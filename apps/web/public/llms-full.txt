@@ -1,0 +1,144 @@
+# grace — Complete Product Reference
+
+> Your daily GLP-1 companion — personalized SMS support for people on GLP-1 medications.
+
+## Product Overview
+
+grace is an SMS-based daily companion for people taking GLP-1 receptor agonist medications (Ozempic, Wegovy, Mounjaro, Zepbound). It delivers personalized text messages throughout the day covering hydration, nutrition, injection reminders, mood support, and weekly milestones. No app download is required — everything happens through standard text messaging.
+
+## Target Audience
+
+- Primary: Women aged 40–70 on GLP-1 medications
+- People who prefer simple text-based communication over mobile apps
+- Individuals seeking daily structure and accountability during their weight-loss journey
+- Users who are new to injectable medications and want guidance
+
+## How grace Works
+
+### Onboarding (2 minutes)
+
+Users complete a short quiz covering:
+1. First name
+2. GLP-1 medication (Ozempic, Wegovy, Mounjaro, or Zepbound)
+3. Goals (weight loss, hydration, nausea management, meal ideas, injection confidence, accountability)
+4. Current and goal weight
+5. Food dislikes and preferences
+6. Injection day of the week
+7. Daily schedule (wake time and sleep time)
+8. Phone number with SMS verification
+
+### Daily Message Schedule
+
+grace sends up to 3 personalized messages per day:
+
+**Morning Check-in**
+- Sent shortly after the user's wake time
+- Includes hydration goals, protein targets, and a motivational message
+- Adapts based on previous day's replies and mood
+
+**Midday Message**
+- Sent around midday
+- Meal suggestions based on food preferences and dislikes
+- Hydration reminders
+- Can be skipped based on user preference
+
+**Evening Wind-down**
+- Sent before the user's sleep time
+- Reflection prompts
+- Next-day preparation tips
+
+### Injection Day Features
+
+On the user's designated injection day:
+- Pre-injection reminder and preparation tips
+- Post-injection confirmation request
+- Side-effect monitoring (24-hour follow-up)
+- Tips specific to their medication
+
+### Adaptive Intelligence
+
+grace adapts its messaging based on:
+- User replies and engagement patterns
+- Mood scores (detected from responses)
+- Consecutive no-reply days (reduces message frequency if unresponsive)
+- Side-effect reports (adjusts tone and content)
+- Weight progress (celebrates milestones)
+- Hydration and protein tracking responses
+
+### Weekly Milestones
+
+- Weekly progress summaries
+- Weight-loss milestone celebrations
+- Injection count tracking
+- Streak and consistency recognition
+
+## Supported GLP-1 Medications
+
+### Semaglutide
+- **Ozempic**: Originally approved for Type 2 diabetes, commonly used for weight management. Weekly injection.
+- **Wegovy**: FDA-approved specifically for chronic weight management. Weekly injection. Higher doses than Ozempic.
+
+### Tirzepatide
+- **Mounjaro**: Dual GIP/GLP-1 receptor agonist. Originally for Type 2 diabetes. Weekly injection.
+- **Zepbound**: FDA-approved for chronic weight management. Same active ingredient as Mounjaro. Weekly injection.
+
+## Safety Features
+
+- Safety flag detection for concerning responses
+- Automatic pause system for safety concerns
+- Medical disclaimer: grace is not a medical service and does not provide medical advice
+- Users can text STOP at any time to cancel
+
+## Pricing Model
+
+- 7-day free trial period
+- SMS-based subscription after trial ends
+- No app purchase or download required
+- Cancel anytime by texting STOP
+
+## Common Questions
+
+### What is grace?
+grace is a text-message-based daily companion for people on GLP-1 weight loss medications. It sends personalized reminders, meal ideas, and encouragement via SMS.
+
+### How is grace different from a weight loss app?
+grace requires no app download. Everything is delivered through text messages, making it accessible and simple. Messages are personalized to your specific medication and preferences.
+
+### What medications does grace support?
+grace supports Ozempic, Wegovy, Mounjaro, and Zepbound — all GLP-1 receptor agonist medications used for weight management.
+
+### Is grace a medical service?
+No. grace provides lifestyle support and reminders. It does not offer medical advice, diagnoses, or treatment recommendations. Always consult your healthcare provider for medical decisions.
+
+### How much does grace cost?
+grace offers a free 7-day trial. After the trial, it continues as an SMS subscription. You can cancel anytime by texting STOP.
+
+### How do I cancel?
+Text STOP to any grace message. Your subscription will be canceled immediately.
+
+### What data does grace collect?
+grace collects your first name, phone number, medication, goals, weight, food preferences, injection day, and daily schedule. See our Privacy Policy for full details.
+
+### Can I change my preferences after signing up?
+Yes. You can update your medication, goals, schedule, and food preferences through the settings page.
+
+## Technical Details
+
+- SMS delivery via standard text messaging
+- Phone number verification during onboarding
+- Timezone-aware message scheduling
+- No app installation required
+- Works on any phone that supports SMS
+
+## Company
+
+STEIMBROS, LLC
+Website: https://graceglp.com
+
+## Links
+
+- Homepage: https://graceglp.com
+- Start Free Trial: https://graceglp.com/onboarding
+- Privacy Policy: https://graceglp.com/privacy
+- Terms of Service: https://graceglp.com/terms
+- Medical Disclaimer: https://graceglp.com/disclaimer

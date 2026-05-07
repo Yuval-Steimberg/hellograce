@@ -1,0 +1,2 @@
+ALTER TABLE public.check_ins DROP CONSTRAINT check_ins_type_check;
+ALTER TABLE public.check_ins ADD CONSTRAINT check_ins_type_check CHECK (type = ANY (ARRAY['morning','midday','evening','weekly','welcome','injection_reminder','injection_followup','injection_dayafter','nausea_4hr_check','nausea_morning_followup','side_effect_response','dose_change']));

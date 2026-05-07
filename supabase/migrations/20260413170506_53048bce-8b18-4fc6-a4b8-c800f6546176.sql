@@ -1,0 +1,1 @@
+ALTER TABLE public.check_ins DROP CONSTRAINT check_ins_type_check;

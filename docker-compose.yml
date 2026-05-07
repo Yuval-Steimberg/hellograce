@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: grace
+      POSTGRES_PASSWORD: grace
+      POSTGRES_DB: grace
+    ports:
+      - "5432:5432"
+    volumes:
+      - grace-pg:/var/lib/postgresql/data
+      - ./supabase/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U grace -d grace"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      LOG_LEVEL: info
+      PUBLIC_BASE_URL: http://localhost:3001
+      DATABASE_URL: postgres://grace:grace@postgres:5432/grace
+      DATABASE_SSL: "false"
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-AC_dev}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-dev}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-+10000000000}
+      LLM_PROVIDER: gemini
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY in your shell or .env}
+      GEMINI_MODEL: gemini-2.5-flash
+      RAG_ENABLED: "true"
+      TOOLS_ENABLED: "true"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+    ports:
+      - "3001:3001"
+
+volumes:
+  grace-pg:

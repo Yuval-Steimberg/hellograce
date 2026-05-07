@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Env } from '../config/env.js';
 import type { AIService } from '../services/ai.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
+import type { UserService } from '../user/user.service.js';
 import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { UnauthorizedError } from '../errors.js';
@@ -10,6 +11,7 @@ export interface WebhookDeps {
   env: Env;
   ai: AIService;
   sender: TwilioSender;
+  users?: UserService;
 }
 
 export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): void {
@@ -42,6 +44,21 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
     // Fire-and-forget AI processing.
     void (async () => {
       try {
+        // Upsert the user record and update last_reply_at on every inbound message.
+        if (deps.users) {
+          const user = await deps.users.ensureUser(normalized.userId).catch(() => null);
+
+          // Handle injection "done" reply — advance the state machine.
+          if (user && user.injection_flow_stage === 'morning_sent') {
+            const trimmed = normalized.text.trim().toLowerCase();
+            if (trimmed === 'done' || trimmed === 'done!' || trimmed === 'injected') {
+              await deps.users.setInjectionStage(user.phone, 'done_confirmed', {
+                injection_done_at: new Date(),
+              }).catch(() => null);
+            }
+          }
+        }
+
         const result = await deps.ai.handleMessage(normalized);
         if (result.text.length > 0) {
           await deps.sender.send({

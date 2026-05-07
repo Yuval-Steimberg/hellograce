@@ -24,6 +24,7 @@ const ConversationsPage = lazy(() => import("./pages/admin/ConversationsPage.tsx
 const FeedbackPage = lazy(() => import("./pages/admin/FeedbackPage.tsx"));
 const PromptsPage = lazy(() => import("./pages/admin/PromptsPage.tsx"));
 const ToolsPage = lazy(() => import("./pages/admin/ToolsPage.tsx"));
+const UsersPage = lazy(() => import("./pages/admin/UsersPage.tsx"));
 
 const queryClient = new QueryClient();
 
@@ -53,6 +54,7 @@ const App = () => (
                 <Route path="feedback" element={<FeedbackPage />} />
                 <Route path="prompts" element={<PromptsPage />} />
                 <Route path="tools" element={<ToolsPage />} />
+                <Route path="users" element={<UsersPage />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />

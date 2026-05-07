@@ -98,8 +98,8 @@ Key design decisions:
 |---|---|---|
 | 1 | Monorepo, Fastify, Twilio webhook, Gemini orchestrator, memory + RAG, tests | ✅ shipped |
 | 2 | Real tools, safety layer, RLHF feedback ingestion, admin API, multimodal | ✅ shipped |
-| 3 | Redis cache, BullMQ background workers, streaming responses | ⏳ not started |
-| 4 | `apps/web` → admin dashboard (conversation viewer, prompt mgmt, RLHF UI, A/B) | ⏳ not started |
+| 3 | Redis cache, BullMQ background workers, SSE streaming, per-tool timeouts | ✅ shipped |
+| 4 | `apps/web` → admin dashboard (conversation viewer, prompt mgmt, RLHF UI, A/B) | ⏳ next |
 | 5 | Cut Twilio webhook over from legacy edge function → `services/api` | ⏳ not started |
 
 13 Vitest tests passing across orchestrator, planner, normalizer, signature, safety.
@@ -165,11 +165,13 @@ psql "$DATABASE_URL" -f supabase/migrations/20260507000001_grace_v2_core.sql
 
 ## Known gaps / things explicitly deferred
 
-- **No Redis / BullMQ yet.** Background work uses fire-and-forget promises in the
-  webhook. Replace with BullMQ in Phase 3.
-- **No streaming.** Gemini supports SSE; webhook responses are synchronous. Add
-  streaming to `/chat/send` for the dashboard, not for Twilio (WhatsApp doesn't
-  stream).
+- **Redis required at runtime.** `REDIS_URL` defaults to `redis://localhost:6379`.
+  Docker Compose starts Redis automatically. For local dev without Docker, run
+  `redis-server` or set `REDIS_URL` to a managed Redis (Upstash, Railway, etc.).
+- **BullMQ dashboard not wired.** Bull Board or similar can be added for job
+  visibility in Phase 4 admin shell.
+- **SSE uses DB polling (500 ms).** Good enough for dashboard; upgrade to Postgres
+  LISTEN/NOTIFY for lower latency if needed.
 - **No prompt versioning UI.** The system prompt lives in
   `packages/ai-core/src/prompts.ts`. Phase 4 adds a `prompts` table + admin UI.
 - **No A/B testing harness.** Stub it in Phase 4.

@@ -32,6 +32,8 @@ const EnvSchema = z.object({
     .transform((v) => v !== 'false'),
 
   ADMIN_TOKEN: z.string().min(16).optional(),
+
+  REDIS_URL: z.string().url().optional().default('redis://localhost:6379'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

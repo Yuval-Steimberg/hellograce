@@ -6,12 +6,16 @@ import rateLimit from '@fastify/rate-limit';
 import { loadEnv } from './config/env.js';
 import { createLogger } from './logger.js';
 import { createPool } from './db/pool.js';
+import { getRedisClient, closeRedis } from './cache/redis.js';
+import { Cache } from './cache/cache.js';
 import { GeminiProvider } from './llm/gemini.js';
 import { GeminiEmbedder } from './rag/gemini-embedder.js';
 import { RagService } from './rag/rag.service.js';
 import { MemoryService } from './memory/memory.service.js';
 import { AIService } from './services/ai.service.js';
 import { TwilioSender } from './twilio/sender.js';
+import { getTurnQueue, closeQueues } from './workers/queues.js';
+import { startWorkers, stopWorkers } from './workers/index.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerWebhookRoutes } from './routes/webhook.js';
 import { registerAdminRoutes } from './routes/admin.js';
@@ -23,10 +27,15 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const logger = createLogger({ level: env.LOG_LEVEL, pretty: env.NODE_ENV !== 'production' });
 
   const pool = createPool(env);
-  const llm = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL }, logger);
+  const redis = getRedisClient(env.REDIS_URL);
+  const cache = new Cache(redis);
+
+  const llm = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL }, logger, cache);
   const memory = new MemoryService(pool);
-  const embedder = new GeminiEmbedder(env.GEMINI_API_KEY);
+  const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'text-embedding-004', cache);
   const rag = new RagService(pool, embedder, logger);
+  const turnQueue = getTurnQueue(redis);
+
   const ai = new AIService({
     pool,
     llm,
@@ -36,7 +45,9 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     flags: { ragEnabled: env.RAG_ENABLED ?? true, toolsEnabled: env.TOOLS_ENABLED ?? true },
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
+    turnQueue,
   });
+
   const sender = new TwilioSender(
     {
       accountSid: env.TWILIO_ACCOUNT_SID,
@@ -46,6 +57,8 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     },
     logger,
   );
+
+  startWorkers({ redis, pool, memory, logger });
 
   const app: FastifyInstance = Fastify({
     loggerInstance: logger as never,
@@ -66,12 +79,15 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   registerHealthRoutes(app, pool);
   registerWebhookRoutes(app, { env, ai, sender });
-  registerChatRoutes(app, ai);
-  registerAdminRoutes(app, { pool, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
+  registerChatRoutes(app, ai, pool);
+  registerAdminRoutes(app, { pool, cache, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
 
   const shutdown = async () => {
     app.log.info('shutdown.start');
     await app.close();
+    await stopWorkers();
+    await closeQueues();
+    await closeRedis();
     await pool.end();
     app.log.info('shutdown.done');
   };

@@ -1,0 +1,1 @@
+UPDATE public.users SET active = true, paused = false, paused_at = NULL WHERE phone = '+972543311033';

@@ -1,0 +1,1 @@
+ALTER TABLE public.users ADD COLUMN dose_change_started_at timestamptz DEFAULT NULL;

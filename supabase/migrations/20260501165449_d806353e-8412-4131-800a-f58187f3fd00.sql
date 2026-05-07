@@ -1,0 +1,1 @@
+ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS slot_index integer;

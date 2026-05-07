@@ -1,0 +1,56 @@
+# grace
+
+> Your daily GLP-1 companion — personalized SMS support for people on GLP-1 medications like Ozempic, Wegovy, Mounjaro, and Zepbound.
+
+grace sends personalized daily text messages — hydration reminders, meal ideas, injection-day guidance, and encouragement — tailored to your specific GLP-1 medication. No app download needed. Just texts.
+
+## What grace Does
+
+- Morning check-ins with hydration and protein goals
+- Midday meal suggestions based on food preferences
+- Injection-day reminders and side-effect follow-ups
+- Evening wind-down messages
+- Weekly milestone celebrations and weight tracking
+
+## Who It's For
+
+grace is designed for people taking GLP-1 receptor agonist medications (semaglutide, tirzepatide) who want daily support and structure during their weight-loss journey. Most users are women aged 40–70 who prefer simple, text-based communication over complex apps.
+
+## How It Works
+
+1. Complete a 2-minute onboarding quiz (medication, goals, schedule, food preferences)
+2. Receive personalized daily texts starting the next morning
+3. Reply to texts naturally — grace adapts based on your responses
+4. Try free for 7 days; cancel anytime by texting STOP
+
+## Supported Medications
+
+- Ozempic (semaglutide)
+- Wegovy (semaglutide)
+- Mounjaro (tirzepatide)
+- Zepbound (tirzepatide)
+
+## Key Features
+
+- No app required — works via SMS
+- Personalized to your medication, goals, and preferences
+- Adapts daily based on your replies and mood
+- Injection-day tracking with side-effect monitoring
+- Meal ideas that respect your food preferences and dislikes
+
+## Pricing
+
+- 7-day free trial
+- SMS-based subscription after trial
+
+## Links
+
+- [Start Your Free Week](https://graceglp.com/onboarding)
+- [Privacy Policy](https://graceglp.com/privacy)
+- [Terms of Service](https://graceglp.com/terms)
+- [Medical Disclaimer](https://graceglp.com/disclaimer)
+- [Full LLM context](https://graceglp.com/llms-full.txt)
+
+## Company
+
+STEIMBROS, LLC

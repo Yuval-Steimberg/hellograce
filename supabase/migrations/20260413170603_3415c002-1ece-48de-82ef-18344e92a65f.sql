@@ -1,0 +1,1 @@
+DELETE FROM check_ins WHERE user_id = '57430f3f-1944-4603-b773-b38fc65ed686' AND message_sent LIKE 'test msg%';

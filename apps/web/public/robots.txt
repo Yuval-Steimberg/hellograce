@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://graceglp.com/sitemap.xml
+
+# LLM-readable product context
+LLMs-txt: https://graceglp.com/llms.txt
+LLMs-full-txt: https://graceglp.com/llms-full.txt

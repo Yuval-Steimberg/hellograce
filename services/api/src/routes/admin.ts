@@ -19,6 +19,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     if (!auth || auth !== `Bearer ${expected}`) throw new UnauthorizedError('Admin token required');
   });
 
+  // ─── Metrics ────────────────────────────────────────────────────────────────
+
   app.get('/admin/metrics', async () => {
     const [{ rows: msgRows }, { rows: toolRows }, { rows: feedbackRows }] = await Promise.all([
       deps.pool.query<{ count: string }>(
@@ -48,6 +50,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     };
   });
 
+  // ─── Conversations ───────────────────────────────────────────────────────────
+
   app.get('/admin/conversations', async () => {
     const { rows } = await deps.pool.query<{
       id: string;
@@ -74,12 +78,14 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
       `SELECT id, role, content, created_at
        FROM messages
        WHERE user_id = $1
-       ORDER BY created_at DESC
+       ORDER BY created_at ASC
        LIMIT 200`,
       [userId],
     );
     return { messages: rows };
   });
+
+  // ─── Feedback / RLHF ────────────────────────────────────────────────────────
 
   const FeedbackSchema = z.object({
     messageId: z.string().uuid().optional(),
@@ -99,7 +105,6 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [f.messageId ?? null, f.userId, f.signalType, f.rating ?? null, f.comment ?? null, f.metadata ?? null],
     );
-    // Bump the embedding's feedback_score if the rating attaches to a stored response.
     if (f.messageId && typeof f.rating === 'number') {
       await deps.pool.query(
         `UPDATE embeddings
@@ -108,6 +113,95 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
         [f.rating, f.messageId],
       );
     }
+    return { ok: true };
+  });
+
+  /** Recent feedback for the RLHF dashboard. */
+  app.get('/admin/feedback', async () => {
+    const { rows } = await deps.pool.query(
+      `SELECT id, user_id, message_id, signal_type, rating, comment, created_at
+       FROM feedback
+       ORDER BY created_at DESC
+       LIMIT 200`,
+    );
+    return { feedback: rows };
+  });
+
+  // ─── Prompts ─────────────────────────────────────────────────────────────────
+
+  app.get('/admin/prompts', async () => {
+    const { rows } = await deps.pool.query(
+      `SELECT id, version, content, active, created_at
+       FROM prompts
+       ORDER BY version DESC`,
+    );
+    return { prompts: rows };
+  });
+
+  const PromptBodySchema = z.object({ content: z.string().min(20).max(10_000) });
+
+  app.post('/admin/prompts', async (req) => {
+    const parsed = PromptBodySchema.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError(parsed.error.message);
+
+    const { rows } = await deps.pool.query<{ id: string; version: number }>(
+      `INSERT INTO prompts (version, content, active)
+       SELECT COALESCE(MAX(version), 0) + 1, $1, FALSE
+       FROM prompts
+       RETURNING id, version`,
+      [parsed.data.content],
+    );
+    return { prompt: rows[0] };
+  });
+
+  app.put('/admin/prompts/:id/activate', async (req) => {
+    const { id } = req.params as { id: string };
+    await deps.pool.query('BEGIN');
+    try {
+      await deps.pool.query(`UPDATE prompts SET active = FALSE WHERE active = TRUE`);
+      const { rowCount } = await deps.pool.query(
+        `UPDATE prompts SET active = TRUE WHERE id = $1`,
+        [id],
+      );
+      await deps.pool.query('COMMIT');
+      if (!rowCount) throw new ValidationError('Prompt not found');
+    } catch (err) {
+      await deps.pool.query('ROLLBACK');
+      throw err;
+    }
+    return { ok: true };
+  });
+
+  // ─── Tool settings ───────────────────────────────────────────────────────────
+
+  app.get('/admin/tool-settings', async () => {
+    const { rows } = await deps.pool.query(
+      `SELECT tool_name, enabled, priority, updated_at
+       FROM tool_settings
+       ORDER BY priority ASC`,
+    );
+    return { tools: rows };
+  });
+
+  const ToolSettingSchema = z.object({
+    enabled: z.boolean(),
+    priority: z.number().int().min(0).max(1000),
+  });
+
+  app.put('/admin/tool-settings/:name', async (req) => {
+    const { name } = req.params as { name: string };
+    const parsed = ToolSettingSchema.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError(parsed.error.message);
+    const { enabled, priority } = parsed.data;
+    await deps.pool.query(
+      `INSERT INTO tool_settings (tool_name, enabled, priority, updated_at)
+       VALUES ($1, $2, $3, now())
+       ON CONFLICT (tool_name) DO UPDATE
+         SET enabled = EXCLUDED.enabled,
+             priority = EXCLUDED.priority,
+             updated_at = now()`,
+      [name, enabled, priority],
+    );
     return { ok: true };
   });
 }

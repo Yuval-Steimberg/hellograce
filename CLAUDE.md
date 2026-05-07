@@ -99,8 +99,8 @@ Key design decisions:
 | 1 | Monorepo, Fastify, Twilio webhook, Gemini orchestrator, memory + RAG, tests | ✅ shipped |
 | 2 | Real tools, safety layer, RLHF feedback ingestion, admin API, multimodal | ✅ shipped |
 | 3 | Redis cache, BullMQ background workers, SSE streaming, per-tool timeouts | ✅ shipped |
-| 4 | `apps/web` → admin dashboard (conversation viewer, prompt mgmt, RLHF UI, A/B) | ⏳ next |
-| 5 | Cut Twilio webhook over from legacy edge function → `services/api` | ⏳ not started |
+| 4 | `apps/web` → admin dashboard (conversation viewer, prompt mgmt, RLHF UI, tools) | ✅ shipped |
+| 5 | Cut Twilio webhook over from legacy edge function → `services/api` | ⏳ next |
 
 13 Vitest tests passing across orchestrator, planner, normalizer, signature, safety.
 
@@ -165,6 +165,9 @@ psql "$DATABASE_URL" -f supabase/migrations/20260507000001_grace_v2_core.sql
 
 ## Known gaps / things explicitly deferred
 
+- **Admin dashboard at `/admin`.** Token stored in localStorage (`grace_admin_token`).
+  Point `VITE_API_URL` at the Grace API. Hot-reload the active prompt with
+  `docker kill --signal HUP grace-api-1` (or `kill -HUP <pid>` locally).
 - **Redis required at runtime.** `REDIS_URL` defaults to `redis://localhost:6379`.
   Docker Compose starts Redis automatically. For local dev without Docker, run
   `redis-server` or set `REDIS_URL` to a managed Redis (Upstash, Railway, etc.).

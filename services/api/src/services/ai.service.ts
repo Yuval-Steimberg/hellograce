@@ -24,10 +24,20 @@ export interface AIServiceDeps {
   geminiApiKey: string;
   geminiModel: string;
   turnQueue?: Queue<TurnPersistJob>;
+  systemPrompt?: string;
 }
 
 export class AIService {
-  constructor(private deps: AIServiceDeps) {}
+  private systemPrompt: string | undefined;
+
+  constructor(private deps: AIServiceDeps) {
+    this.systemPrompt = deps.systemPrompt;
+  }
+
+  updateSystemPrompt(prompt: string | undefined): void {
+    this.systemPrompt = prompt;
+    this.deps.logger.info({ hasPrompt: !!prompt }, 'system_prompt.updated');
+  }
 
   async handleMessage(input: InboundMessage): Promise<OrchestratorOutput> {
     const { logger, memory, rag, flags } = this.deps;
@@ -78,6 +88,7 @@ export class AIService {
       history,
       retrieved,
       toolsEnabled: flags.toolsEnabled,
+      systemPrompt: this.systemPrompt,
     });
 
     // Offload persistence to BullMQ (non-blocking) or fall back to fire-and-forget.

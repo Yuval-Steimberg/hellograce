@@ -21,6 +21,9 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerWebhookRoutes } from './routes/webhook.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerChatRoutes } from './routes/chat.js';
+import { UserService } from './user/user.service.js';
+import { MessageGenerator } from './scheduler/message-generator.js';
+import { Scheduler } from './scheduler/scheduler.js';
 import { AppError } from './errors.js';
 
 async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Promise<void> }> {
@@ -48,11 +51,14 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     }
   };
 
+  const users = new UserService(pool);
+
   const ai = new AIService({
     pool,
     llm,
     memory,
     rag,
+    users,
     logger,
     flags: { ragEnabled: env.RAG_ENABLED ?? true, toolsEnabled: env.TOOLS_ENABLED ?? true },
     geminiApiKey: env.GEMINI_API_KEY,
@@ -71,12 +77,17 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     logger,
   );
 
+  const generator = new MessageGenerator(llm);
+  const scheduler = new Scheduler({ users, sender, generator, logger });
+
   startWorkers({ redis, pool, memory, logger });
 
   // Reload the active system prompt from DB without restarting the process.
   process.on('SIGHUP', () => {
     void loadActivePrompt().then((p) => ai.updateSystemPrompt(p));
   });
+
+  scheduler.start();
 
   const app: FastifyInstance = Fastify({
     loggerInstance: logger as never,
@@ -97,12 +108,13 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   });
 
   registerHealthRoutes(app, pool);
-  registerWebhookRoutes(app, { env, ai, sender });
+  registerWebhookRoutes(app, { env, ai, sender, users });
   registerChatRoutes(app, ai, pool);
   registerAdminRoutes(app, { pool, cache, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
 
   const shutdown = async () => {
     app.log.info('shutdown.start');
+    scheduler.stop();
     await app.close();
     await stopWorkers();
     await closeQueues();

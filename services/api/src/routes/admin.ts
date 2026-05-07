@@ -204,4 +204,22 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     );
     return { ok: true };
   });
+
+  // ─── Users ───────────────────────────────────────────────────────────────────
+
+  app.get('/admin/users', async (req) => {
+    const limit = Math.min(Number((req.query as Record<string, string>)['limit'] ?? 100), 500);
+    const offset = Number((req.query as Record<string, string>)['offset'] ?? 0);
+    const { rows } = await deps.pool.query(
+      `SELECT phone, first_name, medication, goals, timezone, active, paused, blocked,
+              is_paid, is_pro, injection_day, injection_count,
+              last_morning_sent_at, last_reply_at, created_at
+       FROM users
+       ORDER BY created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    );
+    const { rows: countRows } = await deps.pool.query<{ total: string }>(`SELECT count(*)::text AS total FROM users`);
+    return { users: rows, total: Number(countRows[0]?.total ?? 0) };
+  });
 }

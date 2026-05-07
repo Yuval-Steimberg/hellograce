@@ -77,6 +77,24 @@ export interface ToolSetting {
   updated_at: string;
 }
 
+export interface AdminUser {
+  phone: string;
+  first_name: string | null;
+  medication: string | null;
+  goals: string[];
+  timezone: string;
+  active: boolean;
+  paused: boolean;
+  blocked: boolean;
+  is_paid: boolean;
+  is_pro: boolean;
+  injection_day: string | null;
+  injection_count: number;
+  last_morning_sent_at: string | null;
+  last_reply_at: string | null;
+  created_at: string;
+}
+
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export const api = {
@@ -114,4 +132,7 @@ export const api = {
         body: JSON.stringify({ enabled, priority }),
       }),
   },
+
+  users: (limit = 100, offset = 0) =>
+    apiFetch<{ users: AdminUser[]; total: number }>(`/admin/users?limit=${limit}&offset=${offset}`),
 };

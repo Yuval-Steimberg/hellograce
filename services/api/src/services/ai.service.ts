@@ -1,5 +1,6 @@
 import type { Logger } from 'pino';
 import type { Pool } from 'pg';
+import type { Queue } from 'bullmq';
 import type { InboundMessage, OrchestratorOutput } from '@grace/shared';
 import { AIOrchestrator, ToolRegistry } from '@grace/ai-core';
 import type { LLMProvider } from '@grace/shared';
@@ -11,6 +12,7 @@ import { makeLogFoodTool } from '../tools/log-food.js';
 import { makeLogWeightTool } from '../tools/log-weight.js';
 import { makeLogMoodTool } from '../tools/log-mood.js';
 import { makeKnowledgeSearchTool } from '../tools/knowledge-search.js';
+import type { TurnPersistJob } from '../workers/queues.js';
 
 export interface AIServiceDeps {
   pool: Pool;
@@ -21,6 +23,7 @@ export interface AIServiceDeps {
   flags: { ragEnabled: boolean; toolsEnabled: boolean };
   geminiApiKey: string;
   geminiModel: string;
+  turnQueue?: Queue<TurnPersistJob>;
 }
 
 export class AIService {
@@ -77,27 +80,45 @@ export class AIService {
       toolsEnabled: flags.toolsEnabled,
     });
 
-    // Best-effort persistence of the turn.
-    void memory
-      .appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
-      .catch((err) => logger.warn({ err }, 'memory.append.user.failed'));
-    void memory
-      .appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: result.text })
-      .catch((err) => logger.warn({ err }, 'memory.append.assistant.failed'));
-
-    // Log tool runs for observability + future RLHF retraining.
-    for (const tr of result.toolResults) {
-      void this.deps.pool
-        .query(
-          `INSERT INTO tool_logs (user_id, conversation_id, tool_name, args, ok, output, error, latency_ms)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [input.userId, conversationId, tr.name, JSON.stringify({}), tr.ok, JSON.stringify(tr.output ?? null), tr.error ?? null, tr.latencyMs],
-        )
-        .catch((err) => logger.warn({ err }, 'tool_logs.insert.failed'));
+    // Offload persistence to BullMQ (non-blocking) or fall back to fire-and-forget.
+    if (this.deps.turnQueue) {
+      void this.deps.turnQueue
+        .add('persist', {
+          userId: input.userId,
+          conversationId,
+          userText: input.text,
+          assistantText: result.text,
+          toolResults: result.toolResults,
+        })
+        .catch((err) => logger.warn({ err }, 'turn-queue.add.failed'));
+    } else {
+      void memory
+        .appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
+        .catch((err) => logger.warn({ err }, 'memory.append.user.failed'));
+      void memory
+        .appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: result.text })
+        .catch((err) => logger.warn({ err }, 'memory.append.assistant.failed'));
+      for (const tr of result.toolResults) {
+        void this.deps.pool
+          .query(
+            `INSERT INTO tool_logs (user_id, conversation_id, tool_name, args, ok, output, error, latency_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [input.userId, conversationId, tr.name, JSON.stringify({}), tr.ok, JSON.stringify(tr.output ?? null), tr.error ?? null, tr.latencyMs],
+          )
+          .catch((err) => logger.warn({ err }, 'tool_logs.insert.failed'));
+      }
     }
 
     logger.info(
-      { userId: input.userId, intent: result.intent, confidence: result.confidence, latencyMs: result.latencyMs, totalMs: Date.now() - t0, retrievedCount: retrieved.length, mediaCount: input.media.length },
+      {
+        userId: input.userId,
+        intent: result.intent,
+        confidence: result.confidence,
+        latencyMs: result.latencyMs,
+        totalMs: Date.now() - t0,
+        retrievedCount: retrieved.length,
+        mediaCount: input.media.length,
+      },
       'ai.handle.ok',
     );
 

@@ -2,9 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
 import { UnauthorizedError, ValidationError } from '../errors.js';
+import type { Cache } from '../cache/cache.js';
 
 export interface AdminDeps {
   pool: Pool;
+  cache?: Cache;
   adminToken?: string;
 }
 
@@ -42,6 +44,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
       messages_last_24h: Number(msgRows[0]?.count ?? 0),
       tools: toolRows,
       feedback_last_7d: feedbackRows,
+      cache: deps.cache?.stats() ?? null,
     };
   });
 

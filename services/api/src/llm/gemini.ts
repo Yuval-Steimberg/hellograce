@@ -1,7 +1,11 @@
+import { createHash } from 'crypto';
 import { GoogleGenerativeAI, type Content } from '@google/generative-ai';
 import type { Logger } from 'pino';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@grace/shared';
 import { UpstreamError } from '../errors.js';
+import type { Cache } from '../cache/cache.js';
+
+const LLM_TTL_SEC = 30 * 60; // 30 min
 
 export class GeminiProvider implements LLMProvider {
   readonly id = 'gemini';
@@ -10,6 +14,7 @@ export class GeminiProvider implements LLMProvider {
   constructor(
     private cfg: { apiKey: string; model: string },
     private logger: Logger,
+    private cache?: Cache,
   ) {
     this.client = new GoogleGenerativeAI(cfg.apiKey);
   }
@@ -25,6 +30,27 @@ export class GeminiProvider implements LLMProvider {
       parts: [{ text: m.content }],
     }));
 
+    if (this.cache) {
+      const cacheKey = hashRequest(req);
+      const cached = await this.cache.get<LLMResponse>('llm', cacheKey).catch(() => null);
+      if (cached) {
+        this.logger.debug({ cacheKey }, 'llm.cache.hit');
+        return cached;
+      }
+
+      const response = await this.callGemini(systemInstruction, contents, req);
+      await this.cache.set('llm', cacheKey, response, LLM_TTL_SEC).catch(() => null);
+      return response;
+    }
+
+    return this.callGemini(systemInstruction, contents, req);
+  }
+
+  private async callGemini(
+    systemInstruction: string | undefined,
+    contents: Content[],
+    req: LLMRequest,
+  ): Promise<LLMResponse> {
     const model = this.client.getGenerativeModel({
       model: this.cfg.model,
       ...(systemInstruction ? { systemInstruction } : {}),
@@ -53,6 +79,16 @@ export class GeminiProvider implements LLMProvider {
       throw new UpstreamError('Gemini generation failed', err);
     }
   }
+}
+
+function hashRequest(req: LLMRequest): string {
+  const payload = JSON.stringify({
+    messages: req.messages,
+    temperature: req.temperature ?? 0.6,
+    maxOutputTokens: req.maxOutputTokens ?? 400,
+    responseFormat: req.responseFormat,
+  });
+  return createHash('sha256').update(payload).digest('hex');
 }
 
 function mapFinishReason(reason: string | undefined): LLMResponse['finishReason'] {

@@ -11,7 +11,7 @@ Update at the end of every session. Newest entries on top of each section.
 |---|---|---|
 | 1 | Monorepo, Fastify api, Twilio webhook, Gemini orchestrator, memory + RAG, tests | ✅ |
 | 2 | Real tools, safety layer, RLHF feedback ingestion, admin API, multimodal | ✅ |
-| 3 | Redis cache, BullMQ workers, streaming for dashboard | ⏳ pending |
+| 3 | Redis cache, BullMQ workers, SSE streaming, per-tool timeouts | ✅ |
 | 4 | `apps/web` → admin dashboard | ⏳ pending |
 | 5 | Cut Twilio webhook from legacy edge fn → `services/api` | ⏳ pending |
 
@@ -19,25 +19,13 @@ Update at the end of every session. Newest entries on top of each section.
 
 ## Open TODOs (priority order)
 
-### Phase 3 — reliability & latency
-
-- [ ] Add Redis (ioredis) and a thin `cache` module in `services/api/src/cache/`.
-- [ ] Cache LLM completions keyed by hash(systemPrompt + history + retrieved + userText).
-      30-min TTL. Add hit/miss counters to `/admin/metrics`.
-- [ ] Cache embeddings of recent user messages (5-min TTL) to avoid double-embedding.
-- [ ] Add BullMQ; move `memory.appendTurn`, `tool_logs` inserts, and welcome-flow
-      side effects to background workers. Webhook returns in <100ms.
-- [ ] Add SSE endpoint `GET /chat/stream/:conversationId` for the admin dashboard.
-- [ ] Parallel tool execution: already done via `executeMany`. Add per-tool timeouts
-      from a config map (currently hard-coded 5s).
-
 ### Phase 4 — admin dashboard (rebuild `apps/web`)
 
 - [ ] Replace marketing landing with auth-gated admin shell. Keep `/onboarding`
       and `/settings` for end-users; gate `/admin/*` routes by role.
 - [ ] **Conversation viewer** — paginated list of recent conversations
       (`GET /admin/conversations`), drill into messages, show intent + confidence
-      + tool calls per assistant turn.
+      + tool calls per assistant turn. Wire to `GET /chat/stream/:conversationId` SSE.
 - [ ] **RLHF dashboard** — feedback trends, top low-rated responses, ability to
       thumbs-up/down a stored assistant turn (writes to `feedback`).
 - [ ] **Prompt manager** — `prompts` table with `version`, `content`, `active`.
@@ -47,6 +35,7 @@ Update at the end of every session. Newest entries on top of each section.
 - [ ] **A/B experiments** — `experiments` table; orchestrator picks variant based
       on consistent userId hash.
 - [ ] **Metrics** — render `/admin/metrics` as charts (recharts is already a dep).
+      Include cache hit-rate chart from new `cache` field on metrics response.
 
 ### Phase 5 — cutover
 
@@ -67,10 +56,37 @@ Update at the end of every session. Newest entries on top of each section.
 - [ ] Add `@grace/api` integration test that boots Fastify in-process, hits
       `/chat/send` with a stubbed `LLMProvider`, asserts DB writes.
 - [ ] Snapshot test the system prompt to detect accidental drift.
+- [ ] Re-enable `exactOptionalPropertyTypes` in `tsconfig.base.json` (deferred for POC).
 
 ---
 
 ## Done (history, newest first)
+
+### 2026-05-07 — Phase 3: Redis cache + BullMQ workers + SSE streaming
+
+- `services/api/src/cache/redis.ts` — ioredis singleton with graceful close.
+- `services/api/src/cache/cache.ts` — typed `Cache` wrapper: `get/set/del` with
+  namespaced keys, in-process hit/miss counters, `stats()` method.
+- `GeminiProvider` — caches LLM completions keyed by SHA-256(messages + params),
+  30-min TTL. Optional; falls back to direct calls when no Redis.
+- `GeminiEmbedder` — caches embedding vectors keyed by SHA-256(text), 5-min TTL.
+- `GET /admin/metrics` now returns `cache: { hits, misses, hitRate }`.
+- `services/api/src/workers/queues.ts` — BullMQ `Queue<TurnPersistJob>` with
+  retry (3 attempts, exponential backoff), auto-prune completed/failed jobs.
+- `services/api/src/workers/turn-persist.worker.ts` — BullMQ `Worker` that
+  writes `appendTurn` (user + assistant) + `tool_logs` inserts. Concurrency 5.
+- `services/api/src/workers/index.ts` — `startWorkers` / `stopWorkers`.
+- `AIService` — enqueues `TurnPersistJob` to BullMQ; falls back to fire-and-forget
+  if no queue configured (keeps the test harness simple).
+- `server.ts` — wires Redis, Cache, Queue, workers into startup/shutdown lifecycle.
+- `GET /chat/stream/:conversationId` — SSE endpoint; polls DB at 500 ms,
+  pushes `message` events as new rows land.
+- `ToolRegistry` — per-tool timeout config map (log_food: 10s, log_weight/mood: 3s,
+  knowledge_search: 5s) replaces the hardcoded 5s global.
+- Redis added to `docker-compose.yml` (redis:7-alpine) with healthcheck.
+- `REDIS_URL` added to env schema (optional, default `redis://localhost:6379`).
+- `services/api/.env.example` updated.
+- 13 Vitest tests still green; typecheck clean across all packages.
 
 ### 2026-05-07 — Refactor commit `cb17797`
 
@@ -100,6 +116,12 @@ Phase 1 + Phase 2 shipped in one pass.
 
 ## Decisions log
 
+- **2026-05-07** — BullMQ over pg-boss for background workers. Rationale: Redis is
+  already a dep for caching; BullMQ gives reliable retries, job visibility, and
+  worker concurrency control with zero extra infrastructure beyond Redis.
+- **2026-05-07** — SSE over WebSockets for the dashboard stream. Rationale: one-way
+  server→client push is all we need; SSE works through proxies and needs no extra
+  library in the browser.
 - **2026-05-07** — Use direct `@google/generative-ai` SDK instead of OpenRouter or
   Vercel AI SDK. Rationale: lowest dependency surface; the `LLMProvider`
   interface lets us swap later without touching orchestrator.
@@ -110,4 +132,4 @@ Phase 1 + Phase 2 shipped in one pass.
   similarity. Coefficient 0.05 in `RagService.retrieve` is a starting guess.
   Tune in Phase 4 with real data.
 - **2026-05-07** — Disabled `exactOptionalPropertyTypes` in `tsconfig.base.json`
-  for POC velocity. Re-enable in Phase 3 or sooner.
+  for POC velocity. Re-enable in Phase 4 or sooner.

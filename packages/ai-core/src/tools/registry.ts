@@ -6,6 +6,16 @@ export interface Tool {
   execute(args: Record<string, unknown>): Promise<unknown>;
 }
 
+/** Per-tool timeout overrides. Falls back to DEFAULT_TIMEOUT_MS for unlisted tools. */
+const TOOL_TIMEOUT_MS: Record<string, number> = {
+  log_food: 10_000,       // LLM-assisted food parsing can be slow
+  log_weight: 3_000,
+  log_mood: 3_000,
+  knowledge_search: 5_000,
+};
+
+const DEFAULT_TIMEOUT_MS = 5_000;
+
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
 
@@ -33,7 +43,7 @@ export class ToolRegistry {
       };
     }
 
-    const timeoutMs = opts.timeoutMs ?? 5_000;
+    const timeoutMs = opts.timeoutMs ?? TOOL_TIMEOUT_MS[call.name] ?? DEFAULT_TIMEOUT_MS;
     try {
       const output = await Promise.race([
         tool.execute(call.args),

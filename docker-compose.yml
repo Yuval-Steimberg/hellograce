@@ -1,4 +1,13 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -22,6 +31,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: "3001"
@@ -38,6 +49,7 @@ services:
       RAG_ENABLED: "true"
       TOOLS_ENABLED: "true"
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      REDIS_URL: redis://redis:6379
     ports:
       - "3001:3001"
 

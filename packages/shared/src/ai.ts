@@ -36,6 +36,8 @@ export interface OrchestratorInput {
   history: ChatTurn[];
   retrieved: RetrievedDoc[];
   toolsEnabled: boolean;
+  /** Override the default system prompt (loaded from DB prompts table). */
+  systemPrompt?: string;
 }
 
 export interface OrchestratorOutput {

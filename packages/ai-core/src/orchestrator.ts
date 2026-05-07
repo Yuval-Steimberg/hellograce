@@ -35,7 +35,7 @@ export class AIOrchestrator {
     }
 
     const systemPrompt =
-      GRACE_SYSTEM_PROMPT +
+      (input.systemPrompt ?? GRACE_SYSTEM_PROMPT) +
       renderRetrievalContext(input.retrieved) +
       (toolResults.length > 0 ? `\n\nTool results: ${JSON.stringify(toolResults)}` : '');
 

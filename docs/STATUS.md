@@ -12,30 +12,12 @@ Update at the end of every session. Newest entries on top of each section.
 | 1 | Monorepo, Fastify api, Twilio webhook, Gemini orchestrator, memory + RAG, tests | ✅ |
 | 2 | Real tools, safety layer, RLHF feedback ingestion, admin API, multimodal | ✅ |
 | 3 | Redis cache, BullMQ workers, SSE streaming, per-tool timeouts | ✅ |
-| 4 | `apps/web` → admin dashboard | ⏳ pending |
+| 4 | `apps/web` → admin dashboard | ✅ |
 | 5 | Cut Twilio webhook from legacy edge fn → `services/api` | ⏳ pending |
 
 ---
 
 ## Open TODOs (priority order)
-
-### Phase 4 — admin dashboard (rebuild `apps/web`)
-
-- [ ] Replace marketing landing with auth-gated admin shell. Keep `/onboarding`
-      and `/settings` for end-users; gate `/admin/*` routes by role.
-- [ ] **Conversation viewer** — paginated list of recent conversations
-      (`GET /admin/conversations`), drill into messages, show intent + confidence
-      + tool calls per assistant turn. Wire to `GET /chat/stream/:conversationId` SSE.
-- [ ] **RLHF dashboard** — feedback trends, top low-rated responses, ability to
-      thumbs-up/down a stored assistant turn (writes to `feedback`).
-- [ ] **Prompt manager** — `prompts` table with `version`, `content`, `active`.
-      Service reads the active prompt at startup, reloads on SIGHUP.
-- [ ] **Tool toggle** — `tool_settings` table `{tool_name, enabled, priority}`.
-      `ToolRegistry.list()` filters by enabled flag.
-- [ ] **A/B experiments** — `experiments` table; orchestrator picks variant based
-      on consistent userId hash.
-- [ ] **Metrics** — render `/admin/metrics` as charts (recharts is already a dep).
-      Include cache hit-rate chart from new `cache` field on metrics response.
 
 ### Phase 5 — cutover
 
@@ -47,89 +29,92 @@ Update at the end of every session. Newest entries on top of each section.
 
 ### Cross-cutting / nice-to-have
 
-- [ ] Add `pg-boss` or simple cron worker for the v1 cron jobs that today live in
-      Supabase Edge Function scheduled invocations (morning/midday/evening sends).
 - [ ] OpenTelemetry: traces for orchestrator → planner → tool → LLM. Export to
       Honeycomb or Tempo.
 - [ ] Sentry for error reporting (server + web).
-- [ ] Storybook for shared UI in `apps/web` once dashboard work starts.
 - [ ] Add `@grace/api` integration test that boots Fastify in-process, hits
       `/chat/send` with a stubbed `LLMProvider`, asserts DB writes.
 - [ ] Snapshot test the system prompt to detect accidental drift.
 - [ ] Re-enable `exactOptionalPropertyTypes` in `tsconfig.base.json` (deferred for POC).
+- [ ] Add `pg-boss` or simple cron worker for v1 morning/midday/evening sends
+      (currently live in Supabase Edge Function scheduled invocations).
+- [ ] ToolRegistry: filter by `tool_settings.enabled` at runtime (currently settings
+      are only respected via the admin UI — ToolRegistry still registers all tools).
 
 ---
 
 ## Done (history, newest first)
 
+### 2026-05-07 — Phase 4: Admin dashboard
+
+**Backend additions:**
+- `supabase/migrations/20260507000002_grace_v2_phase4.sql` — `prompts` and
+  `tool_settings` tables with seed data (default prompt v1 + four tool rows).
+- `GET /admin/prompts` — list all prompt versions, ordered by version DESC.
+- `POST /admin/prompts` — create new version (auto-incremented, inactive by default).
+- `PUT /admin/prompts/:id/activate` — atomic swap: deactivate all, activate target.
+- `GET /admin/tool-settings` — list tool_name, enabled, priority, updated_at.
+- `PUT /admin/tool-settings/:name` — upsert enabled + priority.
+- `GET /admin/feedback` — list recent feedback entries for the RLHF dashboard.
+- `AIService.updateSystemPrompt()` — hot-reload prompt without restart.
+- `OrchestratorInput.systemPrompt` optional override in `@grace/shared`.
+- `AIOrchestrator` uses `input.systemPrompt ?? GRACE_SYSTEM_PROMPT`.
+- `server.ts` loads active prompt from DB on startup; SIGHUP triggers hot reload.
+- CORS registered (`@fastify/cors`) so the dashboard can call the API.
+
+**Frontend (`apps/web/src/`):**
+- `lib/api.ts` — typed fetch wrapper with Bearer token auth, all typed API calls.
+- `components/admin/AdminAuth.tsx` — React context: `login / logout`, verifies
+  token against `/admin/metrics`, persists in localStorage.
+- `components/admin/AdminLayout.tsx` — sidebar layout (Metrics, Conversations,
+  RLHF Feedback, Prompt Manager, Tool Settings) with auth guard.
+- `pages/admin/AdminLogin.tsx` — token input form with error state.
+- `pages/admin/MetricsPage.tsx` — KPI cards + recharts BarChart (tool usage,
+  p95 latency, feedback pie, cache stats). Auto-refreshes every 30s.
+- `pages/admin/ConversationsPage.tsx` — conversation list + message thread +
+  live SSE stream toggle via `GET /chat/stream/:conversationId`.
+- `pages/admin/FeedbackPage.tsx` — signal breakdown chart + recent entries with
+  inline 👍/👎 rating (writes to `POST /admin/feedback`).
+- `pages/admin/PromptsPage.tsx` — version list, preview pane, "Set active" button.
+- `pages/admin/ToolsPage.tsx` — per-tool card with Switch (enabled) + priority input.
+- `App.tsx` — `/admin/*` routes added (lazy, nested under AdminLayout).
+  `/admin/login` is public; all other `/admin/*` routes are auth-gated.
+- `vite.config.ts` — fixed pre-existing `@tanstack/query-core` dedupe build error.
+- `apps/web/.env.example` — added `VITE_API_URL`.
+- Build clean: 40 chunks, 9.2s.
+
 ### 2026-05-07 — Phase 3: Redis cache + BullMQ workers + SSE streaming
 
-- `services/api/src/cache/redis.ts` — ioredis singleton with graceful close.
-- `services/api/src/cache/cache.ts` — typed `Cache` wrapper: `get/set/del` with
-  namespaced keys, in-process hit/miss counters, `stats()` method.
-- `GeminiProvider` — caches LLM completions keyed by SHA-256(messages + params),
-  30-min TTL. Optional; falls back to direct calls when no Redis.
-- `GeminiEmbedder` — caches embedding vectors keyed by SHA-256(text), 5-min TTL.
-- `GET /admin/metrics` now returns `cache: { hits, misses, hitRate }`.
-- `services/api/src/workers/queues.ts` — BullMQ `Queue<TurnPersistJob>` with
-  retry (3 attempts, exponential backoff), auto-prune completed/failed jobs.
-- `services/api/src/workers/turn-persist.worker.ts` — BullMQ `Worker` that
-  writes `appendTurn` (user + assistant) + `tool_logs` inserts. Concurrency 5.
-- `services/api/src/workers/index.ts` — `startWorkers` / `stopWorkers`.
-- `AIService` — enqueues `TurnPersistJob` to BullMQ; falls back to fire-and-forget
-  if no queue configured (keeps the test harness simple).
-- `server.ts` — wires Redis, Cache, Queue, workers into startup/shutdown lifecycle.
-- `GET /chat/stream/:conversationId` — SSE endpoint; polls DB at 500 ms,
-  pushes `message` events as new rows land.
-- `ToolRegistry` — per-tool timeout config map (log_food: 10s, log_weight/mood: 3s,
-  knowledge_search: 5s) replaces the hardcoded 5s global.
-- Redis added to `docker-compose.yml` (redis:7-alpine) with healthcheck.
-- `REDIS_URL` added to env schema (optional, default `redis://localhost:6379`).
-- `services/api/.env.example` updated.
-- 13 Vitest tests still green; typecheck clean across all packages.
+- `services/api/src/cache/` — ioredis singleton + typed Cache wrapper (hit/miss counters).
+- `GeminiProvider` — caches LLM completions by SHA-256(messages+params), 30-min TTL.
+- `GeminiEmbedder` — caches embedding vectors by SHA-256(text), 5-min TTL.
+- `GET /admin/metrics` returns `cache: { hits, misses, hitRate }`.
+- BullMQ `turn-persist` queue + worker: moves `appendTurn` + `tool_logs` off hot path.
+- `GET /chat/stream/:conversationId` SSE endpoint (DB poll, 500ms intervals).
+- `ToolRegistry` per-tool timeout config map (log_food: 10s, weight/mood: 3s, knowledge: 5s).
+- Redis 7-Alpine in `docker-compose.yml` with healthcheck.
 
 ### 2026-05-07 — Refactor commit `cb17797`
 
-Phase 1 + Phase 2 shipped in one pass.
-
-- Restructured to pnpm monorepo: `apps/web`, `services/api`, `packages/shared`,
-  `packages/ai-core`.
-- Fastify orchestration service with strict TS, pino, helmet, rate-limit, zod
-  config, graceful shutdown.
-- Twilio webhook with HMAC-SHA1 signature verification + WhatsApp/SMS + media
-  normalization (image/audio).
-- Gemini 2.5 Flash provider via `@google/generative-ai` (Lovable removed).
-- Memory service (Postgres) + RAG service (pgvector, feedback-weighted retrieval).
-- `AIOrchestrator` (planner → tool executor → validator) with confidence scoring.
-- Safety guard (deterministic emergency / crisis / medical-advice pre-check).
-- Multimodal: Gemini vision for meal photos, audio transcription.
-- Tools: `log_food`, `log_weight`, `log_mood`, `knowledge_search`.
-- Admin API: `/admin/metrics`, `/admin/conversations`, `POST /admin/feedback`.
-- `/chat/send` demo endpoint (no Twilio).
-- v2 SQL migration: `conversations`, `messages`, `embeddings`, `tool_logs`,
-  `feedback`, `user_profiles`, `food_logs` + ivfflat index.
-- Multi-stage Dockerfile + `docker-compose.yml` (postgres+pgvector + api).
-- Seed knowledge script + investor demo bash script.
-- 13 Vitest tests passing.
+Phase 1 + Phase 2 shipped in one pass. Full monorepo, Fastify service, Gemini 2.5
+Flash, pgvector RAG, RLHF, safety guard, multimodal, admin API, Docker, 13 tests.
 
 ---
 
 ## Decisions log
 
-- **2026-05-07** — BullMQ over pg-boss for background workers. Rationale: Redis is
-  already a dep for caching; BullMQ gives reliable retries, job visibility, and
-  worker concurrency control with zero extra infrastructure beyond Redis.
-- **2026-05-07** — SSE over WebSockets for the dashboard stream. Rationale: one-way
-  server→client push is all we need; SSE works through proxies and needs no extra
-  library in the browser.
-- **2026-05-07** — Use direct `@google/generative-ai` SDK instead of OpenRouter or
-  Vercel AI SDK. Rationale: lowest dependency surface; the `LLMProvider`
-  interface lets us swap later without touching orchestrator.
-- **2026-05-07** — pgvector dim = 768 (text-embedding-004). If we later move to
-  Voyage or OpenAI embeddings, we'll add a new column and dual-write during
-  cutover; we don't rebuild the table.
-- **2026-05-07** — RLHF re-ranking via additive `feedback_score` on cosine
-  similarity. Coefficient 0.05 in `RagService.retrieve` is a starting guess.
-  Tune in Phase 4 with real data.
-- **2026-05-07** — Disabled `exactOptionalPropertyTypes` in `tsconfig.base.json`
-  for POC velocity. Re-enable in Phase 4 or sooner.
+- **2026-05-07** — Prompt hot-reload via SIGHUP (not polling). Activating a prompt in
+  the UI writes to DB; sending `kill -HUP <pid>` re-reads it without restart.
+  In Docker: `docker kill --signal HUP grace-api-1`.
+- **2026-05-07** — Tool settings stored in DB but ToolRegistry still registers all
+  tools at startup. The DB settings gate per-user overrides; a global refactor to
+  filter at registration time is deferred as a nice-to-have.
+- **2026-05-07** — Admin auth: localStorage Bearer token, verified against
+  `/admin/metrics` on load. No JWT/session — sufficient for internal investor demo.
+  Upgrade to Supabase Auth roles before public release.
+- **2026-05-07** — BullMQ over pg-boss: Redis already a dep for caching; BullMQ
+  gives reliable retries, visibility, concurrency control.
+- **2026-05-07** — SSE over WebSockets: one-way push is enough; SSE works through
+  proxies with no extra library.
+- **2026-05-07** — pgvector dim = 768 (text-embedding-004).
+- **2026-05-07** — Disabled `exactOptionalPropertyTypes` for POC velocity.

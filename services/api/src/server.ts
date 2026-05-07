@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
+import cors from '@fastify/cors';
 import formbody from '@fastify/formbody';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
@@ -36,6 +37,17 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const rag = new RagService(pool, embedder, logger);
   const turnQueue = getTurnQueue(redis);
 
+  const loadActivePrompt = async (): Promise<string | undefined> => {
+    try {
+      const { rows } = await pool.query<{ content: string }>(
+        `SELECT content FROM prompts WHERE active = TRUE LIMIT 1`,
+      );
+      return rows[0]?.content;
+    } catch {
+      return undefined;
+    }
+  };
+
   const ai = new AIService({
     pool,
     llm,
@@ -46,6 +58,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
     turnQueue,
+    systemPrompt: await loadActivePrompt(),
   });
 
   const sender = new TwilioSender(
@@ -60,10 +73,16 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   startWorkers({ redis, pool, memory, logger });
 
+  // Reload the active system prompt from DB without restarting the process.
+  process.on('SIGHUP', () => {
+    void loadActivePrompt().then((p) => ai.updateSystemPrompt(p));
+  });
+
   const app: FastifyInstance = Fastify({
     loggerInstance: logger as never,
     trustProxy: true,
   }) as unknown as FastifyInstance;
+  await app.register(cors, { origin: true, credentials: true });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(formbody);
   await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });

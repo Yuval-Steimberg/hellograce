@@ -135,4 +135,22 @@ export const api = {
 
   users: (limit = 100, offset = 0) =>
     apiFetch<{ users: AdminUser[]; total: number }>(`/admin/users?limit=${limit}&offset=${offset}`),
+
+  deleteUser: (phone: string) =>
+    apiFetch<{ ok: boolean }>(`/admin/users/${encodeURIComponent(phone)}`, { method: 'DELETE' }),
+
+  resetMemory: (phone: string) =>
+    apiFetch<{ ok: boolean }>(`/admin/users/${encodeURIComponent(phone)}/reset-memory`, { method: 'POST' }),
+
+  onboard: (body: {
+    firstName: string; phone: string; medication: string;
+    medicationFrequency?: string; injectionDay?: string | null;
+    wakeTime?: string; sleepTime?: string; foodDislikes?: string | null;
+    currentWeight?: number | null; goalWeight?: number | null;
+    goals?: string[]; timezone?: string;
+    checkinCountPerDay?: number; checkinDaysInterval?: number;
+  }) => apiFetch<{ ok: boolean; userId: string; phone: string }>('/users/onboard', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
 };

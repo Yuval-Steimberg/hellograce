@@ -205,7 +205,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     return { ok: true };
   });
 
-  // ─── Users ───────────────────────────────────────────────────────────────────
+  // ─── User management ─────────────────────────────────────────────────────────
 
   app.get('/admin/users', async (req) => {
     const limit = Math.min(Number((req.query as Record<string, string>)['limit'] ?? 100), 500);
@@ -221,5 +221,28 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     );
     const { rows: countRows } = await deps.pool.query<{ total: string }>(`SELECT count(*)::text AS total FROM users`);
     return { users: rows, total: Number(countRows[0]?.total ?? 0) };
+  });
+
+  /** Permanently delete a user and all their data (GDPR). */
+  app.delete('/admin/users/:phone', async (req) => {
+    const { phone } = req.params as { phone: string };
+    await deps.pool.query('DELETE FROM check_ins WHERE phone = $1', [phone]);
+    await deps.pool.query('DELETE FROM messages WHERE user_id = $1', [phone]);
+    await deps.pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]);
+    await deps.pool.query('DELETE FROM embeddings WHERE user_id = $1', [phone]);
+    await deps.pool.query('DELETE FROM food_logs WHERE user_id = $1', [phone]);
+    await deps.pool.query('DELETE FROM weight_logs WHERE user_id = $1', [phone]);
+    await deps.pool.query('DELETE FROM feedback WHERE user_id = $1', [phone]);
+    await deps.pool.query('DELETE FROM users WHERE phone = $1', [phone]);
+    return { ok: true };
+  });
+
+  /** Reset a user's conversation memory (messages + conversations) without deleting the profile. */
+  app.post('/admin/users/:phone/reset-memory', async (req) => {
+    const { phone } = req.params as { phone: string };
+    await deps.pool.query('DELETE FROM messages WHERE user_id = $1', [phone]);
+    await deps.pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]);
+    await deps.pool.query('DELETE FROM embeddings WHERE user_id = $1', [phone]);
+    return { ok: true };
   });
 }

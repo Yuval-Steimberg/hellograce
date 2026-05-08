@@ -3,11 +3,13 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { UnauthorizedError, ValidationError } from '../errors.js';
 import type { Cache } from '../cache/cache.js';
+import type { LLMProvider } from '@grace/shared';
 
 export interface AdminDeps {
   pool: Pool;
   cache?: Cache;
   adminToken?: string;
+  llm?: LLMProvider;
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
@@ -181,6 +183,138 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
       throw err;
     }
     return { ok: true };
+  });
+
+  /**
+   * Analyse recent RLHF feedback and negatively-rated messages, then ask Gemini
+   * to produce an improved system prompt. Saves it as a new inactive draft so the
+   * admin can review and activate it.
+   */
+  app.post('/admin/prompts/auto-improve', async (_req, reply) => {
+    if (!deps.llm) {
+      reply.status(503).send({ error: 'LLM_UNAVAILABLE', message: 'LLM not configured' });
+      return;
+    }
+
+    // 1. Current active prompt
+    const { rows: promptRows } = await deps.pool.query<{ content: string }>(
+      `SELECT content FROM prompts WHERE active = TRUE ORDER BY version DESC LIMIT 1`,
+    );
+    const currentPrompt = promptRows[0]?.content;
+    if (!currentPrompt) throw new ValidationError('No active prompt to improve. Create and activate one first.');
+
+    // 2. Feedback summary (last 14 days)
+    const { rows: feedbackRows } = await deps.pool.query<{
+      signal_type: string; rating: number | null; comment: string | null; created_at: Date;
+    }>(
+      `SELECT signal_type, rating, comment, created_at
+       FROM feedback
+       WHERE created_at > now() - interval '14 days'
+       ORDER BY created_at DESC
+       LIMIT 100`,
+    );
+
+    const positive = feedbackRows.filter((f) => (f.rating ?? 0) > 0).length;
+    const negative = feedbackRows.filter((f) => (f.rating ?? 0) < 0).length;
+    const total = feedbackRows.length;
+    const approvalRate = total > 0 ? Math.round((positive / total) * 100) : null;
+    const comments = feedbackRows
+      .filter((f) => f.comment)
+      .map((f) => `- ${f.comment}`)
+      .join('\n') || '(none)';
+
+    // 3. Sample of negatively-rated assistant messages for context
+    const { rows: badMessages } = await deps.pool.query<{ content: string; comment: string | null }>(
+      `SELECT m.content, f.comment
+       FROM feedback f
+       JOIN messages m ON m.id = f.message_id
+       WHERE f.rating = -1
+         AND f.created_at > now() - interval '14 days'
+         AND m.role = 'assistant'
+       ORDER BY f.created_at DESC
+       LIMIT 8`,
+    );
+
+    const badMessageText = badMessages.length > 0
+      ? badMessages.map((m, i) =>
+          `[${i + 1}] Response: ${m.content.slice(0, 300)}${m.content.length > 300 ? '…' : ''}` +
+          (m.comment ? `\n    Admin note: "${m.comment}"` : '')
+        ).join('\n\n')
+      : '(no negatively-rated messages yet)';
+
+    // 4. Sample of positively-rated messages
+    const { rows: goodMessages } = await deps.pool.query<{ content: string }>(
+      `SELECT m.content
+       FROM feedback f
+       JOIN messages m ON m.id = f.message_id
+       WHERE f.rating = 1
+         AND f.created_at > now() - interval '14 days'
+         AND m.role = 'assistant'
+       ORDER BY f.created_at DESC
+       LIMIT 5`,
+    );
+
+    const goodMessageText = goodMessages.length > 0
+      ? goodMessages.map((m, i) =>
+          `[${i + 1}] ${m.content.slice(0, 200)}${m.content.length > 200 ? '…' : ''}`
+        ).join('\n\n')
+      : '(no positively-rated messages yet)';
+
+    // 5. Call Gemini to produce the improved prompt
+    const metaPrompt = `You are an expert AI prompt engineer. Your task is to improve the system prompt for Grace, an AI companion for people on GLP-1 medications (Ozempic, Wegovy, Mounjaro, Zepbound, compounded semaglutide/tirzepatide).
+
+CURRENT SYSTEM PROMPT:
+---
+${currentPrompt}
+---
+
+FEEDBACK SUMMARY (last 14 days):
+- Total ratings: ${total}
+- Positive (👍): ${positive}
+- Negative (👎): ${negative}${approvalRate !== null ? `\n- Approval rate: ${approvalRate}%` : ''}
+
+USER AND ADMIN COMMENTS (from negative feedback):
+${comments}
+
+EXAMPLES OF RESPONSES THAT RECEIVED NEGATIVE RATINGS:
+${badMessageText}
+
+EXAMPLES OF RESPONSES THAT RECEIVED POSITIVE RATINGS:
+${goodMessageText}
+
+INSTRUCTIONS:
+Based on the feedback above, identify the specific weaknesses in the current prompt and generate an improved version that:
+1. Directly addresses each pattern of negative feedback
+2. Reinforces the qualities that earned positive ratings
+3. Keeps Grace's warm, empathetic, GLP-1-focused persona intact
+4. Is complete and self-contained (no references to this analysis)
+5. Maintains all medical safety guardrails
+
+Return ONLY the improved system prompt text. No explanations, no headers, no markdown — just the prompt itself.`;
+
+    const response = await deps.llm.generate({
+      messages: [{ role: 'user', content: metaPrompt }],
+      temperature: 0.4,
+      maxOutputTokens: 4096,
+    });
+
+    const improvedContent = response.text.trim();
+    if (improvedContent.length < 50) throw new ValidationError('LLM returned an unusable response');
+
+    // 6. Save as new inactive draft
+    const { rows: newRows } = await deps.pool.query<{ id: string; version: number }>(
+      `INSERT INTO prompts (version, content, active)
+       SELECT COALESCE(MAX(version), 0) + 1, $1, FALSE
+       FROM prompts
+       RETURNING id, version`,
+      [improvedContent],
+    );
+
+    return {
+      ok: true,
+      prompt: { ...newRows[0], content: improvedContent, active: false, created_at: new Date() },
+      stats: { total, positive, negative, approvalRate },
+    };
   });
 
   // ─── Tool settings ───────────────────────────────────────────────────────────

@@ -48,6 +48,7 @@ export interface GraceUser {
   is_paid: boolean;
   is_pro: boolean;
   trial_start: Date | null;
+  rlhf_enabled: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -176,6 +177,32 @@ export class UserService {
       calories: rows.reduce((s, r) => s + r.calories, 0),
       items: rows.map((r) => r.food),
     };
+  }
+
+  /**
+   * Record a user-submitted rating/comment for the last assistant message.
+   * Finds the most recent assistant message, writes to feedback, and adjusts
+   * the embedding feedback_score so future RAG retrieval reflects the signal.
+   */
+  async recordUserFeedback(phone: string, rating: number, comment?: string): Promise<void> {
+    const { rows } = await this.pool.query<{ id: string }>(
+      `SELECT id FROM messages WHERE user_id = $1 AND role = 'assistant' ORDER BY created_at DESC LIMIT 1`,
+      [phone],
+    );
+    const messageId = rows[0]?.id ?? null;
+    await this.pool.query(
+      `INSERT INTO feedback (message_id, user_id, signal_type, rating, comment)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [messageId, phone, comment ? 'comment' : 'rating', rating, comment ?? null],
+    );
+    if (messageId) {
+      await this.pool.query(
+        `UPDATE embeddings
+         SET feedback_score = COALESCE(feedback_score, 0) + $1
+         WHERE metadata->>'message_id' = $2`,
+        [rating, messageId],
+      );
+    }
   }
 
   /** List all active users (for scheduler). */

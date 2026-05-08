@@ -88,6 +88,7 @@ export interface AdminUser {
   blocked: boolean;
   is_paid: boolean;
   is_pro: boolean;
+  rlhf_enabled: boolean;
   injection_day: string | null;
   injection_count: number;
   last_morning_sent_at: string | null;
@@ -141,6 +142,12 @@ export const api = {
 
   resetMemory: (phone: string) =>
     apiFetch<{ ok: boolean }>(`/admin/users/${encodeURIComponent(phone)}/reset-memory`, { method: 'POST' }),
+
+  toggleRlhf: (phone: string, enabled: boolean) =>
+    apiFetch<{ ok: boolean }>(`/admin/users/${encodeURIComponent(phone)}/rlhf`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    }),
 
   onboard: (body: {
     firstName: string; phone: string; medication: string;

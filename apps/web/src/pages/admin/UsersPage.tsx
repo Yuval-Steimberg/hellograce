@@ -50,6 +50,15 @@ export default function UsersPage() {
     onError: () => toast.error('Reset failed'),
   });
 
+  const rlhfMutation = useMutation({
+    mutationFn: ({ phone, enabled }: { phone: string; enabled: boolean }) => api.toggleRlhf(phone, enabled),
+    onSuccess: (_, { phone, enabled }) => {
+      toast.success(`RLHF ${enabled ? 'enabled' : 'disabled'} for ${phone}`);
+      void qc.invalidateQueries({ queryKey: ['admin-users'] });
+    },
+    onError: () => toast.error('RLHF toggle failed'),
+  });
+
   const filtered = (data?.users ?? []).filter((u) => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -91,13 +100,14 @@ export default function UsersPage() {
                 <th className="px-4 py-3 text-left font-medium">Last reply</th>
                 <th className="px-4 py-3 text-left font-medium">Joined</th>
                 <th className="px-4 py-3 text-left font-medium">Status</th>
+                <th className="px-4 py-3 text-left font-medium">RLHF</th>
                 <th className="px-4 py-3 text-left font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
                     No users found
                   </td>
                 </tr>
@@ -128,6 +138,17 @@ export default function UsersPage() {
                   <td className="px-4 py-3 text-muted-foreground">{formatDate(user.last_reply_at)}</td>
                   <td className="px-4 py-3 text-muted-foreground">{formatDate(user.created_at)}</td>
                   <td className="px-4 py-3">{statusBadge(user)}</td>
+                  <td className="px-4 py-3">
+                    <Button
+                      size="sm"
+                      variant={user.rlhf_enabled ? 'default' : 'outline'}
+                      className={`text-xs h-7 ${user.rlhf_enabled ? 'bg-amber-600 hover:bg-amber-700' : ''}`}
+                      disabled={rlhfMutation.isPending}
+                      onClick={() => rlhfMutation.mutate({ phone: user.phone, enabled: !user.rlhf_enabled })}
+                    >
+                      {user.rlhf_enabled ? 'RLHF on' : 'RLHF off'}
+                    </Button>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
                       <Button

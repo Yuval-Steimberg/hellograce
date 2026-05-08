@@ -212,7 +212,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     const offset = Number((req.query as Record<string, string>)['offset'] ?? 0);
     const { rows } = await deps.pool.query(
       `SELECT phone, first_name, medication, goals, timezone, active, paused, blocked,
-              is_paid, is_pro, injection_day, injection_count,
+              is_paid, is_pro, rlhf_enabled, injection_day, injection_count,
               last_morning_sent_at, last_reply_at, created_at
        FROM users
        ORDER BY created_at DESC
@@ -243,6 +243,18 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     await deps.pool.query('DELETE FROM messages WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM embeddings WHERE user_id = $1', [phone]);
+    return { ok: true };
+  });
+
+  /** Toggle RLHF contribution for a user — enables/disables in-chat rating prompts. */
+  app.put('/admin/users/:phone/rlhf', async (req) => {
+    const { phone } = req.params as { phone: string };
+    const { enabled } = req.body as { enabled: boolean };
+    const { rowCount } = await deps.pool.query(
+      `UPDATE users SET rlhf_enabled = $1, updated_at = now() WHERE phone = $2`,
+      [enabled, phone],
+    );
+    if (!rowCount) throw new ValidationError('User not found');
     return { ok: true };
   });
 }

@@ -169,6 +169,11 @@ export const api = {
       apiFetch<{ prompt: Prompt }>('/admin/prompts', { method: 'POST', body: JSON.stringify({ content }) }),
     activate: (id: string) =>
       apiFetch<{ ok: boolean }>(`/admin/prompts/${id}/activate`, { method: 'PUT' }),
+    autoImprove: () =>
+      apiFetch<{ ok: boolean; prompt: Prompt; stats: { total: number; positive: number; negative: number; approvalRate: number | null } }>(
+        '/admin/prompts/auto-improve',
+        { method: 'POST' },
+      ),
   },
 
   toolSettings: {

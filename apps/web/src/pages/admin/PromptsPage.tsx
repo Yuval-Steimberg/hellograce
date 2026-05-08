@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { CheckCircle2, Clock, Plus } from 'lucide-react';
+import { CheckCircle2, Clock, Plus, Sparkles } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 export default function PromptsPage() {
@@ -42,16 +42,40 @@ export default function PromptsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const autoImproveMutation = useMutation({
+    mutationFn: api.prompts.autoImprove,
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ['prompts'] });
+      setPreview(data.prompt);
+      const { positive, negative, approvalRate } = data.stats;
+      const pct = approvalRate != null ? ` (${Math.round(approvalRate * 100)}% approval)` : '';
+      toast.success(`AI draft created from ${positive + negative} signals${pct} — review and set active when ready`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const prompts = data?.prompts ?? [];
 
   return (
     <div className="p-6 h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <h1 className="font-serif text-2xl">Prompt Manager</h1>
-        <Button size="sm" onClick={() => setShowNew((v) => !v)} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          New version
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => autoImproveMutation.mutate()}
+            disabled={autoImproveMutation.isPending}
+            className="gap-1.5"
+          >
+            <Sparkles className="h-4 w-4" />
+            {autoImproveMutation.isPending ? 'Improving…' : 'Auto-improve'}
+          </Button>
+          <Button size="sm" onClick={() => setShowNew((v) => !v)} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            New version
+          </Button>
+        </div>
       </div>
 
       {showNew && (

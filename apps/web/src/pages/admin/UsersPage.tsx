@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type AdminUser } from '../../lib/api';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { toast } from 'sonner';
 
 const PAGE_SIZE = 50;
 
@@ -22,13 +23,31 @@ function formatDate(iso: string | null): string {
 }
 
 export default function UsersPage() {
+  const qc = useQueryClient();
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-users', page],
     queryFn: () => api.users(PAGE_SIZE, page * PAGE_SIZE),
     placeholderData: (prev) => prev,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (phone: string) => api.deleteUser(phone),
+    onSuccess: (_, phone) => {
+      toast.success(`User ${phone} deleted`);
+      setConfirmDelete(null);
+      void qc.invalidateQueries({ queryKey: ['admin-users'] });
+    },
+    onError: () => toast.error('Delete failed'),
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: (phone: string) => api.resetMemory(phone),
+    onSuccess: (_, phone) => toast.success(`Memory reset for ${phone}`),
+    onError: () => toast.error('Reset failed'),
   });
 
   const filtered = (data?.users ?? []).filter((u) => {
@@ -48,9 +67,7 @@ export default function UsersPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">Users</h1>
-          <p className="text-sm text-muted-foreground">
-            {data?.total ?? '—'} total users
-          </p>
+          <p className="text-sm text-muted-foreground">{data?.total ?? '—'} total users</p>
         </div>
         <Input
           className="w-64"
@@ -74,12 +91,13 @@ export default function UsersPage() {
                 <th className="px-4 py-3 text-left font-medium">Last reply</th>
                 <th className="px-4 py-3 text-left font-medium">Joined</th>
                 <th className="px-4 py-3 text-left font-medium">Status</th>
+                <th className="px-4 py-3 text-left font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
                     No users found
                   </td>
                 </tr>
@@ -88,11 +106,9 @@ export default function UsersPage() {
                 <tr key={user.phone} className="hover:bg-muted/30 transition-colors">
                   <td className="px-4 py-3">
                     <div className="font-medium">{user.first_name ?? 'Unknown'}</div>
-                    <div className="text-xs text-muted-foreground">{user.phone}</div>
+                    <div className="text-xs text-muted-foreground font-mono">{user.phone}</div>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {user.medication ?? '—'}
-                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{user.medication ?? '—'}</td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {(user.goals ?? []).slice(0, 2).map((g) => (
@@ -109,14 +125,51 @@ export default function UsersPage() {
                       <span className="text-xs ml-1">(#{user.injection_count})</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {formatDate(user.last_reply_at)}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {formatDate(user.created_at)}
-                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{formatDate(user.last_reply_at)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{formatDate(user.created_at)}</td>
+                  <td className="px-4 py-3">{statusBadge(user)}</td>
                   <td className="px-4 py-3">
-                    {statusBadge(user)}
+                    <div className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs h-7"
+                        disabled={resetMutation.isPending}
+                        onClick={() => resetMutation.mutate(user.phone)}
+                      >
+                        Reset
+                      </Button>
+                      {confirmDelete === user.phone ? (
+                        <div className="flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="text-xs h-7"
+                            disabled={deleteMutation.isPending}
+                            onClick={() => deleteMutation.mutate(user.phone)}
+                          >
+                            Confirm
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-xs h-7"
+                            onClick={() => setConfirmDelete(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-xs h-7 text-destructive hover:text-destructive"
+                          onClick={() => setConfirmDelete(user.phone)}
+                        >
+                          Delete
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -127,23 +180,11 @@ export default function UsersPage() {
 
       {totalPages > 1 && (
         <div className="flex items-center justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page === 0}
-            onClick={() => setPage((p) => p - 1)}
-          >
+          <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
             Previous
           </Button>
-          <span className="text-sm text-muted-foreground">
-            Page {page + 1} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= totalPages - 1}
-            onClick={() => setPage((p) => p + 1)}
-          >
+          <span className="text-sm text-muted-foreground">Page {page + 1} of {totalPages}</span>
+          <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>
             Next
           </Button>
         </div>

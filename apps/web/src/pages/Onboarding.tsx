@@ -83,42 +83,57 @@ const Onboarding = () => {
     setSaving(true);
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York";
-      const { data, error } = await supabase.functions.invoke("complete-onboarding", {
-        body: {
-          firstName: firstName.trim(),
-          phone: phone.trim(),
-          medication,
-          medicationFrequency,
-          injectionDay: medicationFrequency === "daily" ? null : injectionDay,
-          medicationTime: medicationFrequency === "daily" ? medicationTime : null,
-          wakeTime,
-          sleepTime,
-          foodDislikes: foodDislikes.trim() || null,
-          currentWeight: currentWeight ? Number(currentWeight) : null,
-          goalWeight: goalWeight ? Number(goalWeight) : null,
-          goals,
-          timezone,
-          checkinCountPerDay,
-          checkinDaysInterval,
-        },
-      });
+      const onboardBody = {
+        firstName: firstName.trim(),
+        phone: phone.trim(),
+        medication,
+        medicationFrequency,
+        injectionDay: medicationFrequency === "daily" ? null : injectionDay,
+        wakeTime,
+        sleepTime,
+        foodDislikes: foodDislikes.trim() || null,
+        currentWeight: currentWeight ? Number(currentWeight) : null,
+        goalWeight: goalWeight ? Number(goalWeight) : null,
+        goals,
+        timezone,
+        checkinCountPerDay,
+        checkinDaysInterval,
+      };
 
-      if (error) {
-        console.error("Error saving user:", error);
-        toast.error("Something went wrong saving your info. Please try again.");
-        return;
+      let resultUserId: string | undefined;
+      const v2ApiUrl = import.meta.env.VITE_API_URL as string | undefined;
+
+      if (v2ApiUrl) {
+        // v2 path: POST directly to the Fastify API
+        const resp = await fetch(`${v2ApiUrl}/users/onboard`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(onboardBody),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({})) as { message?: string };
+          throw new Error(err.message ?? `HTTP ${resp.status}`);
+        }
+        const data = await resp.json() as { ok: boolean; userId: string };
+        resultUserId = data.userId;
+      } else {
+        // v1 fallback: Supabase edge function
+        const { data, error } = await supabase.functions.invoke("complete-onboarding", {
+          body: onboardBody,
+        });
+        if (error) throw new Error(error.message ?? "Supabase error");
+        resultUserId = (data as { userId?: string })?.userId;
       }
 
-      // Store userId so Settings page can skip verification
-      if (data?.userId) {
-        localStorage.setItem("grace_user_id", data.userId);
-        setUserId(data.userId);
+      if (resultUserId) {
+        localStorage.setItem("grace_user_id", resultUserId);
+        setUserId(resultUserId);
       }
 
       next(); // Go to payment step (step 10)
     } catch (err) {
-      console.error("Unexpected error:", err);
-      toast.error("Something went wrong. Please try again.");
+      console.error("Onboarding error:", err);
+      toast.error("Something went wrong saving your info. Please try again.");
     } finally {
       setSaving(false);
     }

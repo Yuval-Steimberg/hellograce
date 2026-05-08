@@ -21,6 +21,7 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerWebhookRoutes } from './routes/webhook.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerChatRoutes } from './routes/chat.js';
+import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
@@ -109,6 +110,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   registerHealthRoutes(app, pool);
   registerWebhookRoutes(app, { env, ai, sender, users });
+  registerUserRoutes(app, { pool, users, sender, generator });
   registerChatRoutes(app, ai, pool);
   registerAdminRoutes(app, { pool, cache, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
 

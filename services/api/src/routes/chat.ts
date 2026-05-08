@@ -97,4 +97,20 @@ export function registerChatRoutes(app: FastifyInstance, ai: AIService, pool?: P
       req.raw.on('close', resolve);
     });
   });
+
+  /** Chat history for a user (most recent 100 messages). */
+  app.get('/chat/history/:userId', async (req) => {
+    if (!pool) return { messages: [] };
+    const { userId } = req.params as { userId: string };
+    const { rows } = await pool.query(
+      `SELECT m.id, m.role, m.content, m.created_at, c.id AS conversation_id
+       FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       WHERE m.user_id = $1
+       ORDER BY m.created_at DESC
+       LIMIT 100`,
+      [userId],
+    );
+    return { messages: rows.reverse() };
+  });
 }

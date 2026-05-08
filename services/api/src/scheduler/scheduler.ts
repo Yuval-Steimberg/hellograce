@@ -116,10 +116,10 @@ export class Scheduler {
 
     // ── Evening wind-down (Tue/Thu/Sun, 90 min before sleep)
     const sleepHour = parseInt(user.sleep_time.split(':')[0]!, 10);
-    if (
+    const isEveningWindow =
       EVENING_DAYS.has(dayOfWeek) &&
-      hour === sleepHour - 2 && minute >= 30 || (hour === sleepHour - 1 && minute <= 0)
-    ) {
+      ((hour === sleepHour - 2 && minute >= 30) || (hour === sleepHour - 1 && minute === 0));
+    if (isEveningWindow) {
       if (!user.last_evening_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_evening_sent_at))) !== todayStr) {
         await this.sendAndRecord(user, 'evening');
         await this.deps.users.update(user.phone, { last_evening_sent_at: new Date() });

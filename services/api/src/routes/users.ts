@@ -71,6 +71,7 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       checkin_count_per_day: b.checkinCountPerDay,
       checkin_days_interval: b.checkinDaysInterval,
       active: true,
+      trial_start: new Date(),
     });
 
     // Fetch completed profile for message generation.

@@ -1,7 +1,7 @@
 # Grace — Claude Operating Notes
 
-This file is loaded automatically by Claude Code at session start. Update it as the
-project evolves so future sessions can resume without re-deriving context.
+This file is loaded automatically by Claude Code at session start.
+Update it at the end of every session so the next session can resume without re-deriving context.
 
 ---
 
@@ -11,13 +11,12 @@ project evolves so future sessions can resume without re-deriving context.
 medications (Ozempic, Wegovy, Mounjaro, Zepbound, compounded semaglutide/tirzepatide).
 
 Users sign up via a web onboarding flow, then receive personalized daily check-ins,
-meal/hydration guidance, injection-day flows, and on-demand chat support. All
-delivered via SMS/WhatsApp — no app required.
+meal/hydration guidance, injection-day flows, and on-demand chat — all via WhatsApp/SMS.
+No app required.
 
-The repo is mid-refactor: the original "v1" Lovable-built stack (Vite app + Supabase
-Edge Functions calling `ai.gateway.lovable.dev`) is being replaced with a "v2"
-Node.js orchestration service built around Gemini 2.5 Flash, pgvector, and an
-RLHF feedback loop — without breaking the existing Twilio webhook contract.
+The v2 Node.js orchestration service is **feature-complete and production-ready**.
+The only remaining step is pointing the Twilio webhook URL from the legacy Supabase
+edge function to `services/api` (Phase 5 cutover — one URL change).
 
 ---
 
@@ -26,160 +25,211 @@ RLHF feedback loop — without breaking the existing Twilio webhook contract.
 ```
 .
 ├── apps/
-│   └── web/                # @grace/web — Vite + React (Lovable-built site).
-│                           # Lovable plugin removed. Becomes admin dashboard in Phase 4.
+│   └── web/                # @grace/web — Vite + React + shadcn/ui
+│                           # Onboarding flow + admin dashboard at /admin
 ├── services/
-│   └── api/                # @grace/api — NEW Fastify orchestration service.
+│   └── api/                # @grace/api — Fastify orchestration service (v2)
+│                           # All AI, scheduling, webhooks, admin API
 ├── packages/
 │   ├── shared/             # @grace/shared — canonical TS types
 │   └── ai-core/            # @grace/ai-core — pure orchestrator, planner, validator
 ├── supabase/
-│   ├── functions/          # Legacy v1 edge functions (Deno). Kept for the cutover.
-│   └── migrations/         # SQL — v1 (20260411..20260502) + v2 (20260507000001).
-├── docker-compose.yml      # One-command POC: postgres+pgvector + api
-└── docs/STATUS.md          # Rolling phase status + open todos (see below)
+│   ├── functions/          # Legacy v1 edge functions (Deno) — still live in prod
+│   └── migrations/         # SQL migrations
+├── docs/
+│   ├── STATUS.md           # Phase tracker + open todos
+│   └── OPERATIONS.md       # Production setup guide + subscriptions + admin
+├── docker-compose.yml      # One-command local: Postgres+pgvector + Redis + api
+└── CLAUDE.md               # This file
 ```
 
 ---
 
-## Architecture (v2)
+## Architecture (v2 — fully built)
 
 ```
-WhatsApp / SMS (Twilio)            Demo / curl
-         │                              │
-         ▼                              ▼
-POST /webhook/twilio            POST /chat/send
-                       \      /
-                        ▼    ▼
-                      AIService
-                         │
-   ┌─────────────────────┼──────────────────────────┐
-   ▼                     ▼                          ▼
-SafetyGuard       MemoryService                RagService
-(emergency/      (Postgres: messages,      (pgvector: embeddings,
- crisis check)    conversations)            feedback-weighted)
-                         │
-                         ▼
-                  AIOrchestrator
-                  ┌──────┴──────┐
-                  ▼             ▼
-            PlannerAgent   ToolRegistry
-                  │             │
-                  ▼             ▼
-           GeminiProvider   log_food / log_weight /
-        (gemini-2.5-flash)  log_mood / knowledge_search
-                  │
-                  ▼
-              Validator (confidence + safety)
-                  │
-                  ▼
-             TwilioSender
+WhatsApp/SMS (Twilio)
+        │
+        ▼
+POST /webhook/twilio
+        │
+        ├── isAccessAllowed() — 3-day trial / is_paid / is_pro gate
+        ├── UserService.ensureUser() — upsert, update last_reply_at
+        ├── injection "done" detection → advances state machine
+        │
+        ▼
+AIService.handleMessage()
+        │
+   ┌────┴───────────────────────────────────────┐
+   ▼                   ▼                        ▼
+SafetyGuard      MemoryService            RagService
+(crisis check)   (Postgres history)       (pgvector + RLHF weights)
+        │
+        ▼
+AIOrchestrator (packages/ai-core)
+   ┌────┴──────┐
+   ▼           ▼
+Planner    ToolRegistry (8 tools, DB-gated)
+   │
+GeminiProvider (gemini-2.5-flash) → Validator
+   │
+BullMQ turn-persist worker → Postgres
+   │
+TwilioSender → WhatsApp/SMS
 ```
 
-Key design decisions:
-
-- **Postgres + pgvector** is the single source of truth (users, history, embeddings,
-  tool logs, feedback). No separate vector DB.
-- **`@grace/ai-core` is pure** — no I/O, no env. The `LLMProvider` interface is
-  injected from the service layer. Swap providers without touching orchestration.
-- **No model retraining for RLHF.** Feedback signals (👍/👎, re-query, drop-off,
-  correction) write to `feedback`, which bumps `embeddings.feedback_score`. The
-  retrieval query adds that score to cosine similarity. Higher-rated past responses
-  surface more often; lower-rated ones fade.
-- **Twilio webhook stays compatible.** The new service exposes the same
-  `POST /webhook/twilio` contract. Cutover is just changing the webhook URL in
-  the Twilio console (Phase 5).
+**Scheduler** (node-cron, in same process as API):
+- Every minute → proactive messages per user (timezone-aware)
+  - Morning at wake_time (daily)
+  - Midday Mon/Wed/Fri 11am–2pm local
+  - Evening Tue/Thu/Sun 90min before sleep_time
+  - Injection day flow (4 stages: morning_sent → done_confirmed → followup_sent → day-after)
+  - Side-effect follow-up 4h after keyword detected
+- Daily 3am UTC → personalization engine (low_mood_mode, midday_skip)
 
 ---
 
-## Current status
+## Subscription model
 
-| Phase | Scope | Status |
-|---|---|---|
-| 1 | Monorepo, Fastify, Twilio webhook, Gemini orchestrator, memory + RAG, tests | ✅ shipped |
-| 2 | Real tools, safety layer, RLHF feedback ingestion, admin API, multimodal | ✅ shipped |
-| 3 | Redis cache, BullMQ background workers, SSE streaming, per-tool timeouts | ✅ shipped |
-| 4 | `apps/web` → admin dashboard (conversation viewer, prompt mgmt, RLHF UI, tools) | ✅ shipped |
-| 5 | Cut Twilio webhook over from legacy edge function → `services/api` | ⏳ next |
+| Tier | DB flag | Stripe price ID | Access |
+|---|---|---|---|
+| Free trial | `trial_start` set | — | 3 days from signup |
+| Standard | `is_paid = true` | `price_1TLha4E0DcWyPH4X2QxV9hh3` | Full AI + proactive |
+| Pro | `is_pro = true` | `price_1TLla9E0DcWyPH4XZnep2X7G` | Full + priority |
 
-13 Vitest tests passing across orchestrator, planner, normalizer, signature, safety.
+Stripe flow (v1 Supabase edge functions, still active):
+1. `create-checkout` → Stripe subscription with 3-day trial
+2. `confirm-checkout` → marks `is_paid = true` in shared DB
+3. `stripe-webhook` → syncs subscription events → `is_paid`/`is_pro`
 
-See `docs/STATUS.md` for the live todo list and open work items.
+v2 API reads `is_paid`/`is_pro` from the same Postgres DB — no duplication needed.
+Subscription gate in `webhook.ts` fires paywall message if trial expired and not paid.
 
 ---
 
-## Commands you'll use most
+## Complete API surface
+
+### Public
+- `POST /webhook/twilio` — Twilio inbound (WhatsApp + SMS)
+- `POST /chat/send` — demo/testing chat endpoint
+- `GET /chat/stream/:conversationId` — SSE live message stream
+- `GET /chat/history/:userId` — last 100 messages for a user
+- `POST /users/onboard` — create user profile + set trial_start + send welcome WhatsApp
+- `DELETE /users/:phone/data` — GDPR self-serve data deletion
+- `GET /health` — liveness check
+
+### Admin (Bearer `ADMIN_TOKEN` required)
+- `GET /admin/metrics` — messages/tools/feedback/cache stats (auto-refresh 30s)
+- `GET /admin/conversations` + `/:userId/messages` — conversation viewer
+- `GET /admin/users?limit&offset` — user list (pagination + search in UI)
+- `DELETE /admin/users/:phone` — hard delete user + all data
+- `POST /admin/users/:phone/reset-memory` — wipe messages/conversations/embeddings
+- `GET|POST /admin/feedback` — RLHF signal viewer + submit
+- `GET|POST /admin/prompts` — system prompt versions
+- `PUT /admin/prompts/:id/activate` — hot-swap active prompt (atomic)
+- `GET /admin/tool-settings` + `PUT /admin/tool-settings/:name` — tool toggles
+
+---
+
+## Tools (8 registered per-request, admin-toggleable)
+
+| Tool | What it does |
+|---|---|
+| `log_food` | LLM-estimates protein/kcal for any food text, writes to `food_logs` |
+| `log_weight` | Records lbs to `weight_logs` |
+| `log_mood` | Records mood score 1–10 |
+| `knowledge_search` | pgvector RAG over GLP-1 knowledge base |
+| `get_user_profile` | Returns user's goals, medication, weight, behavioral flags |
+| `get_weight_trend` | Last 10 weight entries + up/down/stable trend |
+| `get_food_summary` | Today's protein + calories + protein_goal_met (≥80g target) |
+| `log_side_effect` | Sets side_effect_flow → schedules 4h follow-up message |
+
+---
+
+## Database migrations (apply in order)
 
 ```bash
-# Install
+psql "$DATABASE_URL" -f supabase/migrations/20260507000001_grace_v2_core.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260507000002_grace_v2_phase4.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260507000003_grace_v2_users.sql
+```
+
+Core tables: `users`, `conversations`, `messages`, `embeddings`, `tool_logs`,
+`feedback`, `food_logs`, `weight_logs`, `check_ins`, `injections`, `prompts`, `tool_settings`.
+
+---
+
+## Commands
+
+```bash
 pnpm install
 
-# Run everything via Docker (recommended for fresh sessions)
-export GEMINI_API_KEY=...
+# Run everything via Docker (Postgres + Redis + API on :3001)
+export GEMINI_API_KEY=your-key
 docker compose up -d
-pnpm --filter @grace/api exec tsx scripts/seed-knowledge.ts   # seed embeddings
+pnpm --filter @grace/api exec tsx scripts/seed-knowledge.ts
 
-# Local dev for the api
-cp services/api/.env.example services/api/.env
+# Local API dev (no Docker)
+cp services/api/.env.example services/api/.env && vim services/api/.env
 pnpm --filter @grace/api dev
 
 # Tests / typecheck / build
-pnpm test
-pnpm -r typecheck
+pnpm test          # 19 tests, all green
+pnpm -r typecheck  # clean across all 4 packages
 pnpm -r build
 
-# Demo (hits /chat/send with realistic messages)
-./services/api/scripts/demo.sh
+# Hot-reload system prompt without restart
+docker kill --signal HUP grace-api-1  # or: kill -HUP <api-pid>
 
-# Apply v2 migration to a real DB
-psql "$DATABASE_URL" -f supabase/migrations/20260507000001_grace_v2_core.sql
+# Demo (no Twilio needed)
+curl -X POST http://localhost:3001/chat/send \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"+15551234567","text":"I just had chicken and rice"}'
 ```
 
 ---
 
-## Working agreements (please follow)
+## Working agreements
 
-- **Branch policy.** Active branch: `claude/icloud-access-clarification-5hsRr`.
-  Develop, commit, and push there unless told otherwise.
-- **Don't break the Twilio contract.** `POST /webhook/twilio` accepts Twilio's
-  standard form payload and replies with empty TwiML. Outbound messages go via
-  `TwilioSender`, async after the webhook returns.
-- **Don't reintroduce Lovable.** No `lovable-tagger`, no `ai.gateway.lovable.dev`.
-  All AI calls go through `LLMProvider` (currently `GeminiProvider`).
-- **Keep `@grace/ai-core` pure.** No `pg`, no `pino`, no env reads. Inject deps.
-- **Tests first for orchestration changes.** The orchestrator has full coverage —
-  keep it green.
-- **Commit messages: imperative, focused on the why.** Don't reference "Claude" or
-  this session in code or commit subject lines.
+- **Active branch**: `claude/icloud-access-clarification-5hsRr` → develop there, merge to `main` each session.
+- **Don't break Twilio contract.** `POST /webhook/twilio` accepts Twilio form payload, replies empty TwiML. Outbound goes via `TwilioSender` async.
+- **Keep `@grace/ai-core` pure.** No `pg`, no `pino`, no env reads. Inject all deps.
+- **Tests first for orchestration changes.** 19 tests, keep them green.
+- **No Lovable.** No `lovable-tagger`, no `ai.gateway.lovable.dev`.
+- **Commit messages: imperative, focused on why.**
+
+---
+
+## Phase completion status
+
+| Phase | Scope | Status |
+|---|---|---|
+| 1 | Monorepo, Fastify, Twilio webhook, Gemini orchestrator, memory + RAG, tests | ✅ |
+| 2 | Real tools, safety, RLHF feedback, admin API, multimodal | ✅ |
+| 3 | Redis cache, BullMQ workers, SSE streaming, per-tool timeouts | ✅ |
+| 4 | Admin dashboard (web app) | ✅ |
+| 4b | Full chatbot: users, scheduler, proactive messages, all tools, onboarding API | ✅ |
+| 4c | Subscription gate, GDPR delete, chat history, admin user CRUD | ✅ |
+| 5 | Cut Twilio webhook from v1 → v2 | ⏳ one URL change in Twilio console |
 
 ---
 
 ## Where to start in a new session
 
-1. Read this file + `docs/STATUS.md` (open todos).
-2. `git status` and `git log --oneline -10` to see recent commits.
-3. Pick the highest-priority open item from `docs/STATUS.md`.
-4. If unclear, ask before implementing.
+1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
+2. `git log --oneline -10` to see recent commits.
+3. `git checkout claude/icloud-access-clarification-5hsRr`.
+4. For Phase 5: one URL change. See `docs/OPERATIONS.md § Twilio cutover`.
 
 ---
 
-## Known gaps / things explicitly deferred
+## Known gaps / deferred
 
-- **Admin dashboard at `/admin`.** Token stored in localStorage (`grace_admin_token`).
-  Point `VITE_API_URL` at the Grace API. Hot-reload the active prompt with
-  `docker kill --signal HUP grace-api-1` (or `kill -HUP <pid>` locally).
-- **Redis required at runtime.** `REDIS_URL` defaults to `redis://localhost:6379`.
-  Docker Compose starts Redis automatically. For local dev without Docker, run
-  `redis-server` or set `REDIS_URL` to a managed Redis (Upstash, Railway, etc.).
-- **BullMQ dashboard not wired.** Bull Board or similar can be added for job
-  visibility in Phase 4 admin shell.
-- **SSE uses DB polling (500 ms).** Good enough for dashboard; upgrade to Postgres
-  LISTEN/NOTIFY for lower latency if needed.
-- **No prompt versioning UI.** The system prompt lives in
-  `packages/ai-core/src/prompts.ts`. Phase 4 adds a `prompts` table + admin UI.
-- **No A/B testing harness.** Stub it in Phase 4.
-- **Legacy edge functions still active.** Until Phase 5 cutover, real production
-  traffic goes to `supabase/functions/handle-inbound-sms/index.ts`. Both code
-  paths exist; don't delete v1 yet.
-- **`apps/web` is still the customer-facing marketing site.** Don't rip it apart
-  before Phase 4 plan is agreed.
+- **Phase 5 cutover**: change Twilio webhook URL (see `docs/OPERATIONS.md`).
+- **v2 Stripe webhook**: Stripe events currently update `is_paid` via v1 Supabase function hitting the shared DB. v2 reads from same DB so it works. Only build a native v2 handler if moving off Supabase DB entirely.
+- **Admin auth upgrade**: localStorage Bearer token is fine for internal use. Upgrade to Supabase Auth roles before broad team access.
+- **OpenTelemetry + Sentry**: not yet instrumented.
+- **Integration tests**: boot Fastify in-process with stubbed LLMProvider.
+- **`exactOptionalPropertyTypes`**: disabled in tsconfig — re-enable when ready.
+- **A/B testing harness**: deferred.
+- **BullMQ dashboard**: Bull Board not wired yet.

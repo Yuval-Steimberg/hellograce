@@ -57,6 +57,18 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
               }).catch(() => null);
             }
           }
+
+          // Subscription gate — users with an expired trial and no active subscription
+          // get a soft paywall nudge instead of the AI response.
+          if (user && !isAccessAllowed(user)) {
+            const name = user.first_name ?? 'there';
+            await deps.sender.send({
+              to: normalized.userId,
+              channel: normalized.channel,
+              body: `Hi ${name} — your Grace trial has ended 🧡 To keep your daily check-ins going, subscribe at grace.com. Questions? Reply HELP.`,
+            });
+            return;
+          }
         }
 
         const result = await deps.ai.handleMessage(normalized);
@@ -72,4 +84,13 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
       }
     })();
   });
+}
+
+const TRIAL_DAYS = 3;
+
+function isAccessAllowed(user: { is_paid: boolean; is_pro: boolean; trial_start: Date | null }): boolean {
+  if (user.is_paid || user.is_pro) return true;
+  if (!user.trial_start) return true; // no trial_start = not yet onboarded via v2, allow
+  const msElapsed = Date.now() - new Date(user.trial_start).getTime();
+  return msElapsed < TRIAL_DAYS * 24 * 3_600_000;
 }

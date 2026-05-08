@@ -38,7 +38,9 @@ edge function to `services/api` (Phase 5 cutover — one URL change).
 │   └── migrations/         # SQL migrations
 ├── docs/
 │   ├── STATUS.md           # Phase tracker + open todos
-│   └── OPERATIONS.md       # Production setup guide + subscriptions + admin
+│   ├── OPERATIONS.md       # Production setup guide + subscriptions + admin
+│   ├── USER_GUIDE.md       # End-user guide (share with users)
+│   └── WELCOME_EMAIL.md    # Welcome email template with personalization notes
 ├── docker-compose.yml      # One-command local: Postgres+pgvector + Redis + api
 └── CLAUDE.md               # This file
 ```
@@ -120,9 +122,11 @@ Subscription gate in `webhook.ts` fires paywall message if trial expired and not
 - `GET /health` — liveness check
 
 ### Admin (Bearer `ADMIN_TOKEN` required)
-- `GET /admin/metrics` — messages/tools/feedback/cache stats (auto-refresh 30s)
+- `GET /admin/metrics` — messages/tools/feedback/cache stats + `user_stats` breakdown (auto-refresh 30s)
 - `GET /admin/conversations` + `/:userId/messages` — conversation viewer
-- `GET /admin/users?limit&offset` — user list (pagination + search in UI); includes `rlhf_enabled`
+- `GET /admin/users?limit&offset` — paginated user list; includes `rlhf_enabled`
+- `GET /admin/users/:phone` — full user detail: profile + check-in history + weight logs + message count
+- `PUT /admin/users/:phone` — update any profile/account field (Zod-validated)
 - `DELETE /admin/users/:phone` — hard delete user + all data
 - `POST /admin/users/:phone/reset-memory` — wipe messages/conversations/embeddings
 - `PUT /admin/users/:phone/rlhf` — toggle `rlhf_enabled` for a user `{ enabled: boolean }`
@@ -216,6 +220,7 @@ curl -X POST http://localhost:3001/chat/send \
 | 4b | Full chatbot: users, scheduler, proactive messages, all tools, onboarding API | ✅ |
 | 4c | Subscription gate, GDPR delete, chat history, admin user CRUD | ✅ |
 | 4d | User-side RLHF: per-user ratings + feedback comments, admin toggle | ✅ |
+| 4e | Admin dashboard overhaul: user drawer, create modal, richer metrics | ✅ |
 | 5 | Cut Twilio webhook from v1 → v2 | ⏳ one URL change in Twilio console |
 
 ---
@@ -230,6 +235,23 @@ curl -X POST http://localhost:3001/chat/send \
 
 ---
 
+## Admin dashboard — component map
+
+| File | What it does |
+|---|---|
+| `apps/web/src/components/admin/AdminLayout.tsx` | Sidebar nav + auth guard |
+| `apps/web/src/components/admin/AdminAuth.tsx` | Token context (localStorage) |
+| `apps/web/src/components/admin/UserDrawer.tsx` | Right slide-over: profile edit, account toggles, weight chart, check-ins |
+| `apps/web/src/components/admin/CreateUserModal.tsx` | Dialog to onboard a new user without curl |
+| `apps/web/src/pages/admin/MetricsPage.tsx` | Activity KPIs + user stats row + charts |
+| `apps/web/src/pages/admin/ConversationsPage.tsx` | Two-panel thread viewer + SSE live stream |
+| `apps/web/src/pages/admin/UsersPage.tsx` | Paginated table; click row → UserDrawer; Add User → CreateUserModal |
+| `apps/web/src/pages/admin/FeedbackPage.tsx` | RLHF feedback list + quick rate buttons |
+| `apps/web/src/pages/admin/PromptsPage.tsx` | Prompt versioning + one-click activate |
+| `apps/web/src/pages/admin/ToolsPage.tsx` | Per-tool enable/disable + priority |
+
+---
+
 ## Known gaps / deferred
 
 - **Phase 5 cutover**: change Twilio webhook URL (see `docs/OPERATIONS.md`).
@@ -240,3 +262,4 @@ curl -X POST http://localhost:3001/chat/send \
 - **`exactOptionalPropertyTypes`**: disabled in tsconfig — re-enable when ready.
 - **A/B testing harness**: deferred.
 - **BullMQ dashboard**: Bull Board not wired yet.
+- **Welcome email sending**: template written (`docs/WELCOME_EMAIL.md`) but not wired into `POST /users/onboard` yet — needs an email provider (Postmark/Resend/SendGrid).

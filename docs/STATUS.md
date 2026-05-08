@@ -15,6 +15,7 @@ Rolling source of truth. Newest entries on top.
 | 4b | Full chatbot: users, scheduler, proactive messages, all 8 tools | ✅ |
 | 4c | Onboarding API, subscription gate, GDPR delete, chat history, admin user CRUD | ✅ |
 | 4d | User-side RLHF: per-user ratings + feedback comments, admin toggle | ✅ |
+| 4e | Admin dashboard overhaul: user drawer, create modal, richer metrics | ✅ |
 | 5 | Cut Twilio webhook from v1 edge fn → v2 API | ⏳ **next — one URL change** |
 
 ---
@@ -33,6 +34,7 @@ Rolling source of truth. Newest entries on top.
 
 ### Nice-to-have (post-launch)
 
+- [ ] Wire welcome email send into `POST /users/onboard` (template at `docs/WELCOME_EMAIL.md`, needs Postmark/Resend/SendGrid).
 - [ ] OpenTelemetry traces (orchestrator → planner → tool → LLM → Honeycomb/Tempo).
 - [ ] Sentry error reporting (API + web).
 - [ ] Integration test: boot Fastify in-process, hit `/chat/send` with stubbed LLMProvider, assert DB writes.
@@ -45,6 +47,18 @@ Rolling source of truth. Newest entries on top.
 ---
 
 ## Done (newest first)
+
+### 2026-05-08 — Phase 4e: Admin dashboard overhaul
+
+- `GET /admin/users/:phone` — full user detail: profile + check-ins + weight logs + message count.
+- `PUT /admin/users/:phone` — update any user field (Zod-validated, 17 allowed fields).
+- `GET /admin/metrics` — now includes `user_stats` (total/paid/pro/trial/paused/new_this_week).
+- `UserDrawer` — right slide-over with Profile tab (account toggles, editable fields, reset/delete) and History tab (weight sparkline + check-ins).
+- `CreateUserModal` — full onboarding form in a dialog; no curl needed.
+- `MetricsPage` — second KPI row: 6 user stat cards with colour coding.
+- `UsersPage` — click any row → drawer; Add User button → modal.
+- `docs/USER_GUIDE.md` — end-user guide for sharing with users.
+- `docs/WELCOME_EMAIL.md` — welcome email template with A/B subject lines, plain text fallback, personalization fields.
 
 ### 2026-05-08 — Phase 4d: User-side RLHF
 

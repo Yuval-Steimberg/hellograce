@@ -3,11 +3,9 @@ const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://loc
 export function getToken(): string | null {
   return localStorage.getItem('grace_admin_token');
 }
-
 export function setToken(token: string): void {
   localStorage.setItem('grace_admin_token', token);
 }
-
 export function clearToken(): void {
   localStorage.removeItem('grace_admin_token');
 }
@@ -31,11 +29,21 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export interface UserStats {
+  total: number;
+  paid: number;
+  pro: number;
+  trial: number;
+  paused: number;
+  new_this_week: number;
+}
+
 export interface Metrics {
   messages_last_24h: number;
   tools: { tool_name: string; count: string; ok_rate: string; p95_ms: number }[];
   feedback_last_7d: { signal_type: string; count: string; avg_rating: number | null }[];
   cache: { hits: number; misses: number; hitRate: number } | null;
+  user_stats: UserStats;
 }
 
 export interface Conversation {
@@ -88,11 +96,50 @@ export interface AdminUser {
   blocked: boolean;
   is_paid: boolean;
   is_pro: boolean;
+  rlhf_enabled: boolean;
   injection_day: string | null;
   injection_count: number;
   last_morning_sent_at: string | null;
   last_reply_at: string | null;
   created_at: string;
+}
+
+export interface CheckIn {
+  type: string;
+  message_sent: string;
+  user_reply: string | null;
+  mood_score: number | null;
+  created_at: string;
+}
+
+export interface WeightLog {
+  weight: number;
+  created_at: string;
+}
+
+export interface UserDetail {
+  phone: string;
+  first_name: string | null;
+  medication: string | null;
+  medication_frequency: string;
+  injection_day: string | null;
+  injection_count: number;
+  goals: string[];
+  food_dislikes: string[];
+  timezone: string;
+  wake_time: string;
+  sleep_time: string;
+  current_weight: number | null;
+  goal_weight: number | null;
+  active: boolean;
+  paused: boolean;
+  blocked: boolean;
+  is_paid: boolean;
+  is_pro: boolean;
+  rlhf_enabled: boolean;
+  trial_start: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
@@ -136,11 +183,28 @@ export const api = {
   users: (limit = 100, offset = 0) =>
     apiFetch<{ users: AdminUser[]; total: number }>(`/admin/users?limit=${limit}&offset=${offset}`),
 
+  userDetail: (phone: string) =>
+    apiFetch<{ user: UserDetail; check_ins: CheckIn[]; weight_logs: WeightLog[]; message_count: number }>(
+      `/admin/users/${encodeURIComponent(phone)}`,
+    ),
+
+  updateUser: (phone: string, fields: Partial<Omit<UserDetail, 'phone' | 'created_at' | 'updated_at'>>) =>
+    apiFetch<{ ok: boolean }>(`/admin/users/${encodeURIComponent(phone)}`, {
+      method: 'PUT',
+      body: JSON.stringify(fields),
+    }),
+
   deleteUser: (phone: string) =>
     apiFetch<{ ok: boolean }>(`/admin/users/${encodeURIComponent(phone)}`, { method: 'DELETE' }),
 
   resetMemory: (phone: string) =>
     apiFetch<{ ok: boolean }>(`/admin/users/${encodeURIComponent(phone)}/reset-memory`, { method: 'POST' }),
+
+  toggleRlhf: (phone: string, enabled: boolean) =>
+    apiFetch<{ ok: boolean }>(`/admin/users/${encodeURIComponent(phone)}/rlhf`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    }),
 
   onboard: (body: {
     firstName: string; phone: string; medication: string;

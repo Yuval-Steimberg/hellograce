@@ -422,9 +422,10 @@ export DATABASE_URL="postgres://postgres:[password]@db.[project].supabase.co:543
 psql "$DATABASE_URL" -f supabase/migrations/20260507000001_grace_v2_core.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260507000002_grace_v2_phase4.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260507000003_grace_v2_users.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260508000001_rlhf_user_flags.sql
 ```
 
-All migrations are idempotent (`CREATE TABLE IF NOT EXISTS`) — safe to run multiple times.
+All migrations are idempotent (`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) — safe to run multiple times.
 
 ---
 
@@ -559,6 +560,7 @@ pnpm --filter @grace/api dev
 psql "$DATABASE_URL" -f supabase/migrations/20260507000001_grace_v2_core.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260507000002_grace_v2_phase4.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260507000003_grace_v2_users.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260508000001_rlhf_user_flags.sql
 
 # Step 5: Check the API is healthy
 curl http://localhost:3001/health
@@ -710,8 +712,22 @@ Full paginated user list. Search by phone number, name, or medication.
 
 | Button | What it does |
 |---|---|
+| **RLHF off / RLHF on** | Toggles whether this user sees in-chat rating prompts (👍/👎) after each AI response. When on (amber), their ratings flow into `feedback_score` on embeddings — shaping future RAG retrieval. Enable this for engaged, technically curious users who want to help improve Grace. |
 | **Reset** | Deletes messages, conversations, and embeddings for this user. Their profile (medication, goals, etc.) stays. Use when a user wants a fresh start or you're debugging. |
 | **Delete** | Permanently removes the user and all their data (GDPR). Two-click confirm required. |
+
+**Who to enable RLHF for:**
+- Beta testers or early adopters who are highly engaged
+- Users who have explicitly said they want to help improve the product
+- Never enable for users who haven't agreed — the rating prompt adds visual noise to every message
+
+**What opted-in users see** after each AI response:
+```
+_Rate this response: reply 👍 or 👎, or reply FEEDBACK: your comment_
+```
+
+They reply 👍, 👎, or `FEEDBACK: it gave me the wrong protein goal` — Grace intercepts
+it, records the signal, adjusts the embedding score, and acknowledges before moving on.
 
 ---
 

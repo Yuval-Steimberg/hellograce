@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Env } from '../config/env.js';
 import type { AIService } from '../services/ai.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
-import type { UserService } from '../user/user.service.js';
+import type { UserService, GraceUser } from '../user/user.service.js';
 import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { UnauthorizedError } from '../errors.js';
@@ -44,9 +44,10 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
     // Fire-and-forget AI processing.
     void (async () => {
       try {
+        let user: GraceUser | null = null;
         // Upsert the user record and update last_reply_at on every inbound message.
         if (deps.users) {
-          const user = await deps.users.ensureUser(normalized.userId).catch(() => null);
+          user = await deps.users.ensureUser(normalized.userId).catch(() => null);
 
           // Handle injection "done" reply — advance the state machine.
           if (user && user.injection_flow_stage === 'morning_sent') {
@@ -55,6 +56,21 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
               await deps.users.setInjectionStage(user.phone, 'done_confirmed', {
                 injection_done_at: new Date(),
               }).catch(() => null);
+            }
+          }
+
+          // RLHF feedback signal — intercept before AI for opted-in users.
+          if (user?.rlhf_enabled) {
+            const fbResult = parseFeedbackSignal(normalized.text);
+            if (fbResult) {
+              await deps.users.recordUserFeedback(user.phone, fbResult.rating, fbResult.comment).catch(() => null);
+              const ack = fbResult.rating > 0
+                ? 'Thanks for the thumbs up — I\'ll keep that in mind! 💪'
+                : fbResult.comment
+                  ? 'Thanks for the feedback — I\'ll work on that!'
+                  : 'Thanks for letting me know. Feel free to tell me more about what could be better.';
+              await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: ack });
+              return;
             }
           }
 
@@ -73,10 +89,14 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
 
         const result = await deps.ai.handleMessage(normalized);
         if (result.text.length > 0) {
+          const isRlhfUser = user?.rlhf_enabled ?? false;
+          const body = isRlhfUser
+            ? `${result.text}\n\n_Rate this response: reply 👍 or 👎, or reply FEEDBACK: your comment_`
+            : result.text;
           await deps.sender.send({
             to: normalized.userId,
             channel: normalized.channel,
-            body: result.text,
+            body,
           });
         }
       } catch (err) {
@@ -93,4 +113,20 @@ function isAccessAllowed(user: { is_paid: boolean; is_pro: boolean; trial_start:
   if (!user.trial_start) return true; // no trial_start = not yet onboarded via v2, allow
   const msElapsed = Date.now() - new Date(user.trial_start).getTime();
   return msElapsed < TRIAL_DAYS * 24 * 3_600_000;
+}
+
+/** Returns { rating, comment? } when the message is a recognised feedback signal, null otherwise. */
+function parseFeedbackSignal(text: string): { rating: number; comment?: string } | null {
+  const t = text.trim();
+  if (t === '👍' || /^(thumbs[\s-]?up|good|helpful|great|yes|positive)$/i.test(t)) {
+    return { rating: 1 };
+  }
+  if (t === '👎' || /^(thumbs[\s-]?down|bad|not helpful|no|negative)$/i.test(t)) {
+    return { rating: -1 };
+  }
+  const commentMatch = t.match(/^feedback:\s*(.+)/is);
+  if (commentMatch?.[1]) {
+    return { rating: -1, comment: commentMatch[1].trim() };
+  }
+  return null;
 }

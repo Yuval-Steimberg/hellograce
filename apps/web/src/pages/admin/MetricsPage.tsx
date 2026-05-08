@@ -14,7 +14,7 @@ import {
   Cell,
   Legend,
 } from 'recharts';
-import { MessageSquare, Zap, ThumbsUp, Gauge } from 'lucide-react';
+import { MessageSquare, Zap, ThumbsUp, Gauge, Users, TrendingUp, Clock, PauseCircle } from 'lucide-react';
 
 const COLORS = ['#c97b5c', '#b8956a', '#9baf82', '#6e8fa0', '#8a6ea6'];
 
@@ -44,13 +44,25 @@ export default function MetricsPage() {
 
   return (
     <PageShell>
-      {/* KPI row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* Activity KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
         <KpiCard icon={<MessageSquare className="h-4 w-4" />} label="Messages (24h)" value={data.messages_last_24h} />
         <KpiCard icon={<Zap className="h-4 w-4" />} label="Tool calls (24h)" value={data.tools.reduce((s, t) => s + Number(t.count), 0)} />
         <KpiCard icon={<ThumbsUp className="h-4 w-4" />} label="Feedback signals (7d)" value={data.feedback_last_7d.reduce((s, f) => s + Number(f.count), 0)} />
         <KpiCard icon={<Gauge className="h-4 w-4" />} label="Cache hit rate" value={cacheHitPct !== null ? `${cacheHitPct}%` : '—'} />
       </div>
+
+      {/* User stats */}
+      {data.user_stats && (
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
+          <KpiCard icon={<Users className="h-4 w-4" />} label="Total users" value={data.user_stats.total} />
+          <KpiCard icon={<Clock className="h-4 w-4" />} label="On trial" value={data.user_stats.trial} color="amber" />
+          <KpiCard icon={<TrendingUp className="h-4 w-4" />} label="Paid" value={data.user_stats.paid} color="green" />
+          <KpiCard icon={<TrendingUp className="h-4 w-4" />} label="Pro" value={data.user_stats.pro} color="purple" />
+          <KpiCard icon={<PauseCircle className="h-4 w-4" />} label="Paused" value={data.user_stats.paused} />
+          <KpiCard icon={<Users className="h-4 w-4" />} label="New this week" value={data.user_stats.new_this_week} color="blue" />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Tool calls bar chart */}
@@ -152,7 +164,14 @@ function PageShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function KpiCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: number | string }) {
+const COLOR_MAP: Record<string, string> = {
+  amber: 'text-amber-600',
+  green: 'text-green-600',
+  purple: 'text-purple-600',
+  blue: 'text-blue-600',
+};
+
+function KpiCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number | string; color?: string }) {
   return (
     <Card>
       <CardContent className="pt-4">
@@ -160,7 +179,7 @@ function KpiCard({ icon, label, value }: { icon: React.ReactNode; label: string;
           {icon}
           <span className="text-xs font-medium uppercase tracking-wide">{label}</span>
         </div>
-        <p className="text-3xl font-semibold tabular-nums">{value}</p>
+        <p className={`text-3xl font-semibold tabular-nums ${color ? COLOR_MAP[color] ?? '' : ''}`}>{value}</p>
       </CardContent>
     </Card>
   );

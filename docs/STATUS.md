@@ -14,6 +14,7 @@ Rolling source of truth. Newest entries on top.
 | 4 | Admin dashboard (web app) | ✅ |
 | 4b | Full chatbot: users, scheduler, proactive messages, all 8 tools | ✅ |
 | 4c | Onboarding API, subscription gate, GDPR delete, chat history, admin user CRUD | ✅ |
+| 4d | User-side RLHF: per-user ratings + feedback comments, admin toggle | ✅ |
 | 5 | Cut Twilio webhook from v1 edge fn → v2 API | ⏳ **next — one URL change** |
 
 ---
@@ -24,7 +25,7 @@ Rolling source of truth. Newest entries on top.
 
 - [ ] Stand up `services/api` on a public URL (Fly.io / Railway / Render). See `docs/OPERATIONS.md §4`.
 - [ ] Deploy `apps/web` with `VITE_API_URL` set to the API URL. See `docs/OPERATIONS.md §5`.
-- [ ] Run the 3 v2 migrations on your Supabase DB. See `docs/OPERATIONS.md §4b`.
+- [ ] Run the 4 v2 migrations on your Supabase DB. See `docs/OPERATIONS.md §4b`.
 - [ ] Smoke-test via `POST /chat/send` and `POST /users/onboard`.
 - [ ] Change Twilio webhook URL in console. See `docs/OPERATIONS.md §6`.
 - [ ] Monitor logs for 1h after cutover. Watch for `webhook.ai.failed`.
@@ -44,6 +45,15 @@ Rolling source of truth. Newest entries on top.
 ---
 
 ## Done (newest first)
+
+### 2026-05-08 — Phase 4d: User-side RLHF
+
+- `users.rlhf_enabled` column (migration 20260508000001) — opt specific users into feedback collection.
+- `UserService.recordUserFeedback()` — finds last assistant message, writes to `feedback` table, adjusts `embeddings.feedback_score` for real-time RAG ranking impact.
+- Webhook intercept: 👍/👎/`FEEDBACK: text` from opted-in users is captured as RLHF signal, acknowledged, and skips AI processing.
+- AI responses to opted-in users include rating prompt appended to message body.
+- `PUT /admin/users/:phone/rlhf` — toggle `rlhf_enabled` per user.
+- `UsersPage`: RLHF on/off toggle button per row (amber when active).
 
 ### 2026-05-08 — Phase 4c: Production-ready
 

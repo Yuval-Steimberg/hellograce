@@ -56,6 +56,7 @@ POST /webhook/twilio
         ├── isAccessAllowed() — 3-day trial / is_paid / is_pro gate
         ├── UserService.ensureUser() — upsert, update last_reply_at
         ├── injection "done" detection → advances state machine
+        ├── RLHF feedback intercept (👍/👎/FEEDBACK:) for opted-in users
         │
         ▼
 AIService.handleMessage()
@@ -121,9 +122,10 @@ Subscription gate in `webhook.ts` fires paywall message if trial expired and not
 ### Admin (Bearer `ADMIN_TOKEN` required)
 - `GET /admin/metrics` — messages/tools/feedback/cache stats (auto-refresh 30s)
 - `GET /admin/conversations` + `/:userId/messages` — conversation viewer
-- `GET /admin/users?limit&offset` — user list (pagination + search in UI)
+- `GET /admin/users?limit&offset` — user list (pagination + search in UI); includes `rlhf_enabled`
 - `DELETE /admin/users/:phone` — hard delete user + all data
 - `POST /admin/users/:phone/reset-memory` — wipe messages/conversations/embeddings
+- `PUT /admin/users/:phone/rlhf` — toggle `rlhf_enabled` for a user `{ enabled: boolean }`
 - `GET|POST /admin/feedback` — RLHF signal viewer + submit
 - `GET|POST /admin/prompts` — system prompt versions
 - `PUT /admin/prompts/:id/activate` — hot-swap active prompt (atomic)
@@ -152,10 +154,13 @@ Subscription gate in `webhook.ts` fires paywall message if trial expired and not
 psql "$DATABASE_URL" -f supabase/migrations/20260507000001_grace_v2_core.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260507000002_grace_v2_phase4.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260507000003_grace_v2_users.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260508000001_rlhf_user_flags.sql
 ```
 
 Core tables: `users`, `conversations`, `messages`, `embeddings`, `tool_logs`,
 `feedback`, `food_logs`, `weight_logs`, `check_ins`, `injections`, `prompts`, `tool_settings`.
+
+Key columns added by 20260508000001: `users.rlhf_enabled BOOLEAN DEFAULT FALSE`
 
 ---
 
@@ -210,6 +215,7 @@ curl -X POST http://localhost:3001/chat/send \
 | 4 | Admin dashboard (web app) | ✅ |
 | 4b | Full chatbot: users, scheduler, proactive messages, all tools, onboarding API | ✅ |
 | 4c | Subscription gate, GDPR delete, chat history, admin user CRUD | ✅ |
+| 4d | User-side RLHF: per-user ratings + feedback comments, admin toggle | ✅ |
 | 5 | Cut Twilio webhook from v1 → v2 | ⏳ one URL change in Twilio console |
 
 ---
@@ -219,7 +225,8 @@ curl -X POST http://localhost:3001/chat/send \
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
 3. `git checkout claude/icloud-access-clarification-5hsRr`.
-4. For Phase 5: one URL change. See `docs/OPERATIONS.md § Twilio cutover`.
+4. Apply any unapplied migrations (see list above) against your Supabase DB.
+5. For Phase 5: one URL change. See `docs/OPERATIONS.md § Twilio cutover`.
 
 ---
 

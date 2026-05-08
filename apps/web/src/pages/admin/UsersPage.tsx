@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type AdminUser } from '../../lib/api';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { toast } from 'sonner';
+import UserDrawer from '../../components/admin/UserDrawer';
+import CreateUserModal from '../../components/admin/CreateUserModal';
+import { UserPlus } from 'lucide-react';
 
 const PAGE_SIZE = 50;
 
@@ -26,37 +28,13 @@ export default function UsersPage() {
   const qc = useQueryClient();
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['admin-users', page],
     queryFn: () => api.users(PAGE_SIZE, page * PAGE_SIZE),
     placeholderData: (prev) => prev,
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (phone: string) => api.deleteUser(phone),
-    onSuccess: (_, phone) => {
-      toast.success(`User ${phone} deleted`);
-      setConfirmDelete(null);
-      void qc.invalidateQueries({ queryKey: ['admin-users'] });
-    },
-    onError: () => toast.error('Delete failed'),
-  });
-
-  const resetMutation = useMutation({
-    mutationFn: (phone: string) => api.resetMemory(phone),
-    onSuccess: (_, phone) => toast.success(`Memory reset for ${phone}`),
-    onError: () => toast.error('Reset failed'),
-  });
-
-  const rlhfMutation = useMutation({
-    mutationFn: ({ phone, enabled }: { phone: string; enabled: boolean }) => api.toggleRlhf(phone, enabled),
-    onSuccess: (_, { phone, enabled }) => {
-      toast.success(`RLHF ${enabled ? 'enabled' : 'disabled'} for ${phone}`);
-      void qc.invalidateQueries({ queryKey: ['admin-users'] });
-    },
-    onError: () => toast.error('RLHF toggle failed'),
   });
 
   const filtered = (data?.users ?? []).filter((u) => {
@@ -72,144 +50,116 @@ export default function UsersPage() {
   const totalPages = Math.ceil((data?.total ?? 0) / PAGE_SIZE);
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Users</h1>
-          <p className="text-sm text-muted-foreground">{data?.total ?? '—'} total users</p>
+    <>
+      <div className="p-6 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold">Users</h1>
+            <p className="text-sm text-muted-foreground">{data?.total ?? '—'} total users</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              className="w-64"
+              placeholder="Search phone, name, or medication…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <Button size="sm" onClick={() => setCreateOpen(true)} className="gap-1.5">
+              <UserPlus className="h-4 w-4" />
+              Add user
+            </Button>
+          </div>
         </div>
-        <Input
-          className="w-64"
-          placeholder="Search phone, name, or medication…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+
+        {isLoading ? (
+          <p className="text-muted-foreground text-sm">Loading…</p>
+        ) : (
+          <div className="rounded-md border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium">User</th>
+                  <th className="px-4 py-3 text-left font-medium">Medication</th>
+                  <th className="px-4 py-3 text-left font-medium">Goals</th>
+                  <th className="px-4 py-3 text-left font-medium">Injection day</th>
+                  <th className="px-4 py-3 text-left font-medium">Last reply</th>
+                  <th className="px-4 py-3 text-left font-medium">Joined</th>
+                  <th className="px-4 py-3 text-left font-medium">Status</th>
+                  <th className="px-4 py-3 text-left font-medium">RLHF</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                      No users found
+                    </td>
+                  </tr>
+                )}
+                {filtered.map((user) => (
+                  <tr
+                    key={user.phone}
+                    className="hover:bg-muted/30 transition-colors cursor-pointer"
+                    onClick={() => setSelectedUser(user)}
+                  >
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{user.first_name ?? 'Unknown'}</div>
+                      <div className="text-xs text-muted-foreground font-mono">{user.phone}</div>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{user.medication ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {(user.goals ?? []).slice(0, 2).map((g) => (
+                          <Badge key={g} variant="outline" className="text-xs">{g}</Badge>
+                        ))}
+                        {(user.goals ?? []).length > 2 && (
+                          <Badge variant="outline" className="text-xs">+{user.goals.length - 2}</Badge>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {user.injection_day ?? '—'}
+                      {user.injection_count > 0 && (
+                        <span className="text-xs ml-1">(#{user.injection_count})</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{formatDate(user.last_reply_at)}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{formatDate(user.created_at)}</td>
+                    <td className="px-4 py-3">{statusBadge(user)}</td>
+                    <td className="px-4 py-3">
+                      {user.rlhf_enabled && (
+                        <Badge className="bg-amber-600 text-white text-xs">RLHF</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground">Page {page + 1} of {totalPages}</span>
+            <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>
+              Next
+            </Button>
+          </div>
+        )}
       </div>
 
-      {isLoading ? (
-        <p className="text-muted-foreground text-sm">Loading…</p>
-      ) : (
-        <div className="rounded-md border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium">User</th>
-                <th className="px-4 py-3 text-left font-medium">Medication</th>
-                <th className="px-4 py-3 text-left font-medium">Goals</th>
-                <th className="px-4 py-3 text-left font-medium">Injection day</th>
-                <th className="px-4 py-3 text-left font-medium">Last reply</th>
-                <th className="px-4 py-3 text-left font-medium">Joined</th>
-                <th className="px-4 py-3 text-left font-medium">Status</th>
-                <th className="px-4 py-3 text-left font-medium">RLHF</th>
-                <th className="px-4 py-3 text-left font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
-                    No users found
-                  </td>
-                </tr>
-              )}
-              {filtered.map((user) => (
-                <tr key={user.phone} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{user.first_name ?? 'Unknown'}</div>
-                    <div className="text-xs text-muted-foreground font-mono">{user.phone}</div>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">{user.medication ?? '—'}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {(user.goals ?? []).slice(0, 2).map((g) => (
-                        <Badge key={g} variant="outline" className="text-xs">{g}</Badge>
-                      ))}
-                      {(user.goals ?? []).length > 2 && (
-                        <Badge variant="outline" className="text-xs">+{user.goals.length - 2}</Badge>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {user.injection_day ?? '—'}
-                    {user.injection_count > 0 && (
-                      <span className="text-xs ml-1">(#{user.injection_count})</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">{formatDate(user.last_reply_at)}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{formatDate(user.created_at)}</td>
-                  <td className="px-4 py-3">{statusBadge(user)}</td>
-                  <td className="px-4 py-3">
-                    <Button
-                      size="sm"
-                      variant={user.rlhf_enabled ? 'default' : 'outline'}
-                      className={`text-xs h-7 ${user.rlhf_enabled ? 'bg-amber-600 hover:bg-amber-700' : ''}`}
-                      disabled={rlhfMutation.isPending}
-                      onClick={() => rlhfMutation.mutate({ phone: user.phone, enabled: !user.rlhf_enabled })}
-                    >
-                      {user.rlhf_enabled ? 'RLHF on' : 'RLHF off'}
-                    </Button>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-xs h-7"
-                        disabled={resetMutation.isPending}
-                        onClick={() => resetMutation.mutate(user.phone)}
-                      >
-                        Reset
-                      </Button>
-                      {confirmDelete === user.phone ? (
-                        <div className="flex gap-1">
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            className="text-xs h-7"
-                            disabled={deleteMutation.isPending}
-                            onClick={() => deleteMutation.mutate(user.phone)}
-                          >
-                            Confirm
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-xs h-7"
-                            onClick={() => setConfirmDelete(null)}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-xs h-7 text-destructive hover:text-destructive"
-                          onClick={() => setConfirmDelete(user.phone)}
-                        >
-                          Delete
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <UserDrawer
+        user={selectedUser}
+        onClose={() => {
+          setSelectedUser(null);
+          void qc.invalidateQueries({ queryKey: ['admin-users'] });
+        }}
+      />
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
-            Previous
-          </Button>
-          <span className="text-sm text-muted-foreground">Page {page + 1} of {totalPages}</span>
-          <Button variant="outline" size="sm" disabled={page >= totalPages - 1} onClick={() => setPage((p) => p + 1)}>
-            Next
-          </Button>
-        </div>
-      )}
-    </div>
+      <CreateUserModal open={createOpen} onClose={() => setCreateOpen(false)} />
+    </>
   );
 }

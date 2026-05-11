@@ -206,6 +206,16 @@ pnpm test          # 19 tests, all green
 pnpm -r typecheck  # clean across all 4 packages
 pnpm -r build
 
+# Single test file / single test by name (vitest)
+pnpm --filter @grace/api test -- guard.test
+pnpm --filter @grace/ai-core test -- -t "planner"
+
+# Eval harness — measures accuracy/safety across ~50 GLP-1 cases
+# Requires GEMINI_API_KEY. No DB needed (tools are mocked).
+pnpm --filter @grace/api eval
+# Filter / tune concurrency:
+EVAL_FILTER=food EVAL_CONCURRENCY=5 pnpm --filter @grace/api eval
+
 # Hot-reload system prompt without restart
 docker kill --signal HUP grace-api-1  # or: kill -HUP <api-pid>
 
@@ -215,16 +225,36 @@ curl -X POST http://localhost:3001/chat/send \
   -d '{"userId":"+15551234567","text":"I just had chicken and rice"}'
 ```
 
+> If `pnpm` is missing on a fresh machine: `corepack enable pnpm && corepack prepare pnpm@9.12.0 --activate`.
+
 ---
 
 ## Working agreements
 
-- **Active branch**: `claude/icloud-access-clarification-5hsRr` → develop there, merge to `main` each session.
+- **Active branch**: `main`. Prior feature branches have all been merged — cut new branches off `main` and PR back when ready.
 - **Don't break Twilio contract.** `POST /webhook/twilio` accepts Twilio form payload, replies empty TwiML. Outbound goes via `TwilioSender` async.
 - **Keep `@grace/ai-core` pure.** No `pg`, no `pino`, no env reads. Inject all deps.
 - **Tests first for orchestration changes.** 19 tests, keep them green.
 - **No Lovable.** No `lovable-tagger`, no `ai.gateway.lovable.dev`.
 - **Commit messages: imperative, focused on why.**
+
+---
+
+## Accuracy / eval harness
+
+Lives in `services/api/eval/`. Runs every case through real Gemini + mocked tools, grades against expected intent / tool calls / required + forbidden phrases / length bounds, writes JSON to `eval/results/<timestamp>.json`.
+
+- `eval/cases.ts` — the dataset. Add a case when you fix a real failure so it doesn't regress.
+- `eval/grade.ts` — deterministic checks (no LLM judge yet — coming in Step 2).
+- `eval/runner.ts` — concurrent runner + report formatter.
+- Crisis/emergency wording is NOT in the eval set — `SafetyGuard` short-circuits the pipeline before the orchestrator runs, and is unit-tested in `services/api/src/safety/guard.test.ts`.
+
+Roadmap (in progress, in this order):
+1. ✅ Eval harness + 50-case dataset.
+2. ⏳ LLM-critic on risky intents (`knowledge_lookup`, `safety_*`, or validator-flagged) — regenerate once on fail, safe fallback if still bad.
+3. ⏳ Fact-grounding: medical claims must be supported by a KB chunk before sending.
+4. ⏳ Wire eval scores into `prompts` table; gate `activate` on ≥ baseline.
+5. ⏳ Gemini prompt caching for static system prompt + tool defs; skip planner for pure-chat intents.
 
 ---
 

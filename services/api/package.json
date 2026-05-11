@@ -10,6 +10,7 @@
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval": "tsx scripts/run-eval.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },

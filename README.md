@@ -84,9 +84,11 @@ SafetyGuard       MemoryService                  RagService
 |---|---|---|
 | 1 | Monorepo, Fastify, Twilio webhook, Gemini orchestrator, memory + RAG, tests | ✅ |
 | 2 | Real tools, safety layer, RLHF feedback ingestion, admin API | ✅ |
-| 3 | Multimodal (image/audio via Gemini), Redis cache, BullMQ workers | partial (image+audio ✅) |
-| 4 | `apps/web` → admin dashboard (conversation viewer, prompt mgmt, RLHF) | pending |
-| 5 | Cut Twilio webhook over to `services/api`, decommission v1 edge functions | pending |
+| 3 | Multimodal (image/audio via Gemini), Redis cache, BullMQ workers, SSE streaming | ✅ |
+| 4 | `apps/web` → admin dashboard (metrics, conversations, users, prompts, tools, feedback) | ✅ |
+| 5 | Cut Twilio webhook over to `services/api`, decommission v1 edge functions | ⏳ one URL change in Twilio console — see `docs/OPERATIONS.md §6` |
+
+> **Phase 5 is a manual step**: change the webhook URL in the Twilio console (Messaging → WhatsApp Senders → your number → Messaging configuration). The v2 webhook at `POST /webhook/twilio` is built, signature-verified, and ready. Full instructions: `docs/OPERATIONS.md §6`.
 
 ## Lovable removal
 

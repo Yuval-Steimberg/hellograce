@@ -66,9 +66,18 @@ export interface CriticReport {
   pass: boolean;
   /** Specific issues the critic flagged (verbatim, for regen prompt + admin review). */
   issues: string[];
+  /** Quantitative or interaction-safety claims in the response with no
+   *  support in retrieved knowledge. Populated by the deterministic
+   *  grounding precheck (services/api/eval cannot mock these — they're
+   *  computed from response text + retrieved chunks). */
+  unsupportedClaims?: string[];
   /** True if the critic itself failed (malformed JSON, LLM error). In that case
    *  we treat the response as if pass=false for safety. */
   malformed?: boolean;
+  /** True if the report was synthesized from the deterministic precheck
+   *  rather than an LLM call. Saves a Gemini call when we can fail-closed
+   *  on grounding alone. */
+  source?: 'llm' | 'precheck';
 }
 
 /** Provider-agnostic LLM interface. Concrete adapters live in services/api. */

@@ -122,7 +122,9 @@ describe('AIOrchestrator', () => {
     expect(out.usedSafeFallback).toBeUndefined();
   });
 
-  it('regenerates once when the critic flags the draft, accepts the retry if it passes', async () => {
+  it('regenerates once when the LLM-critic flags the draft, accepts the retry if it passes', async () => {
+    // Bad response is qualitatively wrong but has no quantitative claims that
+    // the precheck would catch — so the LLM-critic is the gate.
     const llm = new MockLLM([
       JSON.stringify({
         intent: 'knowledge_lookup',
@@ -130,9 +132,9 @@ describe('AIOrchestrator', () => {
         toolCalls: [],
         rationale: '',
       }),
-      'Take 2mg twice a week, that should help.',
+      'Yeah totally, you can drink as much alcohol as you want on this medication.',
       failingCriticJson,
-      'I can\'t give dose advice — that\'s a question for your prescribing clinician. Want to talk through what you\'re noticing?',
+      "Alcohol can interact with how you tolerate the medication. Check with your prescriber about what's right for you.",
       healthyCriticJson,
     ]);
     const tools = new ToolRegistry();
@@ -140,7 +142,7 @@ describe('AIOrchestrator', () => {
 
     const out = await orch.run({
       userId: 'u1',
-      text: 'what dose should I be on?',
+      text: 'can I drink on Wegovy?',
       history: [],
       retrieved: [],
       toolsEnabled: true,
@@ -149,8 +151,66 @@ describe('AIOrchestrator', () => {
     expect(llm.calls).toHaveLength(5); // planner + gen + critic + regen + critic
     expect(out.regenerated).toBe(true);
     expect(out.usedSafeFallback).toBeUndefined();
-    expect(out.text).toContain('clinician');
+    expect(out.text).toContain('prescriber');
     expect(out.critic?.pass).toBe(true);
+  });
+
+  it('forces regen via grounding precheck even on a chat intent, without an LLM critic call', async () => {
+    // Chat intent would normally skip the critic. But the response contains
+    // an unsupported dose claim — precheck must fail-close and trigger regen.
+    const llm = new MockLLM([
+      JSON.stringify({ intent: 'chat', needsTools: false, toolCalls: [], rationale: '' }),
+      'Just take 2mg next time — that should help.',
+      // No critic call expected for attempt 1 (precheck handles it).
+      // Retry response, clean:
+      "I can't suggest doses — your prescriber is the right person to ask. Want to talk through what you're noticing?",
+      // Critic call for retry (precheck clean now):
+      healthyCriticJson,
+    ]);
+    const tools = new ToolRegistry();
+    const orch = new AIOrchestrator({ llm, tools });
+
+    const out = await orch.run({
+      userId: 'u1',
+      text: 'I missed yesterday, what should I do?',
+      history: [],
+      retrieved: [],
+      toolsEnabled: true,
+    });
+
+    expect(llm.calls).toHaveLength(4); // planner + gen + regen + critic (precheck skipped LLM critic on attempt 1)
+    expect(out.regenerated).toBe(true);
+    expect(out.critic?.pass).toBe(true);
+    expect(out.text).toContain('prescriber');
+  });
+
+  it('attaches unsupportedClaims and source=precheck when grounding fails', async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        intent: 'knowledge_lookup',
+        needsTools: false,
+        toolCalls: [],
+        rationale: '',
+      }),
+      'Most patients lose 25% of their weight in 12 weeks.',
+      // Retry stays bad — precheck still fails:
+      'Studies show 25% loss within 12 weeks consistently.',
+    ]);
+    const tools = new ToolRegistry();
+    const orch = new AIOrchestrator({ llm, tools });
+
+    const out = await orch.run({
+      userId: 'u1',
+      text: 'how much weight will I lose?',
+      history: [],
+      retrieved: [], // empty KB — no support for any claim
+      toolsEnabled: true,
+    });
+
+    expect(out.usedSafeFallback).toBe(true);
+    expect(out.critic?.source).toBe('precheck');
+    expect(out.critic?.unsupportedClaims?.length).toBeGreaterThan(0);
+    expect(out.text).toContain('clinician');
   });
 
   it('falls back to a safe canned response when both attempts fail the critic', async () => {

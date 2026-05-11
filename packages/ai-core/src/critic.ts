@@ -87,7 +87,7 @@ export function parseCriticResponse(raw: string): CriticReport {
     overall >= MIN_OVERALL &&
     Object.values(scores).every((s) => s >= MIN_PER_CRITERION);
 
-  return { scores, overall, pass, issues };
+  return { scores, overall, pass, issues, source: 'llm' };
 }
 
 function malformedReport(): CriticReport {
@@ -97,6 +97,7 @@ function malformedReport(): CriticReport {
     pass: false,
     issues: ['critic_malformed_response'],
     malformed: true,
+    source: 'llm',
   };
 }
 

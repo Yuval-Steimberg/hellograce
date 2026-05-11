@@ -1,7 +1,8 @@
-# Grace — Claude Operating Notes
+# CLAUDE.md
 
-This file is loaded automatically by Claude Code at session start.
-Update it at the end of every session so the next session can resume without re-deriving context.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+_Also loaded automatically at session start. Update at the end of every session so the next session resumes without re-deriving context._
 
 ---
 
@@ -165,6 +166,24 @@ Core tables: `users`, `conversations`, `messages`, `embeddings`, `tool_logs`,
 `feedback`, `food_logs`, `weight_logs`, `check_ins`, `injections`, `prompts`, `tool_settings`.
 
 Key columns added by 20260508000001: `users.rlhf_enabled BOOLEAN DEFAULT FALSE`
+
+---
+
+## Credentials (local dev)
+
+All secrets live in `services/api/.env` (gitignored — never commit it).
+The following are already filled in for this project:
+
+| Variable | Status |
+|---|---|
+| `GEMINI_API_KEY` | ✅ set in `.env` |
+| `REDIS_URL` | ✅ set in `.env` (Upstash TLS) |
+| `DATABASE_URL` | ⏳ fill in from Supabase (see `docs/DEPLOY.md § 1.1`) |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | ⏳ fill in from Twilio console |
+| `TWILIO_WHATSAPP_FROM` | ⏳ fill in once Twilio number confirmed |
+| `ADMIN_TOKEN` | ⏳ generate with `openssl rand -hex 32` |
+
+Full deployment instructions: `docs/DEPLOY.md`
 
 ---
 

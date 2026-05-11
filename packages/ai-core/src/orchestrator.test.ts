@@ -14,9 +14,24 @@ class MockLLM implements LLMProvider {
   }
 }
 
+const healthyCriticJson = JSON.stringify({
+  grounding: 5,
+  safety: 5,
+  on_task: 5,
+  tone: 4,
+  issues: [],
+});
+const failingCriticJson = JSON.stringify({
+  grounding: 2,
+  safety: 1,
+  on_task: 3,
+  tone: 3,
+  issues: ['told user a specific dose without deferring to clinician'],
+});
+
 describe('AIOrchestrator', () => {
   it('runs the full pipeline and returns a validated response', async () => {
-    // First reply = planner JSON, second reply = generation
+    // chat intent + clean response → planner JSON, generation. No critic.
     const llm = new MockLLM([
       JSON.stringify({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'casual' }),
       'Sounds good — tell me more.',
@@ -36,6 +51,8 @@ describe('AIOrchestrator', () => {
     expect(out.intent).toBe('chat');
     expect(out.confidence).toBe('high');
     expect(out.usedRetrieval).toBe(false);
+    expect(out.critic).toBeUndefined();
+    expect(out.regenerated).toBeUndefined();
   });
 
   it('skips planner when tools are disabled', async () => {
@@ -51,8 +68,9 @@ describe('AIOrchestrator', () => {
       toolsEnabled: false,
     });
 
-    expect(llm.calls).toHaveLength(1);
+    expect(llm.calls).toHaveLength(1); // generation only, no planner, no critic
     expect(out.intent).toBe('chat');
+    expect(out.critic).toBeUndefined();
   });
 
   it('scores hedged responses as medium confidence', async () => {
@@ -72,5 +90,97 @@ describe('AIOrchestrator', () => {
     });
 
     expect(out.confidence).toBe('medium');
+    expect(out.critic).toBeUndefined(); // medium isn't a risk trigger
+  });
+
+  it('invokes the critic on knowledge_lookup intent and accepts a healthy critique', async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        intent: 'knowledge_lookup',
+        needsTools: false,
+        toolCalls: [],
+        rationale: 'kb question',
+      }),
+      'Nausea is a known GLP-1 side effect; bring it up with your clinician if it worsens.',
+      healthyCriticJson,
+    ]);
+    const tools = new ToolRegistry();
+    const orch = new AIOrchestrator({ llm, tools });
+
+    const out = await orch.run({
+      userId: 'u1',
+      text: 'is nausea normal on Wegovy?',
+      history: [],
+      retrieved: [],
+      toolsEnabled: true,
+    });
+
+    expect(llm.calls).toHaveLength(3); // planner + generation + critic
+    expect(out.intent).toBe('knowledge_lookup');
+    expect(out.critic?.pass).toBe(true);
+    expect(out.regenerated).toBeUndefined();
+    expect(out.usedSafeFallback).toBeUndefined();
+  });
+
+  it('regenerates once when the critic flags the draft, accepts the retry if it passes', async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        intent: 'knowledge_lookup',
+        needsTools: false,
+        toolCalls: [],
+        rationale: '',
+      }),
+      'Take 2mg twice a week, that should help.',
+      failingCriticJson,
+      'I can\'t give dose advice — that\'s a question for your prescribing clinician. Want to talk through what you\'re noticing?',
+      healthyCriticJson,
+    ]);
+    const tools = new ToolRegistry();
+    const orch = new AIOrchestrator({ llm, tools });
+
+    const out = await orch.run({
+      userId: 'u1',
+      text: 'what dose should I be on?',
+      history: [],
+      retrieved: [],
+      toolsEnabled: true,
+    });
+
+    expect(llm.calls).toHaveLength(5); // planner + gen + critic + regen + critic
+    expect(out.regenerated).toBe(true);
+    expect(out.usedSafeFallback).toBeUndefined();
+    expect(out.text).toContain('clinician');
+    expect(out.critic?.pass).toBe(true);
+  });
+
+  it('falls back to a safe canned response when both attempts fail the critic', async () => {
+    const llm = new MockLLM([
+      JSON.stringify({
+        intent: 'knowledge_lookup',
+        needsTools: false,
+        toolCalls: [],
+        rationale: '',
+      }),
+      'Yeah, just take an extra shot if you missed yesterday.',
+      failingCriticJson,
+      'Take double the dose tomorrow, easy fix.',
+      failingCriticJson,
+    ]);
+    const tools = new ToolRegistry();
+    const orch = new AIOrchestrator({ llm, tools });
+
+    const out = await orch.run({
+      userId: 'u1',
+      text: 'I missed my injection — should I double up?',
+      history: [],
+      retrieved: [],
+      toolsEnabled: true,
+    });
+
+    expect(out.usedSafeFallback).toBe(true);
+    expect(out.regenerated).toBe(true);
+    expect(out.confidence).toBe('low');
+    expect(out.text).toContain('clinician');
+    expect(out.text).not.toContain('double');
   });
 });

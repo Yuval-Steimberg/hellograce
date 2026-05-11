@@ -202,7 +202,7 @@ cp services/api/.env.example services/api/.env && vim services/api/.env
 pnpm --filter @grace/api dev
 
 # Tests / typecheck / build
-pnpm test          # 19 tests, all green
+pnpm test          # 32 tests, all green
 pnpm -r typecheck  # clean across all 4 packages
 pnpm -r build
 
@@ -234,7 +234,7 @@ curl -X POST http://localhost:3001/chat/send \
 - **Active branch**: `main`. Prior feature branches have all been merged — cut new branches off `main` and PR back when ready.
 - **Don't break Twilio contract.** `POST /webhook/twilio` accepts Twilio form payload, replies empty TwiML. Outbound goes via `TwilioSender` async.
 - **Keep `@grace/ai-core` pure.** No `pg`, no `pino`, no env reads. Inject all deps.
-- **Tests first for orchestration changes.** 19 tests, keep them green.
+- **Tests first for orchestration changes.** 32 tests, keep them green.
 - **No Lovable.** No `lovable-tagger`, no `ai.gateway.lovable.dev`.
 - **Commit messages: imperative, focused on why.**
 
@@ -250,9 +250,9 @@ Lives in `services/api/eval/`. Runs every case through real Gemini + mocked tool
 - Crisis/emergency wording is NOT in the eval set — `SafetyGuard` short-circuits the pipeline before the orchestrator runs, and is unit-tested in `services/api/src/safety/guard.test.ts`.
 
 Roadmap (in progress, in this order):
-1. ✅ Eval harness + 50-case dataset.
-2. ⏳ LLM-critic on risky intents (`knowledge_lookup`, `safety_*`, or validator-flagged) — regenerate once on fail, safe fallback if still bad.
-3. ⏳ Fact-grounding: medical claims must be supported by a KB chunk before sending.
+1. ✅ Eval harness + 50-case dataset (`services/api/eval/`).
+2. ✅ LLM-critic on risky intents (`knowledge_lookup`, `safety_*`, validator-flagged, or low-confidence). Regenerate once on critic fail, safe fallback if second attempt also fails. Implementation: `packages/ai-core/src/critic.ts` + orchestrator wiring. Output exposes `critic`, `regenerated`, `usedSafeFallback` for admin observability.
+3. ⏳ Fact-grounding: tighten the critic with explicit KB-chunk citation requirements for medical claims.
 4. ⏳ Wire eval scores into `prompts` table; gate `activate` on ≥ baseline.
 5. ⏳ Gemini prompt caching for static system prompt + tool defs; skip planner for pure-chat intents.
 

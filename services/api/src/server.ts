@@ -37,7 +37,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   const llm = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL }, logger, cache);
   const memory = new MemoryService(pool);
-  const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'text-embedding-004', cache);
+  const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'gemini-embedding-001', cache);
   const rag = new RagService(pool, embedder, logger);
   const turnQueue = getTurnQueue(redis);
 

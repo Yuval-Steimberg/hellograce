@@ -16,21 +16,18 @@ Rolling source of truth. Newest entries on top.
 | 4c | Onboarding API, subscription gate, GDPR delete, chat history, admin user CRUD | ✅ |
 | 4d | User-side RLHF: per-user ratings + feedback comments, admin toggle | ✅ |
 | 4e | Admin dashboard overhaul: user drawer, create modal, richer metrics | ✅ |
-| 5 | Cut Twilio webhook from v1 edge fn → v2 API | ⏳ **next — one URL change** |
+| 5 | Cut Twilio webhook from v1 edge fn → v2 API | ✅ live at `https://grace-api.fly.dev` |
 
 ---
 
 ## Open TODOs (priority order)
 
-### Phase 5 — production cutover
+### Post-cutover
 
-- [ ] Stand up `services/api` on a public URL (Fly.io / Railway / Render). See `docs/OPERATIONS.md §4`.
-- [ ] Deploy `apps/web` with `VITE_API_URL` set to the API URL. See `docs/OPERATIONS.md §5`.
-- [ ] Run the 4 v2 migrations on your Supabase DB. See `docs/OPERATIONS.md §4b`.
-- [ ] Smoke-test via `POST /chat/send` and `POST /users/onboard`.
-- [ ] Change Twilio webhook URL in console. See `docs/OPERATIONS.md §6`.
-- [ ] Monitor logs for 1h after cutover. Watch for `webhook.ai.failed`.
-- [ ] Once stable, the v1 edge function `handle-inbound-sms` can be disabled (keep as fallback for 24h).
+- [ ] Add a Fly.io payment method (https://fly.io/trial) — trial machines auto-stop after 5 min idle, breaking scheduler proactive messages and adding ~10s cold-start to every webhook.
+- [ ] Re-embed the 428 KB rows (currently zero-vector placeholders so RAG returns nothing meaningful). Run a one-off script that reads each row and writes a real `gemini-embedding-001` vector via the API.
+- [ ] Once stable, disable the v1 edge function `handle-inbound-sms` (keep as fallback for 24h).
+- [ ] Monitor logs for 24h. Watch for `webhook.ai.failed`, `rag.embed.failed`, `scheduler.tick.error`.
 
 ### Nice-to-have (post-launch)
 
@@ -47,6 +44,17 @@ Rolling source of truth. Newest entries on top.
 ---
 
 ## Done (newest first)
+
+### 2026-05-12 — Phase 5: Production cutover
+
+- API deployed to Fly.io at `https://grace-api.fly.dev` (2 machines, `iad` region, single-stage Docker, `pnpm exec tsx src/server.ts` at runtime).
+- Admin web deployed to Vercel as `grace-admin` with `VITE_API_URL=https://grace-api.fly.dev`.
+- 14 Fly secrets configured (DB, Redis, Twilio, Gemini, admin token, etc.).
+- Supabase Transaction Pooler URL (`aws-1-ap-northeast-1.pooler.supabase.com:6543`) for IPv6-friendly DB access from Fly machines.
+- Knowledge base imported: 428 rows in `embeddings` table (zero-vector placeholders — re-embed pending).
+- Twilio WhatsApp sandbox webhook pointed at `https://grace-api.fly.dev/webhook/twilio`. Verified end-to-end: real inbound message → Grace reply on WhatsApp.
+- Twilio auth token rotated and updated in both Fly secrets and `services/api/.env`.
+- Embedding model migrated from deprecated `text-embedding-004` → `gemini-embedding-001` with `outputDimensionality=768` via raw REST (SDK 0.21.0 doesn't expose the param).
 
 ### 2026-05-08 — Phase 4e: Admin dashboard overhaul
 
@@ -133,5 +141,6 @@ safety guard (crisis/emergency), multimodal (image + voice), admin API, Docker C
   Sufficient for internal use. Upgrade to Supabase Auth before public team access.
 - **2026-05-07** — BullMQ over pg-boss: Redis already a dep for caching.
 - **2026-05-07** — SSE over WebSockets: one-way push is enough; works through proxies.
-- **2026-05-07** — pgvector dim = 768 (text-embedding-004).
+- **2026-05-12** — Embedding model: `gemini-embedding-001` with `outputDimensionality=768` via raw REST. SDK 0.21.0's `EmbedContentRequest` type doesn't include `outputDimensionality`, so the embedder calls `https://generativelanguage.googleapis.com/v1beta/models/<m>:embedContent` directly. Keeps existing `vector(768)` schema and the 428 imported KB rows.
+- **2026-05-07** — pgvector dim = 768 (originally text-embedding-004, now gemini-embedding-001).
 - **2026-05-07** — Disabled `exactOptionalPropertyTypes` for POC velocity.

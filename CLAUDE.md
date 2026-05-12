@@ -15,9 +15,15 @@ Users sign up via a web onboarding flow, then receive personalized daily check-i
 meal/hydration guidance, injection-day flows, and on-demand chat — all via WhatsApp/SMS.
 No app required.
 
-The v2 Node.js orchestration service is **feature-complete and production-ready**.
-The only remaining step is pointing the Twilio webhook URL from the legacy Supabase
-edge function to `services/api` (Phase 5 cutover — one URL change).
+The v2 Node.js orchestration service is **live in production**:
+- API: `https://grace-api.fly.dev` (Fly.io, region `iad`, 2 machines)
+- Admin web: deployed to Vercel as `grace-admin` with `VITE_API_URL=https://grace-api.fly.dev`
+- Twilio WhatsApp sandbox webhook points at `https://grace-api.fly.dev/webhook/twilio`
+- End-to-end verified 2026-05-12 with a real WhatsApp message.
+
+Open follow-ups: add a Fly payment method (trial machines auto-stop after 5 min idle),
+re-embed the 428 KB rows (currently zero-vector placeholders), disable the legacy v1
+`handle-inbound-sms` edge function once 24h of stable v2 traffic is confirmed.
 
 ---
 
@@ -176,12 +182,13 @@ The following are already filled in for this project:
 
 | Variable | Status |
 |---|---|
-| `GEMINI_API_KEY` | ✅ set in `.env` |
-| `REDIS_URL` | ✅ set in `.env` (Upstash TLS) |
-| `DATABASE_URL` | ⏳ fill in from Supabase (see `docs/DEPLOY.md § 1.1`) |
-| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | ⏳ fill in from Twilio console |
-| `TWILIO_WHATSAPP_FROM` | ⏳ fill in once Twilio number confirmed |
-| `ADMIN_TOKEN` | ⏳ generate with `openssl rand -hex 32` |
+| `GEMINI_API_KEY` | ✅ set in `.env` and Fly secrets |
+| `REDIS_URL` | ✅ Upstash TLS, in `.env` and Fly secrets |
+| `DATABASE_URL` | ✅ Supabase Transaction Pooler (`aws-1-ap-northeast-1.pooler.supabase.com:6543`) |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` | ✅ in `.env` and Fly secrets (auth token rotated 2026-05-12) |
+| `TWILIO_WHATSAPP_FROM` | ✅ sandbox `whatsapp:+14155238886` |
+| `PUBLIC_BASE_URL` | ✅ `https://grace-api.fly.dev` in Fly secrets — used by Twilio signature verification |
+| `ADMIN_TOKEN` | ✅ set in `.env` and Fly secrets |
 
 Full deployment instructions: `docs/DEPLOY.md`
 
@@ -270,7 +277,7 @@ Roadmap (in progress, in this order):
 | 4c | Subscription gate, GDPR delete, chat history, admin user CRUD | ✅ |
 | 4d | User-side RLHF: per-user ratings + feedback comments, admin toggle | ✅ |
 | 4e | Admin dashboard overhaul: user drawer, create modal, richer metrics | ✅ |
-| 5 | Cut Twilio webhook from v1 → v2 | ⏳ one URL change in Twilio console |
+| 5 | Cut Twilio webhook from v1 → v2 | ✅ live at `https://grace-api.fly.dev` |
 
 ---
 
@@ -279,8 +286,8 @@ Roadmap (in progress, in this order):
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
 3. `git checkout claude/icloud-access-clarification-5hsRr`.
-4. Apply any unapplied migrations (see list above) against your Supabase DB.
-5. For Phase 5: one URL change. See `docs/OPERATIONS.md § Twilio cutover`.
+4. Production is live at `https://grace-api.fly.dev`. Tail logs with `fly logs --app grace-api`.
+5. Top open items in `docs/STATUS.md § Post-cutover`: Fly payment method (machines auto-stop), KB re-embedding, disable v1 edge fn.
 
 ---
 
@@ -303,7 +310,9 @@ Roadmap (in progress, in this order):
 
 ## Known gaps / deferred
 
-- **Phase 5 cutover**: change Twilio webhook URL (see `docs/OPERATIONS.md`).
+- **Fly payment method**: add at https://fly.io/trial — trial machines auto-stop after 5 min idle, breaking scheduler proactive messages and adding ~10s cold-start to every incoming webhook.
+- **KB re-embedding**: the 428 rows in `embeddings` (knowledge source) currently hold zero-vector placeholders from the bulk import. RAG retrieval returns near-random results until each row is re-embedded against `gemini-embedding-001`. One-off script TBD.
+- **Legacy v1 edge fn**: `handle-inbound-sms` still deployed in Supabase as a fallback. Disable after 24h of stable v2 traffic.
 - **v2 Stripe webhook**: Stripe events currently update `is_paid` via v1 Supabase function hitting the shared DB. v2 reads from same DB so it works. Only build a native v2 handler if moving off Supabase DB entirely.
 - **Admin auth upgrade**: localStorage Bearer token is fine for internal use. Upgrade to Supabase Auth roles before broad team access.
 - **OpenTelemetry + Sentry**: not yet instrumented.

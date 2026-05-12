@@ -100,10 +100,22 @@
   }
 
   body {
-    @apply bg-background text-foreground font-sans;
+    @apply text-foreground font-sans;
     font-size: 19px;
     font-weight: 400;
     line-height: 1.65;
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(ellipse 1100px 700px at 92% -10%, hsl(16 55% 85% / 0.55) 0%, transparent 60%),
+      radial-gradient(ellipse 900px 700px at -10% 105%, hsl(102 22% 80% / 0.45) 0%, transparent 60%),
+      radial-gradient(ellipse 700px 500px at 50% 50%, hsl(37 50% 94% / 0.4) 0%, transparent 70%);
+    background-attachment: fixed;
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(ellipse 1100px 700px at 92% -10%, hsl(16 40% 28% / 0.5) 0%, transparent 60%),
+      radial-gradient(ellipse 900px 700px at -10% 105%, hsl(102 20% 22% / 0.45) 0%, transparent 60%);
   }
 
   h1, h2, h3 {

@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { ChevronRight } from "lucide-react";
 import HeroSection from "@/components/landing/HeroSection";
+import MedicationsBar from "@/components/landing/MedicationsBar";
 import QuoteSection from "@/components/landing/QuoteSection";
 import PhilosophySection from "@/components/landing/PhilosophySection";
 import FeatureSpread from "@/components/landing/FeatureSpread";
@@ -73,6 +74,7 @@ const Landing = () => {
 
       <main>
         <HeroSection />
+        <MedicationsBar />
         <QuoteSection />
         <PhilosophySection />
         <FeatureSpread />

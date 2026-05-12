@@ -6,33 +6,34 @@
 
 @layer base {
   :root {
-    --background: 15 60% 96%;
-    --foreground: 10 30% 15%;
+    /* Sage + cream + terracotta — nutrition-coded palette */
+    --background: 37 36% 91%;     /* warm cream */
+    --foreground: 100 14% 18%;    /* very dark sage */
 
     --card: 0 0% 100%;
-    --card-foreground: 10 30% 15%;
+    --card-foreground: 100 14% 18%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 10 30% 15%;
+    --popover-foreground: 100 14% 18%;
 
-    --primary: 10 30% 15%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 102 14% 28%;       /* deep sage */
+    --primary-foreground: 37 36% 95%;
 
-    --secondary: 20 40% 90%;
-    --secondary-foreground: 10 30% 25%;
+    --secondary: 37 30% 88%;      /* layered cream */
+    --secondary-foreground: 100 14% 22%;
 
-    --muted: 20 30% 93%;
-    --muted-foreground: 10 15% 45%;
+    --muted: 37 22% 92%;
+    --muted-foreground: 100 10% 40%;
 
-    --accent: 15 76% 70%;
-    --accent-foreground: 10 30% 15%;
+    --accent: 16 50% 58%;         /* terracotta */
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 20 30% 88%;
-    --input: 20 30% 88%;
-    --ring: 10 30% 15%;
+    --border: 37 28% 82%;
+    --input: 37 28% 82%;
+    --ring: 102 14% 28%;
 
     --radius: 1rem;
 
@@ -45,35 +46,35 @@
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
 
-    /* Custom tokens */
-    --peach: 15 76% 70%;
-    --blush: 15 60% 96%;
-    --velvet: 10 30% 15%;
-    --sand: 20 30% 88%;
-    --success: 145 60% 45%;
+    /* Custom tokens — names kept stable, hues shifted to the new palette */
+    --peach: 16 50% 58%;          /* now terracotta */
+    --blush: 37 36% 91%;          /* now cream */
+    --velvet: 100 14% 18%;        /* now dark sage */
+    --sand: 37 34% 85%;
+    --success: 145 50% 38%;
     --success-foreground: 0 0% 100%;
   }
 
   .dark {
-    --background: 15 20% 8%;
-    --foreground: 15 40% 95%;
-    --card: 15 15% 12%;
-    --card-foreground: 15 40% 95%;
-    --popover: 15 15% 12%;
-    --popover-foreground: 15 40% 95%;
-    --primary: 15 60% 96%;
-    --primary-foreground: 10 30% 15%;
-    --secondary: 15 15% 18%;
-    --secondary-foreground: 15 40% 90%;
-    --muted: 15 10% 16%;
-    --muted-foreground: 15 10% 55%;
-    --accent: 15 50% 30%;
-    --accent-foreground: 15 60% 90%;
+    --background: 100 14% 10%;
+    --foreground: 37 22% 92%;
+    --card: 100 12% 13%;
+    --card-foreground: 37 22% 92%;
+    --popover: 100 12% 13%;
+    --popover-foreground: 37 22% 92%;
+    --primary: 37 28% 88%;
+    --primary-foreground: 100 14% 18%;
+    --secondary: 100 10% 16%;
+    --secondary-foreground: 37 22% 88%;
+    --muted: 100 8% 14%;
+    --muted-foreground: 100 8% 55%;
+    --accent: 16 40% 40%;
+    --accent-foreground: 37 22% 92%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 100%;
-    --border: 15 10% 20%;
-    --input: 15 10% 20%;
-    --ring: 15 60% 96%;
+    --border: 100 8% 18%;
+    --input: 100 8% 18%;
+    --ring: 37 28% 88%;
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
@@ -82,6 +83,14 @@
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Custom tokens */
+    --peach: 16 40% 40%;
+    --blush: 100 14% 10%;
+    --velvet: 37 28% 88%;
+    --sand: 100 10% 22%;
+    --success: 145 40% 45%;
+    --success-foreground: 0 0% 100%;
   }
 }
 

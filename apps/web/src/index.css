@@ -6,8 +6,8 @@
 
 @layer base {
   :root {
-    /* Sage + cream + terracotta — nutrition-coded palette */
-    --background: 37 36% 91%;     /* warm cream */
+    /* Cool gray-white + sage primary + terracotta accent */
+    --background: 220 16% 96%;    /* cool gray-white */
     --foreground: 100 14% 18%;    /* very dark sage */
 
     --card: 0 0% 100%;
@@ -17,13 +17,13 @@
     --popover-foreground: 100 14% 18%;
 
     --primary: 102 14% 28%;       /* deep sage */
-    --primary-foreground: 37 36% 95%;
+    --primary-foreground: 220 16% 98%;
 
-    --secondary: 37 30% 88%;      /* layered cream */
+    --secondary: 220 14% 92%;     /* layered cool gray */
     --secondary-foreground: 100 14% 22%;
 
-    --muted: 37 22% 92%;
-    --muted-foreground: 100 10% 40%;
+    --muted: 220 14% 94%;
+    --muted-foreground: 220 8% 42%;
 
     --accent: 16 50% 58%;         /* terracotta */
     --accent-foreground: 0 0% 100%;
@@ -31,8 +31,8 @@
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 37 28% 82%;
-    --input: 37 28% 82%;
+    --border: 220 12% 88%;
+    --input: 220 12% 88%;
     --ring: 102 14% 28%;
 
     --radius: 1rem;
@@ -47,10 +47,10 @@
     --sidebar-ring: 217.2 91.2% 59.8%;
 
     /* Custom tokens — names kept stable, hues shifted to the new palette */
-    --peach: 16 50% 58%;          /* now terracotta */
-    --blush: 37 36% 91%;          /* now cream */
-    --velvet: 100 14% 18%;        /* now dark sage */
-    --sand: 37 34% 85%;
+    --peach: 16 50% 58%;          /* terracotta */
+    --blush: 220 16% 96%;         /* cool gray-white */
+    --velvet: 100 14% 18%;        /* dark sage */
+    --sand: 220 12% 88%;
     --success: 145 50% 38%;
     --success-foreground: 0 0% 100%;
   }
@@ -106,16 +106,15 @@
     line-height: 1.65;
     background-color: hsl(var(--background));
     background-image:
-      radial-gradient(ellipse 1100px 700px at 92% -10%, hsl(16 55% 85% / 0.55) 0%, transparent 60%),
-      radial-gradient(ellipse 900px 700px at -10% 105%, hsl(102 22% 80% / 0.45) 0%, transparent 60%),
-      radial-gradient(ellipse 700px 500px at 50% 50%, hsl(37 50% 94% / 0.4) 0%, transparent 70%);
+      radial-gradient(ellipse 1100px 700px at 92% -10%, hsl(16 55% 85% / 0.35) 0%, transparent 60%),
+      radial-gradient(ellipse 900px 700px at -10% 105%, hsl(220 30% 84% / 0.45) 0%, transparent 60%);
     background-attachment: fixed;
   }
 
   .dark body {
     background-image:
       radial-gradient(ellipse 1100px 700px at 92% -10%, hsl(16 40% 28% / 0.5) 0%, transparent 60%),
-      radial-gradient(ellipse 900px 700px at -10% 105%, hsl(102 20% 22% / 0.45) 0%, transparent 60%);
+      radial-gradient(ellipse 900px 700px at -10% 105%, hsl(220 20% 22% / 0.45) 0%, transparent 60%);
   }
 
   h1, h2, h3 {

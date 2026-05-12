@@ -95,14 +95,22 @@ export class Scheduler {
       return;
     }
 
+    // Engagement gate for midday/evening: cap at 2 proactives/day for silent
+    // users (morning + 1 nudge max). Once they go fully silent for >1 day, drop
+    // to morning only. Engaged users get the full 3-message schedule.
+    const engagedToday = userEngagedToday(user);
+    const silentDays = userSilentDays(user);
+
     // ── Midday nudge (Mon/Wed/Fri, 11am–2pm local)
     if (
       MIDDAY_DAYS.has(dayOfWeek) &&
       hour >= 11 && hour <= 14 &&
       !user.midday_skip &&
       (!user.last_midday_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_midday_sent_at))) !== todayStr) &&
-      // Skip if user replied to morning in last 3h
-      (!user.last_reply_at || Date.now() - new Date(user.last_reply_at).getTime() > 3 * 3_600_000)
+      // Skip if user replied within last 3h — they're already in active chat
+      (!user.last_reply_at || Date.now() - new Date(user.last_reply_at).getTime() > 3 * 3_600_000) &&
+      // Engagement dampener: skip midday after >1 day of silence
+      (engagedToday || silentDays < 1)
     ) {
       // Only send midday if morning was sent today (don't double-cold-start)
       const morningToday = user.last_morning_sent_at &&
@@ -119,7 +127,11 @@ export class Scheduler {
     const isEveningWindow =
       EVENING_DAYS.has(dayOfWeek) &&
       ((hour === sleepHour - 2 && minute >= 30) || (hour === sleepHour - 1 && minute === 0));
-    if (isEveningWindow) {
+    if (
+      isEveningWindow &&
+      // Hard cap: never send evening to a user who hasn't actively chatted today
+      engagedToday
+    ) {
       if (!user.last_evening_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_evening_sent_at))) !== todayStr) {
         await this.sendAndRecord(user, 'evening');
         await this.deps.users.update(user.phone, { last_evening_sent_at: new Date() });
@@ -219,6 +231,18 @@ function localNow(tz: string, date = new Date()): Date {
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/** Has the user actively replied since today's morning message went out? */
+function userEngagedToday(user: GraceUser): boolean {
+  if (!user.last_reply_at || !user.last_morning_sent_at) return false;
+  return new Date(user.last_reply_at) >= new Date(user.last_morning_sent_at);
+}
+
+/** Days elapsed since the user last replied (Infinity if they never have). */
+function userSilentDays(user: GraceUser): number {
+  if (!user.last_reply_at) return Infinity;
+  return (Date.now() - new Date(user.last_reply_at).getTime()) / (24 * 3_600_000);
 }
 
 function analyzeUserBehavior(checkins: Array<{ type: string; user_reply: string | null; mood_score: number | null }>) {

@@ -1,18 +1,18 @@
 const HOW_IT_WORKS = [
   {
     step: "01",
-    title: "Tell us about you",
-    description: "Your medication, schedule, and what you struggle with most. Takes 2 minutes.",
+    title: "Share your protocol",
+    description: "Your medication, dose week, injection day, and goal weight. Two minutes — no medical history form.",
   },
   {
     step: "02",
-    title: "We write your messages",
-    description: "Each text is crafted for your situation — your injection day, hydration needs, food preferences.",
+    title: "grace learns your patterns",
+    description: "She remembers what makes you nauseous, which protein hits land, when your energy dips, and when your weight stalls.",
   },
   {
     step: "03",
-    title: "Open your texts, feel supported",
-    description: "A morning check-in. A midday reminder. An evening wind-down. Reply anytime.",
+    title: "Text her like a friend",
+    description: "Morning check-in. Injection-day prep. Real-time answers when you're at the grocery store or staring at a menu.",
   },
 ];
 
@@ -24,7 +24,7 @@ const PhilosophySection = () => (
           How it works
         </span>
         <h3 className="font-serif text-2xl md:text-4xl text-foreground tracking-tight">
-          Three steps. Two minutes. Zero apps.
+          Three steps. Two minutes. <span className="italic text-accent">No apps.</span>
         </h3>
       </div>
 

@@ -7,36 +7,40 @@ import {
 
 const FAQS = [
   {
+    q: "Which GLP-1 medications does grace support?",
+    a: "Wegovy and Ozempic (semaglutide), Mounjaro and Zepbound (tirzepatide), Saxenda (liraglutide), and compounded semaglutide/tirzepatide from any reputable pharmacy. grace knows the dose ladders, the typical side-effect timelines, and the protocol differences between them.",
+  },
+  {
     q: "Do I need to download an app?",
-    a: "Not at all. grace works entirely through SMS — plain text messages on the phone you already carry. No app, no login, no password to remember.",
+    a: "No. grace lives in WhatsApp (or SMS where WhatsApp isn't available). It's the messaging app on the phone you already carry — no login, no password, no notifications to manage.",
   },
   {
-    q: "What kind of texts will I receive?",
-    a: "Personalized daily check-ins based on your goals, your schedule, and what you've shared with us. Morning hydration prompts, meal ideas using foods you actually like, encouragement when you're having a tough day, and injection-day reminders. Every message is written for you — grace remembers your history and adapts over time.",
+    q: "What happens on my injection day?",
+    a: "grace texts you in the morning with a quick prep ritual (hydration target, lighter meals, ginger if nausea hit last time). She checks in after you've dosed, then again the next day to see how you're feeling. If you flag a side effect, she follows up 4 hours later — exactly when most people forget they're going to need help.",
   },
   {
-    q: "Does grace really remember what I tell it?",
-    a: "Yes. grace learns from every conversation — your food preferences, how you've been feeling, what's working and what isn't. Over time, your messages become more and more tailored to you. It's like texting a friend who actually pays attention.",
+    q: "Can grace help with nausea, fatigue, or constipation?",
+    a: "Yes — and she remembers what worked last time. Plain crackers and ginger tea on day-after nausea. Magnesium citrate at night for constipation. Electrolytes when fatigue spikes. She'll never tell you to push through — only what's reasonable, and when to call your doctor.",
   },
   {
-    q: "What if I'm having a rough day?",
-    a: "That's exactly when grace shows up. If you share that you're struggling, grace adjusts — offering gentler check-ins, lighter suggestions, and genuine encouragement. We're here to cheer you on, not pile on more to-dos.",
+    q: "Does she actually know my history, or is it generic?",
+    a: "She remembers everything you share — your goal weight, current dose week, the foods that make you queasy, which protein sources you actually eat, your last weigh-in, and whether you flagged a side effect this week. Every reply is shaped by that context. Generic check-ins are the one thing she won't do.",
   },
   {
-    q: "Is this medical advice?",
-    a: "No. grace is a wellness companion, not a medical provider. We offer supportive reminders about hydration, protein, and how you're feeling — but always encourage you to follow your doctor's guidance.",
+    q: "What about plateau weeks?",
+    a: "Plateaus around weeks 8–12 are normal on GLP-1s — grace knows this. When the scale stalls, she'll help you spot whether it's a real plateau (steady protein, consistent strength training, good sleep) or a missing variable. No motivational platitudes — actual diagnostic questions.",
+  },
+  {
+    q: "Will grace replace my doctor?",
+    a: "Absolutely not. grace is a wellness companion — she'll never adjust your dose, diagnose a side effect, or override your prescriber. If something sounds clinically serious (severe pain, dehydration, anything she's unsure about), she'll tell you to call your doctor or go to urgent care. That's a firm boundary, by design.",
   },
   {
     q: "How much does it cost?",
-    a: "Your first 3 days are completely free. After that, grace is $12/month — less than a single co-pay. Cancel anytime with a simple text.",
-  },
-  {
-    q: "Can I pause or stop the texts?",
-    a: "Of course. Reply PAUSE at any time to take a break, or STOP to cancel entirely. We respect your space — always.",
+    a: "Your first 3 days are completely free — no card required to start. After that, $12/month, less than a single GLP-1 co-pay. Cancel any time by texting STOP. No retention dark patterns.",
   },
   {
     q: "How is my information protected?",
-    a: "Your phone number and responses are encrypted and never shared with third parties. We don't sell data, run ads, or ask you to perform your health for an audience.",
+    a: "Encrypted in transit and at rest. We never sell your data, never share it with insurers or employers, and never run ads against your messages. You can request full deletion any time by texting DELETE — your record is gone within 24 hours.",
   },
 ];
 

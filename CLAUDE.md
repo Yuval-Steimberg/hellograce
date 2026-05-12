@@ -17,12 +17,15 @@ No app required.
 
 The v2 Node.js orchestration service is **live in production**:
 - API: `https://grace-api.fly.dev` (Fly.io, region `iad`, 2 machines)
-- Admin web: deployed to Vercel as `grace-admin` with `VITE_API_URL=https://grace-api.fly.dev`
+- Admin web + onboarding: deployed to Vercel as `grace-admin` (alias `https://grace-admin-silk.vercel.app`) with `VITE_API_URL=https://grace-api.fly.dev`
 - Twilio WhatsApp sandbox webhook points at `https://grace-api.fly.dev/webhook/twilio`
 - End-to-end verified 2026-05-12 with a real WhatsApp message.
+- KB re-embedded against `gemini-embedding-001` (768-dim) — RAG returns real GLP-1 knowledge.
 
 Open follow-ups: add a Fly payment method (trial machines auto-stop after 5 min idle),
-re-embed the 428 KB rows (currently zero-vector placeholders), disable the legacy v1
+get a WhatsApp Business sender approved by Meta to drop the "Twilio Sandbox:" prefix,
+set the 5 Vercel env vars (`VITE_API_URL`, `VITE_WHATSAPP_NUMBER`, `VITE_WHATSAPP_JOIN_CODE`,
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`), disable the legacy v1
 `handle-inbound-sms` edge function once 24h of stable v2 traffic is confirmed.
 
 ---
@@ -90,11 +93,12 @@ TwilioSender → WhatsApp/SMS
 
 **Scheduler** (node-cron, in same process as API):
 - Every minute → proactive messages per user (timezone-aware)
-  - Morning at wake_time (daily)
-  - Midday Mon/Wed/Fri 11am–2pm local
-  - Evening Tue/Thu/Sun 90min before sleep_time
+  - Morning at wake_time (daily — the "at least 1/day" anchor)
+  - Midday Mon/Wed/Fri 11am–2pm local (only fires if engaged today or <1 day silent)
+  - Evening Tue/Thu/Sun 90min before sleep_time (only fires if user replied today)
   - Injection day flow (4 stages: morning_sent → done_confirmed → followup_sent → day-after)
   - Side-effect follow-up 4h after keyword detected
+- **Engagement dampener** (`userEngagedToday`, `userSilentDays` helpers): caps a silent user at 2 messages/day (morning + 1 nudge), drops to 1/day (morning only) after >1 day of no reply. Engaged users still get the full 3-message schedule.
 - Daily 3am UTC → personalization engine (low_mood_mode, midday_skip)
 
 ---
@@ -286,10 +290,27 @@ Roadmap (in progress, in this order):
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
 3. `git checkout claude/icloud-access-clarification-5hsRr`.
-4. Production is live at `https://grace-api.fly.dev`. Tail logs with `fly logs --app grace-api`.
-5. Top open items in `docs/STATUS.md § Post-cutover`: Fly payment method (machines auto-stop), KB re-embedding, disable v1 edge fn.
+4. Production is live at `https://grace-api.fly.dev` (API) and `https://grace-admin-silk.vercel.app` (web). Tail logs with `fly logs --app grace-api`.
+5. Top open items in `docs/STATUS.md § Post-cutover`: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn.
 
 ---
+
+## Web app — landing + onboarding component map
+
+| File | What it does |
+|---|---|
+| `apps/web/src/components/Logo.tsx` | Reusable logo lockup — botanical sprig SVG mark (sage + terracotta) + serif wordmark. 3 sizes (small/default/large). |
+| `apps/web/src/pages/Landing.tsx` | Sticky desktop nav + mobile header + section composition. |
+| `apps/web/src/components/landing/HeroSection.tsx` | Editorial chat mockup left, copy + CTA right. |
+| `apps/web/src/components/landing/ChatMockup.tsx` | WhatsApp-style phone-frame mockup showing real Grace exchange. |
+| `apps/web/src/components/landing/MedicationsBar.tsx` | Pill row of all supported GLP-1 meds. |
+| `apps/web/src/components/landing/QuoteSection.tsx`, `PhilosophySection.tsx`, `FeatureSpread.tsx`, `FAQSection.tsx`, `FooterCTA.tsx` | Below-fold content sections, all GLP-1-specific. |
+| `apps/web/src/pages/Onboarding.tsx` | 11-step quiz wrapper. POSTs to `/users/onboard` when `VITE_API_URL` set, falls back to Supabase edge fn otherwise. Passes `rlhfEnabled` consent through. |
+| `apps/web/src/components/onboarding/PhoneStep.tsx` | Final form: phone, SMS consent, optional RLHF consent checkbox. |
+| `apps/web/src/components/onboarding/PaymentStep.tsx` | Stripe checkout via Supabase edge fn. Needs `VITE_SUPABASE_*` env vars. |
+| `apps/web/src/components/onboarding/ConfirmationStep.tsx` | Success screen with primary `wa.me` deeplink CTA. Pre-fills `join <code>` in sandbox mode (`VITE_WHATSAPP_JOIN_CODE`), clean link in production. |
+| `apps/web/vercel.json` | SPA rewrite — every route serves `index.html`. |
+| `apps/web/src/index.css` | Design tokens. Sage primary + terracotta accent + cool gray-white background, with a fixed dual-halo body gradient (terracotta top-right, slate bottom-left). |
 
 ## Admin dashboard — component map
 
@@ -311,7 +332,8 @@ Roadmap (in progress, in this order):
 ## Known gaps / deferred
 
 - **Fly payment method**: add at https://fly.io/trial — trial machines auto-stop after 5 min idle, breaking scheduler proactive messages and adding ~10s cold-start to every incoming webhook.
-- **KB re-embedding**: the 428 rows in `embeddings` (knowledge source) currently hold zero-vector placeholders from the bulk import. RAG retrieval returns near-random results until each row is re-embedded against `gemini-embedding-001`. One-off script TBD.
+- **WhatsApp Business sender**: still on Twilio sandbox (`whatsapp:+14155238886`), which forcibly prepends "Twilio Sandbox:" to every outbound message and requires each user to text `join <code>` first. Submit a real sender via Twilio Console → Messaging → Senders → New Sender → "My own phone number". 3–10 business day Meta approval. When done: update `VITE_WHATSAPP_NUMBER` on Vercel, remove `VITE_WHATSAPP_JOIN_CODE`, update `TWILIO_WHATSAPP_FROM` Fly secret.
+- **Vercel env vars**: `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY` need to be set on the `grace-admin` Vercel project for the Stripe checkout step to work. `VITE_WHATSAPP_NUMBER` + `VITE_WHATSAPP_JOIN_CODE` light up the deeplink button on the Confirmation screen.
 - **Legacy v1 edge fn**: `handle-inbound-sms` still deployed in Supabase as a fallback. Disable after 24h of stable v2 traffic.
 - **v2 Stripe webhook**: Stripe events currently update `is_paid` via v1 Supabase function hitting the shared DB. v2 reads from same DB so it works. Only build a native v2 handler if moving off Supabase DB entirely.
 - **Admin auth upgrade**: localStorage Bearer token is fine for internal use. Upgrade to Supabase Auth roles before broad team access.

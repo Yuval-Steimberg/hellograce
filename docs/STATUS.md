@@ -25,7 +25,8 @@ Rolling source of truth. Newest entries on top.
 ### Post-cutover
 
 - [ ] Add a Fly.io payment method (https://fly.io/trial) — trial machines auto-stop after 5 min idle, breaking scheduler proactive messages and adding ~10s cold-start to every webhook.
-- [ ] Re-embed the 428 KB rows (currently zero-vector placeholders so RAG returns nothing meaningful). Run a one-off script that reads each row and writes a real `gemini-embedding-001` vector via the API.
+- [ ] Get a WhatsApp Business sender approved by Meta to drop the "Twilio Sandbox:" prefix from every outbound message. 3–10 business days. Then update `VITE_WHATSAPP_NUMBER` on Vercel and remove `VITE_WHATSAPP_JOIN_CODE`.
+- [ ] Set the 5 Vercel env vars (`VITE_API_URL`, `VITE_WHATSAPP_NUMBER`, `VITE_WHATSAPP_JOIN_CODE`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`) so the new Onboarding → WhatsApp deeplink + Stripe checkout work end-to-end.
 - [ ] Once stable, disable the v1 edge function `handle-inbound-sms` (keep as fallback for 24h).
 - [ ] Monitor logs for 24h. Watch for `webhook.ai.failed`, `rag.embed.failed`, `scheduler.tick.error`.
 
@@ -44,6 +45,38 @@ Rolling source of truth. Newest entries on top.
 ---
 
 ## Done (newest first)
+
+### 2026-05-12 (evening) — Landing redesign, scheduler dampener, KB re-embed
+
+**Landing UX overhaul** (8 commits, all on `claude/icloud-access-clarification-5hsRr-v2`):
+- New `Logo` component — botanical sprig SVG mark (sage stem + terracotta leaves) + serif wordmark. Used in nav, mobile header, footer.
+- New `ChatMockup` component — phone-frame WhatsApp-style conversation showing Grace handling Wegovy nausea + protein math. Replaces the editorial photo in the hero.
+- New `MedicationsBar` section between hero and quote, listing every supported med (Wegovy, Ozempic, Mounjaro, Zepbound, Saxenda, compounded sema/tirz).
+- Hero copy rewritten: eyebrow "For Wegovy · Ozempic · Mounjaro · Zepbound", headline "The friend who knows your medication", concrete CGP-1 subtitle, "Start your free 3-day trial" CTA.
+- `QuoteSection` rewritten: "Your doctor handed you a prescription. They didn't hand you a plan for the nausea, the plateau weeks, or the protein math. grace did."
+- `PhilosophySection`: 3 steps now name actual GLP-1 mechanics (dose week, goal weight, injection day) instead of vague "tell us about you".
+- `FAQSection`: 9 real GLP-1 questions replace the generic 8. Covers supported meds, injection-day flow, side-effect coaching, plateau diagnostics, the medical-boundary, pricing, and deletion rights.
+- Removed unsubstantiated "Trusted by 12,000+" social-proof claim.
+- `seo-schemas.ts`: dropped the fabricated `aggregateRating: 12000` (FTC + Google penalty risk), corrected trial duration 7→3 days, replaced FAQ schema with the new 9 questions, updated `featureList` + `keywords` for the real product.
+
+**Palette migration**:
+- Started as warm cream + coral, shifted to sage + cream + terracotta, then finally cool gray-white + sage + terracotta (Stripe × Notion direction). Body backdrop now: subtle terracotta halo top-right + cool slate halo bottom-left (`background-attachment: fixed`).
+
+**Onboarding flow**:
+- `ConfirmationStep` now includes a primary "Start chatting with grace on WhatsApp" deeplink. When `VITE_WHATSAPP_JOIN_CODE` is set (sandbox), the link pre-fills `join <code>` — one tap to enrol.
+- `PhoneStep` adds an optional RLHF consent checkbox plumbed through `POST /users/onboard` → `users.rlhf_enabled` column.
+- `apps/web/vercel.json` — SPA rewrite so every route serves `index.html`. Fixes 404s on `/admin/login`, `/onboarding`, etc.
+- Supabase client tolerates missing `VITE_SUPABASE_URL` so the Onboarding chunk loads even if Stripe env vars aren't set yet.
+
+**Scheduler engagement dampener** (`services/api/src/scheduler/scheduler.ts`):
+- Cap proactive messages at 2/day for users who didn't reply today; 1/day floor (morning only) once silent for >1 day.
+- Engaged users (replied since today's morning) still get the full morning + midday + evening schedule.
+- Two new helpers: `userEngagedToday`, `userSilentDays`.
+
+**KB re-embedded** ✅:
+- New script `services/api/scripts/reembed-knowledge.ts` (auto-loads `.env`, resumable via zero-vector detection).
+- All 428 knowledge rows re-embedded against `gemini-embedding-001` (768-dim via REST `outputDimensionality`). Took ~4.5 min at 1.6 rows/s.
+- RAG now returns real GLP-1 content for queries like "protein on Wegovy", "nausea injection day", etc.
 
 ### 2026-05-12 — Phase 5: Production cutover
 

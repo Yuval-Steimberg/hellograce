@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { ChevronRight } from "lucide-react";
+import Logo from "@/components/Logo";
 import HeroSection from "@/components/landing/HeroSection";
 import MedicationsBar from "@/components/landing/MedicationsBar";
 import QuoteSection from "@/components/landing/QuoteSection";
@@ -38,7 +39,7 @@ const Landing = () => {
         role="banner"
       >
         <div className="px-10 flex items-center justify-between max-w-[1440px] mx-auto">
-          <span className="font-serif text-2xl text-foreground tracking-tight">grace</span>
+          <Logo size="default" />
           <div className="flex items-center gap-6">
             <button
               onClick={() => navigate("/settings")}
@@ -60,7 +61,7 @@ const Landing = () => {
 
       {/* Mobile header — static */}
       <div className="lg:hidden px-5 sm:px-8 py-5 flex items-center justify-between" role="banner">
-        <span className="font-serif text-2xl text-foreground tracking-tight">grace</span>
+        <Logo size="default" />
         <button
           onClick={() => navigate("/settings")}
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"

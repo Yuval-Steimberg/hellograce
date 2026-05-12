@@ -35,6 +35,7 @@ const Onboarding = () => {
   const [firstName, setFirstName] = useState("");
   const [phone, setPhone] = useState("");
   const [smsConsent, setSmsConsent] = useState(false);
+  const [rlhfConsent, setRlhfConsent] = useState(false);
   const [medication, setMedication] = useState("");
   const [medicationFrequency, setMedicationFrequency] = useState("weekly");
   const [injectionDay, setInjectionDay] = useState("");
@@ -98,6 +99,7 @@ const Onboarding = () => {
         timezone,
         checkinCountPerDay,
         checkinDaysInterval,
+        rlhfEnabled: rlhfConsent,
       };
 
       let resultUserId: string | undefined;
@@ -202,8 +204,10 @@ const Onboarding = () => {
           <PhoneStep
             phone={phone}
             smsConsent={smsConsent}
+            rlhfConsent={rlhfConsent}
             onChangePhone={setPhone}
             onChangeConsent={setSmsConsent}
+            onChangeRlhfConsent={setRlhfConsent}
             onNext={handleComplete}
             saving={saving}
           />

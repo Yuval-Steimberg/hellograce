@@ -7,6 +7,9 @@ interface ConfirmationStepProps {
   phone: string;
 }
 
+const WHATSAPP_NUMBER = (import.meta.env.VITE_WHATSAPP_NUMBER as string | undefined) ?? "";
+const WHATSAPP_JOIN_CODE = (import.meta.env.VITE_WHATSAPP_JOIN_CODE as string | undefined) ?? "";
+
 const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
   const navigate = useNavigate();
 
@@ -14,6 +17,13 @@ const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
   const displayPhone = phone.length > 4
     ? phone.slice(0, phone.length - 4).replace(/./g, "•") + phone.slice(-4)
     : phone;
+
+  const sandboxMode = WHATSAPP_JOIN_CODE.length > 0;
+  const whatsappHref = WHATSAPP_NUMBER
+    ? `https://wa.me/${WHATSAPP_NUMBER.replace(/\D/g, "")}${
+        sandboxMode ? `?text=${encodeURIComponent(`join ${WHATSAPP_JOIN_CODE}`)}` : ""
+      }`
+    : "";
 
   return (
     <>
@@ -66,7 +76,23 @@ const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
           </motion.div>
         )}
 
-        {/* SMS CTA Card */}
+        {/* WhatsApp CTA — primary action */}
+        {whatsappHref && (
+          <motion.a
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.55 }}
+            href={whatsappHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="grace-btn w-full flex items-center justify-center gap-2 text-base py-3 mb-4"
+          >
+            <MessageCircle className="h-5 w-5" />
+            Start chatting with grace on WhatsApp
+          </motion.a>
+        )}
+
+        {/* What to expect card */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -78,11 +104,13 @@ const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
               <MessageCircle className="h-4 w-4 text-primary" />
             </div>
             <span className="text-sm font-medium text-foreground">
-              Check your SMS
+              {sandboxMode ? "One quick step" : "Check your WhatsApp"}
             </span>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            Look for a welcome text from grace. That's where we'll check in with you — no app needed.
+            {sandboxMode
+              ? `Tap the button above to open WhatsApp — it'll pre-fill "join ${WHATSAPP_JOIN_CODE}". Send it and grace will reply.`
+              : "Look for a welcome message from grace. That's where she'll check in with you — no app needed."}
           </p>
         </motion.div>
       </div>

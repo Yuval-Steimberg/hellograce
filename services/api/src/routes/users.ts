@@ -21,6 +21,7 @@ const OnboardSchema = z.object({
   timezone: z.string().trim().max(100).optional().default('America/New_York'),
   checkinCountPerDay: z.number().int().min(1).max(5).optional().default(1),
   checkinDaysInterval: z.number().int().min(1).max(14).optional().default(1),
+  rlhfEnabled: z.boolean().optional().default(false),
 });
 
 export interface UserRouteDeps {
@@ -70,6 +71,7 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       timezone: b.timezone,
       checkin_count_per_day: b.checkinCountPerDay,
       checkin_days_interval: b.checkinDaysInterval,
+      rlhf_enabled: b.rlhfEnabled,
       active: true,
       trial_start: new Date(),
     });

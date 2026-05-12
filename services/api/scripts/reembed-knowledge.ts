@@ -13,9 +13,17 @@
  * Resumable: by default skips rows whose stored embedding magnitude is > 0
  * (i.e. already real), so reruns only fill in what's missing or failed.
  */
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { loadEnv } from '../src/config/env.js';
 import { createPool } from '../src/db/pool.js';
 import { GeminiEmbedder } from '../src/rag/gemini-embedder.js';
+
+// Auto-load services/api/.env so callers don't need --env-file=.env.
+const envPath = resolve(process.cwd(), '.env');
+if (existsSync(envPath)) {
+  process.loadEnvFile(envPath);
+}
 
 const args = new Set(process.argv.slice(2));
 const limitArgIdx = process.argv.indexOf('--limit');

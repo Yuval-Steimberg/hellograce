@@ -8,6 +8,7 @@ import QuoteSection from "@/components/landing/QuoteSection";
 import PhilosophySection from "@/components/landing/PhilosophySection";
 import FeatureSpread from "@/components/landing/FeatureSpread";
 import AnimatedBackground from "@/components/landing/AnimatedBackground";
+import ScrollProgress from "@/components/landing/ScrollProgress";
 
 // Lazy load below-fold sections
 const TestimonialsSection = lazy(() => import("@/components/landing/TestimonialsSection"));
@@ -30,6 +31,7 @@ const Landing = () => {
 
   return (
     <div className="relative isolate min-h-screen text-foreground font-sans">
+      <ScrollProgress />
       <AnimatedBackground />
       {/* Sticky Nav — desktop only */}
       <header

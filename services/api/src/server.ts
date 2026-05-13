@@ -64,6 +64,8 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     flags: { ragEnabled: env.RAG_ENABLED ?? true, toolsEnabled: env.TOOLS_ENABLED ?? true },
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
+    twilioSid: env.TWILIO_ACCOUNT_SID,
+    twilioToken: env.TWILIO_AUTH_TOKEN,
     turnQueue,
     systemPrompt: await loadActivePrompt(),
   });

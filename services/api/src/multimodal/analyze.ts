@@ -24,9 +24,9 @@ export async function analyzeMedia(
       return r.response.text().trim();
     }
     if (first.kind === 'audio') {
-      const prompt = 'Transcribe this short voice note. Output only the transcription, no preamble.';
+      const prompt = 'Transcribe this voice note exactly as spoken. Output only the spoken words, no preamble, no quotes.';
       const r = await model.generateContent([{ inlineData }, { text: prompt }]);
-      return `voice transcript: ${r.response.text().trim()}`;
+      return r.response.text().trim();
     }
     return null;
   } catch (err) {

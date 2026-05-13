@@ -45,6 +45,8 @@ export interface AIServiceDeps {
   flags: { ragEnabled: boolean; toolsEnabled: boolean };
   geminiApiKey: string;
   geminiModel: string;
+  twilioSid?: string;
+  twilioToken?: string;
   turnQueue?: Queue<TurnPersistJob>;
   systemPrompt?: string;
 }
@@ -85,12 +87,24 @@ export class AIService {
     // Multimodal: if the message has media, fold a textual description into the prompt.
     let augmentedText = input.text;
     if (input.media.length > 0) {
+      const twilioAuth = this.deps.twilioSid && this.deps.twilioToken
+        ? { sid: this.deps.twilioSid, token: this.deps.twilioToken }
+        : undefined;
       const description = await analyzeMedia(input.media, {
         apiKey: this.deps.geminiApiKey,
         model: this.deps.geminiModel,
         logger,
+        twilio: twilioAuth,
       });
-      if (description) augmentedText = `${input.text}\n\n[media: ${description}]`.trim();
+      if (description) {
+        const isAudio = input.media[0]?.kind === 'audio';
+        if (isAudio && !input.text) {
+          // Voice note with no text body — transcript IS the user's message.
+          augmentedText = description;
+        } else {
+          augmentedText = `${input.text}\n\n[media: ${description}]`.trim();
+        }
+      }
     }
 
     const conversationId = await memory.ensureConversation(input.userId);

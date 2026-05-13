@@ -163,4 +163,45 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /* Admin shell — deep slate + indigo palette, scoped so landing page is unaffected */
+  .admin-shell {
+    --background: 222 47% 6%;
+    --foreground: 214 32% 91%;
+    --card: 217 33% 11%;
+    --card-foreground: 214 32% 91%;
+    --popover: 217 33% 11%;
+    --popover-foreground: 214 32% 91%;
+    --primary: 239 84% 67%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 214 32% 78%;
+    --muted: 215 25% 14%;
+    --muted-foreground: 215 16% 50%;
+    --accent: 239 84% 67%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 239 84% 67%;
+  }
+
+  .admin-shell *::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  .admin-shell *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .admin-shell *::-webkit-scrollbar-thumb {
+    background: hsl(215 28% 25%);
+    border-radius: 2px;
+  }
+
+  .admin-shell *::-webkit-scrollbar-thumb:hover {
+    background: hsl(215 28% 35%);
+  }
 }

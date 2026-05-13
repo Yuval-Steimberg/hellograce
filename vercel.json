@@ -1,7 +1,7 @@
 {
-  "buildCommand": "pnpm --filter @grace/web build",
+  "buildCommand": "cd apps/web && npm install --no-audit --no-fund && npm run build",
   "outputDirectory": "apps/web/dist",
-  "installCommand": "npm install -g pnpm@10.4.1 && pnpm install --filter @grace/web... --no-frozen-lockfile --ignore-scripts",
+  "installCommand": "echo 'install handled by build command'",
   "framework": null,
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }

@@ -40,18 +40,18 @@ NOTES: [protein adequacy note — e.g. "Solid protein hit" or "Light on protein,
 
 If BODY: provide a warm, encouraging GLP-1-aware analysis.
 IMAGE_TYPE: body
-OBSERVATIONS: [2-3 specific kind, honest observations about visible changes — midsection, face, arms, posture, silhouette]
-MUSCLE_NOTE: [1 sentence on visible muscle tone/preservation — critical for GLP-1 users]
-ENCOURAGEMENT: [1-2 warm personal sentences acknowledging their journey]
+OBSERVATIONS: [2-3 specific kind, honest observations about VISIBLE POSITIVE CHANGES only — midsection, face, arms, posture, silhouette. Do NOT mention pain, injuries, posture problems, discomfort, or any medical conditions. Do NOT invent anything you cannot clearly see.]
+MUSCLE_NOTE: [1 sentence on visible muscle tone/preservation — critical for GLP-1 users. Never comment on medical concerns.]
+ENCOURAGEMENT: [1-2 warm personal sentences acknowledging their weight-loss journey and progress.]
 
 If OTHER:
 IMAGE_TYPE: other
 DESCRIPTION: [1 short sentence describing what the image shows]
 
 Rules:
-- For FOOD: count individual pieces, estimate weight from visual cues (plate/bowl size, density), use USDA values
-- For BODY: be kind and supportive, never give medical diagnoses or body-fat percentage estimates, focus on health and strength
-- Never invent food items not in the photo`,
+- For FOOD: count individual pieces, estimate weight from visual cues (plate/bowl size, density), use USDA values. Never invent food items not visible.
+- For BODY: be kind and supportive, focus ONLY on visible weight-loss progress and muscle preservation. NEVER diagnose pain, injury, posture problems, or any medical condition. NEVER invent symptoms. NEVER mention body fat percentage. If the photo shows a person from the back, simply describe midsection/silhouette changes positively.
+- For OTHER: describe only what you can clearly see, no speculation.`,
         },
       ]);
       return r.response.text().trim();
@@ -75,7 +75,10 @@ async function transcribeAudioViaFileApi(
   modelName: string,
   logger: Logger,
 ): Promise<string | null> {
-  const ext = contentType.includes('ogg') ? 'ogg' : contentType.includes('mp4') ? 'mp4' : contentType.includes('webm') ? 'webm' : 'mp3';
+  // Strip codec parameters (e.g. "audio/ogg; codecs=opus" → "audio/ogg") so
+  // Gemini File API accepts the MIME type without error.
+  const baseMime = contentType.split(';')[0]!.trim();
+  const ext = baseMime.includes('ogg') ? 'ogg' : baseMime.includes('mp4') ? 'mp4' : baseMime.includes('webm') ? 'webm' : baseMime.includes('mpeg') ? 'mp3' : 'ogg';
   const tempPath = join(tmpdir(), `grace-audio-${Date.now()}.${ext}`);
 
   try {
@@ -83,14 +86,14 @@ async function transcribeAudioViaFileApi(
 
     const fileManager = new GoogleAIFileManager(apiKey);
     const upload = await fileManager.uploadFile(tempPath, {
-      mimeType: contentType,
+      mimeType: baseMime,
       displayName: 'voice-note',
     });
 
     const client = new GoogleGenerativeAI(apiKey);
     const model = client.getGenerativeModel({ model: modelName });
     const r = await model.generateContent([
-      { fileData: { mimeType: contentType, fileUri: upload.file.uri } },
+      { fileData: { mimeType: baseMime, fileUri: upload.file.uri } },
       { text: 'Transcribe this voice note exactly as spoken. Output only the spoken words, no preamble, no quotes.' },
     ]);
 

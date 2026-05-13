@@ -118,7 +118,7 @@ export class AIService {
         if (description.includes('IMAGE_TYPE: food')) {
           augmentedText = `${userIntent}The user sent a meal photo. Detailed nutrition analysis:\n\n${description}\n\n[Use the log_food tool with the full item list. Then reply warmly with the protein total, calorie total, and a brief comment tied to their personal protein target. If the analysis CONFIDENCE is "low", gently mention the estimate is rough and offer to refine if they tell you portion sizes. If "medium", you can casually note "rough estimate" once. If "high", just give the numbers confidently. Never dwell on uncertainty — one short mention max.]`;
         } else if (description.includes('IMAGE_TYPE: body')) {
-          augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 journey and encourage them. Do NOT call any logging tools.]`;
+          augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 weight-loss journey and encourage them. CRITICAL: Do NOT mention pain, discomfort, injuries, or any medical conditions — this is a progress selfie, not a medical photo. Do NOT invent symptoms or anything not in the analysis above. Do NOT call any logging tools.]`;
         } else {
           augmentedText = `${userIntent}The user sent an image. ${description}`;
         }

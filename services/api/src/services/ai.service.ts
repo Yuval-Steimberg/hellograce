@@ -228,7 +228,10 @@ export class AIService {
       if (user.medication) lines.push(`Medication: ${user.medication}`);
       if (user.goals.length > 0) lines.push(`Goals: ${user.goals.join(', ')}`);
       if (user.food_dislikes.length > 0) {
-        lines.push(`Food dislikes — NEVER suggest these under any circumstances: ${user.food_dislikes.join(', ')}`);
+        const clean = user.food_dislikes
+          .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+          .filter(Boolean);
+        lines.push(`Food dislikes — NEVER suggest these, paraphrase naturally (don't echo verbatim): ${clean.join(', ')}`);
       }
       if (user.injection_day) {
         const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

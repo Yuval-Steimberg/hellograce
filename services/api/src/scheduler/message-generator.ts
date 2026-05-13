@@ -119,7 +119,12 @@ export class MessageGenerator {
     if (user.first_name) lines.push(`Name: ${user.first_name}`);
     if (user.medication) lines.push(`Medication: ${user.medication}`);
     if (user.goals.length > 0) lines.push(`Goals: ${user.goals.join(', ')}`);
-    if (user.food_dislikes.length > 0) lines.push(`Food dislikes (NEVER suggest these): ${user.food_dislikes.join(', ')}`);
+    if (user.food_dislikes.length > 0) {
+      const clean = user.food_dislikes
+        .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+        .filter(Boolean);
+      lines.push(`Food dislikes (paraphrase naturally — NEVER quote verbatim): ${clean.join(', ')}`);
+    }
     if (user.current_weight && user.goal_weight) {
       lines.push(`Weight: ${user.current_weight} lbs (goal: ${user.goal_weight} lbs, gap: ${Math.abs(user.current_weight - user.goal_weight).toFixed(0)} lbs)`);
     }
@@ -132,8 +137,11 @@ export class MessageGenerator {
   private buildPrompt(type: MsgType, user: GraceUser, opts?: GenerateOpts): string {
     const name = user.first_name ?? 'the user';
     const goal = user.goals[0] ?? 'general wellness';
-    const dislikes = user.food_dislikes.length > 0
-      ? `NEVER suggest: ${user.food_dislikes.join(', ')}.`
+    const cleanDislikes = user.food_dislikes
+      .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+      .filter(Boolean);
+    const dislikes = cleanDislikes.length > 0
+      ? `NEVER suggest these foods (paraphrase naturally, don't quote raw text): ${cleanDislikes.join(', ')}.`
       : '';
 
     const RULES = `RULES — non-negotiable:
@@ -180,7 +188,7 @@ export class MessageGenerator {
       side_effect_nausea: `${base}Context: they reported nausea earlier. Soft follow-up only — no question stack. Offer one practical tip in passing.`,
       side_effect_fatigue: `${base}Context: they reported fatigue. Validate it's real, suggest one gentle helper. No quiz.`,
       side_effect_constipation: `${base}Context: they reported constipation. Soft check-in with one tip woven in. No question barrage.`,
-      welcome: `${base}Context: their very first message. Welcome them warmly. Name them, mention their medication (${user.medication ?? 'GLP-1'}) and their main goal (${goal}). Make clear you'll be light-touch, not overwhelming. ONE warm sentence is enough.`,
+      welcome: `${base}Context: their very first message. Welcome them warmly. Use their first name ONCE. Mention their medication (${user.medication ?? 'GLP-1'}) and main goal (${goal}). ${dislikes ? `If you reference food dislikes, paraphrase naturally — e.g. "I'll keep [item] off the menu" or "I remember you don't like X". NEVER echo their dislike text verbatim (do not write "you're not a fan of i don't like rice" — that's broken English).` : ''} Make clear you'll be light-touch. ONE or TWO short sentences max. Do NOT send a second follow-up message.`,
     };
 
     return instructions[type] + (opts?.extra ? `\n\nExtra context: ${opts.extra}` : '');

@@ -62,6 +62,9 @@ export class Scheduler {
     const minute = now.getMinutes();
     const todayStr = toDateStr(now);
 
+    // ── Quiet hours: never send proactive messages between 21:00 and 07:00 local
+    if (hour >= 21 || hour < 7) return;
+
     // ── Injection day flow (runs any day matching injection_day)
     if (user.injection_day && user.injection_day === DAYS[dayOfWeek]) {
       await this.handleInjectionFlow(user, hour);

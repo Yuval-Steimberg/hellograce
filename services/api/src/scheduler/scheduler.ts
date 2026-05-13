@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import type { Logger } from 'pino';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
-import type { MessageGenerator } from './message-generator.js';
+import type { MessageGenerator, GenerateOpts } from './message-generator.js';
 import type { PromptOptimizer } from './prompt-optimizer.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
@@ -98,7 +98,7 @@ export class Scheduler {
       hour <= wakeHour + 1 &&
       (!user.last_morning_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) !== todayStr)
     ) {
-      await this.sendAndRecord(user, 'morning');
+      await this.sendAndRecord(user, 'morning', { isWednesday: dayOfWeek === 3 });
       await this.deps.users.update(user.phone, { last_morning_sent_at: new Date() });
       return;
     }
@@ -141,7 +141,7 @@ export class Scheduler {
       engagedToday
     ) {
       if (!user.last_evening_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_evening_sent_at))) !== todayStr) {
-        await this.sendAndRecord(user, 'evening');
+        await this.sendAndRecord(user, 'evening', { lowMoodMode: user.low_mood_mode ?? false });
         await this.deps.users.update(user.phone, { last_evening_sent_at: new Date() });
       }
     }
@@ -185,9 +185,9 @@ export class Scheduler {
     }
   }
 
-  private async sendAndRecord(user: GraceUser, type: Parameters<MessageGenerator['generate']>[0]): Promise<void> {
+  private async sendAndRecord(user: GraceUser, type: Parameters<MessageGenerator['generate']>[0], opts?: GenerateOpts): Promise<void> {
     try {
-      const message = await this.deps.generator.generate(type, user);
+      const message = await this.deps.generator.generate(type, user, opts);
       await this.deps.sender.send({ to: user.phone, body: message, channel: 'whatsapp' });
       await this.deps.users.recordCheckIn({
         userId: user.phone,

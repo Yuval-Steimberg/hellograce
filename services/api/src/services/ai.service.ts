@@ -224,23 +224,43 @@ export class AIService {
 
     const lines: string[] = [];
     if (user) {
-      if (user.first_name) lines.push(`User's name: ${user.first_name}`);
+      if (user.first_name) lines.push(`Name: ${user.first_name}`);
       if (user.medication) lines.push(`Medication: ${user.medication}`);
       if (user.goals.length > 0) lines.push(`Goals: ${user.goals.join(', ')}`);
-      if (user.food_dislikes.length > 0) lines.push(`Food they dislike: ${user.food_dislikes.join(', ')}`);
-      if (user.injection_day) lines.push(`Injection day: ${user.injection_day}`);
-      if (user.current_weight) lines.push(`Current weight: ${user.current_weight} lbs`);
-      if (user.goal_weight) lines.push(`Goal weight: ${user.goal_weight} lbs`);
+      if (user.food_dislikes.length > 0) {
+        lines.push(`Food dislikes — NEVER suggest these under any circumstances: ${user.food_dislikes.join(', ')}`);
+      }
+      if (user.injection_day) {
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const todayIdx = new Date().getDay();
+        const injIdx = days.indexOf(user.injection_day);
+        let injStatus = user.injection_day;
+        if (injIdx !== -1) {
+          let diff = injIdx - todayIdx;
+          if (diff < 0) diff += 7;
+          if (diff === 0) injStatus = `TODAY (${user.injection_day}) — injection day`;
+          else if (diff === 1) injStatus = `TOMORROW (${user.injection_day}) — injection day is tomorrow`;
+          else if (diff === 6) injStatus = `YESTERDAY (${user.injection_day}) — injection was yesterday`;
+          else injStatus = `in ${diff} days (${user.injection_day})`;
+        }
+        lines.push(`INJECTION DAY STATUS: ${injStatus}`);
+      }
+      if (user.current_weight && user.goal_weight) {
+        const gap = Math.abs(user.current_weight - user.goal_weight);
+        lines.push(`Weight: ${user.current_weight} lbs → goal ${user.goal_weight} lbs (${gap.toFixed(0)} lbs to go)`);
+      } else if (user.current_weight) {
+        lines.push(`Current weight: ${user.current_weight} lbs`);
+      }
       if (user.height_cm) lines.push(`Height: ${user.height_cm} cm`);
       if (user.age) lines.push(`Age: ${user.age}`);
       if (user.primary_goal) lines.push(`Primary goal: ${user.primary_goal.replace('_', ' ')}`);
       if (user.protein_goal_grams) {
-        lines.push(`Personal daily protein target: ${user.protein_goal_grams}g (use THIS number — not a generic 80g — when discussing protein goals).`);
+        lines.push(`Personal daily protein target: ${user.protein_goal_grams}g — use THIS number, not a generic 80g.`);
       }
-      if (user.grace_notes) lines.push(`Notes: ${user.grace_notes}`);
-      if (user.low_mood_mode) lines.push('User has been in low-mood mode recently — be extra gentle and encouraging.');
-      if (user.protein_focus_boost) lines.push('User struggles with protein intake — nudge toward protein-rich options.');
-      if (user.hydration_struggle) lines.push('User struggles with hydration — gently remind about water when relevant.');
+      if (user.grace_notes) lines.push(`Grace's notes about this user: ${user.grace_notes}`);
+      if (user.low_mood_mode) lines.push('LOW MOOD MODE: user has been struggling recently — lead with encouragement and warmth, no reflection prompts.');
+      if (user.protein_focus_boost) lines.push('User struggles with protein intake — nudge toward protein-rich options when relevant.');
+      if (user.hydration_struggle) lines.push('User struggles with hydration — gently mention water when relevant.');
     }
 
     if (isNew) lines.push('This is the user\'s FIRST message. Welcome them warmly and personally.');

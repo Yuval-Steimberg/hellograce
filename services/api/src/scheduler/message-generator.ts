@@ -16,14 +16,18 @@ const GOAL_MODE_MAP: Record<string, string> = {
 type MsgType = 'morning' | 'midday' | 'evening' | 'injection_morning' | 'injection_followup' |
   'injection_dayafter' | 'side_effect_nausea' | 'side_effect_fatigue' | 'side_effect_constipation' | 'welcome';
 
-/**
- * Fallback proactive messages. Tone: lightweight, supportive, NEVER interrogative.
- * One thought per message. Either no question, or one tiny optional one.
- * The user can always reply if they want to, but they shouldn't feel quizzed.
- */
-const FALLBACKS: Record<MsgType, (user: GraceUser) => string> = {
-  morning: (u) => {
+export interface GenerateOpts {
+  extra?: string;
+  isWednesday?: boolean;  // forces mood check regardless of goals
+  lowMoodMode?: boolean;  // evening → encouragement over reflection
+}
+
+const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => string> = {
+  morning: (u, opts) => {
     const name = u.first_name ?? 'there';
+    if (opts?.isWednesday) {
+      return `Morning ${name} 🌿 Mid-week check — how are you actually feeling today? No wrong answers.`;
+    }
     const goal = u.goals[0];
     const mode = goal ? (GOAL_MODE_MAP[goal] ?? 'protein') : 'protein';
     if (mode === 'protein') {
@@ -33,14 +37,24 @@ const FALLBACKS: Record<MsgType, (user: GraceUser) => string> = {
     if (mode === 'hydration') return `Morning ${name} 🌿 Pouring a glass of water this morning sets the whole day up nicely.`;
     if (mode === 'side_effects') return `Morning ${name} 🌿 Take it easy on yourself today. I'm here if anything feels off.`;
     if (mode === 'fiber') return `Morning ${name} 🌿 A little fiber early (oats, berries, chia) makes the rest of the day kinder to your gut.`;
+    if (mode === 'connection') return `Morning ${name} 🌿 Just wanted to check in — you're not doing this alone.`;
+    if (mode === 'habits') return `Morning ${name} 🌿 One small thing today. That's all it takes.`;
+    if (mode === 'muscle') return `Morning ${name} 🌿 Protecting muscle on ${u.medication ?? 'GLP-1'} — even a bit of protein early helps a lot.`;
     return `Morning ${name} 🌿 Hope today's a soft one. I'm here whenever you want to chat.`;
   },
   midday: (u) => {
     const name = u.first_name ?? 'there';
     return `Hey ${name} — quick midday hello. No pressure to reply, just rooting for you over here 🤍`;
   },
-  evening: (u) => {
+  evening: (u, opts) => {
     const name = u.first_name ?? 'there';
+    if (opts?.lowMoodMode) {
+      return `Hey ${name} — just thinking of you tonight. You're doing something genuinely hard, and it counts even on the quiet days 🤍`;
+    }
+    if (u.current_weight && u.goal_weight) {
+      const diff = Math.abs(u.current_weight - u.goal_weight);
+      return `Wrapping up, ${name}? You're ${diff.toFixed(0)} lbs from your goal — every consistent day is moving the needle 🌙`;
+    }
     return `Wrapping the day, ${name}? Hope it had a good moment in it somewhere. Rest well 🌙`;
   },
   injection_morning: (u) => {
@@ -78,11 +92,11 @@ const FALLBACKS: Record<MsgType, (user: GraceUser) => string> = {
 export class MessageGenerator {
   constructor(private llm: LLMProvider) {}
 
-  async generate(type: MsgType, user: GraceUser, extra?: string): Promise<string> {
-    const fallback = FALLBACKS[type](user);
+  async generate(type: MsgType, user: GraceUser, opts?: GenerateOpts): Promise<string> {
+    const fallback = FALLBACKS[type](user, opts);
     try {
       const userCtx = this.buildUserCtx(user);
-      const prompt = this.buildPrompt(type, user, extra);
+      const prompt = this.buildPrompt(type, user, opts);
 
       const resp = await this.llm.generate({
         messages: [
@@ -105,21 +119,23 @@ export class MessageGenerator {
     if (user.first_name) lines.push(`Name: ${user.first_name}`);
     if (user.medication) lines.push(`Medication: ${user.medication}`);
     if (user.goals.length > 0) lines.push(`Goals: ${user.goals.join(', ')}`);
-    if (user.food_dislikes.length > 0) lines.push(`Food dislikes: ${user.food_dislikes.join(', ')}`);
+    if (user.food_dislikes.length > 0) lines.push(`Food dislikes (NEVER suggest these): ${user.food_dislikes.join(', ')}`);
     if (user.current_weight && user.goal_weight) {
-      lines.push(`Weight: ${user.current_weight} lbs (goal: ${user.goal_weight} lbs)`);
+      lines.push(`Weight: ${user.current_weight} lbs (goal: ${user.goal_weight} lbs, gap: ${Math.abs(user.current_weight - user.goal_weight).toFixed(0)} lbs)`);
     }
     if (user.protein_goal_grams) {
-      lines.push(`Personal daily protein target: ${user.protein_goal_grams}g`);
+      lines.push(`Personal daily protein target: ${user.protein_goal_grams}g — use THIS, not 80g`);
     }
     return lines.length > 0 ? `User context:\n${lines.join('\n')}` : '';
   }
 
-  private buildPrompt(type: MsgType, user: GraceUser, extra?: string): string {
+  private buildPrompt(type: MsgType, user: GraceUser, opts?: GenerateOpts): string {
     const name = user.first_name ?? 'the user';
     const goal = user.goals[0] ?? 'general wellness';
+    const dislikes = user.food_dislikes.length > 0
+      ? `NEVER suggest: ${user.food_dislikes.join(', ')}.`
+      : '';
 
-    // Universal pacing rules — applied to every proactive message.
     const RULES = `RULES — non-negotiable:
 - 1 sentence is best. 2 max. NEVER more.
 - ZERO questions ideal. ONE tiny optional question max. NEVER ask multiple things.
@@ -129,10 +145,35 @@ export class MessageGenerator {
 
     const base = `Generate a single short SMS for ${name}.\n${RULES}\n\n`;
 
+    // Wednesday morning: mood check overrides all goal-based routing
+    if (type === 'morning' && opts?.isWednesday) {
+      return `${base}Context: it's Wednesday — today is always a gentle mood check, regardless of goals. Ask softly how they're feeling mid-week. One warm, open question. No food/protein talk today.`;
+    }
+
     const instructions: Record<MsgType, string> = {
-      morning: `${base}Context: it's their gentle morning hello. ${user.protein_goal_grams ? `Their personal protein target is ${user.protein_goal_grams}g.` : ''} Make it feel like a soft nudge from a friend, not a coach. No questions.`,
-      midday: `${base}Context: a brief midday check-in. NO questions. Just a soft "thinking of you" type message. They can reply if they want.`,
-      evening: `${base}Context: wind-down before sleep. Warm goodnight tone. Optional ONE-WORD-answer question max (or none at all).`,
+      morning: (() => {
+        const mode = user.goals[0] ? (GOAL_MODE_MAP[user.goals[0]] ?? 'protein') : 'protein';
+        const modeHint = {
+          protein: `nudge them toward getting protein early. Their target is ${user.protein_goal_grams ?? 80}g.`,
+          hydration: 'remind them to start hydrated. One glass of water sets the day.',
+          side_effects: 'check in gently about how they\'re feeling. Be soft, no questions required.',
+          fiber: 'mention one easy fiber option for morning (oats, berries, chia). Keep it light.',
+          connection: 'just let them know they\'re not alone in this. Warm presence, nothing more.',
+          habits: 'acknowledge one small intention for the day. Very gentle.',
+          muscle: `remind them that protein early protects muscle on ${user.medication ?? 'GLP-1'}. Target: ${user.protein_goal_grams ?? 80}g.`,
+        }[mode] ?? 'say good morning warmly.';
+        return `${base}Context: gentle morning hello. Today's focus: ${modeHint} No questions.`;
+      })(),
+      midday: `${base}Context: midday nudge (Mon/Wed/Fri). Keep it brief — a soft "thinking of you." ${dislikes} If you mention food, it must be something practical and filtered by their dislikes. NO questions.`,
+      evening: (() => {
+        const weightCtx = user.current_weight && user.goal_weight
+          ? `They're ${Math.abs(user.current_weight - user.goal_weight).toFixed(0)} lbs from their goal (currently ${user.current_weight} lbs, aiming for ${user.goal_weight} lbs). Gently acknowledge progress if it feels natural.`
+          : '';
+        const moodCtx = opts?.lowMoodMode
+          ? 'Their recent mood data shows they\'ve been struggling. Lead with encouragement and warmth — no reflection prompts, no "how did today go?". Just presence.'
+          : 'Soft wind-down tone. Optional one-word-answer question max, or none.';
+        return `${base}Context: evening wind-down (Tue/Thu/Sun). ${weightCtx} ${moodCtx} ${dislikes} If suggesting evening food, filter by dislikes.`;
+      })(),
       injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}. Tell them to reply "done" when injected. No questions about feelings — that comes later.`,
       injection_followup: `${base}Context: ~3 hours after their shot. Just check in softly — no interrogation. One brief opening for them to share if they want.`,
       injection_dayafter: `${base}Context: morning after injection. Acknowledge that day-after can be tough, be gentle. No checklist questions.`,
@@ -142,6 +183,6 @@ export class MessageGenerator {
       welcome: `${base}Context: their very first message. Welcome them warmly. Name them, mention their medication (${user.medication ?? 'GLP-1'}) and their main goal (${goal}). Make clear you'll be light-touch, not overwhelming. ONE warm sentence is enough.`,
     };
 
-    return instructions[type] + (extra ? `\n\nExtra context: ${extra}` : '');
+    return instructions[type] + (opts?.extra ? `\n\nExtra context: ${opts.extra}` : '');
   }
 }

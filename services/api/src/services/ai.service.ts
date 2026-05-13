@@ -81,43 +81,51 @@ export class AIService {
       };
     }
 
-    // Load user profile for personalisation.
-    const user = await users.getById(input.userId).catch(() => null);
+    // Fire all independent I/O in parallel: user profile, conversation, history, tool settings,
+    // and media analysis. RAG retrieval needs augmentedText so it runs after media completes.
+    const twilioAuth = this.deps.twilioSid && this.deps.twilioToken
+      ? { sid: this.deps.twilioSid, token: this.deps.twilioToken }
+      : undefined;
 
-    // Multimodal: if the message has media, fold a textual description into the prompt.
+    const mediaPromise: Promise<string | null> = input.media.length > 0
+      ? analyzeMedia(input.media, {
+          apiKey: this.deps.geminiApiKey,
+          model: this.deps.geminiModel,
+          logger,
+          twilio: twilioAuth,
+        })
+      : Promise.resolve(null);
+
+    const [user, conversationId, isNew, history, toolSettings, description] = await Promise.all([
+      users.getById(input.userId).catch(() => null),
+      memory.ensureConversation(input.userId),
+      users.isNewUser(input.userId).catch(() => false),
+      memory.getRecentTurns(input.userId, 12),
+      flags.toolsEnabled ? this.loadToolSettings() : Promise.resolve({} as Record<string, boolean>),
+      mediaPromise,
+    ]);
+
+    // Fold media description into the prompt (only after Promise.all resolves).
     let augmentedText = input.text;
-    if (input.media.length > 0) {
-      const twilioAuth = this.deps.twilioSid && this.deps.twilioToken
-        ? { sid: this.deps.twilioSid, token: this.deps.twilioToken }
-        : undefined;
-      const description = await analyzeMedia(input.media, {
-        apiKey: this.deps.geminiApiKey,
-        model: this.deps.geminiModel,
-        logger,
-        twilio: twilioAuth,
-      });
-      if (description) {
-        const kind = input.media[0]?.kind;
-        if (kind === 'audio' && !input.text) {
-          augmentedText = description;
-        } else if (kind === 'image') {
-          const userIntent = input.text ? `The user said: "${input.text}"\n\n` : '';
-          if (description.includes('IMAGE_TYPE: food')) {
-            augmentedText = `${userIntent}The user sent a meal photo. Detailed nutrition analysis:\n\n${description}\n\n[Use the log_food tool to log this meal with the full item list and quantities. Then tell the user the protein total, calorie total, and whether it meets their daily protein goal.]`;
-          } else if (description.includes('IMAGE_TYPE: body')) {
-            augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 journey and encourage them. Do NOT call any logging tools.]`;
-          } else {
-            augmentedText = `${userIntent}The user sent an image. ${description}`;
-          }
+    if (description) {
+      const kind = input.media[0]?.kind;
+      if (kind === 'audio' && !input.text) {
+        augmentedText = description;
+      } else if (kind === 'image') {
+        const userIntent = input.text ? `The user said: "${input.text}"\n\n` : '';
+        if (description.includes('IMAGE_TYPE: food')) {
+          augmentedText = `${userIntent}The user sent a meal photo. Detailed nutrition analysis:\n\n${description}\n\n[Use the log_food tool to log this meal with the full item list and quantities. Then tell the user the protein total, calorie total, and whether it meets their daily protein goal.]`;
+        } else if (description.includes('IMAGE_TYPE: body')) {
+          augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 journey and encourage them. Do NOT call any logging tools.]`;
         } else {
-          augmentedText = `${input.text}\n\n[media: ${description}]`.trim();
+          augmentedText = `${userIntent}The user sent an image. ${description}`;
         }
+      } else {
+        augmentedText = `${input.text}\n\n[media: ${description}]`.trim();
       }
     }
 
-    const conversationId = await memory.ensureConversation(input.userId);
-    const isNew = await users.isNewUser(input.userId).catch(() => false);
-    const history = await memory.getRecentTurns(input.userId, 12);
+    // RAG retrieval runs on the augmented text (may include media context).
     const retrieved = flags.ragEnabled ? await rag.retrieve(augmentedText, { userId: input.userId, topK: 5 }) : [];
 
     // Detect side effects in the user's message and update their flow.
@@ -129,7 +137,6 @@ export class AIService {
     // Per-request tool registry — tools close over userId.
     const tools = new ToolRegistry();
     if (flags.toolsEnabled) {
-      const toolSettings = await this.loadToolSettings();
       if (toolSettings['log_food'] !== false) {
         tools.register(makeLogFoodTool({ pool: this.deps.pool, llm: this.deps.llm, logger, userId: input.userId }));
       }

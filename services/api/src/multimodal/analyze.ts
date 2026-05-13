@@ -8,8 +8,6 @@ import type { MessageMedia } from '@grace/shared';
 
 const TWILIO_FETCH_TIMEOUT_MS = 8_000;
 
-type ImageCategory = 'food' | 'body' | 'other';
-
 export async function analyzeMedia(
   media: MessageMedia[],
   opts: { apiKey: string; model: string; logger: Logger; twilio?: { sid: string; token: string } },
@@ -24,13 +22,37 @@ export async function analyzeMedia(
     const inlineData = { data: buf.toString('base64'), mimeType: first.contentType };
 
     if (first.kind === 'image') {
-      const category = await classifyImage(model, inlineData);
-      opts.logger.info({ category }, 'multimodal.image.classified');
+      // Single Gemini call that both classifies and analyzes — saves a round-trip.
+      const r = await model.generateContent([
+        { inlineData },
+        {
+          text: `Examine this image. Decide if it shows FOOD, a BODY (person/selfie/progress photo), or OTHER, then produce the matching analysis below.
 
-      if (category === 'food') return await analyzeFoodImage(model, inlineData);
-      if (category === 'body') return await analyzeBodyImage(model, inlineData);
-      // 'other' — let Grace handle it gracefully with context
-      return 'IMAGE_TYPE: other — the user sent an image that is not food or a body photo.';
+If FOOD: output exactly this structure for a GLP-1 user tracking protein/calories.
+IMAGE_TYPE: food
+ITEMS: [comma-separated list, each with specific name + quantity, e.g. "4 medium green apples ≈ 300g"]
+BREAKDOWN:
+- [item with qty]: protein Xg, carbs Xg, fat Xg, cal Xkcal
+TOTAL: protein Xg | carbs Xg | fat Xg | calories Xkcal
+NOTES: [protein adequacy note — e.g. "Low protein snack — 80g daily target not met"]
+
+If BODY: provide a warm, encouraging GLP-1-aware analysis.
+IMAGE_TYPE: body
+OBSERVATIONS: [2-3 specific kind, honest observations about visible changes — midsection, face, arms, posture, silhouette]
+MUSCLE_NOTE: [1 sentence on visible muscle tone/preservation — critical for GLP-1 users]
+ENCOURAGEMENT: [1-2 warm personal sentences acknowledging their journey]
+
+If OTHER:
+IMAGE_TYPE: other
+DESCRIPTION: [1 short sentence describing what the image shows]
+
+Rules:
+- For FOOD: count individual pieces, estimate weight from visual cues (plate/bowl size, density), use USDA values
+- For BODY: be kind and supportive, never give medical diagnoses or body-fat percentage estimates, focus on health and strength
+- Never invent food items not in the photo`,
+        },
+      ]);
+      return r.response.text().trim();
     }
 
     if (first.kind === 'audio') {
@@ -42,91 +64,6 @@ export async function analyzeMedia(
     opts.logger.warn({ err }, 'multimodal.analyze.failed');
     return null;
   }
-}
-
-async function classifyImage(
-  model: ReturnType<InstanceType<typeof GoogleGenerativeAI>['getGenerativeModel']>,
-  inlineData: { data: string; mimeType: string },
-): Promise<ImageCategory> {
-  const r = await model.generateContent([
-    { inlineData },
-    {
-      text: 'Classify this image into exactly one category. Reply with only one word:\n' +
-        '- "food" if the image shows food, a meal, drinks, snacks, or anything edible\n' +
-        '- "body" if the image shows a person\'s body, a selfie, a progress photo, or any human body part\n' +
-        '- "other" for anything else',
-    },
-  ]);
-  const raw = r.response.text().trim().toLowerCase();
-  if (raw.includes('food')) return 'food';
-  if (raw.includes('body')) return 'body';
-  return 'other';
-}
-
-async function analyzeFoodImage(
-  model: ReturnType<InstanceType<typeof GoogleGenerativeAI>['getGenerativeModel']>,
-  inlineData: { data: string; mimeType: string },
-): Promise<string> {
-  const r = await model.generateContent([
-    { inlineData },
-    {
-      text: `You are a precise food nutritionist analyzing a meal photo for someone on a GLP-1 medication tracking protein and calories.
-
-Examine the image carefully:
-
-1. Identify EVERY food item visible. Be specific (e.g. "green Granny Smith apples" not just "fruit"). Count individual pieces. Estimate weight/portion using visual cues: plate/bowl diameter, stacking, density.
-
-2. For each item state:
-   - Name + quantity (e.g. "4 medium green apples ≈ 300g")
-   - Protein (g), Carbs (g), Fat (g), Calories (kcal) — use USDA values
-
-3. Provide grand totals.
-
-Output exactly in this format:
-IMAGE_TYPE: food
-ITEMS: [comma-separated list with quantities]
-BREAKDOWN:
-- [item with qty]: protein Xg, carbs Xg, fat Xg, cal Xkcal
-TOTAL: protein Xg | carbs Xg | fat Xg | calories Xkcal
-NOTES: [protein adequacy — e.g. "Low protein snack — 80g daily target not met"]`,
-    },
-  ]);
-  return r.response.text().trim();
-}
-
-async function analyzeBodyImage(
-  model: ReturnType<InstanceType<typeof GoogleGenerativeAI>['getGenerativeModel']>,
-  inlineData: { data: string; mimeType: string },
-): Promise<string> {
-  const r = await model.generateContent([
-    { inlineData },
-    {
-      text: `You are a compassionate health coach analyzing a body progress photo for someone on a GLP-1 medication (Ozempic/Wegovy/Mounjaro/Zepbound).
-
-Provide a warm, encouraging, and honest analysis. Focus on:
-
-1. VISIBLE CHANGES: Note any visible changes in body composition you can observe — midsection, face, arms, overall silhouette. Be specific but kind.
-
-2. MUSCLE & TONE: Comment on visible muscle preservation or definition (important for GLP-1 users who risk muscle loss).
-
-3. POSTURE & CONFIDENCE: Note posture, how they're standing, any confidence cues.
-
-4. ENCOURAGEMENT: Acknowledge the courage it takes to share a progress photo and reinforce their journey.
-
-Important rules:
-- Never give medical diagnoses or body fat percentage estimates
-- Be warm and supportive, not clinical
-- Focus on health and strength, not aesthetics
-- If this appears to be a before/after comparison, acknowledge the progress explicitly
-
-Output exactly in this format:
-IMAGE_TYPE: body
-OBSERVATIONS: [2-3 specific, positive, honest observations]
-MUSCLE_NOTE: [1 sentence on muscle tone/preservation — critical for GLP-1 users]
-ENCOURAGEMENT: [1-2 warm, personal sentences]`,
-    },
-  ]);
-  return r.response.text().trim();
 }
 
 async function transcribeAudioViaFileApi(

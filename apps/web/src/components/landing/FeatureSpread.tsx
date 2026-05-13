@@ -1,5 +1,6 @@
 import hydrationImg from "@/assets/editorial-hydration.jpg";
 import nourishImg from "@/assets/editorial-nourish.jpg";
+import { motion } from "framer-motion";
 
 interface FeatureRowProps {
   label: string;
@@ -13,33 +14,49 @@ interface FeatureRowProps {
 
 const FeatureRow = ({ label, title, description, quote, image, imageAlt, reversed }: FeatureRowProps) => (
   <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-16 items-center">
-    <div className={`lg:col-span-5 ${reversed ? "lg:col-start-8 order-2" : "lg:col-start-1 order-2 lg:order-1"}`}>
+    <motion.div
+      initial={{ opacity: 0, x: reversed ? 40 : -40 }}
+      whileInView={{ opacity: 1, x: 0 }}
+      viewport={{ once: true, amount: 0.3 }}
+      transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+      className={`lg:col-span-5 ${reversed ? "lg:col-start-8 order-2" : "lg:col-start-1 order-2 lg:order-1"}`}
+    >
       <span className="block text-xs uppercase tracking-[0.2em] text-accent mb-3 md:mb-4 font-semibold">
         {label}
       </span>
       <h3 className="font-serif text-2xl md:text-4xl text-foreground mb-4 md:mb-5">{title}</h3>
       <p className="text-muted-foreground leading-relaxed mb-6 md:mb-8 text-base md:text-lg">{description}</p>
-      <div className="bg-card rounded-xl md:rounded-2xl p-5 md:p-6 ring-1 ring-border/30">
+      <motion.div
+        whileHover={{ y: -4 }}
+        transition={{ duration: 0.2 }}
+        className="bg-card/90 backdrop-blur-sm rounded-xl md:rounded-2xl p-5 md:p-6 ring-1 ring-border/30 hover:ring-accent/40 hover:shadow-lg hover:shadow-accent/10 transition-all"
+      >
         <p className="italic text-foreground/90 text-sm md:text-base font-serif leading-relaxed">
           "{quote}"
         </p>
         <span className="block text-[11px] md:text-xs text-muted-foreground/60 mt-2 md:mt-3 uppercase tracking-wider">
           Example message
         </span>
-      </div>
-    </div>
-    <div className={`lg:col-span-5 ${reversed ? "lg:col-start-1 order-1" : "lg:col-start-8 order-1 lg:order-2"}`}>
-      <div className="rounded-2xl lg:rounded-[2rem] overflow-hidden">
+      </motion.div>
+    </motion.div>
+    <motion.div
+      initial={{ opacity: 0, x: reversed ? -40 : 40, scale: 0.95 }}
+      whileInView={{ opacity: 1, x: 0, scale: 1 }}
+      viewport={{ once: true, amount: 0.3 }}
+      transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
+      className={`lg:col-span-5 ${reversed ? "lg:col-start-1 order-1" : "lg:col-start-8 order-1 lg:order-2"}`}
+    >
+      <div className="rounded-2xl lg:rounded-[2rem] overflow-hidden shadow-xl shadow-foreground/5">
         <img
           src={image}
           alt={imageAlt}
           loading="lazy"
           width={1200}
           height={900}
-          className="w-full aspect-[4/3] object-cover"
+          className="w-full aspect-[4/3] object-cover hover:scale-105 transition-transform duration-700"
         />
       </div>
-    </div>
+    </motion.div>
   </div>
 );
 

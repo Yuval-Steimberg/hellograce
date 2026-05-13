@@ -169,60 +169,59 @@
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(ellipse 1200px 800px at 50% -20%, hsl(35 90% 92% / 0.5) 0%, transparent 65%),
-      radial-gradient(ellipse 1000px 600px at 0% 100%, hsl(180 50% 90% / 0.45) 0%, transparent 60%),
-      radial-gradient(ellipse 900px 700px at 100% 80%, hsl(280 60% 92% / 0.4) 0%, transparent 60%);
+      radial-gradient(ellipse 1200px 800px at 50% -20%, hsl(35 95% 88% / 0.75) 0%, transparent 65%),
+      radial-gradient(ellipse 1000px 600px at 0% 100%, hsl(180 60% 85% / 0.7)  0%, transparent 60%),
+      radial-gradient(ellipse 900px 700px  at 100% 80%, hsl(280 70% 88% / 0.65) 0%, transparent 60%);
   }
 
   .grace-blob {
     position: absolute;
     border-radius: 50%;
-    filter: blur(70px);
-    opacity: 0.55;
+    filter: blur(60px);
+    opacity: 0.7;
     will-change: transform;
-    mix-blend-mode: multiply;
   }
 
   .grace-blob-coral {
-    width: 540px;
-    height: 540px;
-    background: radial-gradient(circle, hsl(14 100% 72%) 0%, hsl(14 100% 72% / 0) 70%);
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, hsl(14 100% 68% / 0.85) 0%, hsl(14 100% 68% / 0) 70%);
     top: -10%;
     right: -8%;
     animation: drift-coral 28s ease-in-out infinite;
   }
 
   .grace-blob-mint {
-    width: 480px;
-    height: 480px;
-    background: radial-gradient(circle, hsl(165 65% 65%) 0%, hsl(165 65% 65% / 0) 70%);
+    width: 520px;
+    height: 520px;
+    background: radial-gradient(circle, hsl(165 75% 60% / 0.8) 0%, hsl(165 75% 60% / 0) 70%);
     bottom: -12%;
     left: -8%;
     animation: drift-mint 34s ease-in-out infinite;
   }
 
   .grace-blob-lavender {
-    width: 400px;
-    height: 400px;
-    background: radial-gradient(circle, hsl(265 75% 78%) 0%, hsl(265 75% 78% / 0) 70%);
+    width: 440px;
+    height: 440px;
+    background: radial-gradient(circle, hsl(265 85% 75% / 0.8) 0%, hsl(265 85% 75% / 0) 70%);
     top: 45%;
     right: 18%;
     animation: drift-lavender 38s ease-in-out infinite;
   }
 
   .grace-blob-gold {
-    width: 360px;
-    height: 360px;
-    background: radial-gradient(circle, hsl(40 100% 70%) 0%, hsl(40 100% 70% / 0) 70%);
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, hsl(40 100% 65% / 0.8) 0%, hsl(40 100% 65% / 0) 70%);
     top: 20%;
     left: 28%;
     animation: drift-gold 30s ease-in-out infinite;
   }
 
   .grace-blob-sky {
-    width: 460px;
-    height: 460px;
-    background: radial-gradient(circle, hsl(200 90% 72%) 0%, hsl(200 90% 72% / 0) 70%);
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, hsl(200 95% 68% / 0.8) 0%, hsl(200 95% 68% / 0) 70%);
     bottom: 22%;
     right: 8%;
     animation: drift-sky 36s ease-in-out infinite;

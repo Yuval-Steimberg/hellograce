@@ -29,7 +29,7 @@ const Landing = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans">
+    <div className="relative isolate min-h-screen text-foreground font-sans">
       <AnimatedBackground />
       {/* Sticky Nav — desktop only */}
       <header

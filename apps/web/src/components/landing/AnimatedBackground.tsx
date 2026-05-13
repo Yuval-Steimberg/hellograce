@@ -6,7 +6,8 @@
 const AnimatedBackground = () => {
   return (
     <div
-      className="grace-bg fixed inset-0 -z-10 overflow-hidden pointer-events-none"
+      className="grace-bg fixed inset-0 overflow-hidden pointer-events-none"
+      style={{ zIndex: -1 }}
       aria-hidden="true"
     >
       {/* Soft cream wash so blobs read clearly on light surfaces */}

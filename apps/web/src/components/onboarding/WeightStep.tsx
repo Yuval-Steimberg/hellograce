@@ -6,6 +6,7 @@ interface WeightStepData {
   heightCm?: string;
   age?: string;
   primaryGoal?: string;
+  glp1StartDate?: string;
 }
 
 interface WeightStepProps {
@@ -14,6 +15,7 @@ interface WeightStepProps {
   heightCm: string;
   age: string;
   primaryGoal: string;
+  glp1StartDate: string;
   onChange: (data: WeightStepData) => void;
   onNext: () => void;
 }
@@ -34,6 +36,7 @@ const WeightStep = ({
   heightCm,
   age,
   primaryGoal,
+  glp1StartDate,
   onChange,
   onNext,
 }: WeightStepProps) => {
@@ -100,6 +103,18 @@ const WeightStep = ({
               />
             </label>
           </div>
+
+          <label className="flex flex-col gap-2">
+            <span className="text-foreground font-medium text-sm px-1">When did you start your GLP-1?</span>
+            <input
+              type="date"
+              value={glp1StartDate}
+              onChange={(e) => onChange({ glp1StartDate: e.target.value })}
+              max={new Date().toISOString().slice(0, 10)}
+              className={inputClass}
+            />
+            <span className="text-xs text-muted-foreground px-1">Optional — helps me track your week number accurately.</span>
+          </label>
 
           <div className="flex flex-col gap-3">
             <span className="text-foreground font-medium text-sm px-1">Your main goal right now</span>

@@ -49,6 +49,7 @@ const Onboarding = () => {
   const [heightCm, setHeightCm] = useState("");
   const [age, setAge] = useState("");
   const [primaryGoal, setPrimaryGoal] = useState("");
+  const [glp1StartDate, setGlp1StartDate] = useState("");
   const [checkinCountPerDay, setCheckinCountPerDay] = useState(2);
   const [checkinDaysInterval, setCheckinDaysInterval] = useState(1);
 
@@ -101,6 +102,7 @@ const Onboarding = () => {
         heightCm: heightCm ? Number(heightCm) : null,
         age: age ? Number(age) : null,
         primaryGoal: primaryGoal || null,
+        glp1StartDate: glp1StartDate || null,
         goals,
         timezone,
         checkinCountPerDay,
@@ -202,12 +204,14 @@ const Onboarding = () => {
             heightCm={heightCm}
             age={age}
             primaryGoal={primaryGoal}
+            glp1StartDate={glp1StartDate}
             onChange={(d) => {
               if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
               if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
               if (d.heightCm !== undefined) setHeightCm(d.heightCm);
               if (d.age !== undefined) setAge(d.age);
               if (d.primaryGoal !== undefined) setPrimaryGoal(d.primaryGoal);
+              if (d.glp1StartDate !== undefined) setGlp1StartDate(d.glp1StartDate);
             }}
             onNext={next}
           />

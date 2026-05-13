@@ -178,12 +178,18 @@ psql "$DATABASE_URL" -f supabase/migrations/20260507000001_grace_v2_core.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260507000002_grace_v2_phase4.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260507000003_grace_v2_users.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260508000001_rlhf_user_flags.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260513000001_prompt_optimizer_columns.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260513000002_protein_personalization.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260513000003_glp1_start_date.sql
 ```
 
 Core tables: `users`, `conversations`, `messages`, `embeddings`, `tool_logs`,
 `feedback`, `food_logs`, `weight_logs`, `check_ins`, `injections`, `prompts`, `tool_settings`.
 
-Key columns added by 20260508000001: `users.rlhf_enabled BOOLEAN DEFAULT FALSE`
+Key columns:
+- `20260508000001`: `users.rlhf_enabled BOOLEAN DEFAULT FALSE`
+- `20260513000002`: `users.age INT`, `users.primary_goal TEXT`, `users.protein_goal_grams INT`
+- `20260513000003`: `users.glp1_start_date DATE` — drives accurate week-number context
 
 ---
 
@@ -292,6 +298,7 @@ Roadmap (in progress, in this order):
 | 5 | Cut Twilio webhook from v1 → v2 | ✅ live at `https://grace-api.fly.dev` |
 | 6 | Multimodal: voice notes + food photos + body/progress photos | ✅ Gemini File API audio, image classification, per-item nutrition, body analysis |
 | 6b | Admin dashboard premium redesign + animated landing page | ✅ deep slate + indigo admin shell, colorful animated blob background |
+| 7 | AI quality pass from WhatsApp QA: persona, hallucination guards, quiet hours, settings redirect, food-dislike paraphrase, brief-reply rule, GLP-1 week number, 50+ emotional patterns | ✅ landed on `claude/icloud-access-clarification-5hsRr-v2`, ready to deploy 2026-05-13 |
 
 ---
 
@@ -299,9 +306,50 @@ Roadmap (in progress, in this order):
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
-3. `git checkout claude/icloud-access-clarification-5hsRr-v2` (active feature branch as of 2026-05-13).
+3. `git checkout claude/icloud-access-clarification-5hsRr-v2` (active feature branch as of 2026-05-13). Latest commit: `c23584b` — GLP-1 start date collected in onboarding.
 4. Production is live at `https://grace-api.fly.dev` (API) and `https://grace-admin-silk.vercel.app` (web). Tail logs with `fly logs --app grace-api`.
 5. Top open items in `docs/STATUS.md § Post-cutover`: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn.
+
+### Phase 7 — AI quality pass (commits `bb420da`, `b09fe0f`, `174112e`, `c23584b`)
+
+Driven by the WhatsApp QA feedback PDF (`/root/.claude/uploads/.../Grace_WhatsApp_Summary.pdf`) — 1 month of real GLP-1 user testing surfaced these production bugs and fixes:
+
+**System prompt (`packages/ai-core/src/prompts.ts`)** — rewritten with:
+- NON-NEGOTIABLE TRUTHS: Grace is proactive (never deny scheduled messages), Grace remembers (answer from user context, never hallucinate, never deny knowing), never quote raw food-dislike text verbatim
+- SETTINGS MANAGEMENT hard override: settings changes (wake time, injection day, food prefs, etc.) → `https://graceglp.com/settings`, NOT doctor
+- BRIEF REPLY RULE: 1–4 word replies ("ok", "tired", "thanks") get one warm sentence back, no question, no paragraph
+- KEY EMOTIONAL MOMENTS: medical abandonment (validate fully — Grace IS the companion their doctor didn't provide), fear of stopping (validate + educational), loss of food-noise identity (don't rush "great news"), Ozempic face / body image
+- GLP-1 WEEK NUMBER guidance with milestone examples (Week 1/4/8/12/26/52)
+- NON-JUDGMENTAL STANCE with explicit banned implicit-shaming patterns
+- HEALTH EDUCATION vs MEDICAL ADVICE — relaxes blanket "see your doctor" redirect into "Research shows…" framing with explicit escalation triggers (driven by the 50+ women research pivot)
+- RE-ENGAGEMENT LADDER (1/3/7/14 day silence escalation) + PAUSE MODE
+- GLP-1 MEDICATION KNOWLEDGE: tirzepatide vs semaglutide mechanism, Rybelsus empty-stomach rule, muscle loss ~25–35% of weight lost, protein target 1.2–1.6g/kg, Ozempic face mechanism, hair loss telogen effluvium, plateau science
+
+**Scheduler (`services/api/src/scheduler/scheduler.ts`)** — quiet hours (21:00–07:00 local) added as code-level hard guard, passes `GenerateOpts` (isWednesday, lowMoodMode) to `generator.generate()`.
+
+**Message generator (`services/api/src/scheduler/message-generator.ts`)** — food dislike prefix-stripping regex (`/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i`) so Grace doesn't say "you're not a fan of i don't like rice." Welcome prompt capped at 1–2 sentences with explicit paraphrase instruction.
+
+**AI service (`services/api/src/services/ai.service.ts`)** — `buildPersonalisedPrompt` now includes:
+- Injection day computed as TODAY/TOMORROW/YESTERDAY/in N days
+- Weight as `X lbs → goal Y lbs (Z lbs to go)`
+- GLP-1 week number from `glp1_start_date` (e.g. `GLP-1 week: Week 8 (started Mar 18, 2026)`)
+- Food dislikes with same prefix-stripping regex
+- LOW MOOD MODE explicit action instruction
+- isNew → "FIRST message. Welcome them warmly."
+
+**Onboarding** — `glp1StartDate` added to `OnboardSchema` (`services/api/src/routes/users.ts`) + WeightStep (`apps/web/src/components/onboarding/WeightStep.tsx`) as optional date input. Wrapped in try/catch so signup doesn't break if migration `20260513000003` hasn't been applied yet.
+
+**Stripe** — publishable key + price IDs now match `acct_1TWfwc` (commits `5b09c9e`, `57b569a`). Price: `price_1TWgb5LMk6wjvxD9Y9azDUfZ`.
+
+### Phase 7 — known follow-ups not yet shipped
+
+- **STOP/UNSUBSCRIBE** natural-language handling in `services/api/src/routes/webhook.ts` (Twilio handles literal STOP at carrier level; "stop texting me" / "pause" still needs in-process opt-out → settings redirect)
+- **`is_paused` flag** on `users` table to support pause-mode in the re-engagement ladder
+- **Base tier 10-msg/day cap** with upgrade nudge in webhook gate (not yet enforced)
+- **Twilio A2P campaign resubmission** — rejected twice (sample #2 said "Nudge" not "Grace"; use-case was Customer Care vs Mixed). Action: add real unchecked SMS consent checkbox to graceglp.com signup
+- **Grace Pro Stripe price ($24/mo)** — not yet created in `acct_1TWfwc`; `PRO_PRICE_ID` in `supabase/functions/upgrade-to-pro/index.ts` still points to old account
+- **Welcome email** — template ready (`docs/WELCOME_EMAIL.md`), not wired into `/users/onboard`
+- **DB password** — `Giburking18!` was exposed in prior terminal output; should be rotated at Supabase Dashboard → Settings → Database
 
 ---
 
@@ -315,8 +363,9 @@ Roadmap (in progress, in this order):
 | `apps/web/src/components/landing/ChatMockup.tsx` | WhatsApp-style phone-frame mockup showing real Grace exchange. |
 | `apps/web/src/components/landing/MedicationsBar.tsx` | Pill row of all supported GLP-1 meds. |
 | `apps/web/src/components/landing/QuoteSection.tsx`, `PhilosophySection.tsx`, `FeatureSpread.tsx`, `FAQSection.tsx`, `FooterCTA.tsx` | Below-fold content sections, all GLP-1-specific. |
-| `apps/web/src/pages/Onboarding.tsx` | 11-step quiz wrapper. POSTs to `/users/onboard` when `VITE_API_URL` set, falls back to Supabase edge fn otherwise. Passes `rlhfEnabled` consent through. |
+| `apps/web/src/pages/Onboarding.tsx` | 11-step quiz wrapper. POSTs to `/users/onboard` when `VITE_API_URL` set, falls back to Supabase edge fn otherwise. Passes `rlhfEnabled` consent + `glp1StartDate` through. |
 | `apps/web/src/components/onboarding/PhoneStep.tsx` | Final form: phone, SMS consent, optional RLHF consent checkbox. |
+| `apps/web/src/components/onboarding/WeightStep.tsx` | Optional personalization fields: weight, height, age, primary goal, **GLP-1 start date** (drives Grace's week-number accuracy). |
 | `apps/web/src/components/onboarding/PaymentStep.tsx` | Stripe checkout via Supabase edge fn. Needs `VITE_SUPABASE_*` env vars. |
 | `apps/web/src/components/onboarding/ConfirmationStep.tsx` | Success screen with primary `wa.me` deeplink CTA. Pre-fills `join <code>` in sandbox mode (`VITE_WHATSAPP_JOIN_CODE`), clean link in production. |
 | `apps/web/vercel.json` | SPA rewrite — every route serves `index.html`. |

@@ -1,7 +1,7 @@
 {
   "buildCommand": "pnpm --filter @grace/web build",
   "outputDirectory": "apps/web/dist",
-  "installCommand": "pnpm install --no-frozen-lockfile",
+  "installCommand": "pnpm install --filter @grace/web... --no-frozen-lockfile --ignore-scripts",
   "framework": null,
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }

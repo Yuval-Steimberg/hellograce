@@ -21,6 +21,7 @@ The v2 Node.js orchestration service is **live in production**:
 - Twilio WhatsApp sandbox webhook points at `https://grace-api.fly.dev/webhook/twilio`
 - End-to-end verified 2026-05-12 with a real WhatsApp message.
 - KB re-embedded against `gemini-embedding-001` (768-dim) — RAG returns real GLP-1 knowledge.
+- Multimodal fully working: voice notes (transcribed via Gemini File API), food photos (per-item USDA breakdown + auto log_food), body/progress photos (compassionate GLP-1-aware analysis). All fixed 2026-05-13.
 
 Open follow-ups: add a Fly payment method (trial machines auto-stop after 5 min idle),
 get a WhatsApp Business sender approved by Meta to drop the "Twilio Sandbox:" prefix,
@@ -72,6 +73,13 @@ POST /webhook/twilio
         │
         ▼
 AIService.handleMessage()
+        │
+        ├── analyzeMedia() — if media present (runs before orchestrator)
+        │     ├── fetchMedia() with Twilio Basic Auth (SID:token)
+        │     ├── image → classifyImage() → 'food' | 'body' | 'other'
+        │     │     ├── food  → per-item USDA breakdown (ITEMS/BREAKDOWN/TOTAL/NOTES)
+        │     │     └── body  → GLP-1-aware progress analysis (muscle + encouragement)
+        │     └── audio → Gemini File API upload → transcribe → delete
         │
    ┌────┴───────────────────────────────────────┐
    ▼                   ▼                        ▼
@@ -152,7 +160,7 @@ Subscription gate in `webhook.ts` fires paywall message if trial expired and not
 
 | Tool | What it does |
 |---|---|
-| `log_food` | LLM-estimates protein/kcal for any food text, writes to `food_logs` |
+| `log_food` | LLM-estimates protein/kcal for food text (handles multi-item + pre-calculated totals from image analysis), writes to `food_logs` |
 | `log_weight` | Records lbs to `weight_logs` |
 | `log_mood` | Records mood score 1–10 |
 | `knowledge_search` | pgvector RAG over GLP-1 knowledge base |
@@ -282,6 +290,8 @@ Roadmap (in progress, in this order):
 | 4d | User-side RLHF: per-user ratings + feedback comments, admin toggle | ✅ |
 | 4e | Admin dashboard overhaul: user drawer, create modal, richer metrics | ✅ |
 | 5 | Cut Twilio webhook from v1 → v2 | ✅ live at `https://grace-api.fly.dev` |
+| 6 | Multimodal: voice notes + food photos + body/progress photos | ✅ Gemini File API audio, image classification, per-item nutrition, body analysis |
+| 6b | Admin dashboard premium redesign + animated landing page | ✅ deep slate + indigo admin shell, colorful animated blob background |
 
 ---
 
@@ -289,7 +299,7 @@ Roadmap (in progress, in this order):
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
-3. `git checkout claude/icloud-access-clarification-5hsRr`.
+3. `git checkout claude/icloud-access-clarification-5hsRr-v2` (active feature branch as of 2026-05-13).
 4. Production is live at `https://grace-api.fly.dev` (API) and `https://grace-admin-silk.vercel.app` (web). Tail logs with `fly logs --app grace-api`.
 5. Top open items in `docs/STATUS.md § Post-cutover`: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn.
 
@@ -310,7 +320,8 @@ Roadmap (in progress, in this order):
 | `apps/web/src/components/onboarding/PaymentStep.tsx` | Stripe checkout via Supabase edge fn. Needs `VITE_SUPABASE_*` env vars. |
 | `apps/web/src/components/onboarding/ConfirmationStep.tsx` | Success screen with primary `wa.me` deeplink CTA. Pre-fills `join <code>` in sandbox mode (`VITE_WHATSAPP_JOIN_CODE`), clean link in production. |
 | `apps/web/vercel.json` | SPA rewrite — every route serves `index.html`. |
-| `apps/web/src/index.css` | Design tokens. Sage primary + terracotta accent + cool gray-white background, with a fixed dual-halo body gradient (terracotta top-right, slate bottom-left). |
+| `apps/web/src/index.css` | Design tokens. Sage primary + terracotta accent + cool gray-white background, with a fixed dual-halo body gradient (terracotta top-right, slate bottom-left). `.admin-shell` scope overrides all tokens to deep slate + indigo for the admin dashboard. |
+| `apps/web/src/components/landing/AnimatedBackground.tsx` | Five colorful animated blobs (coral, mint, lavender, gold, sky) on the landing page. Uses `isolate` stacking context in Landing.tsx wrapper to keep z-index contained. |
 
 ## Admin dashboard — component map
 
@@ -326,6 +337,23 @@ Roadmap (in progress, in this order):
 | `apps/web/src/pages/admin/FeedbackPage.tsx` | RLHF feedback list + quick rate buttons |
 | `apps/web/src/pages/admin/PromptsPage.tsx` | Prompt versioning + one-click activate |
 | `apps/web/src/pages/admin/ToolsPage.tsx` | Per-tool enable/disable + priority |
+
+---
+
+## Multimodal implementation notes
+
+`services/api/src/multimodal/analyze.ts` is the single entry point for all media.
+
+**Images** — two-step: classify first (one Gemini call), then route:
+- `food` → inline base64 + detailed USDA nutrition prompt → `log_food` tool fires automatically
+- `body` → inline base64 + GLP-1-aware progress analysis prompt → Grace replies warmly, no tool call
+- `other` → Grace handles gracefully
+
+**Audio** (WhatsApp voice notes, `audio/ogg`) — Gemini inline base64 doesn't reliably support ogg.
+Uses the File API instead: write buffer to OS temp file → `GoogleAIFileManager.uploadFile()` → reference by `fileUri` → delete after. Twilio media URLs require Basic auth (`SID:token`) — passed via `AIServiceDeps.twilioSid/twilioToken` → `analyzeMedia opts.twilio`.
+
+**Injection point** in `ai.service.ts`: augmented text is built before the orchestrator runs.
+Food images get an explicit `[Use log_food tool...]` instruction. Body images get `[Do NOT call tools, reply warmly]`. This prevents the orchestrator from guessing the intent wrong.
 
 ---
 

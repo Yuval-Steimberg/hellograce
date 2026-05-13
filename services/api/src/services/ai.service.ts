@@ -116,7 +116,8 @@ export class AIService {
       } else if (kind === 'image') {
         const userIntent = input.text ? `The user said: "${input.text}"\n\n` : '';
         if (description.includes('IMAGE_TYPE: food')) {
-          augmentedText = `${userIntent}The user sent a meal photo. Detailed nutrition analysis:\n\n${description}\n\n[Use the log_food tool with the full item list. Then reply warmly with the protein total, calorie total, and a brief comment tied to their personal protein target. If the analysis CONFIDENCE is "low", gently mention the estimate is rough and offer to refine if they tell you portion sizes. If "medium", you can casually note "rough estimate" once. If "high", just give the numbers confidently. Never dwell on uncertainty — one short mention max.]`;
+          const foodArg = buildFoodLogArg(description);
+          augmentedText = `${userIntent}The user sent a meal photo. Detailed nutrition analysis:\n\n${description}\n\n[REQUIRED ACTION: Call log_food with args {"food": ${JSON.stringify(foodArg)}} — pass this string EXACTLY, do NOT skip this tool call. Then reply warmly with the protein total, calorie total, and a brief comment tied to their personal protein target. If CONFIDENCE is "low", gently mention the estimate is rough. If "medium", note "rough estimate" once. If "high", give the numbers confidently. Never dwell on uncertainty.]`;
         } else if (description.includes('IMAGE_TYPE: body')) {
           augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 weight-loss journey and encourage them. CRITICAL: Do NOT mention pain, discomfort, injuries, or any medical conditions — this is a progress selfie, not a medical photo. Do NOT invent symptoms or anything not in the analysis above. Do NOT call any logging tools.]`;
         } else {
@@ -354,4 +355,16 @@ export class AIService {
       }
     }
   }
+}
+
+// Build a compact food string from a Gemini food-image analysis block so the
+// planner can pass it verbatim as the `food` arg to log_food — guaranteeing
+// the pre-calculated TOTAL is used instead of being re-estimated.
+function buildFoodLogArg(analysis: string): string {
+  const items = analysis.match(/^ITEMS:\s*(.+)$/m)?.[1]?.trim() ?? '';
+  const total = analysis.match(/^TOTAL:\s*(.+)$/m)?.[1]?.trim() ?? '';
+  if (items && total) return `${items}. ${total}`;
+  if (total) return total;
+  if (items) return items;
+  return analysis.replace(/IMAGE_TYPE: food\n?/i, '').trim().slice(0, 400);
 }

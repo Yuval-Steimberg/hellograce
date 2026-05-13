@@ -99,12 +99,16 @@ export class AIService {
       if (description) {
         const kind = input.media[0]?.kind;
         if (kind === 'audio' && !input.text) {
-          // Voice note with no text body — transcript IS the user's message.
           augmentedText = description;
         } else if (kind === 'image') {
-          // Provide the full nutrition analysis + explicit instruction so Grace logs it.
           const userIntent = input.text ? `The user said: "${input.text}"\n\n` : '';
-          augmentedText = `${userIntent}The user sent a meal photo. Here is the detailed nutrition analysis:\n\n${description}\n\n[Log this food using the log_food tool with the full item list and quantities above. Then reply with the protein total, calorie total, and a brief comment on how it fits their daily protein goal.]`;
+          if (description.includes('IMAGE_TYPE: food')) {
+            augmentedText = `${userIntent}The user sent a meal photo. Detailed nutrition analysis:\n\n${description}\n\n[Use the log_food tool to log this meal with the full item list and quantities. Then tell the user the protein total, calorie total, and whether it meets their daily protein goal.]`;
+          } else if (description.includes('IMAGE_TYPE: body')) {
+            augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 journey and encourage them. Do NOT call any logging tools.]`;
+          } else {
+            augmentedText = `${userIntent}The user sent an image. ${description}`;
+          }
         } else {
           augmentedText = `${input.text}\n\n[media: ${description}]`.trim();
         }

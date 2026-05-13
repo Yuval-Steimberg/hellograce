@@ -28,14 +28,17 @@ export function makeLogFoodTool(deps: {
           {
             role: 'system',
             content:
-              'You estimate protein (g) and calories (kcal) for a single typical serving. ' +
+              'You are a nutrition expert. Given a food description (may include multiple items, quantities, and pre-calculated macros), ' +
+              'extract or calculate the TOTAL protein (g) and total calories (kcal) for the entire meal. ' +
+              'If explicit totals are already provided in the text, use those numbers directly. ' +
               'Respond ONLY with JSON: {"food": string, "protein_g": number, "calories": number, "confidence": "low"|"medium"|"high"}. ' +
-              'Use 0 for fruits/coffee/tea. Be conservative.',
+              '"food" should be a concise label (e.g. "4 green apples"). ' +
+              'Use USDA values. Do NOT use 0 for real foods — every food has calories.',
           },
           { role: 'user', content: food },
         ],
         temperature: 0.1,
-        maxOutputTokens: 80,
+        maxOutputTokens: 120,
         responseFormat: 'json',
       });
 

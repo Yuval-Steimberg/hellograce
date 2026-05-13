@@ -21,7 +21,25 @@ export async function analyzeMedia(
     const model = client.getGenerativeModel({ model: opts.model });
 
     if (first.kind === 'image') {
-      const prompt = 'You are analyzing a meal photo for a GLP-1 user. In ONE sentence: identify the foods and estimate total grams of protein and total kcal. Be conservative.';
+      const prompt = `You are a precise food nutritionist analyzing a meal photo for someone on a GLP-1 medication who is tracking protein and calories.
+
+Examine the image carefully and do the following:
+
+1. Identify EVERY food item visible. Be specific (e.g. "green Granny Smith apples" not just "fruit"). Count individual pieces. Estimate weight/portion using visual cues: plate/bowl diameter, stacking, density.
+
+2. For each item, state:
+   - Name + quantity (e.g. "4 medium green apples ≈ 300g")
+   - Protein (g), Carbs (g), Fat (g), Calories (kcal) — use USDA values
+
+3. Provide grand totals.
+
+Output exactly in this format:
+ITEMS: [list each item with quantity on one line, comma-separated]
+BREAKDOWN:
+- [item 1 with qty]: protein Xg, carbs Xg, fat Xg, cal Xkcal
+- [item 2 with qty]: protein Xg, carbs Xg, fat Xg, cal Xkcal
+TOTAL: protein Xg | carbs Xg | fat Xg | calories Xkcal
+NOTES: [1 line — protein adequacy for GLP-1 user, e.g. "Low protein meal — 80g daily target not met"]`;
       const inlineData = { data: buf.toString('base64'), mimeType: first.contentType };
       const r = await model.generateContent([{ inlineData }, { text: prompt }]);
       return r.response.text().trim();

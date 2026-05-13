@@ -26,6 +26,7 @@ const OnboardSchema = z.object({
   checkinCountPerDay: z.number().int().min(1).max(5).optional().default(1),
   checkinDaysInterval: z.number().int().min(1).max(14).optional().default(1),
   rlhfEnabled: z.boolean().optional().default(false),
+  glp1StartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
 });
 
 export interface UserRouteDeps {
@@ -107,6 +108,17 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
           { err, phone },
           'onboard.protein_personalization.skipped (likely missing migration 20260513000002)',
         );
+      }
+    }
+
+    // GLP-1 start date — depends on 20260513000003 migration. Silently degrade if absent.
+    if (b.glp1StartDate) {
+      try {
+        await users.update(phone, {
+          glp1_start_date: new Date(b.glp1StartDate),
+        } as Partial<Parameters<typeof users.update>[1]>);
+      } catch {
+        req.log.warn({ phone }, 'onboard.glp1_start_date.skipped (likely missing migration 20260513000003)');
       }
     }
 

@@ -44,6 +44,7 @@ export interface GraceUser {
   checkin_frequency: string;
   checkin_count_per_day: number;
   checkin_days_interval: number;
+  glp1_start_date: Date | null;
   grace_notes: string | null;
   // account
   active: boolean;

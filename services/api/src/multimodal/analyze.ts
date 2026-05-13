@@ -34,7 +34,9 @@ ITEMS: [comma-separated list, each with specific name + quantity, e.g. "4 medium
 BREAKDOWN:
 - [item with qty]: protein Xg, carbs Xg, fat Xg, cal Xkcal
 TOTAL: protein Xg | carbs Xg | fat Xg | calories Xkcal
-NOTES: [protein adequacy note — e.g. "Low protein snack — 80g daily target not met"]
+CONFIDENCE: [high | medium | low] — be HONEST. High = clear items, visible portions, standard foods. Medium = decent estimate but portion size unclear or mixed dishes. Low = blurry/dark image, hard-to-identify food, or hidden ingredients.
+CONFIDENCE_REASON: [one short phrase explaining why, e.g. "clear plate, easy to count" or "portion size hard to gauge from angle" or "mixed dish, ingredients hidden"]
+NOTES: [protein adequacy note — e.g. "Solid protein hit" or "Light on protein, could pair with yogurt later"]
 
 If BODY: provide a warm, encouraging GLP-1-aware analysis.
 IMAGE_TYPE: body

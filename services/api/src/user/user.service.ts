@@ -15,6 +15,10 @@ export interface GraceUser {
   sleep_time: string;
   current_weight: number | null;
   goal_weight: number | null;
+  height_cm: number | null;
+  age: number | null;
+  primary_goal: string | null;
+  protein_goal_grams: number | null;
   // behavioural flags
   protein_focus_boost: boolean;
   hydration_struggle: boolean;

@@ -114,7 +114,7 @@ export class AIService {
       } else if (kind === 'image') {
         const userIntent = input.text ? `The user said: "${input.text}"\n\n` : '';
         if (description.includes('IMAGE_TYPE: food')) {
-          augmentedText = `${userIntent}The user sent a meal photo. Detailed nutrition analysis:\n\n${description}\n\n[Use the log_food tool to log this meal with the full item list and quantities. Then tell the user the protein total, calorie total, and whether it meets their daily protein goal.]`;
+          augmentedText = `${userIntent}The user sent a meal photo. Detailed nutrition analysis:\n\n${description}\n\n[Use the log_food tool with the full item list. Then reply warmly with the protein total, calorie total, and a brief comment tied to their personal protein target. If the analysis CONFIDENCE is "low", gently mention the estimate is rough and offer to refine if they tell you portion sizes. If "medium", you can casually note "rough estimate" once. If "high", just give the numbers confidently. Never dwell on uncertainty — one short mention max.]`;
         } else if (description.includes('IMAGE_TYPE: body')) {
           augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 journey and encourage them. Do NOT call any logging tools.]`;
         } else {
@@ -231,6 +231,12 @@ export class AIService {
       if (user.injection_day) lines.push(`Injection day: ${user.injection_day}`);
       if (user.current_weight) lines.push(`Current weight: ${user.current_weight} lbs`);
       if (user.goal_weight) lines.push(`Goal weight: ${user.goal_weight} lbs`);
+      if (user.height_cm) lines.push(`Height: ${user.height_cm} cm`);
+      if (user.age) lines.push(`Age: ${user.age}`);
+      if (user.primary_goal) lines.push(`Primary goal: ${user.primary_goal.replace('_', ' ')}`);
+      if (user.protein_goal_grams) {
+        lines.push(`Personal daily protein target: ${user.protein_goal_grams}g (use THIS number — not a generic 80g — when discussing protein goals).`);
+      }
       if (user.grace_notes) lines.push(`Notes: ${user.grace_notes}`);
       if (user.low_mood_mode) lines.push('User has been in low-mood mode recently — be extra gentle and encouraging.');
       if (user.protein_focus_boost) lines.push('User struggles with protein intake — nudge toward protein-rich options.');

@@ -46,6 +46,9 @@ const Onboarding = () => {
   const [foodDislikes, setFoodDislikes] = useState("");
   const [currentWeight, setCurrentWeight] = useState("");
   const [goalWeight, setGoalWeight] = useState("");
+  const [heightCm, setHeightCm] = useState("");
+  const [age, setAge] = useState("");
+  const [primaryGoal, setPrimaryGoal] = useState("");
   const [checkinCountPerDay, setCheckinCountPerDay] = useState(2);
   const [checkinDaysInterval, setCheckinDaysInterval] = useState(1);
 
@@ -95,6 +98,9 @@ const Onboarding = () => {
         foodDislikes: foodDislikes.trim() || null,
         currentWeight: currentWeight ? Number(currentWeight) : null,
         goalWeight: goalWeight ? Number(goalWeight) : null,
+        heightCm: heightCm ? Number(heightCm) : null,
+        age: age ? Number(age) : null,
+        primaryGoal: primaryGoal || null,
         goals,
         timezone,
         checkinCountPerDay,
@@ -193,9 +199,15 @@ const Onboarding = () => {
           <WeightStep
             currentWeight={currentWeight}
             goalWeight={goalWeight}
+            heightCm={heightCm}
+            age={age}
+            primaryGoal={primaryGoal}
             onChange={(d) => {
               if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
               if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
+              if (d.heightCm !== undefined) setHeightCm(d.heightCm);
+              if (d.age !== undefined) setAge(d.age);
+              if (d.primaryGoal !== undefined) setPrimaryGoal(d.primaryGoal);
             }}
             onNext={next}
           />

@@ -5,6 +5,7 @@ import { ValidationError } from '../errors.js';
 import type { UserService } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
 import type { MessageGenerator } from '../scheduler/message-generator.js';
+import { calculateProteinTarget } from '../nutrition/protein-target.js';
 
 const OnboardSchema = z.object({
   firstName: z.string().trim().min(1).max(120),
@@ -17,6 +18,9 @@ const OnboardSchema = z.object({
   foodDislikes: z.string().max(1000).optional().nullable(),
   currentWeight: z.number().finite().positive().optional().nullable(),
   goalWeight: z.number().finite().positive().optional().nullable(),
+  heightCm: z.number().finite().positive().max(260).optional().nullable(),
+  age: z.number().int().min(13).max(120).optional().nullable(),
+  primaryGoal: z.enum(['fat_loss', 'muscle_gain', 'maintenance', 'recomposition']).optional().nullable(),
   goals: z.array(z.string().trim().min(1).max(120)).max(10).default([]),
   timezone: z.string().trim().max(100).optional().default('America/New_York'),
   checkinCountPerDay: z.number().int().min(1).max(5).optional().default(1),
@@ -55,6 +59,15 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       ? b.foodDislikes.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
 
+    // Personalized daily protein target (grams), based on body metrics + goal.
+    // Falls back to a sensible 80g default when inputs are missing.
+    const proteinGoalGrams = calculateProteinTarget({
+      weightLbs: b.currentWeight ?? null,
+      heightCm: b.heightCm ?? null,
+      age: b.age ?? null,
+      goal: b.primaryGoal ?? null,
+    });
+
     // Upsert user then apply full profile.
     await users.ensureUser(phone);
     await users.update(phone, {
@@ -67,6 +80,10 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       food_dislikes: foodDislikesArr,
       current_weight: b.currentWeight ?? undefined,
       goal_weight: b.goalWeight ?? undefined,
+      height_cm: b.heightCm ?? undefined,
+      age: b.age ?? undefined,
+      primary_goal: b.primaryGoal ?? undefined,
+      protein_goal_grams: proteinGoalGrams,
       goals: b.goals,
       timezone: b.timezone,
       checkin_count_per_day: b.checkinCountPerDay,

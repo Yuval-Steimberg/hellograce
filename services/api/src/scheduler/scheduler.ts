@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
 import type { MessageGenerator } from './message-generator.js';
+import type { PromptOptimizer } from './prompt-optimizer.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const MIDDAY_DAYS = new Set([1, 3, 5]); // Mon, Wed, Fri
@@ -13,6 +14,7 @@ interface SchedulerDeps {
   sender: TwilioSender;
   generator: MessageGenerator;
   logger: Logger;
+  promptOptimizer?: PromptOptimizer;
 }
 
 export class Scheduler {
@@ -29,6 +31,12 @@ export class Scheduler {
     this.tasks.push(
       cron.schedule('0 3 * * *', () => void this.runPersonalizationEngine()),
     );
+    // Prompt optimizer runs every 3 days at 4am UTC (Sun/Wed/Sat)
+    if (this.deps.promptOptimizer) {
+      this.tasks.push(
+        cron.schedule('0 4 * * 0,3,6', () => void this.deps.promptOptimizer!.run()),
+      );
+    }
     this.deps.logger.info('scheduler.started');
   }
 

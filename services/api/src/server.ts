@@ -25,6 +25,7 @@ import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
+import { PromptOptimizer } from './scheduler/prompt-optimizer.js';
 import { AppError } from './errors.js';
 
 async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Promise<void> }> {
@@ -81,14 +82,15 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   );
 
   const generator = new MessageGenerator(llm);
-  const scheduler = new Scheduler({ users, sender, generator, logger });
+  const promptOptimizer = new PromptOptimizer(pool, llm, logger);
+  const scheduler = new Scheduler({ users, sender, generator, logger, promptOptimizer });
 
-  startWorkers({ redis, pool, memory, logger });
-
-  // Reload the active system prompt from DB without restarting the process.
+  // Reload the AI service prompt whenever the optimizer activates a new version.
   process.on('SIGHUP', () => {
     void loadActivePrompt().then((p) => ai.updateSystemPrompt(p));
   });
+
+  startWorkers({ redis, pool, memory, logger });
 
   scheduler.start();
 

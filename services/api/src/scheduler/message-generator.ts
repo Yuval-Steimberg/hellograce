@@ -144,12 +144,16 @@ export class MessageGenerator {
       ? `NEVER suggest these foods (paraphrase naturally, don't quote raw text): ${cleanDislikes.join(', ')}.`
       : '';
 
-    const RULES = `RULES — non-negotiable:
+    const RULES = `RULES — non-negotiable for proactive (scheduled) messages:
+- These are REMINDERS, not conversation starters. They deliver value standalone.
+- DEFAULT: end with a STATEMENT, not a question. NO question mark unless absolutely needed.
 - 1 sentence is best. 2 max. NEVER more.
-- ZERO questions ideal. ONE tiny optional question max. NEVER ask multiple things.
-- Tone is a kind friend, not a coach quizzing. No "how's X?, how's Y?, what did you...?" stacking.
-- Don't ask for numerical reports ("rate 1-10", "how many oz"). Just be present.
-- Warm, calm, brief. No motivational speeches.`;
+- Tone is a kind friend dropping a quick note, NOT a coach quizzing. No "how's X? how's Y? what did you...?" stacking.
+- Don't ask for numerical reports ("rate 1-10", "how many oz").
+- Reminder style (✓): "Protein first today. Front-load it before appetite fades." / "Hydration reminder — start with a full glass before coffee." / "Muscle protection reminder: protein + movement today."
+- Question style (✗): "How's your eating going today?" / "What's your first protein hit today?" / "Any cravings hitting today?"
+- Warm, calm, brief. No motivational speeches. No exclamation marks unless absolutely warranted.
+- NEVER label the message ("morning check-in", "midday nudge", "evening wind-down") — those are internal names.`;
 
     const base = `Generate a single short SMS for ${name}.\n${RULES}\n\n`;
 

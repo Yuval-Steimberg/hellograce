@@ -19,17 +19,19 @@ const MEDICAL_ADVICE = [
   'take extra', 'double dose', 'overdose', 'too much medication',
 ];
 
-const EMERGENCY_RESPONSE =
-  'This sounds like an emergency. Please call 911 (or your local emergency number) right now or go to the nearest ER. I\'m here to support you, but you need a clinician immediately.';
-const CRISIS_RESPONSE =
-  'I hear you, and I\'m glad you told me. Please reach out right now: call or text 988 (Suicide & Crisis Lifeline, US) or your local crisis line. You don\'t have to go through this alone.';
+// Unified safety message per master prompt — sent verbatim for both physical
+// emergencies and mental health crises. Both 988 (US crisis line) and 911 are
+// surfaced together so the user always has the right channel without Grace
+// having to disambiguate. Word-for-word per spec.
+const SAFETY_RESPONSE =
+  'Please reach out for support right now. Call or text 988 to talk to someone trained to help. They\'re available 24/7. If you\'re in immediate physical danger, call 911. I care about you and want you to get real help immediately.';
 const MEDICAL_ADVICE_RESPONSE =
-  'I can\'t give dose-change advice — that\'s a conversation for your prescribing clinician. If something feels off, message them today or call your pharmacy\'s nurse line.';
+  'That\'s really one for your prescribing clinician — they can give you the right answer for your specific dose and schedule. If something feels off, message them today or call your pharmacy\'s nurse line.';
 
 export function classifyMessage(text: string): SafetyCheck {
   const lower = text.toLowerCase();
-  for (const k of EMERGENCY) if (lower.includes(k)) return { class: 'emergency', matched: k, response: EMERGENCY_RESPONSE };
-  for (const k of CRISIS) if (lower.includes(k)) return { class: 'crisis', matched: k, response: CRISIS_RESPONSE };
+  for (const k of EMERGENCY) if (lower.includes(k)) return { class: 'emergency', matched: k, response: SAFETY_RESPONSE };
+  for (const k of CRISIS) if (lower.includes(k)) return { class: 'crisis', matched: k, response: SAFETY_RESPONSE };
   for (const k of MEDICAL_ADVICE) if (lower.includes(k)) return { class: 'medical_advice', matched: k, response: MEDICAL_ADVICE_RESPONSE };
   return { class: 'safe' };
 }

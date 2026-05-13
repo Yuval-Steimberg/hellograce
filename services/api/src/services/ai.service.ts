@@ -96,13 +96,15 @@ export class AIService {
         })
       : Promise.resolve(null);
 
-    const [user, conversationId, isNew, history, toolSettings, description] = await Promise.all([
+    const [user, conversationId, isNew, history, toolSettings, description, todaysFood, checkinsToday] = await Promise.all([
       users.getById(input.userId).catch(() => null),
       memory.ensureConversation(input.userId),
       users.isNewUser(input.userId).catch(() => false),
       memory.getRecentTurns(input.userId, 12),
       flags.toolsEnabled ? this.loadToolSettings() : Promise.resolve({} as Record<string, boolean>),
       mediaPromise,
+      users.getTodaysFoodSummary(input.userId).catch(() => ({ protein_g: 0, calories: 0, items: [] })),
+      this.countTodaysCheckIns(input.userId).catch(() => 0),
     ]);
 
     // Fold media description into the prompt (only after Promise.all resolves).
@@ -132,7 +134,7 @@ export class AIService {
     if (user) await this.detectAndSetSideEffectFlow(user.phone, augmentedText, user.side_effect_flow);
 
     // Build personalised system prompt with user context.
-    const systemPrompt = this.buildPersonalisedPrompt(user, isNew);
+    const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday });
 
     // Per-request tool registry — tools close over userId.
     const tools = new ToolRegistry();
@@ -219,13 +221,49 @@ export class AIService {
     return result;
   }
 
-  private buildPersonalisedPrompt(user: ReturnType<UserService['getById']> extends Promise<infer T> ? T : never, isNew: boolean): string {
+  private async countTodaysCheckIns(userId: string): Promise<number> {
+    const { rows } = await this.deps.pool.query<{ count: string }>(
+      `SELECT count(*)::text FROM check_ins
+       WHERE user_id = $1
+         AND created_at::date = (now() AT TIME ZONE 'UTC')::date`,
+      [userId],
+    );
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  private buildPersonalisedPrompt(
+    user: ReturnType<UserService['getById']> extends Promise<infer T> ? T : never,
+    isNew: boolean,
+    runtime?: { todaysFood?: { protein_g: number; calories: number; items: string[] }; checkinsToday?: number },
+  ): string {
     const base = this.systemPrompt ?? undefined;
 
     const lines: string[] = [];
     if (user) {
+      // Time-of-day awareness — user-local, not server-local.
+      try {
+        const tz = user.timezone || 'America/New_York';
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz, weekday: 'long', hour: '2-digit', hour12: false,
+        }).formatToParts(new Date());
+        const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
+        const hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10);
+        const timeOfDay = hour < 5 ? 'night' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
+        if (weekday) lines.push(`Today is: ${weekday}`);
+        lines.push(`Time of day for this user right now: ${timeOfDay}`);
+      } catch {
+        // Fall back silently if timezone is malformed.
+      }
       if (user.first_name) lines.push(`Name: ${user.first_name}`);
       if (user.medication) lines.push(`Medication: ${user.medication}`);
+      // Surface medication type so the prompt's "Weekly injection / Daily pill /
+      // Daily injection" branching can fire correctly.
+      const med = (user.medication || '').toLowerCase();
+      let medType = 'unknown';
+      if (/rybelsus/.test(med)) medType = 'daily_pill';
+      else if (/saxenda|victoza|liraglutide/.test(med)) medType = 'daily_injection';
+      else if (/ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide/.test(med)) medType = 'weekly_injection';
+      lines.push(`Medication type: ${medType}`);
       if (user.goals.length > 0) lines.push(`Goals: ${user.goals.join(', ')}`);
       if (user.food_dislikes.length > 0) {
         const clean = user.food_dislikes
@@ -268,6 +306,21 @@ export class AIService {
       if (user.low_mood_mode) lines.push('LOW MOOD MODE: user has been struggling recently — lead with encouragement and warmth, no reflection prompts.');
       if (user.protein_focus_boost) lines.push('User struggles with protein intake — nudge toward protein-rich options when relevant.');
       if (user.hydration_struggle) lines.push('User struggles with hydration — gently mention water when relevant.');
+
+      // Frequency + today's send count — used by the prompt's "HOW GRACE EXPLAINS
+      // CHECK-INS" section so Grace can answer "how many today?" with the exact
+      // number instead of a vague "a couple."
+      if (user.checkin_count_per_day) {
+        lines.push(`CHECKIN FREQUENCY: ${user.checkin_count_per_day} scheduled check-in(s) per day`);
+      }
+      if (runtime?.checkinsToday !== undefined) {
+        lines.push(`Scheduled check-ins sent today: ${runtime.checkinsToday}`);
+      }
+      if (runtime?.todaysFood) {
+        const f = runtime.todaysFood;
+        lines.push(`Total protein TODAY: ${f.protein_g}g${f.calories ? ` (${f.calories} kcal)` : ''}`);
+        if (f.items.length > 0) lines.push(`Foods logged today: ${f.items.slice(0, 8).join('; ')}`);
+      }
     }
 
     if (isNew) lines.push('This is the user\'s FIRST message. Welcome them warmly and personally.');

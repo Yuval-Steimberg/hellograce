@@ -6,7 +6,7 @@ import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import QuizButton from "./QuizButton";
 
-const stripePromise = loadStripe("pk_test_51TA5TqE0DcWyPH4X0VwSi0iEX2V7dubsLUo5krPxpaNJJJBg9sxPpkoRQSbdZLZ2vMAHREY5RDllFhNyYeXwmQmE003iWe7frc");
+const stripePromise = loadStripe("pk_test_51TWfwcLMk6wjvxD9YRSKqpEGOd93kuzD1g29iK67bvdlkfpdvriGGdeGXwpuoPJf3DwxyOZ77MimOIvzc4kOXCxK00Ny75zsRB");
 
 interface PaymentStepProps {
   userId: string;

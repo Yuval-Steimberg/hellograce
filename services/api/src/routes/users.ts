@@ -70,6 +70,8 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
 
     // Upsert user then apply full profile.
     await users.ensureUser(phone);
+
+    // Core profile fields — guaranteed schema. Must succeed for onboarding.
     await users.update(phone, {
       first_name: b.firstName,
       medication: b.medication,
@@ -81,9 +83,6 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       current_weight: b.currentWeight ?? undefined,
       goal_weight: b.goalWeight ?? undefined,
       height_cm: b.heightCm ?? undefined,
-      age: b.age ?? undefined,
-      primary_goal: b.primaryGoal ?? undefined,
-      protein_goal_grams: proteinGoalGrams,
       goals: b.goals,
       timezone: b.timezone,
       checkin_count_per_day: b.checkinCountPerDay,
@@ -92,6 +91,24 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       active: true,
       trial_start: new Date(),
     });
+
+    // Personalization fields — depend on the 20260513000002 migration.
+    // If the migration hasn't been applied yet, silently degrade so signup
+    // doesn't break. Once the migration runs, these get populated normally.
+    if (b.age != null || b.primaryGoal != null || proteinGoalGrams) {
+      try {
+        await users.update(phone, {
+          age: b.age ?? undefined,
+          primary_goal: b.primaryGoal ?? undefined,
+          protein_goal_grams: proteinGoalGrams,
+        } as Partial<Parameters<typeof users.update>[1]>);
+      } catch (err) {
+        req.log.warn(
+          { err, phone },
+          'onboard.protein_personalization.skipped (likely missing migration 20260513000002)',
+        );
+      }
+    }
 
     // Fetch completed profile for message generation.
     const user = await users.getByPhone(phone);

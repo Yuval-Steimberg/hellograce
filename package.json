@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Grace — production-grade WhatsApp AI assistant for GLP-1 users.",
-  "packageManager": "pnpm@9.15.9",
+  "packageManager": "pnpm@10.4.1",
   "engines": {
     "node": "20.x"
   },

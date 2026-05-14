@@ -116,7 +116,19 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   await app.register(cors, { origin: true, credentials: true });
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(formbody);
-  await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+  await app.register(rateLimit, {
+    max: 120,
+    timeWindow: '1 minute',
+    // Twilio webhook is already protected by signature verification — no rate cap needed.
+    // Admin + chat routes keep the 120 req/min limit.
+    skipOnError: false,
+    keyGenerator: (req) => {
+      if (req.routeOptions?.url === '/webhook/twilio') return 'twilio-exempt';
+      return req.ip;
+    },
+    // Give the exempt key an effectively unlimited ceiling.
+    allowList: ['twilio-exempt'],
+  });
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof AppError) {

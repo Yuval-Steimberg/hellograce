@@ -1,5 +1,6 @@
 import { useNavigate, Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
+import Logo from "@/components/Logo";
 
 const FooterCTA = () => {
   const navigate = useNavigate();
@@ -29,7 +30,7 @@ const FooterCTA = () => {
       {/* Footer */}
       <footer className="border-t border-border py-8 md:py-12 px-6 text-center">
         <div className="max-w-6xl mx-auto flex flex-col items-center gap-4 text-muted-foreground">
-          <span className="font-serif text-lg md:text-xl text-foreground">grace</span>
+          <Logo size="small" />
           <p className="text-xs md:text-sm">© {new Date().getFullYear()} STEIMBROS, LLC. All rights reserved.</p>
           <div className="flex items-center gap-4 text-[13px] md:text-sm">
             <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy Policy</Link>

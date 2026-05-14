@@ -6,33 +6,34 @@
 
 @layer base {
   :root {
-    --background: 15 60% 96%;
-    --foreground: 10 30% 15%;
+    /* Cool gray-white + sage primary + terracotta accent */
+    --background: 220 16% 96%;    /* cool gray-white */
+    --foreground: 100 14% 18%;    /* very dark sage */
 
     --card: 0 0% 100%;
-    --card-foreground: 10 30% 15%;
+    --card-foreground: 100 14% 18%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 10 30% 15%;
+    --popover-foreground: 100 14% 18%;
 
-    --primary: 10 30% 15%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 102 14% 28%;       /* deep sage */
+    --primary-foreground: 220 16% 98%;
 
-    --secondary: 20 40% 90%;
-    --secondary-foreground: 10 30% 25%;
+    --secondary: 220 14% 92%;     /* layered cool gray */
+    --secondary-foreground: 100 14% 22%;
 
-    --muted: 20 30% 93%;
-    --muted-foreground: 10 15% 45%;
+    --muted: 220 14% 94%;
+    --muted-foreground: 220 8% 42%;
 
-    --accent: 15 76% 70%;
-    --accent-foreground: 10 30% 15%;
+    --accent: 16 50% 58%;         /* terracotta */
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 20 30% 88%;
-    --input: 20 30% 88%;
-    --ring: 10 30% 15%;
+    --border: 220 12% 88%;
+    --input: 220 12% 88%;
+    --ring: 102 14% 28%;
 
     --radius: 1rem;
 
@@ -45,35 +46,35 @@
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
 
-    /* Custom tokens */
-    --peach: 15 76% 70%;
-    --blush: 15 60% 96%;
-    --velvet: 10 30% 15%;
-    --sand: 20 30% 88%;
-    --success: 145 60% 45%;
+    /* Custom tokens — names kept stable, hues shifted to the new palette */
+    --peach: 16 50% 58%;          /* terracotta */
+    --blush: 220 16% 96%;         /* cool gray-white */
+    --velvet: 100 14% 18%;        /* dark sage */
+    --sand: 220 12% 88%;
+    --success: 145 50% 38%;
     --success-foreground: 0 0% 100%;
   }
 
   .dark {
-    --background: 15 20% 8%;
-    --foreground: 15 40% 95%;
-    --card: 15 15% 12%;
-    --card-foreground: 15 40% 95%;
-    --popover: 15 15% 12%;
-    --popover-foreground: 15 40% 95%;
-    --primary: 15 60% 96%;
-    --primary-foreground: 10 30% 15%;
-    --secondary: 15 15% 18%;
-    --secondary-foreground: 15 40% 90%;
-    --muted: 15 10% 16%;
-    --muted-foreground: 15 10% 55%;
-    --accent: 15 50% 30%;
-    --accent-foreground: 15 60% 90%;
+    --background: 100 14% 10%;
+    --foreground: 37 22% 92%;
+    --card: 100 12% 13%;
+    --card-foreground: 37 22% 92%;
+    --popover: 100 12% 13%;
+    --popover-foreground: 37 22% 92%;
+    --primary: 37 28% 88%;
+    --primary-foreground: 100 14% 18%;
+    --secondary: 100 10% 16%;
+    --secondary-foreground: 37 22% 88%;
+    --muted: 100 8% 14%;
+    --muted-foreground: 100 8% 55%;
+    --accent: 16 40% 40%;
+    --accent-foreground: 37 22% 92%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 100%;
-    --border: 15 10% 20%;
-    --input: 15 10% 20%;
-    --ring: 15 60% 96%;
+    --border: 100 8% 18%;
+    --input: 100 8% 18%;
+    --ring: 37 28% 88%;
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
@@ -82,6 +83,14 @@
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Custom tokens */
+    --peach: 16 40% 40%;
+    --blush: 100 14% 10%;
+    --velvet: 37 28% 88%;
+    --sand: 100 10% 22%;
+    --success: 145 40% 45%;
+    --success-foreground: 0 0% 100%;
   }
 }
 
@@ -91,10 +100,21 @@
   }
 
   body {
-    @apply bg-background text-foreground font-sans;
-    font-size: 19px;
+    @apply text-foreground font-sans;
+    font-size: 16px;
     font-weight: 400;
     line-height: 1.65;
+    background-color: hsl(var(--background));
+  }
+
+  @media (min-width: 768px) {
+    body { font-size: 18px; }
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(ellipse 1100px 700px at 92% -10%, hsl(16 40% 28% / 0.5) 0%, transparent 60%),
+      radial-gradient(ellipse 900px 700px at -10% 105%, hsl(220 20% 22% / 0.45) 0%, transparent 60%);
   }
 
   h1, h2, h3 {
@@ -142,5 +162,107 @@
   .scrollbar-hide {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Background container — used by AnimatedBackground component */
+  .grace-bg {
+    contain: strict;
+  }
+
+  /* CTA pulsing glow — wraps any .grace-btn-glow trigger */
+  .grace-btn-glow {
+    position: relative;
+  }
+  .grace-btn-glow::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: 9999px;
+    background: linear-gradient(90deg, hsl(14 100% 72% / 0.5), hsl(265 75% 78% / 0.5), hsl(200 90% 72% / 0.5));
+    filter: blur(14px);
+    opacity: 0;
+    z-index: -1;
+    animation: pulse-glow 3.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 0.25; }
+    50%      { opacity: 0.7; }
+  }
+
+  /* Slow float for the chat mockup card */
+  @keyframes gentle-float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-8px); }
+  }
+
+  .grace-float {
+    animation: gentle-float 6s ease-in-out infinite;
+    will-change: transform;
+  }
+
+  /* Shimmer for eyebrow text */
+  @keyframes shimmer {
+    0% { background-position: -200% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+
+  .grace-shimmer {
+    background: linear-gradient(90deg, hsl(16 50% 58%) 0%, hsl(40 100% 60%) 30%, hsl(265 65% 65%) 60%, hsl(16 50% 58%) 100%);
+    background-size: 200% auto;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    animation: shimmer 6s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .grace-float,
+    .grace-shimmer,
+    .grace-btn-glow::after {
+      animation: none !important;
+    }
+  }
+
+  /* Admin shell — deep slate + indigo palette, scoped so landing page is unaffected */
+  .admin-shell {
+    --background: 222 47% 6%;
+    --foreground: 214 32% 91%;
+    --card: 217 33% 11%;
+    --card-foreground: 214 32% 91%;
+    --popover: 217 33% 11%;
+    --popover-foreground: 214 32% 91%;
+    --primary: 239 84% 67%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 28% 17%;
+    --secondary-foreground: 214 32% 78%;
+    --muted: 215 25% 14%;
+    --muted-foreground: 215 16% 50%;
+    --accent: 239 84% 67%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 215 28% 17%;
+    --input: 215 28% 17%;
+    --ring: 239 84% 67%;
+  }
+
+  .admin-shell *::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  .admin-shell *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .admin-shell *::-webkit-scrollbar-thumb {
+    background: hsl(215 28% 25%);
+    border-radius: 2px;
+  }
+
+  .admin-shell *::-webkit-scrollbar-thumb:hover {
+    background: hsl(215 28% 35%);
   }
 }

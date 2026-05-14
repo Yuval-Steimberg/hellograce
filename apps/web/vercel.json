@@ -1,0 +1,9 @@
+{
+  "buildCommand": "npm install --no-audit --no-fund && npm run build",
+  "outputDirectory": "dist",
+  "installCommand": "echo 'install handled by build command'",
+  "framework": null,
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

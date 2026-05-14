@@ -5,6 +5,7 @@ import { ValidationError } from '../errors.js';
 import type { UserService } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
 import type { MessageGenerator } from '../scheduler/message-generator.js';
+import { calculateProteinTarget } from '../nutrition/protein-target.js';
 
 const OnboardSchema = z.object({
   firstName: z.string().trim().min(1).max(120),
@@ -17,10 +18,15 @@ const OnboardSchema = z.object({
   foodDislikes: z.string().max(1000).optional().nullable(),
   currentWeight: z.number().finite().positive().optional().nullable(),
   goalWeight: z.number().finite().positive().optional().nullable(),
+  heightCm: z.number().finite().positive().max(260).optional().nullable(),
+  age: z.number().int().min(13).max(120).optional().nullable(),
+  primaryGoal: z.enum(['fat_loss', 'muscle_gain', 'maintenance', 'recomposition']).optional().nullable(),
   goals: z.array(z.string().trim().min(1).max(120)).max(10).default([]),
   timezone: z.string().trim().max(100).optional().default('America/New_York'),
   checkinCountPerDay: z.number().int().min(1).max(5).optional().default(1),
   checkinDaysInterval: z.number().int().min(1).max(14).optional().default(1),
+  rlhfEnabled: z.boolean().optional().default(false),
+  glp1StartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
 });
 
 export interface UserRouteDeps {
@@ -54,8 +60,19 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       ? b.foodDislikes.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
 
+    // Personalized daily protein target (grams), based on body metrics + goal.
+    // Falls back to a sensible 80g default when inputs are missing.
+    const proteinGoalGrams = calculateProteinTarget({
+      weightLbs: b.currentWeight ?? null,
+      heightCm: b.heightCm ?? null,
+      age: b.age ?? null,
+      goal: b.primaryGoal ?? null,
+    });
+
     // Upsert user then apply full profile.
     await users.ensureUser(phone);
+
+    // Core profile fields — guaranteed schema. Must succeed for onboarding.
     await users.update(phone, {
       first_name: b.firstName,
       medication: b.medication,
@@ -66,13 +83,44 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       food_dislikes: foodDislikesArr,
       current_weight: b.currentWeight ?? undefined,
       goal_weight: b.goalWeight ?? undefined,
+      height_cm: b.heightCm ?? undefined,
       goals: b.goals,
       timezone: b.timezone,
       checkin_count_per_day: b.checkinCountPerDay,
       checkin_days_interval: b.checkinDaysInterval,
+      rlhf_enabled: b.rlhfEnabled,
       active: true,
       trial_start: new Date(),
     });
+
+    // Personalization fields — depend on the 20260513000002 migration.
+    // If the migration hasn't been applied yet, silently degrade so signup
+    // doesn't break. Once the migration runs, these get populated normally.
+    if (b.age != null || b.primaryGoal != null || proteinGoalGrams) {
+      try {
+        await users.update(phone, {
+          age: b.age ?? undefined,
+          primary_goal: b.primaryGoal ?? undefined,
+          protein_goal_grams: proteinGoalGrams,
+        } as Partial<Parameters<typeof users.update>[1]>);
+      } catch (err) {
+        req.log.warn(
+          { err, phone },
+          'onboard.protein_personalization.skipped (likely missing migration 20260513000002)',
+        );
+      }
+    }
+
+    // GLP-1 start date — depends on 20260513000003 migration. Silently degrade if absent.
+    if (b.glp1StartDate) {
+      try {
+        await users.update(phone, {
+          glp1_start_date: new Date(b.glp1StartDate),
+        } as Partial<Parameters<typeof users.update>[1]>);
+      } catch {
+        req.log.warn({ phone }, 'onboard.glp1_start_date.skipped (likely missing migration 20260513000003)');
+      }
+    }
 
     // Fetch completed profile for message generation.
     const user = await users.getByPhone(phone);

@@ -59,7 +59,7 @@ export class AIOrchestrator {
         { role: 'user', content: input.text },
       ],
       temperature: 0.6,
-      maxOutputTokens: 400,
+      maxOutputTokens: 700,
     });
 
     let validated = validateResponse(llmResp.text);
@@ -83,7 +83,7 @@ export class AIOrchestrator {
             { role: 'user', content: input.text },
           ],
           temperature: 0.4,
-          maxOutputTokens: 400,
+          maxOutputTokens: 700,
         });
         const retryValidated = validateResponse(retryResp.text);
         const retryPrecheck = precheckGrounding(retryValidated.text, input.retrieved);

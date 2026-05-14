@@ -1,10 +1,14 @@
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { ChevronRight } from "lucide-react";
+import Logo from "@/components/Logo";
 import HeroSection from "@/components/landing/HeroSection";
+import MedicationsBar from "@/components/landing/MedicationsBar";
 import QuoteSection from "@/components/landing/QuoteSection";
 import PhilosophySection from "@/components/landing/PhilosophySection";
 import FeatureSpread from "@/components/landing/FeatureSpread";
+import AnimatedBackground from "@/components/landing/AnimatedBackground";
+import ScrollProgress from "@/components/landing/ScrollProgress";
 
 // Lazy load below-fold sections
 const TestimonialsSection = lazy(() => import("@/components/landing/TestimonialsSection"));
@@ -26,7 +30,9 @@ const Landing = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans">
+    <div className="relative isolate min-h-screen text-foreground font-sans">
+      <ScrollProgress />
+      <AnimatedBackground />
       {/* Sticky Nav — desktop only */}
       <header
         className={`hidden lg:block fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
@@ -37,7 +43,7 @@ const Landing = () => {
         role="banner"
       >
         <div className="px-10 flex items-center justify-between max-w-[1440px] mx-auto">
-          <span className="font-serif text-2xl text-foreground tracking-tight">grace</span>
+          <Logo size="default" />
           <div className="flex items-center gap-6">
             <button
               onClick={() => navigate("/settings")}
@@ -59,7 +65,7 @@ const Landing = () => {
 
       {/* Mobile header — static */}
       <div className="lg:hidden px-5 sm:px-8 py-5 flex items-center justify-between" role="banner">
-        <span className="font-serif text-2xl text-foreground tracking-tight">grace</span>
+        <Logo size="default" />
         <button
           onClick={() => navigate("/settings")}
           className="text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -73,6 +79,7 @@ const Landing = () => {
 
       <main>
         <HeroSection />
+        <MedicationsBar />
         <QuoteSection />
         <PhilosophySection />
         <FeatureSpread />

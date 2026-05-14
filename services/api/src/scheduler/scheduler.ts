@@ -2,7 +2,8 @@ import cron from 'node-cron';
 import type { Logger } from 'pino';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
-import type { MessageGenerator } from './message-generator.js';
+import type { MessageGenerator, GenerateOpts } from './message-generator.js';
+import type { PromptOptimizer } from './prompt-optimizer.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const MIDDAY_DAYS = new Set([1, 3, 5]); // Mon, Wed, Fri
@@ -13,6 +14,7 @@ interface SchedulerDeps {
   sender: TwilioSender;
   generator: MessageGenerator;
   logger: Logger;
+  promptOptimizer?: PromptOptimizer;
 }
 
 export class Scheduler {
@@ -29,6 +31,12 @@ export class Scheduler {
     this.tasks.push(
       cron.schedule('0 3 * * *', () => void this.runPersonalizationEngine()),
     );
+    // Prompt optimizer runs every 3 days at 4am UTC (Sun/Wed/Sat)
+    if (this.deps.promptOptimizer) {
+      this.tasks.push(
+        cron.schedule('0 4 * * 0,3,6', () => void this.deps.promptOptimizer!.run()),
+      );
+    }
     this.deps.logger.info('scheduler.started');
   }
 
@@ -53,6 +61,9 @@ export class Scheduler {
     const hour = now.getHours();
     const minute = now.getMinutes();
     const todayStr = toDateStr(now);
+
+    // ── Quiet hours: never send proactive messages between 21:00 and 07:00 local
+    if (hour >= 21 || hour < 7) return;
 
     // ── Injection day flow (runs any day matching injection_day)
     if (user.injection_day && user.injection_day === DAYS[dayOfWeek]) {
@@ -90,10 +101,16 @@ export class Scheduler {
       hour <= wakeHour + 1 &&
       (!user.last_morning_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) !== todayStr)
     ) {
-      await this.sendAndRecord(user, 'morning');
+      await this.sendAndRecord(user, 'morning', { isWednesday: dayOfWeek === 3 });
       await this.deps.users.update(user.phone, { last_morning_sent_at: new Date() });
       return;
     }
+
+    // Engagement gate for midday/evening: cap at 2 proactives/day for silent
+    // users (morning + 1 nudge max). Once they go fully silent for >1 day, drop
+    // to morning only. Engaged users get the full 3-message schedule.
+    const engagedToday = userEngagedToday(user);
+    const silentDays = userSilentDays(user);
 
     // ── Midday nudge (Mon/Wed/Fri, 11am–2pm local)
     if (
@@ -101,8 +118,10 @@ export class Scheduler {
       hour >= 11 && hour <= 14 &&
       !user.midday_skip &&
       (!user.last_midday_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_midday_sent_at))) !== todayStr) &&
-      // Skip if user replied to morning in last 3h
-      (!user.last_reply_at || Date.now() - new Date(user.last_reply_at).getTime() > 3 * 3_600_000)
+      // Skip if user replied within last 3h — they're already in active chat
+      (!user.last_reply_at || Date.now() - new Date(user.last_reply_at).getTime() > 3 * 3_600_000) &&
+      // Engagement dampener: skip midday after >1 day of silence
+      (engagedToday || silentDays < 1)
     ) {
       // Only send midday if morning was sent today (don't double-cold-start)
       const morningToday = user.last_morning_sent_at &&
@@ -119,9 +138,13 @@ export class Scheduler {
     const isEveningWindow =
       EVENING_DAYS.has(dayOfWeek) &&
       ((hour === sleepHour - 2 && minute >= 30) || (hour === sleepHour - 1 && minute === 0));
-    if (isEveningWindow) {
+    if (
+      isEveningWindow &&
+      // Hard cap: never send evening to a user who hasn't actively chatted today
+      engagedToday
+    ) {
       if (!user.last_evening_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_evening_sent_at))) !== todayStr) {
-        await this.sendAndRecord(user, 'evening');
+        await this.sendAndRecord(user, 'evening', { lowMoodMode: user.low_mood_mode ?? false });
         await this.deps.users.update(user.phone, { last_evening_sent_at: new Date() });
       }
     }
@@ -165,9 +188,9 @@ export class Scheduler {
     }
   }
 
-  private async sendAndRecord(user: GraceUser, type: Parameters<MessageGenerator['generate']>[0]): Promise<void> {
+  private async sendAndRecord(user: GraceUser, type: Parameters<MessageGenerator['generate']>[0], opts?: GenerateOpts): Promise<void> {
     try {
-      const message = await this.deps.generator.generate(type, user);
+      const message = await this.deps.generator.generate(type, user, opts);
       await this.deps.sender.send({ to: user.phone, body: message, channel: 'whatsapp' });
       await this.deps.users.recordCheckIn({
         userId: user.phone,
@@ -219,6 +242,18 @@ function localNow(tz: string, date = new Date()): Date {
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/** Has the user actively replied since today's morning message went out? */
+function userEngagedToday(user: GraceUser): boolean {
+  if (!user.last_reply_at || !user.last_morning_sent_at) return false;
+  return new Date(user.last_reply_at) >= new Date(user.last_morning_sent_at);
+}
+
+/** Days elapsed since the user last replied (Infinity if they never have). */
+function userSilentDays(user: GraceUser): number {
+  if (!user.last_reply_at) return Infinity;
+  return (Date.now() - new Date(user.last_reply_at).getTime()) / (24 * 3_600_000);
 }
 
 function analyzeUserBehavior(checkins: Array<{ type: string; user_reply: string | null; mood_score: number | null }>) {

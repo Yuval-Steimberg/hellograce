@@ -8,7 +8,7 @@ export const organizationSchema = {
   url: BASE_URL,
   logo: `${BASE_URL}/og-image.png`,
   description:
-    "grace is a personalized SMS companion for people on GLP-1 medications like Ozempic, Wegovy, Mounjaro, and Zepbound.",
+    "grace is a personalized WhatsApp companion for people on GLP-1 medications like Ozempic, Wegovy, Mounjaro, and Zepbound. Handles nausea, plateau weeks, protein math, and injection-day check-ins via text.",
   sameAs: [],
   contactPoint: {
     "@type": "ContactPoint",
@@ -23,7 +23,7 @@ export const websiteSchema = {
   name: "grace",
   url: BASE_URL,
   description:
-    "Your daily GLP-1 text companion. Personalized SMS check-ins for hydration, meals, injection reminders, and emotional support.",
+    "Your daily GLP-1 companion on WhatsApp. Personalized check-ins for hydration, protein targets, injection days, and the dozen small questions GLP-1 throws at you.",
   publisher: {
     "@type": "Organization",
     name: "grace",
@@ -35,24 +35,17 @@ export const softwareApplicationSchema = {
   "@type": "SoftwareApplication",
   name: "grace",
   applicationCategory: "HealthApplication",
-  applicationSubCategory: "Weight Loss Support",
-  operatingSystem: "SMS",
+  applicationSubCategory: "GLP-1 Support",
+  operatingSystem: "WhatsApp, SMS",
   description:
-    "A daily SMS companion for GLP-1 weight loss journeys. Personalized check-ins, protein tracking, injection reminders, and emotional support — all via text message.",
+    "A daily WhatsApp companion for GLP-1 protocols (Wegovy, Ozempic, Mounjaro, Zepbound, compounded sema/tirz). Side-effect coaching, protein math against goal weight, injection-day prep, plateau diagnostics — all via text.",
   url: BASE_URL,
   offers: {
     "@type": "Offer",
     price: "0",
     priceCurrency: "USD",
-    description: "Free 7-day trial, then $12/month",
+    description: "Free 3-day trial, then $12/month",
     priceValidUntil: new Date(new Date().getFullYear() + 1, 0, 1).toISOString().split("T")[0],
-  },
-  aggregateRating: {
-    "@type": "AggregateRating",
-    ratingValue: "4.9",
-    ratingCount: "12000",
-    bestRating: "5",
-    worstRating: "1",
   },
   audience: {
     "@type": "PeopleAudience",
@@ -64,17 +57,16 @@ export const softwareApplicationSchema = {
     },
   },
   featureList: [
-    "Personalized morning check-ins",
-    "Hydration reminders",
-    "Protein tracking suggestions",
-    "Injection day reminders",
-    "Evening wind-down messages",
+    "Side-effect coaching (nausea, fatigue, constipation)",
+    "Injection-day prep + day-after follow-up",
+    "Protein and hydration targets against your goal weight",
+    "Plateau-week diagnostics",
     "Adaptive emotional support",
-    "Weekly milestone summaries",
-    "No app required — SMS only",
+    "Dose-week awareness across all GLP-1 medications",
+    "WhatsApp + SMS — no app required",
   ],
   keywords:
-    "GLP-1, Ozempic, Wegovy, Mounjaro, Zepbound, weight loss, SMS companion, text buddy, daily check-in, hydration, protein tracking, injection reminder",
+    "GLP-1, Ozempic, Wegovy, Mounjaro, Zepbound, semaglutide, tirzepatide, weight loss, WhatsApp companion, injection day, nausea, protein, daily check-in",
 };
 
 export const faqSchema = {
@@ -83,42 +75,50 @@ export const faqSchema = {
   mainEntity: [
     {
       "@type": "Question",
+      name: "Which GLP-1 medications does grace support?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "Wegovy and Ozempic (semaglutide), Mounjaro and Zepbound (tirzepatide), Saxenda (liraglutide), and compounded semaglutide/tirzepatide from any reputable pharmacy. grace knows the dose ladders, the typical side-effect timelines, and the protocol differences between them.",
+      },
+    },
+    {
+      "@type": "Question",
       name: "Do I need to download an app?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Not at all. grace works entirely through SMS — plain text messages on the phone you already carry. No app, no login, no password to remember.",
+        text: "No. grace lives in WhatsApp (or SMS where WhatsApp isn't available). It's the messaging app on the phone you already carry — no login, no password, no notifications to manage.",
       },
     },
     {
       "@type": "Question",
-      name: "What kind of texts will I receive from grace?",
+      name: "What happens on my injection day?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Personalized daily check-ins based on your goals, your schedule, and what you've shared with us. Morning hydration prompts, meal ideas using foods you actually like, encouragement when you're having a tough day, and injection-day reminders.",
+        text: "grace texts you in the morning with a quick prep ritual (hydration target, lighter meals, ginger if nausea hit last time). She checks in after you've dosed, then again the next day to see how you're feeling. If you flag a side effect, she follows up 4 hours later.",
       },
     },
     {
       "@type": "Question",
-      name: "Does grace really remember what I tell it?",
+      name: "Can grace help with nausea, fatigue, or constipation?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Yes. grace learns from every conversation — your food preferences, how you've been feeling, what's working and what isn't. Over time, your messages become more and more tailored to you.",
+        text: "Yes — and she remembers what worked last time. Plain crackers and ginger tea on day-after nausea. Magnesium citrate at night for constipation. Electrolytes when fatigue spikes. She'll never tell you to push through — only what's reasonable, and when to call your doctor.",
       },
     },
     {
       "@type": "Question",
-      name: "What if I'm having a rough day on GLP-1?",
+      name: "Does grace remember my history, or is it generic?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "That's exactly when grace shows up. If you share that you're struggling, grace adjusts — offering gentler check-ins, lighter suggestions, and genuine encouragement.",
+        text: "She remembers everything you share — your goal weight, current dose week, the foods that make you queasy, which protein sources you actually eat, your last weigh-in, and whether you flagged a side effect this week. Every reply is shaped by that context.",
       },
     },
     {
       "@type": "Question",
-      name: "Is grace medical advice?",
+      name: "Will grace replace my doctor?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "No. grace is a wellness companion, not a medical provider. We offer supportive reminders about hydration, protein, and how you're feeling — but always encourage you to follow your doctor's guidance.",
+        text: "No. grace is a wellness companion — she'll never adjust your dose, diagnose a side effect, or override your prescriber. If something sounds clinically serious, she'll tell you to call your doctor or go to urgent care.",
       },
     },
     {
@@ -126,15 +126,7 @@ export const faqSchema = {
       name: "How much does grace cost?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Your first 7 days are completely free. After that, grace is $12/month — less than a single co-pay. Cancel anytime with a simple text.",
-      },
-    },
-    {
-      "@type": "Question",
-      name: "Can I pause or stop the texts?",
-      acceptedAnswer: {
-        "@type": "Answer",
-        text: "Of course. Reply PAUSE at any time to take a break, or STOP to cancel entirely. We respect your space — always.",
+        text: "Your first 3 days are completely free — no card required to start. After that, $12/month, less than a single GLP-1 co-pay. Cancel any time by texting STOP.",
       },
     },
     {
@@ -142,7 +134,7 @@ export const faqSchema = {
       name: "How is my information protected?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Your phone number and responses are encrypted and never shared with third parties. We don't sell data, run ads, or ask you to perform your health for an audience.",
+        text: "Encrypted in transit and at rest. We never sell your data, never share it with insurers or employers, and never run ads against your messages. You can request full deletion any time by texting DELETE — your record is gone within 24 hours.",
       },
     },
   ],
@@ -183,7 +175,7 @@ export const serviceSchema = {
         itemOffered: {
           "@type": "Service",
           name: "grace Free Trial",
-          description: "7 days of free personalized GLP-1 text support",
+          description: "3 days of free personalized GLP-1 text support",
         },
         price: "0",
         priceCurrency: "USD",

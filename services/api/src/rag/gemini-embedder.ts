@@ -1,21 +1,18 @@
 import { createHash } from 'crypto';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { UpstreamError } from '../errors.js';
 import type { Embedder } from './rag.service.js';
 import type { Cache } from '../cache/cache.js';
 
-const EMBED_TTL_SEC = 5 * 60; // 5 min
+const EMBED_TTL_SEC = 5 * 60;
+const EMBED_DIMS = 768;
 
-/** text-embedding-004 → 768-dim vectors. */
+/** gemini-embedding-001 with outputDimensionality=768 → matches existing vector(768) schema. */
 export class GeminiEmbedder implements Embedder {
-  private client: GoogleGenerativeAI;
   constructor(
-    apiKey: string,
-    private model = 'text-embedding-004',
+    private apiKey: string,
+    private model = 'gemini-embedding-001',
     private cache?: Cache,
-  ) {
-    this.client = new GoogleGenerativeAI(apiKey);
-  }
+  ) {}
 
   async embed(text: string): Promise<number[]> {
     if (this.cache) {
@@ -32,12 +29,33 @@ export class GeminiEmbedder implements Embedder {
   }
 
   private async callEmbed(text: string): Promise<number[]> {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:embedContent?key=${this.apiKey}`;
+    let response: Response;
     try {
-      const m = this.client.getGenerativeModel({ model: this.model });
-      const result = await m.embedContent(text);
-      return result.embedding.values;
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: { parts: [{ text }] },
+          outputDimensionality: EMBED_DIMS,
+        }),
+      });
     } catch (err) {
       throw new UpstreamError('Embedding generation failed', err);
     }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new UpstreamError(`Embedding generation failed: HTTP ${response.status} ${body}`);
+    }
+
+    const data = (await response.json()) as { embedding?: { values?: number[] } };
+    const values = data.embedding?.values;
+    if (!values || values.length !== EMBED_DIMS) {
+      throw new UpstreamError(
+        `Embedding generation failed: unexpected response (got ${values?.length ?? 0} dims, want ${EMBED_DIMS})`,
+      );
+    }
+    return values;
   }
 }

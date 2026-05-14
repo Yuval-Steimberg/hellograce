@@ -25,6 +25,7 @@ import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
+import { PromptOptimizer } from './scheduler/prompt-optimizer.js';
 import { AppError } from './errors.js';
 
 async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Promise<void> }> {
@@ -37,7 +38,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   const llm = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL }, logger, cache);
   const memory = new MemoryService(pool);
-  const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'text-embedding-004', cache);
+  const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'gemini-embedding-001', cache);
   const rag = new RagService(pool, embedder, logger);
   const turnQueue = getTurnQueue(redis);
 
@@ -64,6 +65,8 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     flags: { ragEnabled: env.RAG_ENABLED ?? true, toolsEnabled: env.TOOLS_ENABLED ?? true },
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
+    twilioSid: env.TWILIO_ACCOUNT_SID,
+    twilioToken: env.TWILIO_AUTH_TOKEN,
     turnQueue,
     systemPrompt: await loadActivePrompt(),
   });
@@ -79,14 +82,15 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   );
 
   const generator = new MessageGenerator(llm);
-  const scheduler = new Scheduler({ users, sender, generator, logger });
+  const promptOptimizer = new PromptOptimizer(pool, llm, logger);
+  const scheduler = new Scheduler({ users, sender, generator, logger, promptOptimizer });
 
-  startWorkers({ redis, pool, memory, logger });
-
-  // Reload the active system prompt from DB without restarting the process.
+  // Reload the AI service prompt whenever the optimizer activates a new version.
   process.on('SIGHUP', () => {
     void loadActivePrompt().then((p) => ai.updateSystemPrompt(p));
   });
+
+  startWorkers({ redis, pool, memory, logger });
 
   scheduler.start();
 

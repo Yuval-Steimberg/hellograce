@@ -6,13 +6,24 @@ import PhoneInput from "./PhoneInput";
 interface PhoneStepProps {
   phone: string;
   smsConsent: boolean;
+  rlhfConsent: boolean;
   onChangePhone: (phone: string) => void;
   onChangeConsent: (consent: boolean) => void;
+  onChangeRlhfConsent: (consent: boolean) => void;
   onNext: () => void;
   saving?: boolean;
 }
 
-const PhoneStep = ({ phone, smsConsent, onChangePhone, onChangeConsent, onNext, saving }: PhoneStepProps) => {
+const PhoneStep = ({
+  phone,
+  smsConsent,
+  rlhfConsent,
+  onChangePhone,
+  onChangeConsent,
+  onChangeRlhfConsent,
+  onNext,
+  saving,
+}: PhoneStepProps) => {
   const [error, setError] = useState("");
 
   const isIL = phone.startsWith("+972");
@@ -88,6 +99,27 @@ const PhoneStep = ({ phone, smsConsent, onChangePhone, onChangeConsent, onNext, 
             <Link to="/privacy" target="_blank" className="underline hover:text-foreground transition-colors">Privacy Policy</Link>
             {" "}and{" "}
             <Link to="/terms" target="_blank" className="underline hover:text-foreground transition-colors">Terms of Service</Link>.
+          </span>
+        </label>
+
+        <label className="flex items-start gap-4 cursor-pointer mt-5">
+          <div className="mt-0.5 shrink-0">
+            <input
+              type="checkbox"
+              checked={rlhfConsent}
+              onChange={(e) => onChangeRlhfConsent(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className={`w-6 h-6 rounded-lg border-2 transition-all duration-200 flex items-center justify-center ${rlhfConsent ? "border-primary bg-primary" : "border-sand bg-card"}`}>
+              {rlhfConsent && (
+                <svg className="w-3.5 h-3.5 text-primary-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </div>
+          </div>
+          <span className="text-sm text-muted-foreground leading-snug">
+            Help improve Grace by rating her replies (optional). She'll occasionally ask if a message was helpful — your feedback shapes the model.
           </span>
         </label>
 

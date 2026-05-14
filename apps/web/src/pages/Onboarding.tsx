@@ -35,6 +35,7 @@ const Onboarding = () => {
   const [firstName, setFirstName] = useState("");
   const [phone, setPhone] = useState("");
   const [smsConsent, setSmsConsent] = useState(false);
+  const [rlhfConsent, setRlhfConsent] = useState(false);
   const [medication, setMedication] = useState("");
   const [medicationFrequency, setMedicationFrequency] = useState("weekly");
   const [injectionDay, setInjectionDay] = useState("");
@@ -45,6 +46,10 @@ const Onboarding = () => {
   const [foodDislikes, setFoodDislikes] = useState("");
   const [currentWeight, setCurrentWeight] = useState("");
   const [goalWeight, setGoalWeight] = useState("");
+  const [heightCm, setHeightCm] = useState("");
+  const [age, setAge] = useState("");
+  const [primaryGoal, setPrimaryGoal] = useState("");
+  const [glp1StartDate, setGlp1StartDate] = useState("");
   const [checkinCountPerDay, setCheckinCountPerDay] = useState(2);
   const [checkinDaysInterval, setCheckinDaysInterval] = useState(1);
 
@@ -94,10 +99,15 @@ const Onboarding = () => {
         foodDislikes: foodDislikes.trim() || null,
         currentWeight: currentWeight ? Number(currentWeight) : null,
         goalWeight: goalWeight ? Number(goalWeight) : null,
+        heightCm: heightCm ? Number(heightCm) : null,
+        age: age ? Number(age) : null,
+        primaryGoal: primaryGoal || null,
+        glp1StartDate: glp1StartDate || null,
         goals,
         timezone,
         checkinCountPerDay,
         checkinDaysInterval,
+        rlhfEnabled: rlhfConsent,
       };
 
       let resultUserId: string | undefined;
@@ -191,9 +201,17 @@ const Onboarding = () => {
           <WeightStep
             currentWeight={currentWeight}
             goalWeight={goalWeight}
+            heightCm={heightCm}
+            age={age}
+            primaryGoal={primaryGoal}
+            glp1StartDate={glp1StartDate}
             onChange={(d) => {
               if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
               if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
+              if (d.heightCm !== undefined) setHeightCm(d.heightCm);
+              if (d.age !== undefined) setAge(d.age);
+              if (d.primaryGoal !== undefined) setPrimaryGoal(d.primaryGoal);
+              if (d.glp1StartDate !== undefined) setGlp1StartDate(d.glp1StartDate);
             }}
             onNext={next}
           />
@@ -202,8 +220,10 @@ const Onboarding = () => {
           <PhoneStep
             phone={phone}
             smsConsent={smsConsent}
+            rlhfConsent={rlhfConsent}
             onChangePhone={setPhone}
             onChangeConsent={setSmsConsent}
+            onChangeRlhfConsent={setRlhfConsent}
             onNext={handleComplete}
             saving={saving}
           />

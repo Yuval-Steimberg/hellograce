@@ -45,6 +45,8 @@ export interface AIServiceDeps {
   flags: { ragEnabled: boolean; toolsEnabled: boolean };
   geminiApiKey: string;
   geminiModel: string;
+  twilioSid?: string;
+  twilioToken?: string;
   turnQueue?: Queue<TurnPersistJob>;
   systemPrompt?: string;
 }
@@ -79,35 +81,69 @@ export class AIService {
       };
     }
 
-    // Load user profile for personalisation.
-    const user = await users.getById(input.userId).catch(() => null);
+    // Fire all independent I/O in parallel: user profile, conversation, history, tool settings,
+    // and media analysis. RAG retrieval needs augmentedText so it runs after media completes.
+    const twilioAuth = this.deps.twilioSid && this.deps.twilioToken
+      ? { sid: this.deps.twilioSid, token: this.deps.twilioToken }
+      : undefined;
 
-    // Multimodal: if the message has media, fold a textual description into the prompt.
+    const mediaPromise: Promise<string | null> = input.media.length > 0
+      ? analyzeMedia(input.media, {
+          apiKey: this.deps.geminiApiKey,
+          model: this.deps.geminiModel,
+          logger,
+          twilio: twilioAuth,
+        })
+      : Promise.resolve(null);
+
+    const [user, conversationId, isNew, history, toolSettings, description, todaysFood, checkinsToday] = await Promise.all([
+      users.getById(input.userId).catch(() => null),
+      memory.ensureConversation(input.userId),
+      users.isNewUser(input.userId).catch(() => false),
+      memory.getRecentTurns(input.userId, 12),
+      flags.toolsEnabled ? this.loadToolSettings() : Promise.resolve({} as Record<string, boolean>),
+      mediaPromise,
+      users.getTodaysFoodSummary(input.userId).catch(() => ({ protein_g: 0, calories: 0, items: [] })),
+      this.countTodaysCheckIns(input.userId).catch(() => 0),
+    ]);
+
+    // Fold media description into the prompt (only after Promise.all resolves).
     let augmentedText = input.text;
-    if (input.media.length > 0) {
-      const description = await analyzeMedia(input.media, {
-        apiKey: this.deps.geminiApiKey,
-        model: this.deps.geminiModel,
-        logger,
-      });
-      if (description) augmentedText = `${input.text}\n\n[media: ${description}]`.trim();
+    if (description) {
+      const kind = input.media[0]?.kind;
+      if (kind === 'audio' && !input.text) {
+        augmentedText = `[Voice note — auto-transcribed, may have filler words or fragments. Respond naturally.]\n${description}`;
+      } else if (kind === 'image') {
+        const userIntent = input.text ? `The user said: "${input.text}"\n\n` : '';
+        if (description.includes('IMAGE_TYPE: food')) {
+          const foodArg = buildFoodLogArg(description);
+          const confidence = description.match(/^CONFIDENCE:\s*(\w+)/m)?.[1]?.toLowerCase() ?? 'medium';
+          const confidenceNote = confidence === 'low'
+            ? ' (rough estimate — photo was unclear)'
+            : confidence === 'medium' ? ' (rough estimate)' : '';
+          augmentedText = `${userIntent}The user sent a meal photo. Here is the nutrition data for your reference only — do NOT repeat this breakdown to the user:\n\n${description}\n\n[REQUIRED: Call log_food with args {"food": ${JSON.stringify(foodArg)}} — pass this string EXACTLY. Then reply as Grace in 1–2 sentences max, conversational, no lists, no per-item breakdowns. Use the TOTAL protein number naturally. Example style: "That looks like about 30g of protein${confidenceNote}. You're at 55g today." NEVER output ITEMS/BREAKDOWN/TOTAL tables. Sound like a supportive friend, not a nutrition app.]`;
+        } else if (description.includes('IMAGE_TYPE: body')) {
+          augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 weight-loss journey and encourage them. CRITICAL: Do NOT mention pain, discomfort, injuries, or any medical conditions — this is a progress selfie, not a medical photo. Do NOT invent symptoms or anything not in the analysis above. Do NOT call any logging tools.]`;
+        } else {
+          augmentedText = `${userIntent}The user sent an image. ${description}`;
+        }
+      } else {
+        augmentedText = `${input.text}\n\n[media: ${description}]`.trim();
+      }
     }
 
-    const conversationId = await memory.ensureConversation(input.userId);
-    const isNew = await users.isNewUser(input.userId).catch(() => false);
-    const history = await memory.getRecentTurns(input.userId, 12);
+    // RAG retrieval runs on the augmented text (may include media context).
     const retrieved = flags.ragEnabled ? await rag.retrieve(augmentedText, { userId: input.userId, topK: 5 }) : [];
 
     // Detect side effects in the user's message and update their flow.
     if (user) await this.detectAndSetSideEffectFlow(user.phone, augmentedText, user.side_effect_flow);
 
     // Build personalised system prompt with user context.
-    const systemPrompt = this.buildPersonalisedPrompt(user, isNew);
+    const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday });
 
     // Per-request tool registry — tools close over userId.
     const tools = new ToolRegistry();
     if (flags.toolsEnabled) {
-      const toolSettings = await this.loadToolSettings();
       if (toolSettings['log_food'] !== false) {
         tools.register(makeLogFoodTool({ pool: this.deps.pool, llm: this.deps.llm, logger, userId: input.userId }));
       }
@@ -190,22 +226,106 @@ export class AIService {
     return result;
   }
 
-  private buildPersonalisedPrompt(user: ReturnType<UserService['getById']> extends Promise<infer T> ? T : never, isNew: boolean): string {
+  private async countTodaysCheckIns(userId: string): Promise<number> {
+    const { rows } = await this.deps.pool.query<{ count: string }>(
+      `SELECT count(*)::text FROM check_ins
+       WHERE user_id = $1
+         AND created_at::date = (now() AT TIME ZONE 'UTC')::date`,
+      [userId],
+    );
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  private buildPersonalisedPrompt(
+    user: ReturnType<UserService['getById']> extends Promise<infer T> ? T : never,
+    isNew: boolean,
+    runtime?: { todaysFood?: { protein_g: number; calories: number; items: string[] }; checkinsToday?: number },
+  ): string {
     const base = this.systemPrompt ?? undefined;
 
     const lines: string[] = [];
     if (user) {
-      if (user.first_name) lines.push(`User's name: ${user.first_name}`);
+      // Time-of-day awareness — user-local, not server-local.
+      try {
+        const tz = user.timezone || 'America/New_York';
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz, weekday: 'long', hour: '2-digit', hour12: false,
+        }).formatToParts(new Date());
+        const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
+        const hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10);
+        const timeOfDay = hour < 5 ? 'night' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
+        if (weekday) lines.push(`Today is: ${weekday}`);
+        lines.push(`Time of day for this user right now: ${timeOfDay}`);
+      } catch {
+        // Fall back silently if timezone is malformed.
+      }
+      if (user.first_name) lines.push(`Name: ${user.first_name}`);
       if (user.medication) lines.push(`Medication: ${user.medication}`);
+      // Surface medication type so the prompt's "Weekly injection / Daily pill /
+      // Daily injection" branching can fire correctly.
+      const med = (user.medication || '').toLowerCase();
+      let medType = 'unknown';
+      if (/rybelsus/.test(med)) medType = 'daily_pill';
+      else if (/saxenda|victoza|liraglutide/.test(med)) medType = 'daily_injection';
+      else if (/ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide/.test(med)) medType = 'weekly_injection';
+      lines.push(`Medication type: ${medType}`);
       if (user.goals.length > 0) lines.push(`Goals: ${user.goals.join(', ')}`);
-      if (user.food_dislikes.length > 0) lines.push(`Food they dislike: ${user.food_dislikes.join(', ')}`);
-      if (user.injection_day) lines.push(`Injection day: ${user.injection_day}`);
-      if (user.current_weight) lines.push(`Current weight: ${user.current_weight} lbs`);
-      if (user.goal_weight) lines.push(`Goal weight: ${user.goal_weight} lbs`);
-      if (user.grace_notes) lines.push(`Notes: ${user.grace_notes}`);
-      if (user.low_mood_mode) lines.push('User has been in low-mood mode recently — be extra gentle and encouraging.');
-      if (user.protein_focus_boost) lines.push('User struggles with protein intake — nudge toward protein-rich options.');
-      if (user.hydration_struggle) lines.push('User struggles with hydration — gently remind about water when relevant.');
+      if (user.food_dislikes.length > 0) {
+        const clean = user.food_dislikes
+          .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+          .filter(Boolean);
+        lines.push(`Food dislikes — NEVER suggest these, paraphrase naturally (don't echo verbatim): ${clean.join(', ')}`);
+      }
+      if (user.injection_day) {
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const todayIdx = new Date().getDay();
+        const injIdx = days.indexOf(user.injection_day);
+        let injStatus = user.injection_day;
+        if (injIdx !== -1) {
+          let diff = injIdx - todayIdx;
+          if (diff < 0) diff += 7;
+          if (diff === 0) injStatus = `TODAY (${user.injection_day}) — injection day`;
+          else if (diff === 1) injStatus = `TOMORROW (${user.injection_day}) — injection day is tomorrow`;
+          else if (diff === 6) injStatus = `YESTERDAY (${user.injection_day}) — injection was yesterday`;
+          else injStatus = `in ${diff} days (${user.injection_day})`;
+        }
+        lines.push(`INJECTION DAY STATUS: ${injStatus}`);
+      }
+      if (user.current_weight && user.goal_weight) {
+        const gap = Math.abs(user.current_weight - user.goal_weight);
+        lines.push(`Weight: ${user.current_weight} lbs → goal ${user.goal_weight} lbs (${gap.toFixed(0)} lbs to go)`);
+      } else if (user.current_weight) {
+        lines.push(`Current weight: ${user.current_weight} lbs`);
+      }
+      if (user.height_cm) lines.push(`Height: ${user.height_cm} cm`);
+      if (user.age) lines.push(`Age: ${user.age}`);
+      if (user.primary_goal) lines.push(`Primary goal: ${user.primary_goal.replace('_', ' ')}`);
+      if (user.protein_goal_grams) {
+        lines.push(`Personal daily protein target: ${user.protein_goal_grams}g — use THIS number, not a generic 80g.`);
+      }
+      if (user.glp1_start_date) {
+        const weeksOn = Math.floor((Date.now() - new Date(user.glp1_start_date).getTime()) / (7 * 24 * 3_600_000));
+        if (weeksOn >= 0) lines.push(`GLP-1 week: Week ${weeksOn + 1} (started ${new Date(user.glp1_start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })})`);
+      }
+      if (user.grace_notes) lines.push(`Grace's notes about this user: ${user.grace_notes}`);
+      if (user.low_mood_mode) lines.push('LOW MOOD MODE: user has been struggling recently — lead with encouragement and warmth, no reflection prompts.');
+      if (user.protein_focus_boost) lines.push('User struggles with protein intake — nudge toward protein-rich options when relevant.');
+      if (user.hydration_struggle) lines.push('User struggles with hydration — gently mention water when relevant.');
+
+      // Frequency + today's send count — used by the prompt's "HOW GRACE EXPLAINS
+      // CHECK-INS" section so Grace can answer "how many today?" with the exact
+      // number instead of a vague "a couple."
+      if (user.checkin_count_per_day) {
+        lines.push(`CHECKIN FREQUENCY: ${user.checkin_count_per_day} scheduled check-in(s) per day`);
+      }
+      if (runtime?.checkinsToday !== undefined) {
+        lines.push(`Scheduled check-ins sent today: ${runtime.checkinsToday}`);
+      }
+      if (runtime?.todaysFood) {
+        const f = runtime.todaysFood;
+        lines.push(`Total protein TODAY: ${f.protein_g}g${f.calories ? ` (${f.calories} kcal)` : ''}`);
+        if (f.items.length > 0) lines.push(`Foods logged today: ${f.items.slice(0, 8).join('; ')}`);
+      }
     }
 
     if (isNew) lines.push('This is the user\'s FIRST message. Welcome them warmly and personally.');
@@ -239,4 +359,16 @@ export class AIService {
       }
     }
   }
+}
+
+// Build a compact food string from a Gemini food-image analysis block so the
+// planner can pass it verbatim as the `food` arg to log_food — guaranteeing
+// the pre-calculated TOTAL is used instead of being re-estimated.
+function buildFoodLogArg(analysis: string): string {
+  const items = analysis.match(/^ITEMS:\s*(.+)$/m)?.[1]?.trim() ?? '';
+  const total = analysis.match(/^TOTAL:\s*(.+)$/m)?.[1]?.trim() ?? '';
+  if (items && total) return `${items}. ${total}`;
+  if (total) return total;
+  if (items) return items;
+  return analysis.replace(/IMAGE_TYPE: food\n?/i, '').trim().slice(0, 400);
 }

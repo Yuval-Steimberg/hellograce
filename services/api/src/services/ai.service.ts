@@ -130,6 +130,17 @@ export class AIService {
       } else {
         augmentedText = `${input.text}\n\n[media: ${description}]`.trim();
       }
+    } else if (input.media.length > 0 && !input.text) {
+      // Analysis failed (or unsupported format) and user sent no caption — guard against
+      // sending an empty string to the LLM which causes a 400 from Gemini.
+      const kind = input.media[0]?.kind;
+      if (kind === 'image') {
+        augmentedText = "[The user sent a photo but the image could not be processed right now. Acknowledge warmly that you received their photo, apologize briefly that you couldn't analyze it today, and ask them to describe what they sent or to try again.]";
+      } else if (kind === 'audio') {
+        augmentedText = "[The user sent a voice message but it could not be transcribed right now. Acknowledge warmly, apologize briefly, and ask them to type what they were saying.]";
+      } else {
+        augmentedText = "[The user sent a file or attachment that could not be processed. Acknowledge warmly and ask them to describe what they wanted to share.]";
+      }
     }
 
     // RAG retrieval runs on the augmented text (may include media context).

@@ -19,7 +19,10 @@ export async function analyzeMedia(
     const buf = await fetchMedia(first.url, opts.twilio);
     const client = new GoogleGenerativeAI(opts.apiKey);
     const model = client.getGenerativeModel({ model: opts.model });
-    const inlineData = { data: buf.toString('base64'), mimeType: first.contentType };
+    // Strip codec/charset parameters from MIME type (e.g. "image/jpeg; name=foo" → "image/jpeg")
+    // Gemini inline data only accepts the base MIME type without parameters.
+    const cleanMime = first.contentType.split(';')[0]!.trim();
+    const inlineData = { data: buf.toString('base64'), mimeType: cleanMime };
 
     if (first.kind === 'image') {
       // Single Gemini call that both classifies and analyzes — saves a round-trip.
@@ -63,7 +66,16 @@ Rules:
 
     return null;
   } catch (err) {
-    opts.logger.warn({ err }, 'multimodal.analyze.failed');
+    opts.logger.error(
+      {
+        err,
+        mediaKind: first.kind,
+        contentType: first.contentType,
+        hasTwilioAuth: !!opts.twilio,
+        urlHost: (() => { try { return new URL(first.url).host; } catch { return 'unknown'; } })(),
+      },
+      'multimodal.analyze.failed',
+    );
     return null;
   }
 }

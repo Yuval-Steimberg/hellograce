@@ -112,12 +112,16 @@ export class AIService {
     if (description) {
       const kind = input.media[0]?.kind;
       if (kind === 'audio' && !input.text) {
-        augmentedText = description;
+        augmentedText = `[Voice note — auto-transcribed, may have filler words or fragments. Respond naturally.]\n${description}`;
       } else if (kind === 'image') {
         const userIntent = input.text ? `The user said: "${input.text}"\n\n` : '';
         if (description.includes('IMAGE_TYPE: food')) {
           const foodArg = buildFoodLogArg(description);
-          augmentedText = `${userIntent}The user sent a meal photo. Detailed nutrition analysis:\n\n${description}\n\n[REQUIRED ACTION: Call log_food with args {"food": ${JSON.stringify(foodArg)}} — pass this string EXACTLY, do NOT skip this tool call. Then reply warmly with the protein total, calorie total, and a brief comment tied to their personal protein target. If CONFIDENCE is "low", gently mention the estimate is rough. If "medium", note "rough estimate" once. If "high", give the numbers confidently. Never dwell on uncertainty.]`;
+          const confidence = description.match(/^CONFIDENCE:\s*(\w+)/m)?.[1]?.toLowerCase() ?? 'medium';
+          const confidenceNote = confidence === 'low'
+            ? ' (rough estimate — photo was unclear)'
+            : confidence === 'medium' ? ' (rough estimate)' : '';
+          augmentedText = `${userIntent}The user sent a meal photo. Here is the nutrition data for your reference only — do NOT repeat this breakdown to the user:\n\n${description}\n\n[REQUIRED: Call log_food with args {"food": ${JSON.stringify(foodArg)}} — pass this string EXACTLY. Then reply as Grace in 1–2 sentences max, conversational, no lists, no per-item breakdowns. Use the TOTAL protein number naturally. Example style: "That looks like about 30g of protein${confidenceNote}. You're at 55g today." NEVER output ITEMS/BREAKDOWN/TOTAL tables. Sound like a supportive friend, not a nutrition app.]`;
         } else if (description.includes('IMAGE_TYPE: body')) {
           augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 weight-loss journey and encourage them. CRITICAL: Do NOT mention pain, discomfort, injuries, or any medical conditions — this is a progress selfie, not a medical photo. Do NOT invent symptoms or anything not in the analysis above. Do NOT call any logging tools.]`;
         } else {

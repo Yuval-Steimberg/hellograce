@@ -151,7 +151,7 @@ const OPT_OUT_PHRASES: RegExp[] = [
 ];
 
 const OPT_OUT_REPLY =
-  'Of course — you can manage your preferences here: https://graceglp.com/settings. And if you ever want to come back, I\'ll be here.';
+  'Done — you can manage your preferences here: https://graceglp.com/settings. And if you ever want to come back, I\'ll be here.';
 
 function detectNaturalOptOut(text: string): string | null {
   for (const re of OPT_OUT_PHRASES) if (re.test(text)) return OPT_OUT_REPLY;

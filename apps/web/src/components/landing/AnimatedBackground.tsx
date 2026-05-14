@@ -1,35 +1,25 @@
 /**
- * Animated mesh background — floats colorful blurred orbs behind the landing
- * content. Pure CSS keyframes (transform-only) so it stays GPU-cheap.
- * Honors prefers-reduced-motion via the .motion-safe variant in index.css.
+ * Subtle static background — two soft radial gradients in brand colors
+ * (terracotta top-right, sage bottom-left). No animation, no will-change,
+ * no GPU pressure on mobile. Scoped via isolate on the Landing wrapper.
  */
-const AnimatedBackground = () => {
-  return (
+const AnimatedBackground = () => (
+  <div
+    className="fixed inset-0 pointer-events-none"
+    style={{ zIndex: -1 }}
+    aria-hidden="true"
+  >
     <div
-      className="grace-bg fixed inset-0 overflow-hidden pointer-events-none"
-      style={{ zIndex: -1 }}
-      aria-hidden="true"
-    >
-      {/* Soft cream wash so blobs read clearly on light surfaces */}
-      <div className="grace-bg-wash" />
-
-      {/* Five drifting gradient orbs */}
-      <div className="grace-blob grace-blob-coral" />
-      <div className="grace-blob grace-blob-mint" />
-      <div className="grace-blob grace-blob-lavender" />
-      <div className="grace-blob grace-blob-gold" />
-      <div className="grace-blob grace-blob-sky" />
-
-      {/* Subtle SVG grain for texture */}
-      <svg className="grace-bg-grain" aria-hidden="true">
-        <filter id="grace-noise">
-          <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch" />
-          <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0" />
-        </filter>
-        <rect width="100%" height="100%" filter="url(#grace-noise)" />
-      </svg>
-    </div>
-  );
-};
+      style={{
+        position: "absolute",
+        inset: 0,
+        background: [
+          "radial-gradient(ellipse 900px 700px at 92% -8%, hsl(16 55% 80% / 0.32) 0%, transparent 68%)",
+          "radial-gradient(ellipse 800px 700px at -4% 108%, hsl(102 20% 72% / 0.22) 0%, transparent 68%)",
+        ].join(", "),
+      }}
+    />
+  </div>
+);
 
 export default AnimatedBackground;

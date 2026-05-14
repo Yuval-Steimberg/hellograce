@@ -2,7 +2,6 @@ import { useNavigate } from "react-router-dom";
 import { ChevronRight, ShieldCheck, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
 import ChatMockup from "./ChatMockup";
-import FloatingAccents from "./FloatingAccents";
 import MagneticButton from "./MagneticButton";
 
 const fadeUp = {
@@ -36,10 +35,8 @@ const HeroSection = () => {
   const navigate = useNavigate();
 
   return (
-    <section className="relative px-5 sm:px-8 md:px-10 max-w-[1440px] mx-auto min-h-[calc(100dvh-58px)] lg:min-h-[calc(100dvh-88px)] flex items-center">
-      <FloatingAccents />
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-20 items-center w-full py-10 lg:py-0 relative">
+    <section className="relative px-6 sm:px-10 md:px-14 max-w-[1440px] mx-auto min-h-[85svh] lg:min-h-[calc(100dvh-88px)] flex items-center">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-20 items-center w-full py-14 lg:py-0 relative">
         {/* Chat mockup — desktop left, mobile below copy */}
         <motion.div
           initial={{ opacity: 0, x: -30 }}

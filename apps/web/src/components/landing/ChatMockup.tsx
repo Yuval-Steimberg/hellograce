@@ -12,10 +12,11 @@ const SCRIPT: Message[] = [
   { from: "grace", text: "Yep — for your goal weight, 90g. Two eggs + Greek yogurt = a stress-free 35g start. You've got this. 🤍", time: "8:16 AM" },
 ];
 
-// Per-message timing: user messages appear faster, grace messages get a typing pause.
-const USER_DELAY = 1200;
-const GRACE_TYPING = 1600;
-const LOOP_PAUSE = 4500;
+// Per-message timing: user messages appear after a natural pause, grace gets a
+// realistic typing delay. LOOP_PAUSE holds the completed conversation before restart.
+const USER_DELAY = 1800;
+const GRACE_TYPING = 2400;
+const LOOP_PAUSE = 7000;
 
 const ChatMockup = () => {
   const prefersReduced = useReducedMotion();
@@ -89,7 +90,7 @@ const ChatMockup = () => {
           {/* Messages */}
           <div
             ref={scrollRef}
-            className="px-3 py-4 space-y-2 h-[480px] overflow-y-auto scrollbar-hide"
+            className="px-3 py-4 space-y-2 h-[360px] sm:h-[420px] md:h-[480px] overflow-y-auto scrollbar-hide"
             style={{
               backgroundImage:
                 "repeating-linear-gradient(0deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 6px)",
@@ -99,10 +100,10 @@ const ChatMockup = () => {
               {visible.map((m, i) => (
                 <motion.div
                   key={`${i}-${m.text.slice(0, 12)}`}
-                  initial={{ opacity: 0, y: 12, scale: 0.96 }}
+                  initial={{ opacity: 0, y: 10, scale: 0.97 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0 }}
-                  transition={{ type: "spring", stiffness: 360, damping: 26 }}
+                  transition={{ type: "spring", stiffness: 220, damping: 28 }}
                   className={`flex ${m.from === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div

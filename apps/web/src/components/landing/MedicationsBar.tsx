@@ -18,7 +18,7 @@ const MedicationsBar = () => {
   return (
     <section
       aria-label="Supported GLP-1 medications"
-      className="relative border-y border-sand/40 bg-card/40 backdrop-blur-md py-8 md:py-10 overflow-hidden"
+      className="relative border-y border-sand/30 bg-card/30 backdrop-blur-sm py-10 md:py-12 overflow-hidden"
     >
       <div className="max-w-[1440px] mx-auto px-5 sm:px-8 md:px-10">
         <motion.p

@@ -61,7 +61,7 @@ const FeatureRow = ({ label, title, description, quote, image, imageAlt, reverse
 );
 
 const FeatureSpread = () => (
-  <section className="py-16 md:py-32 px-6 md:px-10 max-w-[1440px] mx-auto space-y-16 md:space-y-40">
+  <section className="py-24 md:py-40 px-8 md:px-14 max-w-[1440px] mx-auto space-y-20 md:space-y-44">
     <div className="text-center max-w-2xl mx-auto mb-2 md:mb-4">
       <span className="block text-xs uppercase tracking-[0.2em] text-muted-foreground/60 font-semibold mb-3">
         What you'll receive

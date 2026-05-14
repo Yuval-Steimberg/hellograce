@@ -101,10 +101,14 @@
 
   body {
     @apply text-foreground font-sans;
-    font-size: 19px;
+    font-size: 16px;
     font-weight: 400;
     line-height: 1.65;
     background-color: hsl(var(--background));
+  }
+
+  @media (min-width: 768px) {
+    body { font-size: 18px; }
   }
 
   .dark body {
@@ -160,113 +164,9 @@
     scrollbar-width: none;
   }
 
-  /* Animated mesh background — landing-page eye candy */
+  /* Background container — used by AnimatedBackground component */
   .grace-bg {
-    contain: layout style paint;
-  }
-
-  .grace-bg-wash {
-    position: absolute;
-    inset: 0;
-    background:
-      radial-gradient(ellipse 1200px 800px at 50% -20%, hsl(35 95% 88% / 0.75) 0%, transparent 65%),
-      radial-gradient(ellipse 1000px 600px at 0% 100%, hsl(180 60% 85% / 0.7)  0%, transparent 60%),
-      radial-gradient(ellipse 900px 700px  at 100% 80%, hsl(280 70% 88% / 0.65) 0%, transparent 60%);
-  }
-
-  .grace-blob {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(60px);
-    opacity: 0.7;
-    will-change: transform;
-  }
-
-  .grace-blob-coral {
-    width: 600px;
-    height: 600px;
-    background: radial-gradient(circle, hsl(14 100% 68% / 0.85) 0%, hsl(14 100% 68% / 0) 70%);
-    top: -10%;
-    right: -8%;
-    animation: drift-coral 28s ease-in-out infinite;
-  }
-
-  .grace-blob-mint {
-    width: 520px;
-    height: 520px;
-    background: radial-gradient(circle, hsl(165 75% 60% / 0.8) 0%, hsl(165 75% 60% / 0) 70%);
-    bottom: -12%;
-    left: -8%;
-    animation: drift-mint 34s ease-in-out infinite;
-  }
-
-  .grace-blob-lavender {
-    width: 440px;
-    height: 440px;
-    background: radial-gradient(circle, hsl(265 85% 75% / 0.8) 0%, hsl(265 85% 75% / 0) 70%);
-    top: 45%;
-    right: 18%;
-    animation: drift-lavender 38s ease-in-out infinite;
-  }
-
-  .grace-blob-gold {
-    width: 400px;
-    height: 400px;
-    background: radial-gradient(circle, hsl(40 100% 65% / 0.8) 0%, hsl(40 100% 65% / 0) 70%);
-    top: 20%;
-    left: 28%;
-    animation: drift-gold 30s ease-in-out infinite;
-  }
-
-  .grace-blob-sky {
-    width: 500px;
-    height: 500px;
-    background: radial-gradient(circle, hsl(200 95% 68% / 0.8) 0%, hsl(200 95% 68% / 0) 70%);
-    bottom: 22%;
-    right: 8%;
-    animation: drift-sky 36s ease-in-out infinite;
-  }
-
-  .grace-bg-grain {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0.07;
-    mix-blend-mode: overlay;
-    pointer-events: none;
-  }
-
-  @keyframes drift-coral {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    25%      { transform: translate(60px, 80px) scale(1.08); }
-    50%      { transform: translate(-40px, 140px) scale(0.95); }
-    75%      { transform: translate(80px, 40px) scale(1.05); }
-  }
-
-  @keyframes drift-mint {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    33%      { transform: translate(100px, -60px) scale(1.1); }
-    66%      { transform: translate(40px, -120px) scale(0.92); }
-  }
-
-  @keyframes drift-lavender {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    25%      { transform: translate(-80px, 40px) scale(1.12); }
-    50%      { transform: translate(60px, 80px) scale(0.94); }
-    75%      { transform: translate(-40px, -60px) scale(1.06); }
-  }
-
-  @keyframes drift-gold {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    50%      { transform: translate(120px, 100px) scale(1.15); }
-  }
-
-  @keyframes drift-sky {
-    0%, 100% { transform: translate(0, 0) scale(1); }
-    25%      { transform: translate(-60px, -40px) scale(1.08); }
-    50%      { transform: translate(40px, -80px) scale(0.96); }
-    75%      { transform: translate(-100px, 20px) scale(1.04); }
+    contain: strict;
   }
 
   /* CTA pulsing glow — wraps any .grace-btn-glow trigger */
@@ -318,7 +218,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .grace-blob,
     .grace-float,
     .grace-shimmer,
     .grace-btn-glow::after {

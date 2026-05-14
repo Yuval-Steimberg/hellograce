@@ -5,7 +5,7 @@ import type { TwilioSender } from '../twilio/sender.js';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
-import { UnauthorizedError } from '../errors.js';
+import { UnauthorizedError, UpstreamError } from '../errors.js';
 
 export interface WebhookDeps {
   env: Env;
@@ -109,20 +109,32 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           }
         }
 
-        const result = await deps.ai.handleMessage(normalized);
-        if (result.text.length > 0) {
+        const result = await withRetry(() => deps.ai.handleMessage(normalized), {
+          attempts: 3,
+          delayMs: 1500,
+          retryIf: (err) => err instanceof UpstreamError,
+        });
+
+        const responseText = result?.text ?? '';
+        if (responseText.length > 0) {
           const isRlhfUser = user?.rlhf_enabled ?? false;
           const body = isRlhfUser
-            ? `${result.text}\n\n_Rate this: 👍 👎, or start a message with # to leave a note (e.g. #too long)_`
-            : result.text;
-          await deps.sender.send({
-            to: normalized.userId,
-            channel: normalized.channel,
-            body,
-          });
+            ? `${responseText}\n\n_Rate this: 👍 👎, or start a message with # to leave a note (e.g. #too long)_`
+            : responseText;
+          await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
         }
       } catch (err) {
         req.log.error({ err }, 'webhook.ai.failed');
+        // Send a warm fallback so the user isn't left with silence.
+        const fallbacks = [
+          'My connection blipped — what were you saying?',
+          'Sorry, I missed that one. Can you resend?',
+          'Something went sideways on my end. What did you say?',
+        ];
+        const fallback = fallbacks[Math.floor(Math.random() * fallbacks.length)]!;
+        await deps.sender
+          .send({ to: normalized.userId, channel: normalized.channel, body: fallback })
+          .catch(() => null);
       }
     })();
   });
@@ -190,6 +202,26 @@ function detectFrequencyChange(text: string, current: number): { newCount: numbe
       : { newCount: next, reply: `Got it — bumping it up to ${next} times a day. Tell me if it ever feels like too much.` };
   }
   return null;
+}
+
+// ─── Retry helper ────────────────────────────────────────────────────────────
+// Retries an async fn up to `attempts` times with a fixed delay between tries.
+// Only retries when `retryIf` returns true — non-transient errors throw immediately.
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  opts: { attempts: number; delayMs: number; retryIf: (err: unknown) => boolean },
+): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < opts.attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!opts.retryIf(err)) throw err;
+      lastErr = err;
+      if (i < opts.attempts - 1) await new Promise((r) => setTimeout(r, opts.delayMs * (i + 1)));
+    }
+  }
+  throw lastErr;
 }
 
 /** Returns { rating, comment? } when the message is a recognised feedback signal, null otherwise. */

@@ -546,4 +546,35 @@ export const EVAL_CASES: EvalCase[] = [
     },
     note: 'Grace must not invent her own past actions when there is no evidence in context.',
   },
+  {
+    id: 'rlhf-no-hyphen-dash',
+    category: 'chat',
+    input: "how are you doing today",
+    expected: {
+      maxLengthChars: 300,
+      mustNotInclude: [' - '],
+    },
+    note: 'RLHF signal: no hyphen used as an informal mid-sentence dash. Grace should write full sentences, not "I\'m here - just checking in."',
+  },
+  {
+    id: 'rlhf-no-name-in-routine',
+    category: 'chat',
+    input: 'I logged my food today',
+    userContext: { name: 'Uri', medication: 'semaglutide' },
+    expected: {
+      maxLengthChars: 300,
+      mustNotInclude: ['Uri'],
+    },
+    note: 'RLHF signal: Grace must not use the user\'s name in routine replies. Name is reserved for the first welcome message only (or when user addresses Grace by name).',
+  },
+  {
+    id: 'rlhf-no-goal-label-echo',
+    category: 'chat',
+    input: "how am I tracking toward my goals?",
+    expected: {
+      maxLengthChars: 400,
+      mustNotInclude: ['fat loss goals', 'weight loss goals', 'your weight loss goal', 'your fat loss goal'],
+    },
+    note: 'RLHF signal: Grace must not echo the user\'s goal category label. Use "your goals" or "what you\'re working toward" instead.',
+  },
 ];

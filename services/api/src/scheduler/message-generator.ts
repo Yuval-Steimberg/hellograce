@@ -90,17 +90,30 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
 };
 
 export class MessageGenerator {
+  private activeSystemPrompt: string | undefined;
+
   constructor(private llm: LLMProvider) {}
+
+  /**
+   * Update the system prompt used for proactive (scheduled) messages.
+   * Called on startup with the DB-active prompt and again whenever the
+   * PromptOptimizer auto-activates a new version, so RLHF improvements
+   * affect every channel — reactive AND proactive.
+   */
+  updateSystemPrompt(prompt: string | undefined): void {
+    this.activeSystemPrompt = prompt;
+  }
 
   async generate(type: MsgType, user: GraceUser, opts?: GenerateOpts): Promise<string> {
     const fallback = FALLBACKS[type](user, opts);
     try {
       const userCtx = this.buildUserCtx(user);
       const prompt = this.buildPrompt(type, user, opts);
+      const systemPrompt = this.activeSystemPrompt ?? GRACE_SYSTEM_PROMPT;
 
       const resp = await this.llm.generate({
         messages: [
-          { role: 'system', content: GRACE_SYSTEM_PROMPT + '\n\n' + userCtx },
+          { role: 'system', content: systemPrompt + '\n\n' + userCtx },
           { role: 'user', content: prompt },
         ],
         temperature: 0.75,

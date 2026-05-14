@@ -31,10 +31,12 @@ export class Scheduler {
     this.tasks.push(
       cron.schedule('0 3 * * *', () => void this.runPersonalizationEngine()),
     );
-    // Prompt optimizer runs every 3 days at 4am UTC (Sun/Wed/Sat)
+    // Prompt optimizer runs DAILY at 4am UTC so every signal that lands in
+    // the feedback table gets analyzed within 24h. Strict isSafe() gates
+    // auto-activation; failures save as inactive drafts for admin review.
     if (this.deps.promptOptimizer) {
       this.tasks.push(
-        cron.schedule('0 4 * * 0,3,6', () => void this.deps.promptOptimizer!.run()),
+        cron.schedule('0 4 * * *', () => void this.deps.promptOptimizer!.run()),
       );
     }
     this.deps.logger.info('scheduler.started');

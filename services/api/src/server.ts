@@ -82,12 +82,27 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   );
 
   const generator = new MessageGenerator(llm);
-  const promptOptimizer = new PromptOptimizer(pool, llm, logger);
+  // Seed the proactive generator with the same active prompt the AI service uses.
+  generator.updateSystemPrompt(await loadActivePrompt());
+
+  // Hot-reload BOTH the reactive AIService and the proactive MessageGenerator
+  // whenever the optimizer auto-activates a new prompt. No SIGHUP, no restart.
+  const promptOptimizer = new PromptOptimizer(pool, llm, logger, {
+    onPromptActivated: async (content: string) => {
+      ai.updateSystemPrompt(content);
+      generator.updateSystemPrompt(content);
+      logger.info({ bytes: content.length }, 'prompt.hot_reloaded_from_optimizer');
+    },
+  });
   const scheduler = new Scheduler({ users, sender, generator, logger, promptOptimizer });
 
-  // Reload the AI service prompt whenever the optimizer activates a new version.
+  // Manual SIGHUP still works for ops-driven reloads (e.g. ad-hoc prompt edits
+  // via the admin dashboard).
   process.on('SIGHUP', () => {
-    void loadActivePrompt().then((p) => ai.updateSystemPrompt(p));
+    void loadActivePrompt().then((p) => {
+      ai.updateSystemPrompt(p);
+      generator.updateSystemPrompt(p);
+    });
   });
 
   startWorkers({ redis, pool, memory, logger });

@@ -5,8 +5,27 @@ import type { Logger } from 'pino';
 const SAFE_FALLBACK_SNIPPET = 'could you share a bit more about what you\'re hoping to learn';
 const MIN_PROMPT_LENGTH = 200;
 
-// Safety phrases that must survive in any auto-generated prompt.
-const REQUIRED_SAFETY_PHRASES = ['clinician', 'prescribing', 'doctor'];
+// Phrases the canonical Grace prompt depends on. If the optimizer's output
+// drops ANY of these, we reject auto-activation and save as draft only.
+// The list reflects non-negotiable behavior contracts surfaced by the
+// WhatsApp pilot QA + Phase 8 master-prompt work.
+const REQUIRED_SAFETY_PHRASES = ['988', '911', 'doctor'];
+const REQUIRED_BEHAVIOR_PHRASES = [
+  'BANNED',                       // The banned-phrase list (Phase 7+8 explicit fixes)
+  'graceglp.com/settings',        // Settings management URL must remain literal
+  'GLP-1',                        // Product identity
+];
+
+// Samples + lookback window. Bumped from (20/10/7d) → (50/25/14d) so the
+// optimizer sees more of the actual user signal, per user request.
+const NEG_SAMPLE_LIMIT = 50;
+const POS_SAMPLE_LIMIT = 25;
+const LOOKBACK_DAYS = 14;
+
+export interface PromptOptimizerHooks {
+  /** Called after a new prompt is auto-activated. Used to hot-reload AIService. */
+  onPromptActivated?: (content: string) => void | Promise<void>;
+}
 
 interface FeedbackRow {
   assistant_message: string | null;
@@ -19,6 +38,7 @@ export class PromptOptimizer {
     private pool: Pool,
     private llm: LLMProvider,
     private logger: Logger,
+    private hooks?: PromptOptimizerHooks,
   ) {}
 
   async run(): Promise<void> {
@@ -32,7 +52,7 @@ export class PromptOptimizer {
       }
 
       const { negativeSamples, positiveSamples, fallbackCount, totalMessages } =
-        await this.gatherSignals(7);
+        await this.gatherSignals(LOOKBACK_DAYS);
 
       // Skip if there's not enough signal to learn from.
       if (totalMessages < 10 && negativeSamples.length === 0) {
@@ -62,6 +82,15 @@ export class PromptOptimizer {
 
       if (safe) {
         this.logger.info('prompt_optimizer.auto_activated_new_prompt');
+        // Hot-reload the live AIService so changes take effect immediately
+        // without waiting for a SIGHUP or process restart.
+        if (this.hooks?.onPromptActivated) {
+          try {
+            await this.hooks.onPromptActivated(result.prompt);
+          } catch (err) {
+            this.logger.error({ err }, 'prompt_optimizer.hot_reload_failed');
+          }
+        }
       } else {
         this.logger.warn(
           { reason: result.analysis },
@@ -100,8 +129,8 @@ export class PromptOptimizer {
        ) u ON TRUE
        WHERE f.rating = -1 AND f.created_at > $1
        ORDER BY f.created_at DESC
-       LIMIT 20`,
-      [since],
+       LIMIT $2`,
+      [since, NEG_SAMPLE_LIMIT],
     );
 
     const { rows: positiveRows } = await this.pool.query<FeedbackRow>(
@@ -120,8 +149,8 @@ export class PromptOptimizer {
        ) u ON TRUE
        WHERE f.rating = 1 AND f.created_at > $1
        ORDER BY f.created_at DESC
-       LIMIT 10`,
-      [since],
+       LIMIT $2`,
+      [since, POS_SAMPLE_LIMIT],
     );
 
     const { rows: fallbackRows } = await this.pool.query<{ count: string }>(
@@ -223,18 +252,33 @@ Analyze the failures and produce an improved prompt that fixes them.`,
     }
   }
 
-  // Basic safety check before auto-activating.
+  // Strict safety gate before auto-activating. Bias is heavily toward
+  // saving-as-draft — auto-activation requires every guardrail to survive.
   private isSafe(newPrompt: string, currentPrompt: string): boolean {
     if (newPrompt.length < MIN_PROMPT_LENGTH) return false;
 
-    // Must contain at least one safety reference.
-    const hasSafety = REQUIRED_SAFETY_PHRASES.some((p) =>
-      newPrompt.toLowerCase().includes(p),
-    );
-    if (!hasSafety) return false;
+    const lower = newPrompt.toLowerCase();
 
-    // Reject if it grew more than 2x (likely hallucinated junk).
-    if (newPrompt.length > currentPrompt.length * 2) return false;
+    // ALL safety phrases must survive — losing any one is grounds for rejection.
+    for (const p of REQUIRED_SAFETY_PHRASES) {
+      if (!lower.includes(p.toLowerCase())) {
+        this.logger.warn({ missing: p }, 'prompt_optimizer.safety_phrase_dropped');
+        return false;
+      }
+    }
+
+    // Non-negotiable behavior anchors must survive too.
+    for (const p of REQUIRED_BEHAVIOR_PHRASES) {
+      if (!newPrompt.includes(p)) {
+        this.logger.warn({ missing: p }, 'prompt_optimizer.behavior_anchor_dropped');
+        return false;
+      }
+    }
+
+    // Reject if it grew more than 1.5x or shrunk to less than 70% of current.
+    // Larger drift means a structural rewrite — review manually instead.
+    if (newPrompt.length > currentPrompt.length * 1.5) return false;
+    if (newPrompt.length < currentPrompt.length * 0.7) return false;
 
     return true;
   }

@@ -134,7 +134,23 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     return { ok: true };
   });
 
-  app.get('/admin/feedback', async () => {
+  app.get('/admin/feedback', async (req) => {
+    const { userId } = (req.query ?? {}) as { userId?: string };
+    if (userId) {
+      // Per-user feed: includes the Grace reply each rating points at, so
+      // Uri/Danny-style signals are diagnose-able in one query.
+      const { rows } = await deps.pool.query(
+        `SELECT f.id, f.user_id, f.message_id, f.signal_type, f.rating, f.comment,
+                f.created_at, m.content AS assistant_message
+         FROM feedback f
+         LEFT JOIN messages m ON m.id = f.message_id
+         WHERE f.user_id = $1
+         ORDER BY f.created_at DESC
+         LIMIT 500`,
+        [userId],
+      );
+      return { feedback: rows };
+    }
     const { rows } = await deps.pool.query(
       `SELECT id, user_id, message_id, signal_type, rating, comment, created_at
        FROM feedback

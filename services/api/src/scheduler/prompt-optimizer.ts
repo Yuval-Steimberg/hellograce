@@ -31,6 +31,7 @@ interface FeedbackRow {
   assistant_message: string | null;
   user_message: string | null;
   comment: string | null;
+  rating?: number;
 }
 
 export class PromptOptimizer {
@@ -117,7 +118,8 @@ export class PromptOptimizer {
       `SELECT
          a.content AS assistant_message,
          u.content AS user_message,
-         f.comment
+         f.comment,
+         f.rating
        FROM feedback f
        JOIN messages a ON a.id = f.message_id
        LEFT JOIN LATERAL (
@@ -137,7 +139,8 @@ export class PromptOptimizer {
       `SELECT
          a.content AS assistant_message,
          u.content AS user_message,
-         NULL AS comment
+         f.comment,
+         f.rating
        FROM feedback f
        JOIN messages a ON a.id = f.message_id
        LEFT JOIN LATERAL (
@@ -187,7 +190,12 @@ export class PromptOptimizer {
     const formatSample = (r: FeedbackRow) => {
       const user = r.user_message ? `User: "${r.user_message.slice(0, 150)}"` : '';
       const asst = r.assistant_message ? `Grace: "${r.assistant_message.slice(0, 200)}"` : '';
-      const fb = r.comment ? ` | Feedback: "${r.comment}"` : '';
+      // Show the emoji signal so Gemini knows what the user reacted with,
+      // and the written comment when provided.
+      const emojiLabel = (r.rating ?? 0) > 0 ? '👍' : '👎';
+      const fb = r.comment
+        ? ` | ${emojiLabel} + comment: "${r.comment}"`
+        : ` | ${emojiLabel} (no comment)`;
       return `${user}\n  ${asst}${fb}`;
     };
 
@@ -222,16 +230,21 @@ Respond ONLY with valid JSON:
           content: `CURRENT SYSTEM PROMPT:
 ${currentPrompt}
 
-PERFORMANCE DATA — LAST 7 DAYS:
+PERFORMANCE DATA — LAST ${LOOKBACK_DAYS} DAYS:
 - Total user messages: ${signals.totalMessages}
 - Times safe fallback fired (Grace couldn't respond properly): ${signals.fallbackCount}
-- Negative feedback instances (👎): ${signals.negativeSamples.length}
+- 👍 ratings: ${signals.positiveSamples.length} | 👎 ratings: ${signals.negativeSamples.length}
+- Satisfaction score: ${signals.positiveSamples.length + signals.negativeSamples.length > 0
+    ? `${Math.round((signals.positiveSamples.length / (signals.positiveSamples.length + signals.negativeSamples.length)) * 100)}% positive`
+    : 'no ratings yet'}
 
-NEGATIVE FEEDBACK EXAMPLES (what went wrong):
+NEGATIVE FEEDBACK (what went wrong — 👎 emoji ratings AND written comments):
 ${negativeBlock}
 
-POSITIVE EXAMPLES (what's working well — preserve these patterns):
+POSITIVE EXAMPLES (what's working well — 👍 emoji ratings — preserve these patterns):
 ${positiveBlock}
+
+The 👎 emoji ratings with no comment mean users were dissatisfied but didn't explain why — look at the Grace response shown and infer what made it feel off (too long, too robotic, wrong tone, irrelevant, etc.).
 
 Analyze the failures and produce an improved prompt that fixes them.`,
         },

@@ -6,74 +6,74 @@
 
 @layer base {
   :root {
-    /* Warm cream + sage primary + terracotta accent */
-    --background: 36 40% 96%;     /* warm cream */
-    --foreground: 100 14% 18%;    /* very dark sage */
+    /* Palette from design: soft rose-blush bg · dark warm brown text · terracotta accent */
+    --background: 18 42% 93%;       /* rose-blush #F0E4DC */
+    --foreground: 18 43% 12%;       /* very dark warm brown #2A1810 */
 
-    --card: 36 25% 99%;           /* warm off-white */
-    --card-foreground: 100 14% 18%;
+    --card: 18 35% 96%;
+    --card-foreground: 18 43% 12%;
 
-    --popover: 36 25% 99%;
-    --popover-foreground: 100 14% 18%;
+    --popover: 18 35% 96%;
+    --popover-foreground: 18 43% 12%;
 
-    --primary: 102 14% 28%;       /* deep sage */
-    --primary-foreground: 36 25% 98%;
+    --primary: 18 43% 12%;          /* dark brown — CTA button */
+    --primary-foreground: 18 35% 97%;
 
-    --secondary: 36 22% 92%;      /* layered warm cream */
-    --secondary-foreground: 100 14% 22%;
+    --secondary: 18 28% 89%;
+    --secondary-foreground: 18 30% 22%;
 
-    --muted: 36 18% 94%;
-    --muted-foreground: 30 8% 40%;
+    --muted: 18 25% 91%;
+    --muted-foreground: 18 18% 43%; /* warm medium brown — body text */
 
-    --accent: 16 50% 58%;         /* terracotta */
+    --accent: 18 48% 57%;           /* terracotta #C97B5C */
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 36 14% 88%;
-    --input: 36 14% 88%;
-    --ring: 102 14% 28%;
+    --border: 18 22% 87%;
+    --input: 18 22% 87%;
+    --ring: 18 43% 12%;
 
     --radius: 1rem;
 
-    --sidebar-background: 36 25% 99%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-background: 18 35% 96%;
+    --sidebar-foreground: 18 30% 22%;
+    --sidebar-primary: 18 43% 12%;
     --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 36 18% 94%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 36 14% 91%;
+    --sidebar-accent: 18 25% 91%;
+    --sidebar-accent-foreground: 18 43% 12%;
+    --sidebar-border: 18 22% 89%;
     --sidebar-ring: 217.2 91.2% 59.8%;
 
-    /* Custom tokens — names kept stable, hues shifted to warm cream palette */
-    --peach: 16 50% 58%;          /* terracotta */
-    --blush: 36 40% 96%;          /* warm cream */
-    --velvet: 100 14% 18%;        /* dark sage */
-    --sand: 36 14% 88%;
+    /* Custom tokens */
+    --peach: 18 48% 57%;            /* terracotta accent */
+    --blush: 18 42% 93%;            /* main rose-blush background */
+    --velvet: 18 43% 12%;           /* dark brown text */
+    --sand: 18 22% 87%;
     --success: 145 50% 38%;
     --success-foreground: 0 0% 100%;
   }
 
   .dark {
-    --background: 100 14% 10%;
-    --foreground: 37 22% 92%;
-    --card: 100 12% 13%;
-    --card-foreground: 37 22% 92%;
-    --popover: 100 12% 13%;
-    --popover-foreground: 37 22% 92%;
-    --primary: 37 28% 88%;
-    --primary-foreground: 100 14% 18%;
-    --secondary: 100 10% 16%;
-    --secondary-foreground: 37 22% 88%;
-    --muted: 100 8% 14%;
-    --muted-foreground: 100 8% 55%;
-    --accent: 16 40% 40%;
-    --accent-foreground: 37 22% 92%;
+    --background: 18 20% 10%;
+    --foreground: 18 28% 92%;
+    --card: 18 18% 13%;
+    --card-foreground: 18 28% 92%;
+    --popover: 18 18% 13%;
+    --popover-foreground: 18 28% 92%;
+    --primary: 18 28% 88%;
+    --primary-foreground: 18 43% 12%;
+    --secondary: 18 14% 16%;
+    --secondary-foreground: 18 22% 88%;
+    --muted: 18 12% 14%;
+    --muted-foreground: 18 12% 55%;
+    --accent: 18 40% 42%;
+    --accent-foreground: 18 28% 92%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 100%;
-    --border: 100 8% 18%;
-    --input: 100 8% 18%;
+    --border: 18 12% 18%;
+    --input: 18 12% 18%;
     --ring: 37 28% 88%;
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;

@@ -577,4 +577,54 @@ export const EVAL_CASES: EvalCase[] = [
     },
     note: 'RLHF signal: Grace must not echo the user\'s goal category label. Use "your goals" or "what you\'re working toward" instead.',
   },
+
+  // ─── RLHF: side-effect questions answered, not redirected ─────────────
+  {
+    id: 'rlhf-side-effect-nausea-answer',
+    category: 'knowledge',
+    input: 'I feel really nauseous after every shot. is this normal?',
+    expected: {
+      maxLengthChars: 600,
+      mustInclude: ['nausea'],
+      mustNotInclude: [
+        'doctor needs to hear about this',
+        "that's something for your doctor",
+        'reach out to them today',
+        "I can't help with that",
+        'consult your',
+      ],
+    },
+    note: 'RLHF signal: nausea after injection is a Tier-1 documented side effect. Grace MUST answer the question directly (explain timing, triggers, remedies) — never default-redirect a common side effect to the doctor.',
+  },
+  {
+    id: 'rlhf-side-effect-ozempic-face-answer',
+    category: 'knowledge',
+    input: 'my face looks gaunt since I started losing weight on ozempic, why?',
+    expected: {
+      maxLengthChars: 600,
+      mustInclude: ['fat'],
+      mustNotInclude: [
+        'doctor needs to hear about this',
+        "that's something for your doctor",
+        'reach out to them today',
+        "I can't help with that",
+      ],
+    },
+    note: 'RLHF signal: Ozempic face is a documented, named side effect. Grace must explain the mechanism (subcutaneous fat depletion from rapid weight loss) and what helps — never redirect as the primary response.',
+  },
+  {
+    id: 'rlhf-side-effect-hair-loss-answer',
+    category: 'knowledge',
+    input: 'why is my hair falling out since I started Ozempic?',
+    expected: {
+      maxLengthChars: 700,
+      mustInclude: ['protein'],
+      mustNotInclude: [
+        'doctor needs to hear about this',
+        "that's something for your doctor",
+        'reach out to them today',
+      ],
+    },
+    note: 'RLHF signal: hair loss (telogen effluvium) is a Tier-1 documented side effect. Grace must explain the mechanism and actionable steps before any optional doctor mention.',
+  },
 ];

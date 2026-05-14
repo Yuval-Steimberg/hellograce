@@ -6,24 +6,24 @@
 
 @layer base {
   :root {
-    /* Cool gray-white + sage primary + terracotta accent */
-    --background: 220 16% 96%;    /* cool gray-white */
+    /* Warm cream + sage primary + terracotta accent */
+    --background: 36 40% 96%;     /* warm cream */
     --foreground: 100 14% 18%;    /* very dark sage */
 
-    --card: 0 0% 100%;
+    --card: 36 25% 99%;           /* warm off-white */
     --card-foreground: 100 14% 18%;
 
-    --popover: 0 0% 100%;
+    --popover: 36 25% 99%;
     --popover-foreground: 100 14% 18%;
 
     --primary: 102 14% 28%;       /* deep sage */
-    --primary-foreground: 220 16% 98%;
+    --primary-foreground: 36 25% 98%;
 
-    --secondary: 220 14% 92%;     /* layered cool gray */
+    --secondary: 36 22% 92%;      /* layered warm cream */
     --secondary-foreground: 100 14% 22%;
 
-    --muted: 220 14% 94%;
-    --muted-foreground: 220 8% 42%;
+    --muted: 36 18% 94%;
+    --muted-foreground: 30 8% 40%;
 
     --accent: 16 50% 58%;         /* terracotta */
     --accent-foreground: 0 0% 100%;
@@ -31,26 +31,26 @@
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 220 12% 88%;
-    --input: 220 12% 88%;
+    --border: 36 14% 88%;
+    --input: 36 14% 88%;
     --ring: 102 14% 28%;
 
     --radius: 1rem;
 
-    --sidebar-background: 0 0% 98%;
+    --sidebar-background: 36 25% 99%;
     --sidebar-foreground: 240 5.3% 26.1%;
     --sidebar-primary: 240 5.9% 10%;
     --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent: 36 18% 94%;
     --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
+    --sidebar-border: 36 14% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
 
-    /* Custom tokens — names kept stable, hues shifted to the new palette */
+    /* Custom tokens — names kept stable, hues shifted to warm cream palette */
     --peach: 16 50% 58%;          /* terracotta */
-    --blush: 220 16% 96%;         /* cool gray-white */
+    --blush: 36 40% 96%;          /* warm cream */
     --velvet: 100 14% 18%;        /* dark sage */
-    --sand: 220 12% 88%;
+    --sand: 36 14% 88%;
     --success: 145 50% 38%;
     --success-foreground: 0 0% 100%;
   }

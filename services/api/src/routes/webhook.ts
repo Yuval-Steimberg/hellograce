@@ -195,10 +195,12 @@ function detectFrequencyChange(text: string, current: number): { newCount: numbe
 /** Returns { rating, comment? } when the message is a recognised feedback signal, null otherwise. */
 function parseFeedbackSignal(text: string): { rating: number; comment?: string } | null {
   const t = text.trim();
-  if (t === '👍' || /^(thumbs[\s-]?up|good|helpful|great|yes|positive)$/i.test(t)) {
+  // Match 👍 in all skin tones (base + Fitzpatrick modifier U+1F3FB–U+1F3FF)
+  if (/^\u{1F44D}[\u{1F3FB}-\u{1F3FF}]?$/u.test(t) || /^(thumbs[\s-]?up|good|helpful|great|yes|positive)$/i.test(t)) {
     return { rating: 1 };
   }
-  if (t === '👎' || /^(thumbs[\s-]?down|bad|not helpful|no|negative)$/i.test(t)) {
+  // Match 👎 in all skin tones
+  if (/^\u{1F44E}[\u{1F3FB}-\u{1F3FF}]?$/u.test(t) || /^(thumbs[\s-]?down|bad|not helpful|no|negative)$/i.test(t)) {
     return { rating: -1 };
   }
   // "#<comment>" shortcut — faster than typing "FEEDBACK:"

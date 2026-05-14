@@ -113,7 +113,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         if (result.text.length > 0) {
           const isRlhfUser = user?.rlhf_enabled ?? false;
           const body = isRlhfUser
-            ? `${result.text}\n\n_Rate this response: reply 👍 or 👎, or reply FEEDBACK: your comment_`
+            ? `${result.text}\n\n_Rate this: 👍 👎, or start a message with # to leave a note (e.g. #too long)_`
             : result.text;
           await deps.sender.send({
             to: normalized.userId,
@@ -200,6 +200,11 @@ function parseFeedbackSignal(text: string): { rating: number; comment?: string }
   }
   if (t === '👎' || /^(thumbs[\s-]?down|bad|not helpful|no|negative)$/i.test(t)) {
     return { rating: -1 };
+  }
+  // "#<comment>" shortcut — faster than typing "FEEDBACK:"
+  const hashMatch = t.match(/^#\s*(.+)/s);
+  if (hashMatch?.[1]) {
+    return { rating: -1, comment: hashMatch[1].trim() };
   }
   const commentMatch = t.match(/^feedback:\s*(.+)/is);
   if (commentMatch?.[1]) {

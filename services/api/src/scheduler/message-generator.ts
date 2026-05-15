@@ -14,7 +14,8 @@ const GOAL_MODE_MAP: Record<string, string> = {
 };
 
 type MsgType = 'morning' | 'midday' | 'evening' | 'injection_morning' | 'injection_followup' |
-  'injection_dayafter' | 'side_effect_nausea' | 'side_effect_fatigue' | 'side_effect_constipation' | 'welcome';
+  'injection_dayafter' | 'side_effect_nausea' | 'side_effect_fatigue' | 'side_effect_constipation' |
+  'welcome' | 'trial_expiry_reminder';
 
 export interface GenerateOpts {
   extra?: string;
@@ -24,68 +25,62 @@ export interface GenerateOpts {
 
 const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => string> = {
   morning: (u, opts) => {
-    const name = u.first_name ?? 'there';
     if (opts?.isWednesday) {
-      return `Morning ${name} 🌿 Mid-week check — how are you actually feeling today? No wrong answers.`;
+      return `Morning 🌿 Mid-week check — how are you actually feeling today? No wrong answers.`;
     }
     const goal = u.goals[0];
     const mode = goal ? (GOAL_MODE_MAP[goal] ?? 'protein') : 'protein';
     if (mode === 'protein') {
       const target = u.protein_goal_grams ?? 80;
-      return `Morning ${name} 🌿 Gentle nudge — try to land protein early today. ${target}g feels easier when you front-load it.`;
+      return `Morning 🌿 Gentle nudge — try to land protein early today. ${target}g feels easier when you front-load it.`;
     }
-    if (mode === 'hydration') return `Morning ${name} 🌿 Pouring a glass of water this morning sets the whole day up nicely.`;
-    if (mode === 'side_effects') return `Morning ${name} 🌿 Take it easy on yourself today. I'm here if anything feels off.`;
-    if (mode === 'fiber') return `Morning ${name} 🌿 A little fiber early (oats, berries, chia) makes the rest of the day kinder to your gut.`;
-    if (mode === 'connection') return `Morning ${name} 🌿 Just wanted to check in — you're not doing this alone.`;
-    if (mode === 'habits') return `Morning ${name} 🌿 One small thing today. That's all it takes.`;
-    if (mode === 'muscle') return `Morning ${name} 🌿 Protecting muscle on ${u.medication ?? 'GLP-1'} — even a bit of protein early helps a lot.`;
-    return `Morning ${name} 🌿 Hope today's a soft one. I'm here whenever you want to chat.`;
+    if (mode === 'hydration') return `Morning 🌿 Pouring a glass of water first thing sets the whole day up nicely.`;
+    if (mode === 'side_effects') return `Morning 🌿 Take it easy on yourself today. I'm here if anything feels off.`;
+    if (mode === 'fiber') return `Morning 🌿 A little fiber early (oats, berries, chia) makes the rest of the day kinder to your gut.`;
+    if (mode === 'connection') return `Morning 🌿 Just wanted to check in — you're not doing this alone.`;
+    if (mode === 'habits') return `Morning 🌿 One small thing today. That's all it takes.`;
+    if (mode === 'muscle') return `Morning 🌿 Protecting muscle on ${u.medication ?? 'GLP-1'} — even a bit of protein early helps a lot.`;
+    return `Morning 🌿 Hope today's a soft one. I'm here whenever you want to chat.`;
   },
-  midday: (u) => {
-    const name = u.first_name ?? 'there';
-    return `Hey ${name} — quick midday hello. No pressure to reply, just rooting for you over here 🤍`;
+  midday: () => {
+    return `Quick midday hello. No pressure to reply — just rooting for you over here 🤍`;
   },
   evening: (u, opts) => {
-    const name = u.first_name ?? 'there';
     if (opts?.lowMoodMode) {
-      return `Hey ${name} — just thinking of you tonight. You're doing something genuinely hard, and it counts even on the quiet days 🤍`;
+      return `Just thinking of you tonight. You're doing something genuinely hard, and it counts even on the quiet days 🤍`;
     }
     if (u.current_weight && u.goal_weight) {
       const diff = Math.abs(u.current_weight - u.goal_weight);
-      return `Wrapping up, ${name}? You're ${diff.toFixed(0)} lbs from your goal — every consistent day is moving the needle 🌙`;
+      return `Wrapping up? You're ${diff.toFixed(0)} lbs from your goal — every consistent day moves the needle 🌙`;
     }
-    return `Wrapping the day, ${name}? Hope it had a good moment in it somewhere. Rest well 🌙`;
+    return `Wrapping the day. Hope it had a good moment in it somewhere. Rest well 🌙`;
   },
   injection_morning: (u) => {
-    const name = u.first_name ?? 'there';
     const med = u.medication ?? 'your medication';
-    return `It's ${med} day, ${name} 💉 Rotate your spot, take your time. Reply "done" when you're set — no rush.`;
+    return `${med} day 💉 Rotate your spot, take your time. Reply "done" when you're set — no rush.`;
   },
-  injection_followup: (u) => {
-    const name = u.first_name ?? 'there';
-    return `Hey ${name} — just thinking about you a few hours post-shot. Hope you're feeling okay. If anything's up, I'm here.`;
+  injection_followup: () => {
+    return `Just thinking about you a few hours post-shot. Hope you're feeling okay. I'm here if anything's up.`;
   },
-  injection_dayafter: (u) => {
-    const name = u.first_name ?? 'there';
-    return `Morning ${name} — day after your shot. Be gentle with yourself today 🤍`;
+  injection_dayafter: () => {
+    return `Morning — day after your shot. Be gentle with yourself today 🤍`;
   },
-  side_effect_nausea: (u) => {
-    const name = u.first_name ?? 'there';
-    return `Checking in softly, ${name} — hope the nausea's easing. Ginger tea and tiny sips help a lot of people 🤍`;
+  side_effect_nausea: () => {
+    return `Checking in softly — hope the nausea's easing. Ginger tea and tiny sips help a lot of people 🤍`;
   },
-  side_effect_fatigue: (u) => {
-    const name = u.first_name ?? 'there';
-    return `Hey ${name} — fatigue is real on this med. Rest if you can, and a bit of protein + water often helps. I'm here.`;
+  side_effect_fatigue: () => {
+    return `Fatigue is real on this med. Rest if you can — a bit of protein + water often helps. I'm here.`;
   },
-  side_effect_constipation: (u) => {
-    const name = u.first_name ?? 'there';
-    return `Hey ${name} — just a soft check-in. Water, fiber, and a short walk are the usual gentle helpers if things are still slow.`;
+  side_effect_constipation: () => {
+    return `Soft check-in. Water, fiber, and a short walk are the usual gentle helpers if things are still slow.`;
   },
   welcome: (u) => {
     const name = u.first_name ?? 'there';
     const med = u.medication ?? 'your GLP-1';
     return `Hi ${name} — I'm Grace, your ${med} companion 🤍 I'll check in lightly each day, never overwhelm you. Text me anything, anytime — even just "tired" works.`;
+  },
+  trial_expiry_reminder: () => {
+    return `Your Grace trial ends tomorrow 🧡 Head to graceglp.com anytime to keep your check-ins going — no pressure, whenever you're ready.`;
   },
 };
 
@@ -206,6 +201,7 @@ export class MessageGenerator {
       side_effect_fatigue: `${base}Context: they reported fatigue. Validate it's real, suggest one gentle helper. No quiz.`,
       side_effect_constipation: `${base}Context: they reported constipation. Soft check-in with one tip woven in. No question barrage.`,
       welcome: `${base}Context: their very first message. Welcome them warmly. Use their first name ONCE. Mention their medication (${user.medication ?? 'GLP-1'}) and main goal (${goal}). ${dislikes ? `If you reference food dislikes, paraphrase naturally — e.g. "I'll keep [item] off the menu" or "I remember you don't like X". NEVER echo their dislike text verbatim (do not write "you're not a fan of i don't like rice" — that's broken English).` : ''} Make clear you'll be light-touch. ONE or TWO short sentences max. Do NOT send a second follow-up message.`,
+      trial_expiry_reminder: `${base}Context: this is Day 2 of the user's 3-day free trial — their trial ends tomorrow. Send a warm, pressure-free reminder that their trial ends tomorrow and they can subscribe at graceglp.com. NEVER use their name. NEVER use "upgrade" language — say "continue" or "keep going." NEVER exclamation marks. NEVER salesy tone. ONE or TWO short sentences max. Example: "Your Grace trial ends tomorrow 🧡 Head to graceglp.com anytime to keep your check-ins going."`,
     };
 
     return instructions[type] + (opts?.extra ? `\n\nExtra context: ${opts.extra}` : '');

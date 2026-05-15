@@ -99,11 +99,10 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           // Subscription gate — users with an expired trial and no active subscription
           // get a soft paywall nudge instead of the AI response.
           if (user && !isAccessAllowed(user)) {
-            const name = user.first_name ?? 'there';
             await deps.sender.send({
               to: normalized.userId,
               channel: normalized.channel,
-              body: `Hi ${name} — your Grace trial has ended 🧡 To keep your daily check-ins going, subscribe at grace.com. Questions? Reply HELP.`,
+              body: `Your 3-day Grace trial has ended 🧡 To keep your daily check-ins going, head to graceglp.com to subscribe. Questions? Reply HELP.`,
             });
             return;
           }

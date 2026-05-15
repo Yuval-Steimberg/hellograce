@@ -96,13 +96,23 @@ export class Scheduler {
       }
     }
 
-    // ── Morning check-in
+    // ── Morning window (covers both trial reminder and regular check-in)
     const wakeHour = parseInt(user.wake_time.split(':')[0]!, 10);
-    if (
-      hour >= wakeHour &&
-      hour <= wakeHour + 1 &&
-      (!user.last_morning_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) !== todayStr)
-    ) {
+    const isMorningWindow = hour >= wakeHour && hour <= wakeHour + 1;
+    const morningAlreadySent = user.last_morning_sent_at &&
+      toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) === todayStr;
+
+    if (isMorningWindow && !morningAlreadySent) {
+      // Trial Day 2 reminder fires instead of the regular morning check-in.
+      // Sends only once (24–48h after trial_start) for unpaid users.
+      if (!user.is_paid && !user.is_pro && user.trial_start) {
+        const trialHours = (Date.now() - new Date(user.trial_start).getTime()) / 3_600_000;
+        if (trialHours >= 24 && trialHours < 48) {
+          await this.sendAndRecord(user, 'trial_expiry_reminder');
+          await this.deps.users.update(user.phone, { last_morning_sent_at: new Date() });
+          return;
+        }
+      }
       await this.sendAndRecord(user, 'morning', { isWednesday: dayOfWeek === 3 });
       await this.deps.users.update(user.phone, { last_morning_sent_at: new Date() });
       return;

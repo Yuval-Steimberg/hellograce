@@ -207,6 +207,7 @@ The following are already filled in for this project:
 | `TWILIO_WHATSAPP_FROM` | ✅ sandbox `whatsapp:+14155238886` |
 | `PUBLIC_BASE_URL` | ✅ `https://grace-api.fly.dev` in Fly secrets — used by Twilio signature verification |
 | `ADMIN_TOKEN` | ✅ set in `.env` and Fly secrets |
+| `ADMIN_PHONE` | ✅ set in Fly secrets (`+972547722420`) — receives WhatsApp RLHF optimizer report after each nightly run |
 
 Full deployment instructions: `docs/DEPLOY.md`
 
@@ -276,7 +277,7 @@ Lives in `services/api/eval/`. Runs every case through real Gemini + mocked tool
 
 Roadmap (in progress, in this order):
 1. ✅ Eval harness + 50-case dataset (`services/api/eval/`).
-2. ✅ LLM-critic on risky intents (`knowledge_lookup`, `safety_*`, validator-flagged, or low-confidence). Regenerate once on critic fail, safe fallback if second attempt also fails. Implementation: `packages/ai-core/src/critic.ts` + orchestrator wiring. Output exposes `critic`, `regenerated`, `usedSafeFallback` for admin observability.
+2. ✅ LLM-critic on risky intents (`safety_*`, validator-flagged `possible_medical_advice`, or low-confidence). `knowledge_lookup` removed from risky list (2026-05-15) — it was incorrectly failing food/nutrition responses. Regenerate once on critic fail, safe fallback if second attempt also fails. Implementation: `packages/ai-core/src/critic.ts` + orchestrator wiring.
 3. ✅ Fact-grounding: deterministic precheck (`packages/ai-core/src/grounding.ts`) detects quantitative medical claims (doses, durations, frequencies, percentages) and interaction-safety assertions in the response and verifies them against retrieved KB chunks. Unsupported claims fail-close to regen — saves a Gemini call vs. invoking the LLM-critic. Surfaced via `CriticReport.unsupportedClaims` + `source: 'precheck' | 'llm'`.
 4. ⏳ Wire eval scores into `prompts` table; gate `activate` on ≥ baseline.
 5. ⏳ Gemini prompt caching for static system prompt + tool defs; skip planner for pure-chat intents.
@@ -298,8 +299,9 @@ Roadmap (in progress, in this order):
 | 5 | Cut Twilio webhook from v1 → v2 | ✅ live at `https://grace-api.fly.dev` |
 | 6 | Multimodal: voice notes + food photos + body/progress photos | ✅ Gemini File API audio, image classification, per-item nutrition, body analysis |
 | 6b | Admin dashboard premium redesign + animated landing page | ✅ deep slate + indigo admin shell, colorful animated blob background |
-| 7 | AI quality pass from WhatsApp QA: persona, hallucination guards, quiet hours, settings redirect, food-dislike paraphrase, brief-reply rule, GLP-1 week number, 50+ emotional patterns | ✅ landed on `claude/icloud-access-clarification-5hsRr-v2`, ready to deploy 2026-05-13 |
-| 8 | Master prompt operationalization: full prompt rewrite from `gracemasterprompt.md`, unified safety message (988+911), reminder-style proactive messages, in-chat frequency change, natural-language opt-out, runtime context (Today is / Time of day / Total protein TODAY / Scheduled check-ins sent today / Medication type) | ✅ landed 2026-05-13 |
+| 7 | AI quality pass from WhatsApp QA: persona, hallucination guards, quiet hours, settings redirect, food-dislike paraphrase, brief-reply rule, GLP-1 week number, 50+ emotional patterns | ✅ |
+| 8 | Master prompt operationalization: full prompt rewrite from `gracemasterprompt.md`, unified safety message (988+911), reminder-style proactive messages, in-chat frequency change, natural-language opt-out, runtime context (Today is / Time of day / Total protein TODAY / Scheduled check-ins sent today / Medication type) | ✅ |
+| 9 | Production quality pass: proactive message label/truncation fix, humanized timing jitter, trial Day 2 reminder, RLHF on proactive messages, admin WhatsApp optimizer report, food recommendation rules, every-response-unique rule, critic tuned for food facts, safe fallback improved, name stripping in code | ✅ 2026-05-15 |
 
 ---
 
@@ -307,9 +309,9 @@ Roadmap (in progress, in this order):
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
-3. `git checkout claude/icloud-access-clarification-5hsRr-v2` (active feature branch as of 2026-05-13). Latest commit: `c23584b` — GLP-1 start date collected in onboarding.
+3. Active branch: `main` (all feature branches merged as of 2026-05-15). Latest commit: `285eb73` — EVERY RESPONSE IS UNIQUE rule added to prompt.
 4. Production is live at `https://grace-api.fly.dev` (API) and `https://grace-admin-silk.vercel.app` (web). Tail logs with `fly logs --app grace-api`.
-5. Top open items in `docs/STATUS.md § Post-cutover`: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn.
+5. Top open items: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn.
 
 ### Phase 7 — AI quality pass (commits `bb420da`, `b09fe0f`, `174112e`, `c23584b`)
 
@@ -357,6 +359,58 @@ Adopts `gracemasterprompt.md` as the canonical Grace behavioral spec.
 **`services/api/src/routes/webhook.ts`** — two new in-conversation intercepts:
 - `detectNaturalOptOut()` — 6 regex patterns ("stop texting me", "I want to cancel", "don't want messages", etc). Reply word-for-word per spec; redirects to `https://graceglp.com/settings`. Short-circuits before AI handler.
 - `detectFrequencyChange()` — patterns for "text me less/more", "once a day", "twice a day", "every other day". Updates `users.checkin_count_per_day` directly (bounded [1, 4]) and confirms warmly. Short-circuits before AI handler.
+
+### Phase 9 — Production quality pass (2026-05-15)
+
+All changes landed on `main`, deployed to `https://grace-api.fly.dev`.
+
+**`services/api/src/routes/webhook.ts`**
+- Paywall URL fixed: `grace.com` → `graceglp.com`
+- Paywall message removes user name (RLHF rule)
+- `detectFrequencyChange()` patterns expanded to cover indirect phrasings: "stop texting so much", "you message too much", "tone it down", "back off a bit", "less reminders", "check in more", "bump up the messages", etc.
+
+**`services/api/src/scheduler/scheduler.ts`**
+- **Trial Day 2 reminder**: fires `trial_expiry_reminder` during morning window when `trial_start` is 24–48h old for unpaid users, using `last_morning_sent_at` as gate. Replaces regular morning message that day.
+- **Humanized timing (jitter)**: `jitterMinutes(seed, max)` — deterministic hash-based per-user-per-day offset so messages never fire at the exact same minute. Morning: 0–55 min, midday: 0–165 min across 11:00–13:45, evening: 0–30 min, injection: 0–45 min. Survives restarts/retries (same seed = same window within a day).
+- **RLHF on proactive messages**: `sendAndRecord()` now appends `👍 👎 / #` rating prompt for `rlhf_enabled` users, same as reactive messages.
+
+**`services/api/src/scheduler/message-generator.ts`**
+- `MsgType` union extended with `trial_expiry_reminder`
+- All proactive fallbacks except `welcome` now name-free (RLHF ZERO TOLERANCE rule)
+- `maxOutputTokens` bumped 120 → 280 (Gemini 2.5 Flash thinking tokens were eating the output)
+- `sanitizeProactiveOutput(raw, firstName)`:
+  - Strips forbidden label prefixes (`Midday reminder:`, `Morning check-in —`, etc.) that the LLM emits ~10% of the time despite prompt instructions
+  - Strips user's first name from non-welcome messages at the code level
+  - Rejects output that doesn't end with punctuation/emoji (detects mid-sentence truncation)
+  - Falls back to warm canned message on any rejection
+- RULES block in `buildPrompt` now lists every forbidden opener pattern with `✗` examples
+
+**`packages/ai-core/src/orchestrator.ts`**
+- `knowledge_lookup` removed from `RISKY_INTENT_PREFIXES` — it was too broad, causing food/nutrition questions to run through the critic which then failed on USDA protein-gram facts not verbatim in retrieved KB chunks. Only `safety_` intents now gate the critic.
+- `SAFE_FALLBACK_TEXT` replaced: cold "could you share a bit more…" → neutral "I'm not sure I caught all of that — can you give me a bit more detail so I can actually help?"
+
+**`packages/ai-core/src/critic.ts`**
+- `CRITIC_SYSTEM` updated: general nutritional facts (protein grams, USDA food values, calories) explicitly score `grounding: 5`. Only drug doses/interaction claims still penalised.
+
+**`packages/ai-core/src/prompts.ts`** — three new sections:
+- **FOOD RECOMMENDATIONS — ANSWER DIRECTLY**: Grace gives 3–5 specific foods with brief reasoning, filtered by user dislikes, GLP-1-aware (small/dense), ends every food reply with "These are general suggestions — a registered dietitian can tailor this further." Includes ✓/✗ examples.
+- **EVERY RESPONSE IS UNIQUE — HARD RULE**: If a different user with a different message would get the same reply → rewrite. Every response must reference something concrete from THIS message (a word they used, a number, today's protein total, their medication, weeks in). Includes ✓/✗ examples.
+- **NO PHRASE REPETITION** strengthened with more rotation examples.
+
+**`services/api/src/scheduler/prompt-optimizer.ts`**
+- `OptimizerRunReport` interface + `onRunComplete` hook added
+- `saveVersion()` now returns the version number
+- After each nightly run (4am UTC), calls `onRunComplete` with stats (totalMessages, pos/neg counts, satisfaction %, fallback count), analysis, activated/draft status
+
+**`services/api/src/server.ts`**
+- `onRunComplete` wired to `buildOptimizerReport()` → `sender.send()` to `ADMIN_PHONE`
+- Report format: version, 14-day stats, what changed, same-pattern prevention note, link to `graceglp.com/admin/prompts`
+
+**`services/api/src/config/env.ts`**
+- `ADMIN_PHONE` optional env var added (E.164, receives RLHF optimizer WhatsApp report)
+
+**`services/api/src/scheduler/prompt-optimizer.ts`**
+- `SAFE_FALLBACK_SNIPPET` updated to match new fallback text
 
 ### Phase 7+8 — known follow-ups not yet shipped
 

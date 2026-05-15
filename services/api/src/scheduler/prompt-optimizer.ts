@@ -22,9 +22,26 @@ const NEG_SAMPLE_LIMIT = 50;
 const POS_SAMPLE_LIMIT = 25;
 const LOOKBACK_DAYS = 14;
 
+export interface OptimizerRunReport {
+  activated: boolean;
+  version: number;
+  analysis: string;
+  stats: {
+    totalMessages: number;
+    negativeCount: number;
+    positiveCount: number;
+    fallbackCount: number;
+    satisfactionPct: number | null;
+  };
+  /** Set when the prompt failed the safety gate and was saved as draft only. */
+  draftReason?: string;
+}
+
 export interface PromptOptimizerHooks {
   /** Called after a new prompt is auto-activated. Used to hot-reload AIService. */
   onPromptActivated?: (content: string) => void | Promise<void>;
+  /** Called at the end of every run with a summary report. Use to send admin notifications. */
+  onRunComplete?: (report: OptimizerRunReport) => void | Promise<void>;
 }
 
 interface FeedbackRow {
@@ -79,12 +96,20 @@ export class PromptOptimizer {
       }
 
       const safe = this.isSafe(result.prompt, currentPrompt);
-      await this.saveVersion(result.prompt, result.analysis, safe);
+      const version = await this.saveVersion(result.prompt, result.analysis, safe);
+
+      const stats = {
+        totalMessages,
+        negativeCount: negativeSamples.length,
+        positiveCount: positiveSamples.length,
+        fallbackCount,
+        satisfactionPct: (positiveSamples.length + negativeSamples.length) > 0
+          ? Math.round((positiveSamples.length / (positiveSamples.length + negativeSamples.length)) * 100)
+          : null,
+      };
 
       if (safe) {
         this.logger.info('prompt_optimizer.auto_activated_new_prompt');
-        // Hot-reload the live AIService so changes take effect immediately
-        // without waiting for a SIGHUP or process restart.
         if (this.hooks?.onPromptActivated) {
           try {
             await this.hooks.onPromptActivated(result.prompt);
@@ -97,6 +122,20 @@ export class PromptOptimizer {
           { reason: result.analysis },
           'prompt_optimizer.saved_as_draft_failed_safety_check',
         );
+      }
+
+      if (this.hooks?.onRunComplete) {
+        try {
+          await this.hooks.onRunComplete({
+            activated: safe,
+            version,
+            analysis: result.analysis,
+            stats,
+            draftReason: safe ? undefined : 'Safety gate: a required safety or behavior phrase was dropped. Saved as draft for manual review.',
+          });
+        } catch (err) {
+          this.logger.error({ err }, 'prompt_optimizer.report_hook_failed');
+        }
       }
     } catch (err) {
       this.logger.error({ err }, 'prompt_optimizer.failed');
@@ -296,7 +335,7 @@ Analyze the failures and produce an improved prompt that fixes them.`,
     return true;
   }
 
-  private async saveVersion(content: string, analysis: string, autoActivate: boolean): Promise<void> {
+  private async saveVersion(content: string, analysis: string, autoActivate: boolean): Promise<number> {
     const { rows } = await this.pool.query<{ max: number | null }>(
       `SELECT MAX(version) AS max FROM prompts`,
     );
@@ -326,5 +365,7 @@ Analyze the failures and produce an improved prompt that fixes them.`,
         [nextVersion, content, notes],
       );
     }
+
+    return nextVersion;
   }
 }

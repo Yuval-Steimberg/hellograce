@@ -32,6 +32,8 @@ const EnvSchema = z.object({
     .transform((v) => v !== 'false'),
 
   ADMIN_TOKEN: z.string().min(16).optional(),
+  /** Phone number (E.164) to receive RLHF optimizer run reports via WhatsApp. */
+  ADMIN_PHONE: z.string().optional(),
 
   REDIS_URL: z.string().url().optional().default('redis://localhost:6379'),
 });

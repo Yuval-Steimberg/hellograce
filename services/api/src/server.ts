@@ -25,7 +25,7 @@ import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
-import { PromptOptimizer } from './scheduler/prompt-optimizer.js';
+import { PromptOptimizer, type OptimizerRunReport } from './scheduler/prompt-optimizer.js';
 import { AppError } from './errors.js';
 
 async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Promise<void> }> {
@@ -92,6 +92,13 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       ai.updateSystemPrompt(content);
       generator.updateSystemPrompt(content);
       logger.info({ bytes: content.length }, 'prompt.hot_reloaded_from_optimizer');
+    },
+    onRunComplete: async (report: OptimizerRunReport) => {
+      const adminPhone = env.ADMIN_PHONE;
+      if (!adminPhone) return;
+      const msg = buildOptimizerReport(report);
+      await sender.send({ to: adminPhone, body: msg, channel: 'whatsapp' });
+      logger.info({ adminPhone, version: report.version }, 'prompt_optimizer.report_sent');
     },
   });
   const scheduler = new Scheduler({ users, sender, generator, logger, promptOptimizer });
@@ -177,6 +184,36 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error('fatal startup error', err);
     process.exit(1);
   });
+}
+
+function buildOptimizerReport(r: OptimizerRunReport): string {
+  const { stats, activated, version, analysis, draftReason } = r;
+  const pct = stats.satisfactionPct !== null ? `${stats.satisfactionPct}% positive` : 'no ratings';
+  const statsLine = `${stats.totalMessages} msgs · ${stats.positiveCount}👍 ${stats.negativeCount}👎 · ${pct} · ${stats.fallbackCount} fallbacks`;
+
+  if (activated) {
+    return [
+      `🤖 Grace RLHF Report — v${version} activated`,
+      ``,
+      `📊 Last 14 days: ${statsLine}`,
+      ``,
+      `What changed: ${analysis}`,
+      ``,
+      `Same patterns prevented: the updated prompt now handles these cases with explicit rules. Review at graceglp.com/admin/prompts`,
+    ].join('\n');
+  }
+
+  return [
+    `🤖 Grace RLHF Report — v${version} saved as DRAFT`,
+    ``,
+    `📊 Last 14 days: ${statsLine}`,
+    ``,
+    `⚠️ Not auto-activated — ${draftReason}`,
+    ``,
+    `What the optimizer found: ${analysis}`,
+    ``,
+    `Action needed: review and manually activate at graceglp.com/admin/prompts`,
+  ].join('\n');
 }
 
 export { buildServer };

@@ -163,7 +163,11 @@ export class MessageGenerator {
 - Reminder style (✓): "Protein first today. Front-load it before appetite fades." / "Hydration reminder — start with a full glass before coffee." / "Muscle protection reminder: protein + movement today."
 - Question style (✗): "How's your eating going today?" / "What's your first protein hit today?" / "Any cravings hitting today?"
 - Warm, calm, brief. No motivational speeches. No exclamation marks unless absolutely warranted.
-- NEVER label the message ("morning check-in", "midday nudge", "evening wind-down") — those are internal names.`;
+- ZERO TOLERANCE — NEVER start the message with a label or category prefix. ALL of the following are strictly forbidden as openers:
+  ✗ "Midday reminder:" / "Morning reminder:" / "Evening reminder:"
+  ✗ "Daily check-in:" / "Check-in:" / "Reminder:" / "Note:"
+  ✗ "Morning check-in —" / "Midday nudge —" / "Evening wind-down —"
+  Start DIRECTLY with the actual message content. No preambles, no categories.`;
 
     const base = `Generate a single short SMS for ${name}.\n${RULES}\n\n`;
 

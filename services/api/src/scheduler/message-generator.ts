@@ -117,7 +117,7 @@ export class MessageGenerator {
         maxOutputTokens: 280,
       });
 
-      const sanitized = sanitizeProactiveOutput(resp.text);
+      const sanitized = sanitizeProactiveOutput(resp.text, type === 'welcome' ? null : user.first_name);
       return sanitized ?? fallback;
     } catch {
       return fallback;
@@ -227,7 +227,7 @@ const GENERIC_LABEL_PREFIX = /^(reminder|check[\s-]?in|note|update|hey there)[\s
 // Allow standard sentence punctuation, common Grace emojis, and quote marks.
 const COMPLETE_ENDING = /[.!?…"')\]🤍🌿🌙💪💉🧡✨🍃🤍🌱☀️🌞🌤️]$/u;
 
-function sanitizeProactiveOutput(raw: string): string | null {
+function sanitizeProactiveOutput(raw: string, firstName: string | null): string | null {
   let text = raw.trim();
   if (text.length === 0) return null;
 
@@ -242,6 +242,18 @@ function sanitizeProactiveOutput(raw: string): string | null {
   // Capitalize first letter if the strip left it lowercase mid-word.
   if (before !== text && text.length > 0) {
     text = text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  // Strip the user's first name wherever it appears — it's forbidden in every
+  // proactive message except welcome. The LLM violates this rule ~10% of the
+  // time despite the prompt instruction, so we enforce it in code too.
+  if (firstName) {
+    const n = firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // "Morning Danni 🌿 ..." → "Morning 🌿 ..."  |  "Hey Danni — ..." → "..."
+    text = text.replace(new RegExp(`(Morning|Evening|Hey|Hi|Hello),?\\s+${n}[,\\s—–]\\s*`, 'gi'), '$1 ');
+    // Any remaining standalone name occurrence with surrounding punctuation
+    text = text.replace(new RegExp(`\\b${n}[,—–]\\s*`, 'gi'), '');
+    text = text.replace(/\s{2,}/g, ' ').trim();
   }
 
   // Reject too-short results (likely the prefix was the entire message).

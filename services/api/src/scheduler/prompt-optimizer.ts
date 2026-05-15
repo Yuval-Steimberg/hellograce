@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import type { LLMProvider } from '@grace/shared';
 import type { Logger } from 'pino';
 
-const SAFE_FALLBACK_SNIPPET = 'could you share a bit more about what you\'re hoping to learn';
+const SAFE_FALLBACK_SNIPPET = "I'm not sure I caught all of that";
 const MIN_PROMPT_LENGTH = 200;
 
 // Phrases the canonical Grace prompt depends on. If the optimizer's output

@@ -22,9 +22,14 @@ export interface OrchestratorDeps {
 }
 
 const SAFE_FALLBACK_TEXT =
-  "I want to make sure I give you good information here — could you share a bit more about what you're hoping to learn? For anything dose- or medication-specific, your prescribing clinician is the right person to check with.";
+  "I'm not sure I caught all of that — can you give me a bit more detail so I can actually help?";
 
-const RISKY_INTENT_PREFIXES = ['knowledge_lookup', 'safety_'];
+// Only run the LLM critic for genuinely dangerous intent categories.
+// `knowledge_lookup` was here but it's too broad — food/nutrition questions
+// get treated as risky and the critic then fails on USDA protein-gram facts
+// that aren't verbatim in retrieved KB chunks. The validator's
+// `possible_medical_advice` flag handles the cases we care about.
+const RISKY_INTENT_PREFIXES = ['safety_'];
 
 export class AIOrchestrator {
   private planner: PlannerAgent;

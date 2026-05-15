@@ -223,7 +223,11 @@ export class Scheduler {
   private async sendAndRecord(user: GraceUser, type: Parameters<MessageGenerator['generate']>[0], opts?: GenerateOpts): Promise<void> {
     try {
       const message = await this.deps.generator.generate(type, user, opts);
-      await this.deps.sender.send({ to: user.phone, body: message, channel: 'whatsapp' });
+      // RLHF users get a feedback prompt on proactive messages too, not just reactive.
+      const body = user.rlhf_enabled
+        ? `${message}\n\n_Rate this: 👍 👎, or start a message with # to leave a note (e.g. #too long)_`
+        : message;
+      await this.deps.sender.send({ to: user.phone, body, channel: 'whatsapp' });
       await this.deps.users.recordCheckIn({
         userId: user.phone,
         phone: user.phone,

@@ -170,13 +170,32 @@ function detectNaturalOptOut(text: string): string | null {
 }
 
 // ─── In-chat check-in frequency change ───────────────────────────────────────
-// Master prompt — CHECK-IN FREQUENCY says these requests get handled in-chat,
-// not via the settings URL. The new count is bounded to [1, 4].
-const FREQ_LESS = /\b(text|message)\s+me\s+(less|less\s+often)\b|\btoo\s+(many|much)\s+(messages|texts)\b|\bfewer\s+(check.?ins|messages|texts)\b|\bless\s+often\b/i;
-const FREQ_MORE = /\b(text|message)\s+me\s+more\b|\bmore\s+(check.?ins|messages|texts)\b/i;
-const FREQ_ONCE = /\bonce\s+(a\s+day|per\s+day|daily)\b|\bjust\s+one\s+(message|text|check.?in)\s+(a|per)\s+day\b/i;
-const FREQ_TWICE = /\btwice\s+(a\s+day|per\s+day)\b/i;
-const FREQ_EVERY_OTHER = /\bevery\s+other\s+day\b|\bnot\s+every\s+day\b/i;
+// Master prompt — CHECK-IN FREQUENCY: handle in-chat, never redirect to settings.
+// Patterns cover direct ("text me less"), indirect ("you message too much"),
+// and softer phrasings ("tone it down"). Bounded to [1, 4] daily messages.
+const FREQ_LESS = new RegExp([
+  /\b(text|message|msg)\s+me\s+less\b/,
+  /\bless\s+(often|reminders?|messages?|texts?|check[\s-]?ins?|nudges?)\b/,
+  /\bfewer\s+(reminders?|check[\s-]?ins?|messages?|texts?|nudges?)\b/,
+  /\btoo\s+(many|much)\s+(messages?|texts?|reminders?|check[\s-]?ins?|nudges?)\b/,
+  /\bstop\s+texting\s+(me\s+)?so\s+much\b/,
+  /\b(tone|dial)\s+(it|things|the\s+(messages|texts|reminders))\s+(down|back)\b/,
+  /\byou\s+(text|message)\s+(me\s+)?too\s+much\b/,
+  /\bback\s+off\s+(a\s+bit|with\s+the\s+(texts|messages|reminders))\b/,
+  /\b(reduce|cut\s+down|lower)\s+(the\s+)?(messages?|texts?|reminders?|check[\s-]?ins?)\b/,
+].map((r) => r.source).join('|'), 'i');
+
+const FREQ_MORE = new RegExp([
+  /\b(text|message|msg)\s+me\s+more\b/,
+  /\bmore\s+(check[\s-]?ins?|messages?|texts?|reminders?|nudges?)\b/,
+  /\bcheck\s+(on\s+me\s+|in\s+(on\s+me\s+)?)?more(\s+often)?\b/,
+  /\b(increase|bump\s+up)\s+(the\s+)?(messages?|texts?|reminders?|check[\s-]?ins?)\b/,
+  /\b(text|message|check\s+in)\s+more\s+often\b/,
+].map((r) => r.source).join('|'), 'i');
+
+const FREQ_ONCE = /\bonce\s+(a\s+day|per\s+day|daily)\b|\bjust\s+one\s+(message|text|check.?in)\s+(a|per)\s+day\b|\bone\s+(message|text|check.?in)\s+(a|per)\s+day\b/i;
+const FREQ_TWICE = /\btwice\s+(a\s+day|per\s+day)\b|\btwo\s+(messages|texts|check.?ins)\s+(a|per)\s+day\b/i;
+const FREQ_EVERY_OTHER = /\bevery\s+other\s+day\b|\bnot\s+every\s+day\b|\bskip\s+(a\s+)?days?\b/i;
 
 function detectFrequencyChange(text: string, current: number): { newCount: number; reply: string } | null {
   if (FREQ_ONCE.test(text)) {

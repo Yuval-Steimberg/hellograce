@@ -97,8 +97,14 @@ export class Scheduler {
     }
 
     // ── Morning window (covers both trial reminder and regular check-in)
+    // Humanized timing: each user gets a deterministic per-day offset of 0-55
+    // minutes from their wake_hour so messages don't all fire at exactly 7:00.
+    // Deterministic so retries within the same day land in the same window.
     const wakeHour = parseInt(user.wake_time.split(':')[0]!, 10);
-    const isMorningWindow = hour >= wakeHour && hour <= wakeHour + 1;
+    const morningOffset = jitterMinutes(`${user.phone}-${todayStr}-morning`, 55);
+    const morningTargetMin = wakeHour * 60 + morningOffset;
+    const nowMin = hour * 60 + minute;
+    const isMorningWindow = nowMin >= morningTargetMin && nowMin < morningTargetMin + 5;
     const morningAlreadySent = user.last_morning_sent_at &&
       toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) === todayStr;
 
@@ -124,15 +130,20 @@ export class Scheduler {
     const engagedToday = userEngagedToday(user);
     const silentDays = userSilentDays(user);
 
-    // ── Midday nudge (Mon/Wed/Fri, 11am–2pm local)
-    if (
+    // ── Midday nudge (Mon/Wed/Fri, randomized within 11am–2pm local)
+    // Per-user-per-day offset across the 3-hour window so different users hit
+    // at different minutes, and the same user hits at different times day-to-day.
+    const middayBaseMin = 11 * 60;
+    const middayOffset = jitterMinutes(`${user.phone}-${todayStr}-midday`, 165); // 11:00–13:45
+    const middayTargetMin = middayBaseMin + middayOffset;
+    const isMiddayWindow =
       MIDDAY_DAYS.has(dayOfWeek) &&
-      hour >= 11 && hour <= 14 &&
+      nowMin >= middayTargetMin && nowMin < middayTargetMin + 5;
+    if (
+      isMiddayWindow &&
       !user.midday_skip &&
       (!user.last_midday_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_midday_sent_at))) !== todayStr) &&
-      // Skip if user replied within last 3h — they're already in active chat
       (!user.last_reply_at || Date.now() - new Date(user.last_reply_at).getTime() > 3 * 3_600_000) &&
-      // Engagement dampener: skip midday after >1 day of silence
       (engagedToday || silentDays < 1)
     ) {
       // Only send midday if morning was sent today (don't double-cold-start)
@@ -145,11 +156,15 @@ export class Scheduler {
       }
     }
 
-    // ── Evening wind-down (Tue/Thu/Sun, 90 min before sleep)
+    // ── Evening wind-down (Tue/Thu/Sun, ~90 min before sleep, randomized ±15)
+    // Base time = sleep_hour - 1:30; jitter 0-30 shifts to roughly -1:30 to -1:00.
     const sleepHour = parseInt(user.sleep_time.split(':')[0]!, 10);
+    const eveningBaseMin = (sleepHour - 2) * 60 + 30;
+    const eveningOffset = jitterMinutes(`${user.phone}-${todayStr}-evening`, 30);
+    const eveningTargetMin = eveningBaseMin + eveningOffset;
     const isEveningWindow =
       EVENING_DAYS.has(dayOfWeek) &&
-      ((hour === sleepHour - 2 && minute >= 30) || (hour === sleepHour - 1 && minute === 0));
+      nowMin >= eveningTargetMin && nowMin < eveningTargetMin + 5;
     if (
       isEveningWindow &&
       // Hard cap: never send evening to a user who hasn't actively chatted today
@@ -165,9 +180,14 @@ export class Scheduler {
   private async handleInjectionFlow(user: GraceUser, hour: number): Promise<void> {
     const stage = user.injection_flow_stage;
     const wakeHour = parseInt(user.wake_time.split(':')[0]!, 10);
+    const todayStr = toDateStr(localNow(user.timezone));
+    const minute = localNow(user.timezone).getMinutes();
+    const injectionOffset = jitterMinutes(`${user.phone}-${todayStr}-injection`, 45);
+    const injectionTargetMin = wakeHour * 60 + injectionOffset;
+    const nowMin = hour * 60 + minute;
 
-    // Stage 0: Send injection morning message at user's wake time
-    if (!stage && hour >= wakeHour) {
+    // Stage 0: Send injection morning message during randomized morning window
+    if (!stage && nowMin >= injectionTargetMin) {
       await this.sendAndRecord(user, 'injection_morning');
       await this.deps.users.setInjectionStage(user.phone, 'morning_sent', {
         injection_flow_started_at: new Date(),
@@ -254,6 +274,24 @@ function localNow(tz: string, date = new Date()): Date {
 
 function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Deterministic per-user-per-day jitter in minutes (0 to maxMinutes-1).
+ * Same seed → same offset, so re-runs of the cron within the same day land
+ * in the same window. Different days, users, or message types get different
+ * offsets — so deliveries feel naturally varied, never mechanically scheduled.
+ * Survives restarts, retries, and timezone resyncs because the seed encodes
+ * user + local date + message type, not wall-clock time.
+ */
+function jitterMinutes(seed: string, maxMinutes: number): number {
+  if (maxMinutes <= 0) return 0;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash) + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash) % maxMinutes;
 }
 
 /** Has the user actively replied since today's morning message went out? */

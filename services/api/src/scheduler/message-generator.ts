@@ -112,11 +112,13 @@ export class MessageGenerator {
           { role: 'user', content: prompt },
         ],
         temperature: 0.75,
-        maxOutputTokens: 120,
+        // 120 was too tight for Gemini 2.5 Flash — thinking tokens + final text
+        // sometimes truncated mid-sentence ("Midday reminder: your" bug).
+        maxOutputTokens: 280,
       });
 
-      const text = resp.text.trim();
-      return text.length > 20 ? text : fallback;
+      const sanitized = sanitizeProactiveOutput(resp.text);
+      return sanitized ?? fallback;
     } catch {
       return fallback;
     }
@@ -206,4 +208,43 @@ export class MessageGenerator {
 
     return instructions[type] + (opts?.extra ? `\n\nExtra context: ${opts.extra}` : '');
   }
+}
+
+// ─── Output sanitizer ────────────────────────────────────────────────────────
+// Two failure modes from the LLM that this guards against:
+//   1. Forbidden internal labels leaking into the message ("Midday reminder:",
+//      "Morning check-in —", etc). The system prompt forbids these but Gemini
+//      still emits them ~5% of the time, so we strip them deterministically.
+//   2. Truncation mid-sentence (output budget exhausted). We detect by
+//      requiring the message ends with punctuation, an emoji, or a closing
+//      quote — anything else means it was cut off and we fall back.
+const FORBIDDEN_LABEL_PREFIX = /^(morning|midday|afternoon|evening|night|daily|weekly|injection|protein|hydration|side[\s-]?effect)\s+(reminder|check[\s-]?in|nudge|note|update|message|hello|hi)[\s:.\-—–,]+/i;
+const GENERIC_LABEL_PREFIX = /^(reminder|check[\s-]?in|note|update|hey there)[\s:,.\-—–]+/i;
+// Allow standard sentence punctuation, common Grace emojis, and quote marks.
+const COMPLETE_ENDING = /[.!?…"')\]🤍🌿🌙💪💉🧡✨🍃🤍🌱☀️🌞🌤️]$/u;
+
+function sanitizeProactiveOutput(raw: string): string | null {
+  let text = raw.trim();
+  if (text.length === 0) return null;
+
+  // Strip wrapping quotes Gemini sometimes adds.
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1).trim();
+  }
+
+  // Strip a forbidden label-style prefix if present, then re-trim.
+  const before = text;
+  text = text.replace(FORBIDDEN_LABEL_PREFIX, '').replace(GENERIC_LABEL_PREFIX, '').trim();
+  // Capitalize first letter if the strip left it lowercase mid-word.
+  if (before !== text && text.length > 0) {
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+  }
+
+  // Reject too-short results (likely the prefix was the entire message).
+  if (text.length < 15) return null;
+
+  // Reject if it doesn't end cleanly — most likely truncated by token budget.
+  if (!COMPLETE_ENDING.test(text)) return null;
+
+  return text;
 }

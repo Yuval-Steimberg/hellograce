@@ -64,7 +64,10 @@ export class AIOrchestrator {
         { role: 'user', content: input.text },
       ],
       temperature: 0.6,
-      maxOutputTokens: 700,
+      // Gemini 2.5 Flash burns budget on internal thinking BEFORE output.
+      // 700 was producing mid-word truncation (e.g. "easy-to-" cut off).
+      // 2048 leaves plenty of room for thinking + a 1–3 sentence reply.
+      maxOutputTokens: 2048,
     });
 
     let validated = validateResponse(llmResp.text);
@@ -73,8 +76,16 @@ export class AIOrchestrator {
     let regenerated = false;
     let usedSafeFallback = false;
 
+    // Detect mid-word/mid-sentence truncation (e.g. "...easy-to-" cut off by
+    // hitting maxOutputTokens). Forces the critic→regen path so the user
+    // never sees a half-sentence reply.
+    const truncated =
+      llmResp.finishReason === 'length' || endsMidWord(validated.text);
+
     const needsReview =
-      precheck.unsupported.length > 0 || this.shouldRunCritic(plan, validated);
+      truncated ||
+      precheck.unsupported.length > 0 ||
+      this.shouldRunCritic(plan, validated);
 
     if (needsReview) {
       critic = await this.review(precheck, input.text, validated.text, input.retrieved);
@@ -88,7 +99,7 @@ export class AIOrchestrator {
             { role: 'user', content: input.text },
           ],
           temperature: 0.4,
-          maxOutputTokens: 700,
+          maxOutputTokens: 2048,
         });
         const retryValidated = validateResponse(retryResp.text);
         const retryPrecheck = precheckGrounding(retryValidated.text, input.retrieved);
@@ -193,4 +204,24 @@ function buildCriticAddendum(c: CriticReport): string {
   );
 
   return parts.join('\n');
+}
+
+/**
+ * Heuristic for mid-word/mid-sentence truncation.
+ * Returns true when the response clearly ends in the middle of something —
+ * a trailing dash/hyphen, a single letter, an article ("the", "a"), a
+ * preposition ("of", "on", "for"), or no terminal punctuation/emoji at all.
+ */
+function endsMidWord(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return false;
+  // Ends in a dash/hyphen → mid-word
+  if (/[-–—]$/.test(trimmed)) return true;
+  const lastTok = trimmed.split(/\s+/).pop() ?? "";
+  // Ends with a stranded preposition/article (no terminal punctuation)
+  const stranded = /^(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be|easy|dense)$/i;
+  if (stranded.test(lastTok)) return true;
+  // No terminal punctuation or emoji at all
+  if (!/[.!?…]$|[\p{Extended_Pictographic}]$/u.test(trimmed)) return true;
+  return false;
 }

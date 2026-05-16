@@ -349,9 +349,15 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     console.error("Webhook error:", err);
-    return new Response(JSON.stringify({ error: "Webhook error" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    const msg = err instanceof Error ? err.message : String(err);
+    const hasSecret = !!Deno.env.get("STRIPE_WEBHOOK_SECRET");
+    const secretLen = (Deno.env.get("STRIPE_WEBHOOK_SECRET") ?? "").length;
+    return new Response(
+      JSON.stringify({ error: "Webhook error", detail: msg, hasSecret, secretLen }),
+      {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
 });

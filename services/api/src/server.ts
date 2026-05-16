@@ -109,7 +109,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       logger.info({ adminPhone, version: report.version }, 'prompt_optimizer.report_sent');
     },
   });
-  const scheduler = new Scheduler({ users, sender, generator, logger, promptOptimizer });
+  const scheduler = new Scheduler({ users, sender, generator, logger, redis, promptOptimizer });
 
   // Shared hot-reload routine — used by SIGHUP and the admin sync endpoint.
   const reloadActivePrompt = async (): Promise<void> => {

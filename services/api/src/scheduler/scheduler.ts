@@ -1,4 +1,5 @@
 import cron from 'node-cron';
+import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
@@ -14,6 +15,7 @@ interface SchedulerDeps {
   sender: TwilioSender;
   generator: MessageGenerator;
   logger: Logger;
+  redis: Redis;
   promptOptimizer?: PromptOptimizer;
 }
 
@@ -221,6 +223,18 @@ export class Scheduler {
   }
 
   private async sendAndRecord(user: GraceUser, type: Parameters<MessageGenerator['generate']>[0], opts?: GenerateOpts): Promise<void> {
+    // Distributed lock: prevent two Fly machines from sending the same
+    // message type to the same user on the same day. TTL = 23h so the key
+    // expires before tomorrow's window opens. NX means only the first
+    // machine to acquire the lock proceeds; the second skips silently.
+    const todayStr = toDateStr(localNow(user.timezone));
+    const lockKey = `sched:${user.phone}:${type}:${todayStr}`;
+    const acquired = await this.deps.redis.set(lockKey, '1', 'EX', 82800, 'NX');
+    if (!acquired) {
+      this.deps.logger.debug({ phone: user.phone, type }, 'scheduler.skipped_duplicate');
+      return;
+    }
+
     try {
       const message = await this.deps.generator.generate(type, user, opts);
       // RLHF users get a feedback prompt on proactive messages too, not just reactive.
@@ -236,6 +250,8 @@ export class Scheduler {
       });
       this.deps.logger.info({ phone: user.phone, type }, 'scheduler.sent');
     } catch (err) {
+      // Release the lock on failure so the next tick can retry.
+      await this.deps.redis.del(lockKey);
       this.deps.logger.error({ err, phone: user.phone, type }, 'scheduler.send.failed');
     }
   }

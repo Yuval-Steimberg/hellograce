@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { GRACE_SYSTEM_PROMPT } from '@grace/ai-core';
 import { UnauthorizedError, ValidationError } from '../errors.js';
 import type { Cache } from '../cache/cache.js';
 import type { LLMProvider } from '@grace/shared';
@@ -12,6 +13,8 @@ export interface AdminDeps {
   adminToken?: string;
   llm?: LLMProvider;
   promptOptimizer?: PromptOptimizer;
+  /** Hot-reload callback wired in server.ts — pushes the active prompt to AIService and MessageGenerator. */
+  reloadActivePrompt?: () => Promise<void>;
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
@@ -491,5 +494,37 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     // Run in background so the HTTP response returns immediately
     void deps.promptOptimizer.run().catch(() => undefined);
     return { ok: true, message: 'Optimizer started — report will be sent to ADMIN_PHONE when complete' };
+  });
+
+  /**
+   * Push the canonical GRACE_SYSTEM_PROMPT from packages/ai-core/src/prompts.ts
+   * into the prompts table as a new active version. Use this after a prompt
+   * rewrite in code that the optimizer hasn't picked up yet, or to bootstrap
+   * a fresh DB. Hot-reloads the live AIService + MessageGenerator on success.
+   */
+  app.post('/admin/prompts/sync-from-code', async () => {
+    const content = GRACE_SYSTEM_PROMPT;
+    await deps.pool.query('BEGIN');
+    let version: number;
+    try {
+      const { rows } = await deps.pool.query<{ max: number | null }>(
+        `SELECT MAX(version) AS max FROM prompts`,
+      );
+      version = (rows[0]?.max ?? 0) + 1;
+      await deps.pool.query(`UPDATE prompts SET active = FALSE WHERE active = TRUE`);
+      await deps.pool.query(
+        `INSERT INTO prompts (version, content, active, notes, auto_generated)
+         VALUES ($1, $2, TRUE, $3, FALSE)`,
+        [version, content, `Synced from code (GRACE_SYSTEM_PROMPT, ${content.length} chars)`],
+      );
+      await deps.pool.query('COMMIT');
+    } catch (err) {
+      await deps.pool.query('ROLLBACK');
+      throw err;
+    }
+    if (deps.reloadActivePrompt) {
+      await deps.reloadActivePrompt().catch(() => undefined);
+    }
+    return { ok: true, version, contentLength: content.length, message: 'Master prompt synced and activated. Hot-reloaded into AIService.' };
   });
 }

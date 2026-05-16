@@ -103,13 +103,18 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   });
   const scheduler = new Scheduler({ users, sender, generator, logger, promptOptimizer });
 
+  // Shared hot-reload routine — used by SIGHUP and the admin sync endpoint.
+  const reloadActivePrompt = async (): Promise<void> => {
+    const p = await loadActivePrompt();
+    ai.updateSystemPrompt(p);
+    generator.updateSystemPrompt(p);
+    logger.info({ bytes: p?.length ?? 0 }, 'prompt.hot_reloaded');
+  };
+
   // Manual SIGHUP still works for ops-driven reloads (e.g. ad-hoc prompt edits
   // via the admin dashboard).
   process.on('SIGHUP', () => {
-    void loadActivePrompt().then((p) => {
-      ai.updateSystemPrompt(p);
-      generator.updateSystemPrompt(p);
-    });
+    void reloadActivePrompt().catch((err) => logger.error({ err }, 'prompt.reload.failed'));
   });
 
   startWorkers({ redis, pool, memory, logger });
@@ -150,7 +155,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   registerWebhookRoutes(app, { env, ai, sender, users });
   registerUserRoutes(app, { pool, users, sender, generator });
   registerChatRoutes(app, ai, pool);
-  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
+  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
 
   const shutdown = async () => {
     app.log.info('shutdown.start');

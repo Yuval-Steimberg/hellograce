@@ -93,13 +93,15 @@ describe('AIOrchestrator', () => {
     expect(out.critic).toBeUndefined(); // medium isn't a risk trigger
   });
 
-  it('invokes the critic on knowledge_lookup intent and accepts a healthy critique', async () => {
+  it('invokes the critic on safety intent and accepts a healthy critique', async () => {
+    // knowledge_lookup is intentionally NOT in RISKY_INTENT_PREFIXES (too broad).
+    // Use a safety_ intent to exercise the critic path.
     const llm = new MockLLM([
       JSON.stringify({
-        intent: 'knowledge_lookup',
+        intent: 'safety_dosing',
         needsTools: false,
         toolCalls: [],
-        rationale: 'kb question',
+        rationale: 'dosing question',
       }),
       'Nausea is a known GLP-1 side effect; bring it up with your clinician if it worsens.',
       healthyCriticJson,
@@ -116,7 +118,7 @@ describe('AIOrchestrator', () => {
     });
 
     expect(llm.calls).toHaveLength(3); // planner + generation + critic
-    expect(out.intent).toBe('knowledge_lookup');
+    expect(out.intent).toBe('safety_dosing');
     expect(out.critic?.pass).toBe(true);
     expect(out.regenerated).toBeUndefined();
     expect(out.usedSafeFallback).toBeUndefined();
@@ -125,9 +127,10 @@ describe('AIOrchestrator', () => {
   it('regenerates once when the LLM-critic flags the draft, accepts the retry if it passes', async () => {
     // Bad response is qualitatively wrong but has no quantitative claims that
     // the precheck would catch — so the LLM-critic is the gate.
+    // Uses safety_ intent because knowledge_lookup no longer triggers the critic.
     const llm = new MockLLM([
       JSON.stringify({
-        intent: 'knowledge_lookup',
+        intent: 'safety_dosing',
         needsTools: false,
         toolCalls: [],
         rationale: '',
@@ -152,6 +155,7 @@ describe('AIOrchestrator', () => {
     expect(out.regenerated).toBe(true);
     expect(out.usedSafeFallback).toBeUndefined();
     expect(out.text).toContain('prescriber');
+    expect(out.intent).toBe('safety_dosing');
     expect(out.critic?.pass).toBe(true);
   });
 
@@ -210,13 +214,17 @@ describe('AIOrchestrator', () => {
     expect(out.usedSafeFallback).toBe(true);
     expect(out.critic?.source).toBe('precheck');
     expect(out.critic?.unsupportedClaims?.length).toBeGreaterThan(0);
-    expect(out.text).toContain('clinician');
+    // Safe fallback is returned when both grounding attempts fail
+    expect(out.text).toContain("I'm not sure I caught all of that");
   });
 
   it('falls back to a safe canned response when both attempts fail the critic', async () => {
+    // Uses safety_ intent because knowledge_lookup no longer triggers the LLM-critic
+    // (only the grounding precheck can gate it). These responses lack quantitative
+    // claims so the precheck is clean — the LLM-critic must be the gate.
     const llm = new MockLLM([
       JSON.stringify({
-        intent: 'knowledge_lookup',
+        intent: 'safety_dosing',
         needsTools: false,
         toolCalls: [],
         rationale: '',
@@ -240,7 +248,7 @@ describe('AIOrchestrator', () => {
     expect(out.usedSafeFallback).toBe(true);
     expect(out.regenerated).toBe(true);
     expect(out.confidence).toBe('low');
-    expect(out.text).toContain('clinician');
+    expect(out.text).toContain("I'm not sure I caught all of that");
     expect(out.text).not.toContain('double');
   });
 });

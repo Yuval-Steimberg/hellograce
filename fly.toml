@@ -1,0 +1,37 @@
+app = 'grace-api'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'services/api/Dockerfile'
+
+[env]
+  NODE_ENV = 'production'
+  PORT = '3001'
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = 'stop'
+  # Always keep at least 1 machine running so the 4am UTC daily optimizer cron
+  # and all node-cron proactive message jobs fire reliably — even with no traffic.
+  min_machines_running = 1
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'requests'
+    soft_limit = 200
+    hard_limit = 250
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'
+
+[checks]
+  [checks.health]
+    grace_period = '10s'
+    interval = '30s'
+    method = 'get'
+    path = '/health'
+    port = 3001
+    timeout = '5s'
+    type = 'http'

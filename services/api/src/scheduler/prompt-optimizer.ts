@@ -3,24 +3,30 @@ import type { LLMProvider } from '@grace/shared';
 import type { Logger } from 'pino';
 
 const SAFE_FALLBACK_SNIPPET = "I'm not sure I caught all of that";
-const MIN_PROMPT_LENGTH = 200;
+const MIN_ADDITIONS_LENGTH = 20;
 
-// Phrases the canonical Grace prompt depends on. If the optimizer's output
-// drops ANY of these, we reject auto-activation and save as draft only.
-// The list reflects non-negotiable behavior contracts surfaced by the
-// WhatsApp pilot QA + Phase 8 master-prompt work.
+// Phrases the canonical Grace prompt depends on. If the optimizer's generated
+// additions somehow drop these from the COMBINED prompt, we reject auto-activation.
+// In practice, additions are appended to the base prompt, so these always survive.
 const REQUIRED_SAFETY_PHRASES = ['988', '911', 'doctor'];
 const REQUIRED_BEHAVIOR_PHRASES = [
-  'BANNED',                       // The banned-phrase list (Phase 7+8 explicit fixes)
-  'graceglp.com/settings',        // Settings management URL must remain literal
-  'GLP-1',                        // Product identity
+  'BANNED',
+  'graceglp.com/settings',
+  'GLP-1',
 ];
 
-// Samples + lookback window. Bumped from (20/10/7d) → (50/25/14d) so the
-// optimizer sees more of the actual user signal, per user request.
+// Samples + lookback window.
 const NEG_SAMPLE_LIMIT = 50;
 const POS_SAMPLE_LIMIT = 25;
 const LOOKBACK_DAYS = 14;
+
+// PostgreSQL advisory lock key — prevents two Fly machines running the optimizer
+// simultaneously at 4am UTC. Session-level: held for the life of the DB connection,
+// released automatically if the process crashes.
+const OPTIMIZER_LOCK_KEY = 987654321;
+
+// Marker used to strip the previous additions block before appending new ones.
+const ADDITIONS_MARKER = '\n\n---\n## BEHAVIORAL ADJUSTMENTS (auto-learned from user feedback)\n';
 
 export interface OptimizerRunReport {
   activated: boolean;
@@ -62,6 +68,30 @@ export class PromptOptimizer {
   async run(): Promise<void> {
     this.logger.info('prompt_optimizer.started');
 
+    // Use a dedicated DB connection for the advisory lock so it's held for the
+    // full duration of the run and released cleanly when we're done.
+    const client = await this.pool.connect();
+    try {
+      // Distributed lock: only one Fly machine runs the optimizer per day.
+      // pg_try_advisory_lock returns false immediately if another session holds the key.
+      const { rows: lockRows } = await client.query<{ locked: boolean }>(
+        'SELECT pg_try_advisory_lock($1) AS locked',
+        [OPTIMIZER_LOCK_KEY],
+      );
+      if (!lockRows[0]?.locked) {
+        this.logger.info('prompt_optimizer.skipped_lock_held_by_other_machine');
+        return;
+      }
+
+      await this.runWithLock(client);
+    } finally {
+      // Always release the lock and connection, even on crash.
+      await client.query('SELECT pg_advisory_unlock($1)', [OPTIMIZER_LOCK_KEY]).catch(() => undefined);
+      client.release();
+    }
+  }
+
+  private async runWithLock(_client: import('pg').PoolClient): Promise<void> {
     try {
       const currentPrompt = await this.getActivePrompt();
       if (!currentPrompt) {
@@ -83,7 +113,7 @@ export class PromptOptimizer {
         'prompt_optimizer.analyzing',
       );
 
-      const result = await this.generateImprovedPrompt(currentPrompt, {
+      const result = await this.generateAdditions(currentPrompt, {
         negativeSamples,
         positiveSamples,
         fallbackCount,
@@ -95,8 +125,12 @@ export class PromptOptimizer {
         return;
       }
 
-      const safe = this.isSafe(result.prompt, currentPrompt);
-      const version = await this.saveVersion(result.prompt, result.analysis, safe);
+      // Strip any previous BEHAVIORAL ADJUSTMENTS block, then append fresh additions.
+      const basePrompt = currentPrompt.replace(new RegExp(`${ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*$`), '').trimEnd();
+      const newPrompt = `${basePrompt}${ADDITIONS_MARKER}${result.additions.trim()}`;
+
+      const safe = this.isSafe(newPrompt);
+      const version = await this.saveVersion(newPrompt, result.analysis, safe);
 
       const stats = {
         totalMessages,
@@ -112,16 +146,13 @@ export class PromptOptimizer {
         this.logger.info('prompt_optimizer.auto_activated_new_prompt');
         if (this.hooks?.onPromptActivated) {
           try {
-            await this.hooks.onPromptActivated(result.prompt);
+            await this.hooks.onPromptActivated(newPrompt);
           } catch (err) {
             this.logger.error({ err }, 'prompt_optimizer.hot_reload_failed');
           }
         }
       } else {
-        this.logger.warn(
-          { reason: result.analysis },
-          'prompt_optimizer.saved_as_draft_failed_safety_check',
-        );
+        this.logger.warn({ reason: result.analysis }, 'prompt_optimizer.saved_as_draft_failed_safety_check');
       }
 
       if (this.hooks?.onRunComplete) {
@@ -131,7 +162,7 @@ export class PromptOptimizer {
             version,
             analysis: result.analysis,
             stats,
-            draftReason: safe ? undefined : 'Safety gate: a required safety or behavior phrase was dropped. Saved as draft for manual review.',
+            draftReason: safe ? undefined : 'Safety gate: a required safety or behavior phrase was dropped from the combined prompt. Saved as draft for manual review.',
           });
         } catch (err) {
           this.logger.error({ err }, 'prompt_optimizer.report_hook_failed');
@@ -152,7 +183,6 @@ export class PromptOptimizer {
   private async gatherSignals(days: number) {
     const since = new Date(Date.now() - days * 24 * 3_600_000);
 
-    // Negative feedback: join feedback → message (assistant reply) → preceding user message
     const { rows: negativeRows } = await this.pool.query<FeedbackRow>(
       `SELECT
          a.content AS assistant_message,
@@ -217,7 +247,10 @@ export class PromptOptimizer {
     };
   }
 
-  private async generateImprovedPrompt(
+  // Generates a SHORT list of behavioral additions (not a full rewrite).
+  // The additions are appended to the base prompt, keeping the full prompt
+  // length stable and preserving all safety/behavior anchors.
+  private async generateAdditions(
     currentPrompt: string,
     signals: {
       negativeSamples: FeedbackRow[];
@@ -225,16 +258,12 @@ export class PromptOptimizer {
       fallbackCount: number;
       totalMessages: number;
     },
-  ): Promise<{ prompt: string; analysis: string } | null> {
+  ): Promise<{ additions: string; analysis: string } | null> {
     const formatSample = (r: FeedbackRow) => {
       const user = r.user_message ? `User: "${r.user_message.slice(0, 150)}"` : '';
       const asst = r.assistant_message ? `Grace: "${r.assistant_message.slice(0, 200)}"` : '';
-      // Show the emoji signal so Gemini knows what the user reacted with,
-      // and the written comment when provided.
       const emojiLabel = (r.rating ?? 0) > 0 ? '👍' : '👎';
-      const fb = r.comment
-        ? ` | ${emojiLabel} + comment: "${r.comment}"`
-        : ` | ${emojiLabel} (no comment)`;
+      const fb = r.comment ? ` | ${emojiLabel} + comment: "${r.comment}"` : ` | ${emojiLabel} (no comment)`;
       return `${user}\n  ${asst}${fb}`;
     };
 
@@ -246,28 +275,35 @@ export class PromptOptimizer {
       ? signals.positiveSamples.map(formatSample).join('\n\n')
       : 'None in this period.';
 
+    // Strip previous additions so the model doesn't see them as part of the
+    // "current prompt" — it should reason about the base behavior only.
+    const basePromptExcerpt = currentPrompt
+      .replace(new RegExp(`${ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*$`), '')
+      .slice(-3000); // Last 3000 chars of the base prompt gives context for what's already there
+
     const resp = await this.llm.generate({
       messages: [
         {
           role: 'system',
-          content: `You are an expert prompt engineer for Grace, a WhatsApp AI companion for people on GLP-1 medications (Ozempic, Wegovy, Mounjaro, Zepbound).
+          content: `You are an expert at improving AI behavioral rules based on real user feedback.
 
-Your job: analyze real user feedback, identify what's failing and what's working, then rewrite the system prompt to fix the failures while preserving the successes.
+Grace is a WhatsApp companion for people on GLP-1 medications. You will write 2–5 SHORT, SPECIFIC behavioral rules to add to her existing prompt based on recent 👍/👎 feedback.
 
-Hard rules for the improved prompt:
-- Keep responses warm, concise — 1 to 3 short sentences max (WhatsApp/SMS, no markdown)
-- MUST keep safety language: always refer to prescribing clinician for dose/medical questions
-- MUST NOT change the AI's core identity or make it claim to be human
-- Length must be between 80% and 150% of the current prompt length
-- Focus on fixing the specific failure patterns you identify
+Rules for your output:
+- Each rule should be 1–2 sentences, written as an imperative instruction to Grace
+- Rules must directly address patterns visible in the 👎 feedback
+- Do NOT repeat rules that are clearly already in the existing prompt excerpt shown
+- Do NOT rewrite the full prompt — only write the new additions
+- Write rules in the same style as the existing prompt (direct, specific, WhatsApp-aware)
+- If the feedback is mostly positive or there are no clear failures, write 1 small improvement
 
 Respond ONLY with valid JSON:
-{"analysis": "2-3 sentences identifying the key failure patterns and what you changed", "prompt": "the full improved system prompt text"}`,
+{"analysis": "2-3 sentences: what failure patterns did you find and what rules fix them", "additions": "- Rule 1...\n- Rule 2...\n- Rule 3..."}`,
         },
         {
           role: 'user',
-          content: `CURRENT SYSTEM PROMPT:
-${currentPrompt}
+          content: `EXISTING PROMPT EXCERPT (end of current prompt — context for what's already covered):
+${basePromptExcerpt}
 
 PERFORMANCE DATA — LAST ${LOOKBACK_DAYS} DAYS:
 - Total user messages: ${signals.totalMessages}
@@ -277,60 +313,50 @@ PERFORMANCE DATA — LAST ${LOOKBACK_DAYS} DAYS:
     ? `${Math.round((signals.positiveSamples.length / (signals.positiveSamples.length + signals.negativeSamples.length)) * 100)}% positive`
     : 'no ratings yet'}
 
-NEGATIVE FEEDBACK (what went wrong — 👎 emoji ratings AND written comments):
+NEGATIVE FEEDBACK (what went wrong — fix these):
 ${negativeBlock}
 
-POSITIVE EXAMPLES (what's working well — 👍 emoji ratings — preserve these patterns):
+POSITIVE EXAMPLES (what's working — do more of this):
 ${positiveBlock}
 
-The 👎 emoji ratings with no comment mean users were dissatisfied but didn't explain why — look at the Grace response shown and infer what made it feel off (too long, too robotic, wrong tone, irrelevant, etc.).
-
-Analyze the failures and produce an improved prompt that fixes them.`,
+Write 2–5 specific new behavioral rules to add to Grace's prompt that fix the patterns you see in the negative feedback.`,
         },
       ],
       temperature: 0.3,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 1024,
       responseFormat: 'json',
     });
 
     try {
-      const parsed = JSON.parse(resp.text) as { analysis?: string; prompt?: string };
-      if (!parsed.prompt || parsed.prompt.length < MIN_PROMPT_LENGTH) return null;
+      const parsed = JSON.parse(resp.text) as { analysis?: string; additions?: string };
+      if (!parsed.additions || parsed.additions.trim().length < MIN_ADDITIONS_LENGTH) return null;
       if (!parsed.analysis) return null;
-      return { prompt: parsed.prompt, analysis: parsed.analysis };
+      return { additions: parsed.additions, analysis: parsed.analysis };
     } catch {
       this.logger.warn({ raw: resp.text.slice(0, 300) }, 'prompt_optimizer.parse_failed');
       return null;
     }
   }
 
-  // Strict safety gate before auto-activating. Bias is heavily toward
-  // saving-as-draft — auto-activation requires every guardrail to survive.
-  private isSafe(newPrompt: string, currentPrompt: string): boolean {
-    if (newPrompt.length < MIN_PROMPT_LENGTH) return false;
+  // Safety gate: check the COMBINED prompt (base + new additions) still has all anchors.
+  // Since we're only appending to the base, this should always pass unless the model
+  // somehow generated additions that contain conflicting instructions.
+  private isSafe(combinedPrompt: string): boolean {
+    if (combinedPrompt.length < 500) return false;
 
-    const lower = newPrompt.toLowerCase();
-
-    // ALL safety phrases must survive — losing any one is grounds for rejection.
+    const lower = combinedPrompt.toLowerCase();
     for (const p of REQUIRED_SAFETY_PHRASES) {
       if (!lower.includes(p.toLowerCase())) {
-        this.logger.warn({ missing: p }, 'prompt_optimizer.safety_phrase_dropped');
+        this.logger.warn({ missing: p }, 'prompt_optimizer.safety_phrase_missing');
         return false;
       }
     }
-
-    // Non-negotiable behavior anchors must survive too.
     for (const p of REQUIRED_BEHAVIOR_PHRASES) {
-      if (!newPrompt.includes(p)) {
-        this.logger.warn({ missing: p }, 'prompt_optimizer.behavior_anchor_dropped');
+      if (!combinedPrompt.includes(p)) {
+        this.logger.warn({ missing: p }, 'prompt_optimizer.behavior_anchor_missing');
         return false;
       }
     }
-
-    // Reject if it grew more than 1.5x or shrunk to less than 70% of current.
-    // Larger drift means a structural rewrite — review manually instead.
-    if (newPrompt.length > currentPrompt.length * 1.5) return false;
-    if (newPrompt.length < currentPrompt.length * 0.7) return false;
 
     return true;
   }
@@ -343,7 +369,6 @@ Analyze the failures and produce an improved prompt that fixes them.`,
     const notes = `Auto-generated by PromptOptimizer v${nextVersion} — ${analysis}`;
 
     if (autoActivate) {
-      // Deactivate current, insert new active version atomically.
       await this.pool.query('BEGIN');
       try {
         await this.pool.query(`UPDATE prompts SET active = FALSE WHERE active = TRUE`);
@@ -358,7 +383,6 @@ Analyze the failures and produce an improved prompt that fixes them.`,
         throw err;
       }
     } else {
-      // Save as inactive draft for manual review in admin dashboard.
       await this.pool.query(
         `INSERT INTO prompts (version, content, active, notes, auto_generated)
          VALUES ($1, $2, FALSE, $3, TRUE)`,

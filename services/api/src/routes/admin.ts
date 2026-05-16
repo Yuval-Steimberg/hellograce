@@ -525,7 +525,8 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     `);
     await deps.pool.query(`
       ALTER TABLE users
-        ADD COLUMN IF NOT EXISTS sex TEXT
+        ADD COLUMN IF NOT EXISTS sex TEXT,
+        ADD COLUMN IF NOT EXISTS dietary_pattern TEXT
     `);
     await deps.pool.query(`
       CREATE TABLE IF NOT EXISTS user_profile_facts (

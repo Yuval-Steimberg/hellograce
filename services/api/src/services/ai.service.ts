@@ -158,7 +158,30 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     // This drives a hard top-of-prompt banner that the 71k-char system prompt's
     // nested rule can't reliably enforce on its own (Gemini Flash parrots the
     // example templates that include "chicken or tuna at lunch").
-    const dietaryRestriction = detectDietaryRestriction(history, knownFacts, input.text);
+    //
+    // We also pass the persisted column (users.dietary_pattern) so that even
+    // when the BullMQ turn-persist worker is behind and history doesn't yet
+    // contain the user's "I'm vegetarian" message, we still fail-safe.
+    const dietaryRestriction = detectDietaryRestriction(
+      history,
+      knownFacts,
+      input.text,
+      user?.dietary_pattern ?? null,
+    );
+
+    // If detection found a restriction AND the user record doesn't already
+    // have it persisted, write it now. This is fire-and-forget — we don't
+    // need to await it for the current request because we already have
+    // `dietaryRestriction` in scope, but writing closes the race for the
+    // user's NEXT message.
+    if (dietaryRestriction && user?.phone) {
+      const newLabel = dietaryRestriction.label.toLowerCase();
+      if (user.dietary_pattern !== newLabel) {
+        void users
+          .setDietaryPattern(user.phone, newLabel)
+          .catch((err) => logger.warn({ err, phone: user.phone }, 'dietary_pattern.persist.failed'));
+      }
+    }
 
     // Build personalised system prompt with user context.
     const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday, knownFacts, dietaryRestriction });
@@ -527,10 +550,32 @@ const PESCATARIAN_ALLOWED = [
   'cottage cheese', 'eggs', 'tofu', 'lentils', 'beans', 'protein shake',
 ];
 
+/**
+ * Build a DietaryRestriction object from a known label. Used both by the
+ * regex-detection path AND the persisted-column path (user.dietary_pattern).
+ * Centralizing here means the forbidden/allowed lists stay in sync.
+ */
+export function buildRestrictionFromLabel(label: string): DietaryRestriction | null {
+  switch (label.toLowerCase()) {
+    case 'vegan':
+      return { label: 'VEGAN', forbidden: VEGAN_FORBIDDEN, allowed: VEGAN_ALLOWED };
+    case 'vegetarian':
+      return { label: 'VEGETARIAN', forbidden: VEGETARIAN_FORBIDDEN, allowed: VEGETARIAN_ALLOWED };
+    case 'pescatarian':
+    case 'pescetarian':
+      return { label: 'PESCATARIAN', forbidden: PESCATARIAN_FORBIDDEN, allowed: PESCATARIAN_ALLOWED };
+    default:
+      return null;
+  }
+}
+
 export function detectDietaryRestriction(
   history: Array<{ role: string; content: string }>,
   knownFacts: Array<{ fact: string; category: string }>,
   currentText: string,
+  /** Optional pre-existing pattern stored on the user record. Wins if the
+   *  current message doesn't override it. */
+  persistedPattern?: string | null,
 ): DietaryRestriction | null {
   const userTurns = history
     .filter((m) => m.role === 'user')
@@ -556,6 +601,15 @@ export function detectDietaryRestriction(
   const pescatarianPattern = /\b(i'?m\s+(a\s+)?pesc[ae]tarian|i\s+only\s+eat\s+fish|fish\s+only)\b/;
   if (pescatarianPattern.test(corpus)) {
     return { label: 'PESCATARIAN', forbidden: PESCATARIAN_FORBIDDEN, allowed: PESCATARIAN_ALLOWED };
+  }
+
+  // Nothing in the current corpus — fall back to the persisted column.
+  // This is what closes the BullMQ history-race: once Grace acknowledges
+  // "I'm vegetarian" in any prior session, ai.service.ts writes the label
+  // to users.dietary_pattern. Subsequent messages will find it here even
+  // when conversation history is empty or stale.
+  if (persistedPattern) {
+    return buildRestrictionFromLabel(persistedPattern);
   }
 
   return null;

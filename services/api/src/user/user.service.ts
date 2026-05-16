@@ -20,6 +20,11 @@ export interface GraceUser {
   sex: string | null;
   primary_goal: string | null;
   protein_goal_grams: number | null;
+  /** Durable dietary restriction detected from past messages.
+   *  'vegan' | 'vegetarian' | 'pescatarian' | null. Written synchronously
+   *  by ai.service.ts when detectDietaryRestriction matches; read on every
+   *  request so the guard layer doesn't rely on history timing. */
+  dietary_pattern: string | null;
   // behavioural flags
   protein_focus_boost: boolean;
   hydration_struggle: boolean;
@@ -252,6 +257,29 @@ export class UserService {
          WHERE metadata->>'message_id' = $2`,
         [rating, messageId],
       );
+    }
+  }
+
+  /**
+   * Persist a detected dietary pattern (vegan/vegetarian/pescatarian) onto
+   * the user record. Tolerant of the migration not being applied — if the
+   * column doesn't exist yet, swallows the error and logs nothing (this
+   * runs in the hot path of every reactive message).
+   *
+   * Only writes when the pattern actually changes, so we don't churn the
+   * row on every request.
+   */
+  async setDietaryPattern(phone: string, pattern: string | null): Promise<void> {
+    try {
+      await this.pool.query(
+        `UPDATE users
+         SET dietary_pattern = $2, updated_at = now()
+         WHERE phone = $1
+           AND (dietary_pattern IS DISTINCT FROM $2)`,
+        [phone, pattern],
+      );
+    } catch {
+      // Migration 20260516000004 not applied yet — ignore.
     }
   }
 

@@ -181,7 +181,10 @@ psql "$DATABASE_URL" -f supabase/migrations/20260508000001_rlhf_user_flags.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260513000001_prompt_optimizer_columns.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260513000002_protein_personalization.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260513000003_glp1_start_date.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260516000005_content_rules.sql
 ```
+
+**`20260516000005_content_rules.sql`** — IMPORTANT: run in Supabase SQL Editor with "No limit" toggle OFF (not in Neon). Creates `content_rules` table + 48 seed rules. Verify with: `SELECT severity, COUNT(*) FROM content_rules GROUP BY severity;` → should show `block: 4, regen: 44`.
 
 Core tables: `users`, `conversations`, `messages`, `embeddings`, `tool_logs`,
 `feedback`, `food_logs`, `weight_logs`, `check_ins`, `injections`, `prompts`, `tool_settings`.
@@ -302,6 +305,7 @@ Roadmap (in progress, in this order):
 | 7 | AI quality pass from WhatsApp QA: persona, hallucination guards, quiet hours, settings redirect, food-dislike paraphrase, brief-reply rule, GLP-1 week number, 50+ emotional patterns | ✅ |
 | 8 | Master prompt operationalization: full prompt rewrite from `gracemasterprompt.md`, unified safety message (988+911), reminder-style proactive messages, in-chat frequency change, natural-language opt-out, runtime context (Today is / Time of day / Total protein TODAY / Scheduled check-ins sent today / Medication type) | ✅ |
 | 9 | Production quality pass: proactive message label/truncation fix, humanized timing jitter, trial Day 2 reminder, RLHF on proactive messages, admin WhatsApp optimizer report, food recommendation rules, every-response-unique rule, critic tuned for food facts, safe fallback improved, name stripping in code | ✅ 2026-05-15 |
+| 10 | DB-driven content guardbands: `content_rules` table (48 rules: 4 block + 44 regen), `ContentRulesService` with 60s cache, applied to both reactive AI and proactive scheduler paths. Admin CRUD + test endpoint. Redis distributed lock on scheduler to prevent duplicate messages across Fly machines. | ✅ 2026-05-16 |
 
 ---
 
@@ -309,9 +313,9 @@ Roadmap (in progress, in this order):
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
-3. Active branch: `main` (all feature branches merged as of 2026-05-15). Latest commit: `285eb73` — EVERY RESPONSE IS UNIQUE rule added to prompt.
+3. Active branch: `claude/icloud-access-clarification-5hsRr` (not yet merged to main). Latest commit: `0c9f73f` — Redis distributed lock on scheduler.
 4. Production is live at `https://grace-api.fly.dev` (API) and `https://grace-admin-silk.vercel.app` (web). Tail logs with `fly logs --app grace-api`.
-5. Top open items: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn.
+5. Top open items: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn, rotate DB password.
 
 ### Phase 7 — AI quality pass (commits `bb420da`, `b09fe0f`, `174112e`, `c23584b`)
 
@@ -412,6 +416,82 @@ All changes landed on `main`, deployed to `https://grace-api.fly.dev`.
 **`services/api/src/scheduler/prompt-optimizer.ts`**
 - `SAFE_FALLBACK_SNIPPET` updated to match new fallback text
 
+### Phase 10 — DB-driven content guardbands + scheduler reliability (2026-05-16)
+
+All changes on branch `claude/icloud-access-clarification-5hsRr`. Deploy: `fly deploy --app grace-api`.
+
+**`supabase/migrations/20260516000005_content_rules.sql`** (NEW — run in Supabase SQL Editor)
+- Creates `content_rules` table with: `rule_type`, `pattern`, `is_regex`, `flags`, `reason`, `severity` (block/regen/log), `applies_to` (ai/scheduler/all), `is_active`
+- Trigger auto-updates `updated_at`
+- Seeds 48 rules: 4 `block` + 44 `regen`
+  - **block** (4): extra dose, double dose, exceeding prescribed amount, prescribing authority
+  - **regen** (44): medication safety (6), medical authority (10), emotional safety (10), banned phrases (14), privacy leaks (4)
+- All block rules and most regen rules have `applies_to = 'all'` (both paths)
+- One rule (`seek immediate medical help`) is `applies_to = 'ai'` only — safety guard handles real emergencies
+
+**`services/api/src/services/content-rules.service.ts`** (NEW)
+- `ContentRulesService` singleton: 60-second in-memory TTL cache, zero latency on hot path
+- `getActive(target: 'ai' | 'scheduler')` filters by `applies_to`
+- `start()` loads immediately + refreshes on interval; `stop()` clears timer
+- Keeps stale cache on transient DB error (never wipes on failure)
+
+**`packages/shared/src/ai.ts`** (MODIFIED)
+- Added `DbContentRule` interface (id, rule_type, pattern, is_regex, flags, reason, severity, applies_to)
+- Added `dbRules?: DbContentRule[]` to `OrchestratorInput`
+
+**`packages/ai-core/src/content-checker.ts`** (MODIFIED)
+- Added `severity?: 'log' | 'regen' | 'block'` to `ContentViolation`
+- Added `dbRules?: DbContentRule[]` to `ContentCheckOpts`
+- Added `checkDbRules(text, rules)` — silently skips invalid regex patterns (never crash on bad admin input)
+- Extended `checkContent()` to call `checkDbRules` when opts.dbRules provided
+- Extended `buildContentRegenInstruction()` to format `db_rule_*` violations
+
+**`packages/ai-core/src/index.ts`** (MODIFIED)
+- Added `export * from './content-checker.js'` so `checkDbRules` is importable by scheduler
+
+**`packages/ai-core/src/orchestrator.ts`** (MODIFIED)
+- Block-severity gate: if any violation has `severity === 'block'` → immediate safe fallback, no regen attempt
+- Split violations into `blockViolations` / `regenViolations` / `logViolations`
+- `needsReview` uses `regenViolations.length > 0` only
+- Retry also checks `retryBlockViolations` — block after regen still falls through to safe fallback
+
+**`services/api/src/services/ai.service.ts`** (MODIFIED)
+- Added `contentRulesService?: ContentRulesService` to `AIServiceDeps`
+- In `handleMessage()`: loads `dbRules` from `contentRulesService.getActive('ai')`, passes to orchestrator
+
+**`services/api/src/scheduler/message-generator.ts`** (MODIFIED)
+- Added `rulesService?: ContentRulesService` field + `updateRulesService()` method
+- In `generate()`: after `sanitizeProactiveOutput`, loads scheduler rules and runs `checkDbRules`
+- Any block/regen violation → returns canned fallback (proactive messages can't regen with chat history)
+
+**`services/api/src/scheduler/scheduler.ts`** (MODIFIED)
+- Added `redis: Redis` to `SchedulerDeps`
+- `sendAndRecord()` now acquires a Redis `SET NX EX 82800` lock (`sched:{phone}:{type}:{todayStr}`)
+  before generating + sending. Only first Fly machine to win the lock sends; second skips silently.
+  Lock released on failure so next tick can retry. Prevents duplicate messages from 2-machine deploy.
+
+**`services/api/src/routes/admin.ts`** (MODIFIED)
+- 5 new endpoints under `/admin/content-rules`:
+  - `GET` — list/filter by type/severity/active with pagination
+  - `POST` — create (validates regex before saving)
+  - `PUT /:id` — partial update
+  - `DELETE /:id` — soft-deactivate (sets `is_active = false`)
+  - `POST /test` — test any text against all active rules, returns violations JSON
+
+**`services/api/src/server.ts`** (MODIFIED)
+- `ContentRulesService` instantiated, `start()` called, `stop()` in shutdown
+- Injected into `AIService` (constructor) and `MessageGenerator` (`updateRulesService()`)
+- `redis` passed to `Scheduler`
+
+**Smoke test** (confirmed working in production):
+```bash
+curl -s -X POST https://grace-api.fly.dev/admin/content-rules/test \
+  -H "Authorization: Bearer <ADMIN_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"You could take an extra dose to make up for it"}' | jq .
+# → {"violations":[{"id":1,"severity":"block","reason":"Advising an extra dose...","match":"take an extra dose"}],"clean":false}
+```
+
 ### Phase 7+8 — known follow-ups not yet shipped
 
 - **`is_paused` flag** on `users` table to support pause-mode in the re-engagement ladder. Currently `paused: boolean` exists but isn't toggled by chat — needs a separate handler for "pause" / "I'm back" phrases.
@@ -419,7 +499,7 @@ All changes landed on `main`, deployed to `https://grace-api.fly.dev`.
 - **Twilio A2P campaign resubmission** — rejected twice (sample #2 said "Nudge" not "Grace"; use-case was Customer Care vs Mixed). Action: add real unchecked SMS consent checkbox to graceglp.com signup
 - **Grace Pro Stripe price ($24/mo)** — not yet created in `acct_1TWfwc`; `PRO_PRICE_ID` in `supabase/functions/upgrade-to-pro/index.ts` still points to old account
 - **Welcome email** — template ready (`docs/WELCOME_EMAIL.md`), not wired into `/users/onboard`
-- **DB password** — `Giburking18!` was exposed in prior terminal output; should be rotated at Supabase Dashboard → Settings → Database
+- **DB password** — `Giburking18!` was exposed in terminal output twice; MUST be rotated at https://supabase.com/dashboard/project/uifadtlktpddtfohwxfi/settings/database then update `fly secrets set --app grace-api DATABASE_URL="postgresql://postgres.uifadtlktpddtfohwxfi:NEW_PASSWORD@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres"`
 
 ---
 

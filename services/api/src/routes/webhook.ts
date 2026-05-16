@@ -210,10 +210,30 @@ const FREQ_MORE = new RegExp([
 ].map((r) => r.source).join('|'), 'i');
 
 const FREQ_ONCE = /\bonce\s+(a\s+day|per\s+day|daily)\b|\bjust\s+one\s+(message|text|check.?in)\s+(a|per)\s+day\b|\bone\s+(message|text|check.?in)\s+(a|per)\s+day\b/i;
-const FREQ_TWICE = /\btwice\s+(a\s+day|per\s+day)\b|\btwo\s+(messages|texts|check.?ins)\s+(a|per)\s+day\b/i;
+const FREQ_TWICE = /\btwice\s+(a\s+day|per\s+day)\b|\btwo\s+(messages?|texts?|check.?ins?|checking)\s+(a|per)\s+day\b/i;
 const FREQ_EVERY_OTHER = /\bevery\s+other\s+day\b|\bnot\s+every\s+day\b|\bskip\s+(a\s+)?days?\b/i;
 
+// Matches explicit digit-based requests:
+// "send me 2 check-ins per day", "2 times a day", "3 checking per day", etc.
+// Captures the digit so we can clamp it to [1, 4].
+const FREQ_DIGIT = /\b(?:send\s+me\s+)?([1-4])\s*(?:x\s+|times?\s+|check[\s-]?ins?\s+|checking\s+|messages?\s+|texts?\s+|reminders?\s+|nudges?\s+)?(?:a|per)\s+day\b|\b(?:send\s+me\s+)([1-4])\s+(?:check[\s-]?ins?|checking|messages?|texts?|reminders?|nudges?|times?)\b/i;
+
+const FREQ_LABEL: Record<number, string> = {
+  1: 'once a day',
+  2: 'twice a day',
+  3: '3 times a day',
+  4: '4 times a day',
+};
+
 function detectFrequencyChange(text: string, current: number): { newCount: number; reply: string } | null {
+  // Digit-based check first — most explicit signal
+  const digitMatch = FREQ_DIGIT.exec(text);
+  if (digitMatch) {
+    const raw = parseInt(digitMatch[1] ?? digitMatch[2] ?? '0', 10);
+    const n = Math.min(4, Math.max(1, raw));
+    const label = FREQ_LABEL[n] ?? `${n} times a day`;
+    return { newCount: n, reply: `Done — ${label} from now on. Just let me know if you want to adjust it.` };
+  }
   if (FREQ_ONCE.test(text)) {
     return { newCount: 1, reply: 'Done — I\'ll check in once a day from now on. Just tell me if you want to change it again.' };
   }

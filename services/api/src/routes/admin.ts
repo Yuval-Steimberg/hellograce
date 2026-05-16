@@ -4,12 +4,14 @@ import { z } from 'zod';
 import { UnauthorizedError, ValidationError } from '../errors.js';
 import type { Cache } from '../cache/cache.js';
 import type { LLMProvider } from '@grace/shared';
+import type { PromptOptimizer } from '../scheduler/prompt-optimizer.js';
 
 export interface AdminDeps {
   pool: Pool;
   cache?: Cache;
   adminToken?: string;
   llm?: LLMProvider;
+  promptOptimizer?: PromptOptimizer;
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
@@ -481,5 +483,13 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     );
     if (!rowCount) throw new ValidationError('User not found');
     return { ok: true };
+  });
+
+  /** Manually trigger the RLHF prompt optimizer (normally runs at 4am UTC). */
+  app.post('/admin/run-optimizer', async () => {
+    if (!deps.promptOptimizer) return { ok: false, message: 'Prompt optimizer not available' };
+    // Run in background so the HTTP response returns immediately
+    void deps.promptOptimizer.run().catch(() => undefined);
+    return { ok: true, message: 'Optimizer started — report will be sent to ADMIN_PHONE when complete' };
   });
 }

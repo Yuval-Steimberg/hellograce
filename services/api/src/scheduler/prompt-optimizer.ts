@@ -342,8 +342,11 @@ Rules for your output:
 - Write rules in the same style as the existing prompt (direct, specific, WhatsApp-aware)
 - If the feedback is mostly positive or there are no clear failures, write 1 small improvement
 
-Respond ONLY with valid JSON:
-{"analysis": "2-3 sentences: what failure patterns did you find and what rules fix them", "additions": "- Rule 1...\n- Rule 2...\n- Rule 3..."}`,
+Respond with ONLY a JSON object — no markdown code fences, no prose, no commentary before or after.
+Schema: {"analysis": "<2-3 sentences explaining patterns and rules>", "additions": "<bullet list of new rules>"}
+
+Example output:
+{"analysis": "Users complain Grace echoes their food dislikes verbatim and gives generic responses. Adding rules to paraphrase dislikes and reference user-specific context.", "additions": "- Never echo a user's food dislike verbatim — paraphrase naturally (e.g. 'not a rice person' becomes 'rice isn't your thing').\\n- Every response must reference something concrete from the user's message — a word they used, today's protein, their week number."}`,
         },
         {
           role: 'user',
@@ -364,23 +367,33 @@ ${negativeBlock}
 POSITIVE EXAMPLES (what's working — do more of this):
 ${positiveBlock}
 
-Write 2–5 specific new behavioral rules to add to Grace's prompt that fix the patterns you see in the negative feedback.`,
+Write 2–5 specific new behavioral rules to add to Grace's prompt that fix the patterns you see in the negative feedback. Respond with ONLY the JSON object.`,
         },
       ],
       temperature: 0.3,
-      maxOutputTokens: 1024,
+      // Gemini 2.5 Flash burns tokens on internal thinking BEFORE output —
+      // 1024 was too small and produced empty/truncated JSON. 4096 leaves
+      // plenty of room for thinking + a multi-bullet additions block.
+      maxOutputTokens: 4096,
       responseFormat: 'json',
     });
 
-    try {
-      const parsed = JSON.parse(resp.text) as { analysis?: string; additions?: string };
-      if (!parsed.additions || parsed.additions.trim().length < MIN_ADDITIONS_LENGTH) return null;
-      if (!parsed.analysis) return null;
-      return { additions: parsed.additions, analysis: parsed.analysis };
-    } catch {
-      this.logger.warn({ raw: resp.text.slice(0, 300) }, 'prompt_optimizer.parse_failed');
+    const parsed = parseAdditionsResponse(resp.text);
+    if (!parsed) {
+      this.logger.warn(
+        { rawLength: resp.text.length, rawPreview: resp.text.slice(0, 500), finishReason: resp.finishReason },
+        'prompt_optimizer.parse_failed',
+      );
       return null;
     }
+    if (parsed.additions.trim().length < MIN_ADDITIONS_LENGTH) {
+      this.logger.warn(
+        { additionsLength: parsed.additions.length, rawPreview: resp.text.slice(0, 500) },
+        'prompt_optimizer.additions_too_short',
+      );
+      return null;
+    }
+    return parsed;
   }
 
   // Safety gate: check the COMBINED prompt (base + new additions) still has all anchors.
@@ -447,4 +460,58 @@ function emptyStats(): OptimizerRunReport['stats'] {
     fallbackCount: 0,
     satisfactionPct: null,
   };
+}
+
+/**
+ * Robust JSON extraction for Gemini's output. Handles:
+ *  - clean JSON
+ *  - ```json ... ``` markdown fences (Gemini sometimes wraps despite JSON mode)
+ *  - leading/trailing prose
+ *  - alternate field names ('rules' / 'behavioral_additions' for additions)
+ */
+export function parseAdditionsResponse(raw: string): { additions: string; analysis: string } | null {
+  if (!raw || raw.trim().length === 0) return null;
+
+  // Strip markdown code fences and surrounding whitespace
+  let cleaned = raw.trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+
+  // If the cleaned text isn't a pure JSON object, locate the first '{' and last '}'
+  if (!cleaned.startsWith('{')) {
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+    }
+  }
+
+  let obj: Record<string, unknown>;
+  try {
+    obj = JSON.parse(cleaned) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  // Field name fallbacks — Gemini sometimes uses 'rules' or 'behavioral_additions'
+  const additionsRaw = obj['additions'] ?? obj['rules'] ?? obj['behavioral_additions'] ?? obj['new_rules'];
+  const analysisRaw = obj['analysis'] ?? obj['summary'] ?? obj['rationale'];
+
+  let additions: string;
+  if (typeof additionsRaw === 'string') {
+    additions = additionsRaw;
+  } else if (Array.isArray(additionsRaw)) {
+    // If model returned an array of strings, join into a bullet list
+    additions = additionsRaw
+      .filter((x): x is string => typeof x === 'string')
+      .map((s) => (s.trim().startsWith('-') ? s.trim() : `- ${s.trim()}`))
+      .join('\n');
+  } else {
+    return null;
+  }
+
+  if (typeof analysisRaw !== 'string') return null;
+
+  return { additions: additions.trim(), analysis: analysisRaw.trim() };
 }

@@ -42,7 +42,7 @@ export function sanitizeOutbound(input: string): string {
   const endsMidWord =
     /[-–—]$/.test(trimmed) ||
     /\s(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be)$/i.test(trimmed) ||
-    !/[.!?…)]$|[\p{Extended_Pictographic}]$/u.test(trimmed);
+    !/[.!?…)_]$|[\p{Extended_Pictographic}]$/u.test(trimmed);
 
   if (endsMidWord) {
     // Find the last complete sentence terminator and trim everything after it.

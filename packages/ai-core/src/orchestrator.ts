@@ -23,8 +23,19 @@ export interface OrchestratorDeps {
   critic?: LLMCritic;
 }
 
-const SAFE_FALLBACK_TEXT =
-  "I'm not sure I caught all of that — can you give me a bit more detail so I can actually help?";
+const SAFE_FALLBACK_TEXTS = [
+  "Not sure I got all of that. Can you say it another way?",
+  "I missed something there. Can you give me a bit more to go on?",
+  "Hmm, I didn't quite follow. Can you rephrase that?",
+  "I want to make sure I get this right. Can you say more?",
+  "I think I missed part of what you meant. What's going on?",
+];
+let _safeFallbackIdx = 0;
+function getNextSafeFallback(): string {
+  const text = SAFE_FALLBACK_TEXTS[_safeFallbackIdx % SAFE_FALLBACK_TEXTS.length]!;
+  _safeFallbackIdx++;
+  return text;
+}
 
 // Only run the LLM critic for genuinely dangerous intent categories.
 // `knowledge_lookup` was here but it's too broad — food/nutrition questions
@@ -150,7 +161,7 @@ export class AIOrchestrator {
           critic = retryCritic;
         } else {
           validated = {
-            text: SAFE_FALLBACK_TEXT,
+            text: getNextSafeFallback(),
             confidence: 'low',
             flags: ['safe_fallback'],
           };

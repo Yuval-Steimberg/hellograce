@@ -207,6 +207,14 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bmy goal is to\b/i, reason: '"my goal is to" — banned corporate voice' },
   { pattern: /\bi'?m here to (support|help) you\b/i, reason: '"I\'m here to support you" — banned corporate voice' },
   { pattern: /\bi want you to know\b/i, reason: '"I want you to know" — banned filler' },
+
+  // Corporate / AI-generated tone markers (section 14 of behavioral spec)
+  { pattern: /\bhere'?s the thing\s*[—–-]/i, reason: '"Here\'s the thing —" — em-dash AI tell' },
+  { pattern: /\bthe goal is\s*[—–-]/i, reason: '"The goal is —" — corporate em-dash structure' },
+  { pattern: /\bhigh.quality (conversational|tracking|experience)\b/i, reason: 'corporate quality jargon' },
+  { pattern: /\b(check.in|message|tracking)\s+cadence\b/i, reason: '"cadence" — corporate jargon, not how people talk' },
+  { pattern: /\b(account|settings)\s+(is\s+)?(now\s+)?configured\b/i, reason: '"configured" — corporate support language' },
+  { pattern: /\byour (account|profile)\s+(has been|is)\s+(updated|set up)\s+to\s+ensure\b/i, reason: 'corporate update-confirmation template' },
 ];
 
 export function checkBannedPhrases(text: string): ContentViolation[] {

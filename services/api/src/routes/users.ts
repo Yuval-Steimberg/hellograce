@@ -7,13 +7,17 @@ import type { TwilioSender } from '../twilio/sender.js';
 import type { MessageGenerator } from '../scheduler/message-generator.js';
 import { calculateProteinTarget } from '../nutrition/protein-target.js';
 
+// Minimal onboarding spec: only medication / injection day / sex / height /
+// weight / goal weight / food dislikes are essential. Everything else is
+// optional and gets learned progressively through conversation.
 const OnboardSchema = z.object({
-  firstName: z.string().trim().min(1).max(120),
+  firstName: z.string().trim().max(120).optional().default(''),
   phone: z.string().trim().min(8).max(30),
   medication: z.string().trim().min(1).max(120),
   medicationFrequency: z.string().trim().optional().default('weekly'),
   injectionDay: z.string().trim().max(20).optional().nullable(),
-  wakeTime: z.string().regex(/^\d{2}:\d{2}$/).default('07:00'),
+  sex: z.enum(['female', 'male', 'nonbinary', 'prefer_not_to_say']).optional().nullable(),
+  wakeTime: z.string().regex(/^\d{2}:\d{2}$/).default('08:00'),
   sleepTime: z.string().regex(/^\d{2}:\d{2}$/).default('22:00'),
   foodDislikes: z.string().max(1000).optional().nullable(),
   currentWeight: z.number().finite().positive().optional().nullable(),
@@ -73,8 +77,10 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     await users.ensureUser(phone);
 
     // Core profile fields — guaranteed schema. Must succeed for onboarding.
+    // firstName is optional now; we omit the column from the update when empty
+    // so the DB stores NULL and Grace can ask in chat ("what should I call you?").
     await users.update(phone, {
-      first_name: b.firstName,
+      ...(b.firstName ? { first_name: b.firstName } : {}),
       medication: b.medication,
       medication_frequency: b.medicationFrequency,
       injection_day: b.injectionDay ?? undefined,
@@ -92,6 +98,15 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       active: true,
       trial_start: new Date(),
     });
+
+    // Sex — depends on migration 20260516000002. Degrades silently if absent.
+    if (b.sex) {
+      try {
+        await users.update(phone, { sex: b.sex } as Partial<Parameters<typeof users.update>[1]>);
+      } catch {
+        req.log.warn({ phone }, 'onboard.sex.skipped (likely missing migration 20260516000002)');
+      }
+    }
 
     // Personalization fields — depend on the 20260513000002 migration.
     // If the migration hasn't been applied yet, silently degrade so signup

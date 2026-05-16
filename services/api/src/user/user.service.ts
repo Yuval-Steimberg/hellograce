@@ -17,6 +17,7 @@ export interface GraceUser {
   goal_weight: number | null;
   height_cm: number | null;
   age: number | null;
+  sex: string | null;
   primary_goal: string | null;
   protein_goal_grams: number | null;
   // behavioural flags

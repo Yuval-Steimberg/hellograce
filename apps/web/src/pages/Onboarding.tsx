@@ -7,19 +7,21 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import QuizLayout from "@/components/onboarding/QuizLayout";
 import WelcomeStep from "@/components/onboarding/WelcomeStep";
-import NameStep from "@/components/onboarding/NameStep";
 import PhoneStep from "@/components/onboarding/PhoneStep";
 import MedicationStep from "@/components/onboarding/MedicationStep";
 import InjectionDayStep from "@/components/onboarding/InjectionDayStep";
 import MedicationTimeStep from "@/components/onboarding/MedicationTimeStep";
-import GoalsStep from "@/components/onboarding/GoalsStep";
-import ScheduleStep from "@/components/onboarding/ScheduleStep";
 import FoodStep from "@/components/onboarding/FoodStep";
 import WeightStep from "@/components/onboarding/WeightStep";
 import PaymentStep from "@/components/onboarding/PaymentStep";
 import ConfirmationStep from "@/components/onboarding/ConfirmationStep";
 
-const TOTAL_STEPS = 11;
+// Minimal onboarding spec — only the fields Grace truly needs to start safely.
+// Everything else (name, goals, schedule, age, primary goal, GLP-1 start date)
+// gets learned naturally through conversation. Defaults are used for the
+// scheduler-required fields (wake_time, sleep_time) and the user can change
+// them via chat ("text me at 8am", "text me less").
+const TOTAL_STEPS = 8;
 
 const Onboarding = () => {
   const seoJsonLd = breadcrumbSchema([
@@ -31,8 +33,7 @@ const Onboarding = () => {
   const [userId, setUserId] = useState("");
   const [searchParams] = useSearchParams();
 
-  // User data
-  const [firstName, setFirstName] = useState("");
+  // Core profile fields — collected in the form.
   const [phone, setPhone] = useState("");
   const [smsConsent, setSmsConsent] = useState(false);
   const [rlhfConsent, setRlhfConsent] = useState(false);
@@ -40,18 +41,18 @@ const Onboarding = () => {
   const [medicationFrequency, setMedicationFrequency] = useState("weekly");
   const [injectionDay, setInjectionDay] = useState("");
   const [medicationTime, setMedicationTime] = useState("");
-  const [goals, setGoals] = useState<string[]>([]);
-  const [wakeTime, setWakeTime] = useState("07:00");
-  const [sleepTime, setSleepTime] = useState("22:00");
+  const [sex, setSex] = useState("");
   const [foodDislikes, setFoodDislikes] = useState("");
   const [currentWeight, setCurrentWeight] = useState("");
   const [goalWeight, setGoalWeight] = useState("");
   const [heightCm, setHeightCm] = useState("");
-  const [age, setAge] = useState("");
-  const [primaryGoal, setPrimaryGoal] = useState("");
-  const [glp1StartDate, setGlp1StartDate] = useState("");
-  const [checkinCountPerDay, setCheckinCountPerDay] = useState(2);
-  const [checkinDaysInterval, setCheckinDaysInterval] = useState(1);
+
+  // Defaults — used by the scheduler if the user doesn't change them.
+  // User can adjust via chat ("text me at 7am", "text me less").
+  const wakeTime = "08:00";
+  const sleepTime = "22:00";
+  const checkinCountPerDay = 2;
+  const checkinDaysInterval = 1;
 
   const next = () => setStep((s) => Math.min(s + 1, TOTAL_STEPS));
   const back = () => setStep((s) => Math.max(s - 1, 1));
@@ -64,7 +65,6 @@ const Onboarding = () => {
   useEffect(() => {
     const checkoutStatus = searchParams.get("checkout");
     if (checkoutStatus === "success") {
-      // User completed checkout — confirm payment and trigger welcome SMS
       const storedId = localStorage.getItem("grace_user_id");
       if (storedId) {
         setUserId(storedId);
@@ -74,11 +74,10 @@ const Onboarding = () => {
       }
       setStep(TOTAL_STEPS);
     } else if (checkoutStatus === "cancel") {
-      // User cancelled checkout, stay on payment step
       const storedId = localStorage.getItem("grace_user_id");
       if (storedId) {
         setUserId(storedId);
-        setStep(10); // payment step
+        setStep(7); // payment step
       }
     }
   }, [searchParams]);
@@ -89,21 +88,19 @@ const Onboarding = () => {
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York";
       const onboardBody = {
-        firstName: firstName.trim(),
+        // firstName intentionally omitted — Grace asks naturally in chat.
         phone: phone.trim(),
         medication,
         medicationFrequency,
         injectionDay: medicationFrequency === "daily" ? null : injectionDay,
+        sex: sex || null,
         wakeTime,
         sleepTime,
         foodDislikes: foodDislikes.trim() || null,
         currentWeight: currentWeight ? Number(currentWeight) : null,
         goalWeight: goalWeight ? Number(goalWeight) : null,
         heightCm: heightCm ? Number(heightCm) : null,
-        age: age ? Number(age) : null,
-        primaryGoal: primaryGoal || null,
-        glp1StartDate: glp1StartDate || null,
-        goals,
+        // age, primaryGoal, glp1StartDate, goals — all deferred to chat.
         timezone,
         checkinCountPerDay,
         checkinDaysInterval,
@@ -114,7 +111,6 @@ const Onboarding = () => {
       const v2ApiUrl = import.meta.env.VITE_API_URL as string | undefined;
 
       if (v2ApiUrl) {
-        // v2 path: POST directly to the Fastify API
         const resp = await fetch(`${v2ApiUrl}/users/onboard`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -127,7 +123,6 @@ const Onboarding = () => {
         const data = await resp.json() as { ok: boolean; userId: string };
         resultUserId = data.userId;
       } else {
-        // v1 fallback: Supabase edge function
         const { data, error } = await supabase.functions.invoke("complete-onboarding", {
           body: onboardBody,
         });
@@ -140,7 +135,7 @@ const Onboarding = () => {
         setUserId(resultUserId);
       }
 
-      next(); // Go to payment step (step 10)
+      next(); // Go to payment step
     } catch (err) {
       console.error("Onboarding error:", err);
       toast.error("Something went wrong saving your info. Please try again.");
@@ -149,12 +144,13 @@ const Onboarding = () => {
     }
   };
 
-  // Flow: Welcome → Name → Medication → Injection Day → Goals → Schedule → Food → Weight → Phone → Payment → Confirmation
+  // Minimal flow (8 steps):
+  // Welcome → About You → Medication → Injection Day / Med Time → Food → Phone → Payment → Confirmation
   return (
     <>
       <SEOHead
         title="Get Started"
-        description="Set up your personalized GLP-1 text companion in 2 minutes. Tell us about your medication, goals, and schedule."
+        description="Set up your personalized GLP-1 text companion in under 2 minutes. Just the essentials — Grace learns the rest as you chat."
         canonical="/onboarding"
         noindex
         jsonLd={seoJsonLd}
@@ -166,7 +162,21 @@ const Onboarding = () => {
         showBack={step > 1 && step < TOTAL_STEPS}
       >
         {step === 1 && <WelcomeStep onNext={next} />}
-        {step === 2 && <NameStep value={firstName} onChange={setFirstName} onNext={next} />}
+        {step === 2 && (
+          <WeightStep
+            sex={sex}
+            currentWeight={currentWeight}
+            goalWeight={goalWeight}
+            heightCm={heightCm}
+            onChange={(d) => {
+              if (d.sex !== undefined) setSex(d.sex);
+              if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
+              if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
+              if (d.heightCm !== undefined) setHeightCm(d.heightCm);
+            }}
+            onNext={next}
+          />
+        )}
         {step === 3 && (
           <MedicationStep
             selected={medication}
@@ -184,39 +194,8 @@ const Onboarding = () => {
             <InjectionDayStep selected={injectionDay} onSelect={setInjectionDay} onNext={next} />
           )
         )}
-        {step === 5 && <GoalsStep selected={goals} onChange={setGoals} onNext={next} />}
+        {step === 5 && <FoodStep value={foodDislikes} onChange={setFoodDislikes} onNext={next} />}
         {step === 6 && (
-          <ScheduleStep
-            wakeTime={wakeTime}
-            sleepTime={sleepTime}
-            onChange={(d) => {
-              if (d.wakeTime !== undefined) setWakeTime(d.wakeTime);
-              if (d.sleepTime !== undefined) setSleepTime(d.sleepTime);
-            }}
-            onNext={next}
-          />
-        )}
-        {step === 7 && <FoodStep value={foodDislikes} onChange={setFoodDislikes} onNext={next} />}
-        {step === 8 && (
-          <WeightStep
-            currentWeight={currentWeight}
-            goalWeight={goalWeight}
-            heightCm={heightCm}
-            age={age}
-            primaryGoal={primaryGoal}
-            glp1StartDate={glp1StartDate}
-            onChange={(d) => {
-              if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
-              if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
-              if (d.heightCm !== undefined) setHeightCm(d.heightCm);
-              if (d.age !== undefined) setAge(d.age);
-              if (d.primaryGoal !== undefined) setPrimaryGoal(d.primaryGoal);
-              if (d.glp1StartDate !== undefined) setGlp1StartDate(d.glp1StartDate);
-            }}
-            onNext={next}
-          />
-        )}
-        {step === 9 && (
           <PhoneStep
             phone={phone}
             smsConsent={smsConsent}
@@ -228,14 +207,14 @@ const Onboarding = () => {
             saving={saving}
           />
         )}
-        {step === 10 && (
+        {step === 7 && (
           <PaymentStep
             userId={userId}
-            firstName={firstName}
+            firstName=""
             onNext={next}
           />
         )}
-        {step === 11 && <ConfirmationStep firstName={firstName} phone={phone} />}
+        {step === 8 && <ConfirmationStep firstName="" phone={phone} />}
       </QuizLayout>
       <LegalFooter />
     </>

@@ -33,7 +33,7 @@ const TrialTimeline = ({
     <div className="flex flex-col items-center w-full max-w-lg mx-auto">
       <div className="text-center mb-8">
         <span className="uppercase tracking-widest text-xs font-semibold text-muted-foreground/60 block mb-3">
-          Almost there, {firstName}
+          Almost there{firstName ? `, ${firstName}` : ""}
         </span>
         <h1 className="text-3xl md:text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-3">
           How your free trial works

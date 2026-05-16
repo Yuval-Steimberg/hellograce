@@ -523,6 +523,10 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         ON food_logs (user_id, dedupe_key)
         WHERE dedupe_key IS NOT NULL
     `);
+    await deps.pool.query(`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS sex TEXT
+    `);
 
     await deps.pool.query('BEGIN');
     let version: number;

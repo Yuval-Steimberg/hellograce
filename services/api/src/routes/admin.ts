@@ -527,6 +527,25 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       ALTER TABLE users
         ADD COLUMN IF NOT EXISTS sex TEXT
     `);
+    await deps.pool.query(`
+      CREATE TABLE IF NOT EXISTS user_profile_facts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id TEXT NOT NULL,
+        fact TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT 'other',
+        confidence TEXT NOT NULL DEFAULT 'medium',
+        source_message_id UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await deps.pool.query(`
+      CREATE INDEX IF NOT EXISTS user_profile_facts_user_idx
+        ON user_profile_facts (user_id, created_at DESC)
+    `);
+    await deps.pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS user_profile_facts_dedupe_idx
+        ON user_profile_facts (user_id, lower(fact))
+    `);
 
     await deps.pool.query('BEGIN');
     let version: number;

@@ -15,7 +15,7 @@ import { RagService } from './rag/rag.service.js';
 import { MemoryService } from './memory/memory.service.js';
 import { AIService } from './services/ai.service.js';
 import { TwilioSender } from './twilio/sender.js';
-import { getTurnQueue, closeQueues } from './workers/queues.js';
+import { getTurnQueue, getFactExtractQueue, closeQueues } from './workers/queues.js';
 import { startWorkers, stopWorkers } from './workers/index.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerWebhookRoutes } from './routes/webhook.js';
@@ -41,6 +41,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'gemini-embedding-001', cache);
   const rag = new RagService(pool, embedder, logger);
   const turnQueue = getTurnQueue(redis);
+  const factExtractQueue = getFactExtractQueue(redis);
 
   const loadActivePrompt = async (): Promise<string | undefined> => {
     try {
@@ -68,6 +69,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     twilioSid: env.TWILIO_ACCOUNT_SID,
     twilioToken: env.TWILIO_AUTH_TOKEN,
     turnQueue,
+    factExtractQueue,
     systemPrompt: await loadActivePrompt(),
   });
 
@@ -117,7 +119,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     void reloadActivePrompt().catch((err) => logger.error({ err }, 'prompt.reload.failed'));
   });
 
-  startWorkers({ redis, pool, memory, logger });
+  startWorkers({ redis, pool, memory, llm, logger });
 
   scheduler.start();
 

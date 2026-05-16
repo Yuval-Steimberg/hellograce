@@ -17,7 +17,7 @@ import { makeGetUserProfileTool } from '../tools/get-user-profile.js';
 import { makeGetWeightTrendTool } from '../tools/get-weight-trend.js';
 import { makeGetFoodSummaryTool } from '../tools/get-food-summary.js';
 import { makeLogSideEffectTool } from '../tools/log-side-effect.js';
-import type { TurnPersistJob } from '../workers/queues.js';
+import type { TurnPersistJob, FactExtractJob } from '../workers/queues.js';
 
 const SIDE_EFFECT_KEYWORDS: Record<string, string> = {
   nausea: 'nausea',
@@ -48,6 +48,7 @@ export interface AIServiceDeps {
   twilioSid?: string;
   twilioToken?: string;
   turnQueue?: Queue<TurnPersistJob>;
+  factExtractQueue?: Queue<FactExtractJob>;
   systemPrompt?: string;
 }
 
@@ -96,7 +97,7 @@ export class AIService {
         })
       : Promise.resolve(null);
 
-    const [user, conversationId, isNew, history, toolSettings, description, todaysFood, checkinsToday] = await Promise.all([
+    const [user, conversationId, isNew, history, toolSettings, description, todaysFood, checkinsToday, knownFacts] = await Promise.all([
       users.getById(input.userId).catch(() => null),
       memory.ensureConversation(input.userId),
       users.isNewUser(input.userId).catch(() => false),
@@ -105,6 +106,7 @@ export class AIService {
       mediaPromise,
       users.getTodaysFoodSummary(input.userId).catch(() => ({ protein_g: 0, calories: 0, items: [] })),
       this.countTodaysCheckIns(input.userId).catch(() => 0),
+      users.getKnownFacts(input.userId, 30).catch(() => []),
     ]);
 
     // Fold media description into the prompt (only after Promise.all resolves).
@@ -153,7 +155,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     if (user) await this.detectAndSetSideEffectFlow(user.phone, augmentedText, user.side_effect_flow);
 
     // Build personalised system prompt with user context.
-    const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday });
+    const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday, knownFacts });
 
     // Track which modality drove this request so log_food rows are tagged
     // correctly (text vs image vs voice) â€” used by analytics + dedup.
@@ -212,7 +214,18 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
           toolResults: result.toolResults,
         })
         .catch((err) => logger.warn({ err }, 'turn-queue.add.failed'));
-    } else {
+    }
+
+    // Progressive profiling: extract durable facts from the user's message in
+    // the background. Skip empty/very short messages and any media-only turns
+    // (the worker also filters but this saves an enqueue + LLM call).
+    if (this.deps.factExtractQueue && input.text.trim().length >= 15) {
+      void this.deps.factExtractQueue
+        .add('extract', { userId: input.userId, userText: input.text })
+        .catch((err) => logger.warn({ err }, 'fact-extract-queue.add.failed'));
+    }
+
+    if (!this.deps.turnQueue) {
       void memory
         .appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
         .catch((err) => logger.warn({ err }, 'memory.append.user.failed'));
@@ -266,7 +279,11 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
   private buildPersonalisedPrompt(
     user: ReturnType<UserService['getById']> extends Promise<infer T> ? T : never,
     isNew: boolean,
-    runtime?: { todaysFood?: { protein_g: number; calories: number; items: string[] }; checkinsToday?: number },
+    runtime?: {
+      todaysFood?: { protein_g: number; calories: number; items: string[] };
+      checkinsToday?: number;
+      knownFacts?: Array<{ fact: string; category: string; confidence: string }>;
+    },
   ): string {
     const base = this.systemPrompt ?? undefined;
 
@@ -365,8 +382,18 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
 
     if (isNew) lines.push('This is the user\'s FIRST message. Welcome them warmly and personally.');
 
-    if (lines.length === 0) return base ?? '';
-    return `${base ?? ''}\n\n--- User context ---\n${lines.join('\n')}`;
+    // Progressive profiling: durable facts extracted from past conversations.
+    // Grouped by category so Grace can scan them quickly. The master prompt
+    // already tells her to use these subtly â€” never read them back verbatim,
+    // never say "according to your profile".
+    const factsBlock = runtime?.knownFacts && runtime.knownFacts.length > 0
+      ? renderKnownFactsBlock(runtime.knownFacts)
+      : '';
+
+    if (lines.length === 0 && !factsBlock) return base ?? '';
+    const userCtx = lines.length > 0 ? `\n\n--- User context ---\n${lines.join('\n')}` : '';
+    const factsCtx = factsBlock ? `\n\n--- What Grace has naturally learned about this user ---\n${factsBlock}\nUse these subtly. Never read them back mechanically. Never say "according to your profile."` : '';
+    return `${base ?? ''}${userCtx}${factsCtx}`;
   }
 
   private async loadToolSettings(): Promise<Record<string, boolean>> {
@@ -406,4 +433,37 @@ function buildFoodLogArg(analysis: string): string {
   if (total) return total;
   if (items) return items;
   return analysis.replace(/IMAGE_TYPE: food\n?/i, '').trim().slice(0, 400);
+}
+
+// Render durable facts as a compact, grouped, scannable block.
+// Categories ordered by prompt-relevance: diet/aversion/symptom first, since
+// they directly affect food recommendations.
+const FACT_LABELS: Record<string, string> = {
+  diet: 'Diet',
+  aversion: 'Food aversions',
+  symptom: 'Symptoms / tolerances',
+  preference: 'Food preferences',
+  schedule: 'Schedule / routines',
+  exercise: 'Exercise',
+  social: 'Social / eating habits',
+  other: 'Other',
+};
+const FACT_CATEGORY_ORDER = ['diet', 'aversion', 'symptom', 'preference', 'schedule', 'exercise', 'social', 'other'];
+
+function renderKnownFactsBlock(
+  facts: Array<{ fact: string; category: string; confidence: string }>,
+): string {
+  const byCategory = new Map<string, string[]>();
+  for (const f of facts) {
+    const cat = FACT_LABELS[f.category] ? f.category : 'other';
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat)!.push(f.fact);
+  }
+  const out: string[] = [];
+  for (const cat of FACT_CATEGORY_ORDER) {
+    const items = byCategory.get(cat);
+    if (!items || items.length === 0) continue;
+    out.push(`${FACT_LABELS[cat]}: ${items.join('; ')}`);
+  }
+  return out.join('\n');
 }

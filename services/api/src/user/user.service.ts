@@ -198,6 +198,38 @@ export class UserService {
   }
 
   /**
+   * Load the durable profile facts extracted by the fact-extractor worker
+   * (e.g. "vegetarian", "works night shifts", "protein shakes cause nausea").
+   * Returned grouped by category, most recent first, capped to keep the
+   * system prompt compact. Used by buildPersonalisedPrompt so Grace
+   * remembers things users mentioned in previous conversations.
+   *
+   * Returns empty array if migration 20260516000003 hasn't been applied —
+   * tolerant fallback so the table-missing case doesn't break message
+   * handling.
+   */
+  async getKnownFacts(
+    userId: string,
+    limit = 30,
+  ): Promise<Array<{ fact: string; category: string; confidence: string }>> {
+    try {
+      const { rows } = await this.pool.query<{ fact: string; category: string; confidence: string }>(
+        `SELECT fact, category, confidence
+         FROM user_profile_facts
+         WHERE user_id = $1
+         ORDER BY
+           CASE confidence WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+           created_at DESC
+         LIMIT $2`,
+        [userId, limit],
+      );
+      return rows;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Record a user-submitted rating/comment for the last assistant message.
    * Finds the most recent assistant message, writes to feedback, and adjusts
    * the embedding feedback_score so future RAG retrieval reflects the signal.

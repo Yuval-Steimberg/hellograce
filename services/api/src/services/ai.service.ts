@@ -154,8 +154,14 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     // Detect side effects in the user's message and update their flow.
     if (user) await this.detectAndSetSideEffectFlow(user.phone, augmentedText, user.side_effect_flow);
 
+    // Detect dietary restrictions stated in this conversation OR in stored facts.
+    // This drives a hard top-of-prompt banner that the 71k-char system prompt's
+    // nested rule can't reliably enforce on its own (Gemini Flash parrots the
+    // example templates that include "chicken or tuna at lunch").
+    const dietaryRestriction = detectDietaryRestriction(history, knownFacts, input.text);
+
     // Build personalised system prompt with user context.
-    const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday, knownFacts });
+    const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday, knownFacts, dietaryRestriction });
 
     // Track which modality drove this request so log_food rows are tagged
     // correctly (text vs image vs voice) — used by analytics + dedup.
@@ -283,6 +289,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       todaysFood?: { protein_g: number; calories: number; items: string[] };
       checkinsToday?: number;
       knownFacts?: Array<{ fact: string; category: string; confidence: string }>;
+      dietaryRestriction?: DietaryRestriction | null;
     },
   ): string {
     const base = this.systemPrompt ?? undefined;
@@ -390,10 +397,17 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       ? renderKnownFactsBlock(runtime.knownFacts)
       : '';
 
-    if (lines.length === 0 && !factsBlock) return base ?? '';
+    // TOP-OF-PROMPT dietary banner — comes BEFORE the base prompt so the LLM
+    // reads it first. The system prompt's nested dietary rule alone isn't
+    // enough; this banner is short, explicit, and deterministic.
+    const dietBanner = runtime?.dietaryRestriction
+      ? buildDietaryBanner(runtime.dietaryRestriction) + '\n\n'
+      : '';
+
+    if (lines.length === 0 && !factsBlock) return `${dietBanner}${base ?? ''}`;
     const userCtx = lines.length > 0 ? `\n\n--- User context ---\n${lines.join('\n')}` : '';
     const factsCtx = factsBlock ? `\n\n--- What Grace has naturally learned about this user ---\n${factsBlock}\nUse these subtly. Never read them back mechanically. Never say "according to your profile."` : '';
-    return `${base ?? ''}${userCtx}${factsCtx}`;
+    return `${dietBanner}${base ?? ''}${userCtx}${factsCtx}`;
   }
 
   private async loadToolSettings(): Promise<Record<string, boolean>> {
@@ -466,4 +480,113 @@ function renderKnownFactsBlock(
     out.push(`${FACT_LABELS[cat]}: ${items.join('; ')}`);
   }
   return out.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dietary restriction detection
+//
+// Gemini Flash repeatedly ignores the system prompt's "honor vegetarian"
+// rule because the prompt's own food-recommendation EXAMPLES include
+// "chicken or tuna at lunch" and the LLM parrots them. The fix is a
+// deterministic top-of-prompt banner that lists the exact forbidden foods.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DietaryRestriction {
+  label: 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN';
+  forbidden: string[];
+  allowed: string[];
+}
+
+const VEGETARIAN_FORBIDDEN = [
+  'chicken', 'turkey', 'beef', 'pork', 'lamb', 'veal', 'duck', 'goat',
+  'fish', 'tuna', 'salmon', 'cod', 'tilapia', 'sardines', 'anchovies',
+  'shrimp', 'prawns', 'crab', 'lobster', 'scallops', 'oysters', 'mussels', 'clams',
+  'bacon', 'ham', 'sausage', 'pepperoni', 'salami', 'prosciutto', 'jerky',
+  'meat', 'poultry', 'seafood',
+];
+const VEGAN_FORBIDDEN = [
+  ...VEGETARIAN_FORBIDDEN,
+  'eggs', 'cheese', 'yogurt', 'milk', 'butter', 'cream', 'whey', 'casein',
+  'gelatin', 'honey', 'dairy', 'cottage cheese', 'greek yogurt',
+];
+const PESCATARIAN_FORBIDDEN = [
+  'chicken', 'turkey', 'beef', 'pork', 'lamb', 'veal', 'duck', 'goat',
+  'bacon', 'ham', 'sausage', 'pepperoni', 'salami', 'prosciutto', 'jerky',
+  'meat', 'poultry',
+];
+
+const VEGETARIAN_ALLOWED = [
+  'Greek yogurt', 'cottage cheese', 'eggs', 'cheese', 'milk', 'edamame',
+  'tofu', 'tempeh', 'seitan', 'lentils', 'beans', 'chickpeas',
+  'quinoa', 'nuts', 'nut butters', 'protein shake (whey or plant)',
+];
+const VEGAN_ALLOWED = [
+  'tofu', 'tempeh', 'seitan', 'lentils', 'beans', 'chickpeas',
+  'edamame', 'quinoa', 'nuts', 'nut butters', 'plant-based protein shake',
+  'pea protein', 'soy milk', 'almond milk', 'oat milk',
+];
+const PESCATARIAN_ALLOWED = [
+  'salmon', 'tuna', 'cod', 'shrimp', 'sardines', 'Greek yogurt',
+  'cottage cheese', 'eggs', 'tofu', 'lentils', 'beans', 'protein shake',
+];
+
+export function detectDietaryRestriction(
+  history: Array<{ role: string; content: string }>,
+  knownFacts: Array<{ fact: string; category: string }>,
+  currentText: string,
+): DietaryRestriction | null {
+  const userTurns = history
+    .filter((m) => m.role === 'user')
+    .map((m) => m.content);
+  const factTexts = knownFacts
+    .filter((f) => f.category === 'diet' || f.category === 'aversion')
+    .map((f) => f.fact);
+  const corpus = [currentText, ...userTurns, ...factTexts].join(' \n ').toLowerCase();
+
+  // Check vegan first (most restrictive). "Plant-based" is treated as vegan
+  // for safety — better to recommend a vegan option to a vegetarian than meat
+  // to a vegan.
+  const veganPattern = /\b(i'?m\s+(a\s+)?vegan|i\s+am\s+vegan|going\s+vegan|i\s+eat\s+vegan|plant[\s-]?based|no\s+animal\s+products|strictly\s+vegan)\b/;
+  if (veganPattern.test(corpus)) {
+    return { label: 'VEGAN', forbidden: VEGAN_FORBIDDEN, allowed: VEGAN_ALLOWED };
+  }
+
+  const vegetarianPattern = /\b(i'?m\s+(a\s+)?vegetarian|i\s+am\s+vegetarian|i\s+don'?t\s+eat\s+meat|i\s+do\s+not\s+eat\s+meat|no\s+meat|meat[\s-]?free|i'?m\s+veggie)\b/;
+  if (vegetarianPattern.test(corpus)) {
+    return { label: 'VEGETARIAN', forbidden: VEGETARIAN_FORBIDDEN, allowed: VEGETARIAN_ALLOWED };
+  }
+
+  const pescatarianPattern = /\b(i'?m\s+(a\s+)?pesc[ae]tarian|i\s+only\s+eat\s+fish|fish\s+only)\b/;
+  if (pescatarianPattern.test(corpus)) {
+    return { label: 'PESCATARIAN', forbidden: PESCATARIAN_FORBIDDEN, allowed: PESCATARIAN_ALLOWED };
+  }
+
+  return null;
+}
+
+export function buildDietaryBanner(r: DietaryRestriction): string {
+  return [
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    `⚠️ DIETARY RESTRICTION — ABSOLUTE — READ FIRST`,
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+    `This user is ${r.label}. They told you. This applies to every food suggestion you make, today and forever.`,
+    '',
+    `FORBIDDEN — NEVER suggest, mention, or recommend ANY of these:`,
+    r.forbidden.join(', '),
+    '',
+    `ALLOWED protein options for this user:`,
+    r.allowed.join(', '),
+    '',
+    `If you are about to type any forbidden word — STOP. Replace it with an allowed option.`,
+    `If the user asks "what should I eat for lunch?" — answer with allowed foods ONLY.`,
+    `Suggesting a forbidden food is a CRITICAL FAILURE. There is no exception. Not "I forgot." Not "just this once." Not "as a small option."`,
+    '',
+    `Examples of what NOT to do (REAL production bugs):`,
+    `✗ User says "I'm vegetarian" → Grace replies "Greek yogurt, cottage cheese, or a chicken salad" — chicken is FORBIDDEN.`,
+    `✗ Grace says "good options include chicken, tuna, or eggs" to a vegetarian — chicken and tuna are FORBIDDEN.`,
+    '',
+    `Correct response when a ${r.label} asks for lunch ideas:`,
+    `"${r.allowed.slice(0, 4).join(', ')} are all solid protein options that sit well on GLP-1. These are general suggestions — a registered dietitian can build a full plan if you want."`,
+    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+  ].join('\n');
 }

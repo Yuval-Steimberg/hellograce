@@ -28,6 +28,7 @@ Deno.serve(async (req) => {
     const allowedFields = [
       "first_name", "phone", "email", "medication", "injection_day", "goals", "wake_time", "sleep_time",
       "food_dislikes", "current_weight", "goal_weight", "timezone",
+      "checkin_frequency", "checkin_count_per_day", "checkin_days_interval",
     ];
     const safeUpdates: Record<string, unknown> = {};
     for (const key of allowedFields) {

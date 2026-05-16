@@ -154,7 +154,8 @@ Deno.serve(async (req) => {
 
     // Send welcome SMS only if not already sent (idempotent across retries)
     if (!existingWelcome) {
-      const message = `Hi ${user.first_name}, it's grace. Expect daily check-ins, simple meal ideas, and a little encouragement when you need it most. You can always reply to our messages — we're here to listen and cheer you on. Save this number so you always know it's us. Reply STOP to cancel, HELP for help. Msg & data rates may apply.`;
+      const nameGreeting = user.first_name ? ` ${user.first_name}` : "";
+      const message = `Hi${nameGreeting}, it's grace. Expect daily check-ins, simple meal ideas, and a little encouragement when you need it most. You can always reply to our messages — we're here to listen and cheer you on. Save this number so you always know it's us. Reply STOP to cancel, HELP for help. Msg & data rates may apply.`;
 
       try {
         await sendSMS(user.phone, message);

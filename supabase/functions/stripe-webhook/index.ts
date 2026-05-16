@@ -157,7 +157,7 @@ Deno.serve(async (req) => {
 
     const endpointSecret = Deno.env.get("STRIPE_WEBHOOK_SECRET");
     if (endpointSecret && sig) {
-      event = stripe.webhooks.constructEvent(body, sig, endpointSecret);
+      event = await stripe.webhooks.constructEventAsync(body, sig, endpointSecret);
     } else {
       // Fallback: parse without signature verification (dev mode)
       event = JSON.parse(body) as Stripe.Event;

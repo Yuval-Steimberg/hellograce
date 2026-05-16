@@ -81,6 +81,21 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             }
           }
 
+          // ── In-chat injection day change.
+          // Handles typo-tolerant phrasings like "change my injuction day to Sunday".
+          if (user) {
+            const injDay = detectInjectionDayChange(normalized.text);
+            if (injDay) {
+              await deps.users.update(user.phone, { injection_day: injDay }).catch(() => null);
+              await deps.sender.send({
+                to: normalized.userId,
+                channel: normalized.channel,
+                body: `Done — your injection day is now set to ${injDay}.`,
+              });
+              return;
+            }
+          }
+
           // RLHF feedback signal — intercept before AI for opted-in users.
           if (user?.rlhf_enabled) {
             const fbResult = parseFeedbackSignal(normalized.text);
@@ -117,7 +132,8 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         const responseText = result?.text ?? '';
         if (responseText.length > 0) {
           const isRlhfUser = user?.rlhf_enabled ?? false;
-          const body = isRlhfUser
+          const isFallback = !!(result?.usedSafeFallback);
+          const body = (isRlhfUser && !isFallback)
             ? `${responseText}\n\n_Rate this: 👍 👎, or start a message with # to leave a note (e.g. #too long)_`
             : responseText;
           await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
@@ -220,6 +236,30 @@ function detectFrequencyChange(text: string, current: number): { newCount: numbe
       : { newCount: next, reply: `Got it — bumping it up to ${next} times a day. Tell me if it ever feels like too much.` };
   }
   return null;
+}
+
+// ─── Injection day change ─────────────────────────────────────────────────────
+// Typo-tolerant: "injuction", "injution", "injetion" all match \binj\w+.
+// Also covers "shot day", "dose day", "jab day".
+// Requires a day-of-week AND a change verb to avoid false positives.
+const INJECTION_WORD_RE = /\binj\w+|shot\s+day|dose\s+day|jab\s+day/i;
+const INJECTION_CHANGE_VERB_RE = /\b(change|move|switch|set|update|shift)\b/i;
+const INJECTION_DAY_NAME_RE =
+  /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/i;
+const INJECTION_DAY_MAP: Record<string, string> = {
+  mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday',
+  fri: 'Friday', sat: 'Saturday', sun: 'Sunday',
+  monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday',
+  thursday: 'Thursday', friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
+};
+
+function detectInjectionDayChange(text: string): string | null {
+  if (!INJECTION_WORD_RE.test(text)) return null;
+  if (!INJECTION_CHANGE_VERB_RE.test(text)) return null;
+  const dayMatch = text.match(INJECTION_DAY_NAME_RE);
+  if (!dayMatch) return null;
+  const key = dayMatch[1]?.toLowerCase() ?? '';
+  return INJECTION_DAY_MAP[key] ?? null;
 }
 
 // ─── Retry helper ────────────────────────────────────────────────────────────

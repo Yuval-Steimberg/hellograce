@@ -67,7 +67,7 @@ INSERT INTO public.content_rules (rule_type, pattern, is_regex, flags, reason, s
 
 -- ── REGEN: medication safety — defer to prescriber ───────────────────────────
 ('medication_safety',
- '\bit[''']?s (perfectly |completely |totally )?safe (for you )?to (take|inject|skip|stop|combine|mix)\b',
+ '\bit['']?s (perfectly |completely |totally )?safe (for you )?to (take|inject|skip|stop|combine|mix)\b',
  TRUE, 'i',
  'Claims medication safety — always defer to prescriber',
  'regen', 'all'),
@@ -92,7 +92,7 @@ INSERT INTO public.content_rules (rule_type, pattern, is_regex, flags, reason, s
 
 -- ── REGEN: medical authority claims ──────────────────────────────────────────
 ('medical_authority',
- '\bi[''']?m not a (licensed |certified )?(doctor|physician|medical professional|healthcare provider|clinician)\b',
+ '\bi['']?m not a (licensed |certified )?(doctor|physician|medical professional|healthcare provider|clinician)\b',
  TRUE, 'i',
  '"I''m not a doctor" disclaimer — defer naturally to prescriber instead',
  'regen', 'all'),
@@ -165,13 +165,13 @@ INSERT INTO public.content_rules (rule_type, pattern, is_regex, flags, reason, s
  'regen', 'all'),
 
 ('emotional_safety',
- '\byou[''']?ll get used to it\b',
+ '\byou['']?ll get used to it\b',
  TRUE, 'i',
  '"You''ll get used to it" — dismisses discomfort instead of validating',
  'regen', 'all'),
 
 ('emotional_safety',
- '\bit (will |[''']?ll )get better\b',
+ '\bit (will |['']?ll )get better\b',
  TRUE, 'i',
  '"It will get better" — hollow reassurance that bypasses current experience',
  'regen', 'all'),
@@ -183,7 +183,7 @@ INSERT INTO public.content_rules (rule_type, pattern, is_regex, flags, reason, s
  'regen', 'all'),
 
 ('emotional_safety',
- '\byou[''']?re doing (so |absolutely )?(amazing|incredible|wonderful|fantastic|awesome)!?\b',
+ '\byou['']?re doing (so |absolutely )?(amazing|incredible|wonderful|fantastic|awesome)!?\b',
  TRUE, 'i',
  'Hollow superlative affirmation — be specific and genuine instead',
  'regen', 'all'),
@@ -207,13 +207,13 @@ INSERT INTO public.content_rules (rule_type, pattern, is_regex, flags, reason, s
  'regen', 'all'),
 
 ('emotional_safety',
- '\byou[''']?re not alone in this\b',
+ '\byou['']?re not alone in this\b',
  TRUE, 'i',
  '"You''re not alone in this" — over-used empathy cliché; be specific',
  'regen', 'all'),
 
 ('emotional_safety',
- '\bthat[''']?s (a )?(totally |completely |perfectly )?(normal|natural|common|typical) (feeling|response|reaction|experience)\b',
+ '\bthat['']?s (a )?(totally |completely |perfectly )?(normal|natural|common|typical) (feeling|response|reaction|experience)\b',
  TRUE, 'i',
  '"That''s a normal feeling" — slightly clinical; validate specifically instead',
  'regen', 'all'),
@@ -238,7 +238,7 @@ INSERT INTO public.content_rules (rule_type, pattern, is_regex, flags, reason, s
  'regen', 'all'),
 
 ('banned_phrase',
- '\bi (cannot|can[''']?t) (feel|experience|understand) (emotions?|feelings?|what you[''']?re going through)\b',
+ '\bi (cannot|can['']?t) (feel|experience|understand) (emotions?|feelings?|what you['']?re going through)\b',
  TRUE, 'i',
  'AI emotion-capability denial — Grace does not disclaim empathy',
  'regen', 'all'),
@@ -281,7 +281,7 @@ INSERT INTO public.content_rules (rule_type, pattern, is_regex, flags, reason, s
  'regen', 'all'),
 
 ('banned_phrase',
- '\bi[''']?m (so |very |truly )?glad (to|that) (hear|help|you)\b',
+ '\bi['']?m (so |very |truly )?glad (to|that) (hear|help|you)\b',
  TRUE, 'i',
  '"I''m so glad to hear/help" — hollow corporate opener',
  'regen', 'all'),

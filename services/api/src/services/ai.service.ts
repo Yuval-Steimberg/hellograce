@@ -152,11 +152,18 @@ export class AIService {
     // Build personalised system prompt with user context.
     const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday });
 
+    // Track which modality drove this request so log_food rows are tagged
+    // correctly (text vs image vs voice) — used by analytics + dedup.
+    const logFoodSource: 'text' | 'image' | 'voice' =
+      input.media.some((m) => m.kind === 'image') ? 'image'
+      : input.media.some((m) => m.kind === 'audio') ? 'voice'
+      : 'text';
+
     // Per-request tool registry — tools close over userId.
     const tools = new ToolRegistry();
     if (flags.toolsEnabled) {
       if (toolSettings['log_food'] !== false) {
-        tools.register(makeLogFoodTool({ pool: this.deps.pool, llm: this.deps.llm, logger, userId: input.userId }));
+        tools.register(makeLogFoodTool({ pool: this.deps.pool, llm: this.deps.llm, logger, userId: input.userId, source: logFoodSource }));
       }
       if (toolSettings['log_weight'] !== false) {
         tools.register(makeLogWeightTool({ pool: this.deps.pool, logger, userId: input.userId }));
@@ -238,10 +245,16 @@ export class AIService {
   }
 
   private async countTodaysCheckIns(userId: string): Promise<number> {
+    // User's calendar day, not UTC — same fix as getTodaysFoodSummary.
     const { rows } = await this.deps.pool.query<{ count: string }>(
-      `SELECT count(*)::text FROM check_ins
+      `WITH user_tz AS (
+         SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
+         FROM users WHERE phone = $1
+       )
+       SELECT count(*)::text FROM check_ins, user_tz
        WHERE user_id = $1
-         AND created_at::date = (now() AT TIME ZONE 'UTC')::date`,
+         AND (created_at AT TIME ZONE user_tz.tz)::date
+             = (now() AT TIME ZONE user_tz.tz)::date`,
       [userId],
     );
     return Number(rows[0]?.count ?? 0);

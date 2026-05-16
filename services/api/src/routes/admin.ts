@@ -505,13 +505,23 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   app.post('/admin/prompts/sync-from-code', async () => {
     const content = GRACE_SYSTEM_PROMPT;
 
-    // Ensure the optimizer migration columns exist (idempotent). Without these,
-    // the optimizer's saveVersion() also fails, so applying them here unblocks
-    // the entire RLHF flow as a side effect.
+    // Ensure all idempotent schema migrations are applied. Bundling them here
+    // means a fresh deploy + one curl call brings the DB schema fully up to
+    // date alongside the prompt sync — no separate psql step required.
     await deps.pool.query(`
       ALTER TABLE prompts
         ADD COLUMN IF NOT EXISTS notes TEXT,
         ADD COLUMN IF NOT EXISTS auto_generated BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+    await deps.pool.query(`
+      ALTER TABLE food_logs
+        ADD COLUMN IF NOT EXISTS source TEXT,
+        ADD COLUMN IF NOT EXISTS dedupe_key TEXT
+    `);
+    await deps.pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS food_logs_user_dedupe_idx
+        ON food_logs (user_id, dedupe_key)
+        WHERE dedupe_key IS NOT NULL
     `);
 
     await deps.pool.query('BEGIN');

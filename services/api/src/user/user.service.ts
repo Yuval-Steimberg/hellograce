@@ -168,12 +168,24 @@ export class UserService {
     return rows;
   }
 
-  /** Get today's food logs summary. */
+  /**
+   * Get today's food logs summary in the USER'S calendar day (not UTC, not a
+   * rolling 24h window). Boundary is computed from the user's timezone column,
+   * so the total resets at the user's local midnight and never mixes days.
+   */
   async getTodaysFoodSummary(userId: string): Promise<{ protein_g: number; calories: number; items: string[] }> {
     const { rows } = await this.pool.query<{ food: string; protein_g: number; calories: number }>(
-      `SELECT food, COALESCE(protein_g, 0) AS protein_g, COALESCE(calories, 0) AS calories
-       FROM food_logs
-       WHERE user_id = $1 AND created_at > now() - interval '24 hours'
+      `WITH user_tz AS (
+         SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
+         FROM users WHERE phone = $1
+       )
+       SELECT food,
+              COALESCE(protein_g, 0) AS protein_g,
+              COALESCE(calories, 0) AS calories
+       FROM food_logs, user_tz
+       WHERE user_id = $1
+         AND (created_at AT TIME ZONE user_tz.tz)::date
+             = (now() AT TIME ZONE user_tz.tz)::date
        ORDER BY created_at DESC`,
       [userId],
     );

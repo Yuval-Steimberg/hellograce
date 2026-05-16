@@ -32,6 +32,14 @@ export interface ToolResult {
   latencyMs: number;
 }
 
+export interface DietaryRestriction {
+  label: 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN';
+  /** Lower-case food words that must NEVER appear in a recommendation. */
+  forbidden: string[];
+  /** Suggested allowed protein alternatives. */
+  allowed: string[];
+}
+
 export interface OrchestratorInput {
   userId: string;
   text: string;
@@ -40,6 +48,10 @@ export interface OrchestratorInput {
   toolsEnabled: boolean;
   /** Override the default system prompt (loaded from DB prompts table). */
   systemPrompt?: string;
+  /** Detected dietary restriction (vegan/vegetarian/pescatarian). When
+   *  present, the orchestrator post-checks the response for forbidden words
+   *  and force-regens if any are found. */
+  dietaryRestriction?: DietaryRestriction;
 }
 
 export interface OrchestratorOutput {

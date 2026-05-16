@@ -1,7 +1,7 @@
 import type { Logger } from 'pino';
 import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
-import type { InboundMessage, OrchestratorOutput } from '@grace/shared';
+import type { DietaryRestriction, InboundMessage, OrchestratorOutput } from '@grace/shared';
 import { AIOrchestrator, ToolRegistry } from '@grace/ai-core';
 import type { LLMProvider } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
@@ -207,6 +207,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       retrieved,
       toolsEnabled: flags.toolsEnabled,
       systemPrompt,
+      ...(dietaryRestriction ? { dietaryRestriction } : {}),
     });
 
     // Offload persistence to BullMQ (non-blocking) or fall back to fire-and-forget.
@@ -490,12 +491,6 @@ function renderKnownFactsBlock(
 // "chicken or tuna at lunch" and the LLM parrots them. The fix is a
 // deterministic top-of-prompt banner that lists the exact forbidden foods.
 // ─────────────────────────────────────────────────────────────────────────────
-
-export interface DietaryRestriction {
-  label: 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN';
-  forbidden: string[];
-  allowed: string[];
-}
 
 const VEGETARIAN_FORBIDDEN = [
   'chicken', 'turkey', 'beef', 'pork', 'lamb', 'veal', 'duck', 'goat',

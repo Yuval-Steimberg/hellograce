@@ -130,24 +130,50 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Mark user as paid and capture email if missing
+    // Mark user as paid and capture email + name if missing
     const updatePayload: Record<string, unknown> = { is_paid: true };
 
-    if (!user.email) {
-      // Try to get email from Stripe: 1) customer record, 2) payment method billing details
-      const customer = await stripe.customers.retrieve(searchResult.data[0].id) as Stripe.Customer;
-      let stripeEmail = customer.email;
-      if (!stripeEmail) {
-        const sub = subs.data[0];
-        if (sub.default_payment_method) {
-          const pm = await stripe.paymentMethods.retrieve(sub.default_payment_method as string);
-          if (pm.billing_details?.email) {
-            stripeEmail = pm.billing_details.email;
-          }
-        }
+    // Try to back-fill missing fields from Stripe customer + payment method.
+    // The v2 onboarding doesn't ask for name/email — the payment form is the
+    // first place we capture them, so we mirror them back to our DB and the
+    // Stripe customer record (so admin views show a name instead of "—").
+    const stripeCustomer = await stripe.customers.retrieve(searchResult.data[0].id) as Stripe.Customer;
+    const sub = subs.data[0];
+    let pmBillingDetails: Stripe.PaymentMethod["billing_details"] | null = null;
+    if (sub?.default_payment_method) {
+      try {
+        const pm = await stripe.paymentMethods.retrieve(sub.default_payment_method as string);
+        pmBillingDetails = pm.billing_details ?? null;
+      } catch (pmErr) {
+        console.error("Failed to retrieve payment method:", pmErr);
       }
+    }
+
+    if (!user.email) {
+      const stripeEmail = stripeCustomer.email ?? pmBillingDetails?.email ?? null;
       if (stripeEmail) {
         updatePayload.email = stripeEmail;
+      }
+    }
+
+    if (!user.first_name) {
+      const fullName = stripeCustomer.name ?? pmBillingDetails?.name ?? null;
+      if (fullName) {
+        // Use just the first token as first_name (e.g. "Sarah Johnson" → "Sarah").
+        // Stripe's billing_details.name is typically the cardholder's full name.
+        const firstName = fullName.trim().split(/\s+/)[0] ?? "";
+        if (firstName) {
+          updatePayload.first_name = firstName;
+        }
+        // Mirror the full name back to the Stripe customer if it's missing there.
+        // This makes the Stripe customer list show real names instead of blanks.
+        if (!stripeCustomer.name) {
+          try {
+            await stripe.customers.update(stripeCustomer.id, { name: fullName });
+          } catch (custErr) {
+            console.error("Failed to update Stripe customer name:", custErr);
+          }
+        }
       }
     }
     await supabase.from("users").update(updatePayload).eq("id", user.id);

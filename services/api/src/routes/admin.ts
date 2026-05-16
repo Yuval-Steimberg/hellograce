@@ -504,6 +504,16 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
    */
   app.post('/admin/prompts/sync-from-code', async () => {
     const content = GRACE_SYSTEM_PROMPT;
+
+    // Ensure the optimizer migration columns exist (idempotent). Without these,
+    // the optimizer's saveVersion() also fails, so applying them here unblocks
+    // the entire RLHF flow as a side effect.
+    await deps.pool.query(`
+      ALTER TABLE prompts
+        ADD COLUMN IF NOT EXISTS notes TEXT,
+        ADD COLUMN IF NOT EXISTS auto_generated BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+
     await deps.pool.query('BEGIN');
     let version: number;
     try {

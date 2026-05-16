@@ -29,6 +29,12 @@ export interface ContentViolation {
 
 export interface ContentCheckOpts {
   dietaryRestriction?: DietaryRestriction;
+  /** Cleaned food-dislike list (no "I don't like" prefix). */
+  foodDislikes?: string[];
+  /** Medication category — enables the contradiction guard. */
+  medicationType?: 'weekly_injection' | 'daily_pill' | 'daily_injection' | 'unknown';
+  /** Response modality. 'image_body' triggers the medical-leak guard. */
+  responseMode?: 'text' | 'image_food' | 'image_body' | 'voice';
 }
 
 export function checkContent(text: string, opts: ContentCheckOpts): ContentViolation[] {
@@ -36,6 +42,15 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
 
   if (opts.dietaryRestriction) {
     violations.push(...checkDietaryViolations(text, opts.dietaryRestriction));
+  }
+  if (opts.foodDislikes && opts.foodDislikes.length > 0) {
+    violations.push(...checkFoodDislikes(text, opts.foodDislikes));
+  }
+  if (opts.medicationType && opts.medicationType !== 'unknown') {
+    violations.push(...checkMedicationContradiction(text, opts.medicationType));
+  }
+  if (opts.responseMode === 'image_body') {
+    violations.push(...checkBodyPhotoLeak(text));
   }
   violations.push(...checkBannedPhrases(text));
   violations.push(...checkLinkPlaceholder(text));
@@ -258,6 +273,139 @@ export function checkPrivacyLeak(text: string): ContentViolation[] {
 }
 
 /**
+ * Treat the user's food_dislikes list as a mini dietary restriction. Same
+ * matching logic as checkDietaryViolations: whole-word, longest-match wins,
+ * sentence-level negation.
+ *
+ * Each dislike is normalized to strip the natural-language prefix users tend
+ * to write at signup ("I don't like rice", "no mushrooms", "avoid dairy").
+ */
+export function checkFoodDislikes(text: string, dislikes: string[]): ContentViolation[] {
+  const cleaned = dislikes
+    .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim().toLowerCase())
+    .filter((d) => d.length >= 2 && d.length <= 40);
+  if (cleaned.length === 0) return [];
+
+  const lower = text.toLowerCase();
+  const rawHits: Array<{ word: string; start: number; end: number }> = [];
+  for (const word of cleaned) {
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`\\b${escaped}\\b`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(lower)) !== null) {
+      rawHits.push({ word, start: m.index, end: m.index + m[0].length });
+      if (m.index === pattern.lastIndex) pattern.lastIndex += 1;
+    }
+  }
+
+  rawHits.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+  const taken: Array<[number, number]> = [];
+  const deduped: typeof rawHits = [];
+  for (const h of rawHits) {
+    if (taken.some(([s, e]) => h.start < e && h.end > s)) continue;
+    taken.push([h.start, h.end]);
+    deduped.push(h);
+  }
+
+  const seen = new Set<string>();
+  const hits: ContentViolation[] = [];
+  for (const h of deduped) {
+    if (isNegated(lower, h.start)) continue;
+    if (seen.has(h.word)) continue;
+    seen.add(h.word);
+    hits.push({
+      code: 'disliked_food',
+      message: `mentioned "${h.word}" but user has it on their food-dislikes list`,
+      match: h.word,
+    });
+  }
+  return hits;
+}
+
+/**
+ * Medication-type contradictions. The user context tells the LLM whether
+ * the user is on a weekly injection, daily pill, or daily injection, but
+ * Gemini Flash regularly slips and says "your injection day" to a Rybelsus
+ * user or "your daily pill" to a Wegovy user.
+ *
+ * Each medication category has phrases it must NEVER appear with. False
+ * positives are minimized by requiring possessive language ("your injection
+ * day") so generic statements ("weekly injections are common") don't trip.
+ */
+const MEDICATION_FORBIDDEN: Record<string, Array<{ pattern: RegExp; reason: string }>> = {
+  daily_pill: [
+    { pattern: /\b(your|the)\s+injection\s+day\b/i, reason: '"injection day" — user is on a daily pill (Rybelsus), no injection day' },
+    { pattern: /\bweekly\s+(injection|shot|dose)\b/i, reason: '"weekly injection/shot" — user is on a daily pill' },
+    { pattern: /\b(your|the)\s+(weekly\s+)?shot\b/i, reason: '"your shot" — user is on a daily pill, no shot' },
+    { pattern: /\binject(?:ing|ion)\s+(today|tomorrow|yesterday)\b/i, reason: 'injection scheduling — user is on a daily pill' },
+  ],
+  daily_injection: [
+    { pattern: /\bweekly\s+(injection|shot|dose)\b/i, reason: '"weekly injection" — user is on a daily injection (Saxenda/Victoza)' },
+    { pattern: /\b(your|the)\s+injection\s+day\b/i, reason: '"injection day" — user injects daily, every day is the same' },
+    { pattern: /\bonce\s+a\s+week\s+(injection|shot|dose)\b/i, reason: '"once a week" — user injects daily' },
+  ],
+  weekly_injection: [
+    { pattern: /\b(your|the)\s+(daily\s+)?pill\b/i, reason: '"pill" — user is on a weekly injection, no pill' },
+    { pattern: /\bdaily\s+medication\b/i, reason: '"daily medication" — user takes a weekly injection' },
+    { pattern: /\bempty\s+stomach\s+(rule|requirement)\b/i, reason: '"empty stomach rule" — user takes a weekly injection (no Rybelsus rules apply)' },
+    { pattern: /\btake\s+(it|your\s+pill)\s+(in\s+the\s+)?morning\b/i, reason: '"take it in the morning" — Rybelsus phrasing, user is on an injectable' },
+  ],
+};
+
+export function checkMedicationContradiction(
+  text: string,
+  medicationType: 'weekly_injection' | 'daily_pill' | 'daily_injection',
+): ContentViolation[] {
+  const rules = MEDICATION_FORBIDDEN[medicationType];
+  if (!rules) return [];
+  const hits: ContentViolation[] = [];
+  for (const { pattern, reason } of rules) {
+    const m = pattern.exec(text);
+    if (m) {
+      hits.push({
+        code: 'medication_contradiction',
+        message: reason,
+        match: m[0],
+      });
+    }
+  }
+  return hits;
+}
+
+/**
+ * Body-photo medical-leak guard. The image-analysis pipeline already adds
+ * "[Do NOT mention pain, discomfort, injuries…]" to the LLM input, but the
+ * LLM still slips into clinical observations on a progress selfie. This
+ * regen-trigger forces a rewrite.
+ *
+ * Tuned for low false-positives: ignore generic words like "good" or
+ * "healthy" and match only on explicit medical/symptom vocabulary.
+ */
+const BODY_PHOTO_MEDICAL_TERMS: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /\b(pain|painful|ache|aching|sore|soreness)\b/i, reason: 'mentioned pain in a progress-photo response' },
+  { pattern: /\b(injur(?:y|ies)|wound|bruis(?:e|ing|ed)|swelling|swollen|inflammation|inflamed)\b/i, reason: 'mentioned injury/swelling in a progress-photo response' },
+  { pattern: /\b(symptom|symptoms|diagnos(?:e|is|ed)|condition)\b/i, reason: 'mentioned symptoms/diagnosis in a progress-photo response' },
+  { pattern: /\b(rash|hives|lesion|cyst|lump|tumor)\b/i, reason: 'mentioned a skin/medical concern in a progress-photo response' },
+  { pattern: /\bsee\s+(a|your)\s+doctor\s+(about|for)\s+(this|that)\b/i, reason: 'redirected to doctor on a progress photo (unnecessary)' },
+  { pattern: /\bgaunt|emaciated|underweight|too\s+thin\b/i, reason: 'commented negatively on appearance — banned' },
+];
+
+export function checkBodyPhotoLeak(text: string): ContentViolation[] {
+  const hits: ContentViolation[] = [];
+  for (const { pattern, reason } of BODY_PHOTO_MEDICAL_TERMS) {
+    const m = pattern.exec(text);
+    if (m) {
+      hits.push({
+        code: 'body_photo_medical_leak',
+        message: reason,
+        match: m[0],
+      });
+    }
+  }
+  return hits;
+}
+
+/**
  * Build a short instruction the orchestrator appends to the regen system
  * prompt so the LLM knows exactly what to fix. Keep this terse — the regen
  * already inherits the full system prompt.
@@ -273,6 +421,28 @@ export function buildContentRegenInstruction(
     const offending = dietaryHits.map((v) => v.match).filter(Boolean).join(', ');
     parts.push(
       `CRITICAL: Your draft suggested ${offending} to a ${restriction.label} user. ${restriction.label}s cannot eat ${offending}. Rewrite using ONLY these allowed proteins: ${restriction.allowed.join(', ')}. Do NOT mention any of: ${restriction.forbidden.join(', ')}.`,
+    );
+  }
+
+  const dislikeHits = violations.filter((v) => v.code === 'disliked_food');
+  if (dislikeHits.length > 0) {
+    const offending = dislikeHits.map((v) => v.match).filter(Boolean).join(', ');
+    parts.push(
+      `Your draft mentioned ${offending} — the user dislikes these foods. Rewrite without ${offending}; pick alternatives.`,
+    );
+  }
+
+  const medHits = violations.filter((v) => v.code === 'medication_contradiction');
+  if (medHits.length > 0) {
+    parts.push(
+      `Your draft contradicted the user's medication type: ${medHits.map((v) => v.message).join('; ')}. Rewrite without these phrases.`,
+    );
+  }
+
+  const bodyHits = violations.filter((v) => v.code === 'body_photo_medical_leak');
+  if (bodyHits.length > 0) {
+    parts.push(
+      `Your draft used medical/symptom language on a progress photo: ${bodyHits.map((v) => `"${v.match}"`).join(', ')}. Progress photos get warmth and encouragement, NEVER medical commentary. Rewrite without any pain/injury/symptom words.`,
     );
   }
 

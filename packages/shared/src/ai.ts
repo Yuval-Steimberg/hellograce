@@ -60,6 +60,17 @@ export interface OrchestratorInput {
    *  name-strip in the format enforcer (welcome messages are allowed to
    *  use the user's name once). */
   isFirstMessage?: boolean;
+  /** Cleaned (prefix-stripped) list of foods the user dislikes. Content
+   *  checker treats these like a mini dietary restriction — Grace must
+   *  never suggest them. */
+  foodDislikes?: string[];
+  /** Inferred GLP-1 medication category. Drives the medication-contradiction
+   *  guard so Grace doesn't talk about "injection day" to a Rybelsus user. */
+  medicationType?: 'weekly_injection' | 'daily_pill' | 'daily_injection' | 'unknown';
+  /** Modality flag set by ai.service.ts before invoking the orchestrator.
+   *  'image_body' enables the medical-leak guard (Grace must not mention
+   *  pain/injury/symptoms in response to a progress selfie). */
+  responseMode?: 'text' | 'image_food' | 'image_body' | 'voice';
 }
 
 export interface OrchestratorOutput {

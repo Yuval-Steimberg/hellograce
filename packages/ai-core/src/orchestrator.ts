@@ -90,9 +90,13 @@ export class AIOrchestrator {
     // Forbidden foods given a dietary restriction. We must regen — there's
     // no way to "fix" a chicken recommendation to a vegetarian via string
     // replacement.
-    const contentViolations: ContentViolation[] = checkContent(validated.text, {
+    const contentCheckOpts = {
       ...(input.dietaryRestriction ? { dietaryRestriction: input.dietaryRestriction } : {}),
-    });
+      ...(input.foodDislikes && input.foodDislikes.length > 0 ? { foodDislikes: input.foodDislikes } : {}),
+      ...(input.medicationType ? { medicationType: input.medicationType } : {}),
+      ...(input.responseMode ? { responseMode: input.responseMode } : {}),
+    };
+    const contentViolations: ContentViolation[] = checkContent(validated.text, contentCheckOpts);
 
     // Detect mid-word/mid-sentence truncation (e.g. "...easy-to-" cut off by
     // hitting maxOutputTokens). Forces the critic→regen path so the user
@@ -133,9 +137,7 @@ export class AIOrchestrator {
         const retryFormatted = enforceFormat(retryResp.text, stripName ? { stripFirstName: stripName } : {});
         const retryValidated = validateResponse(retryFormatted.text);
         const retryPrecheck = precheckGrounding(retryValidated.text, input.retrieved);
-        const retryContentViolations = checkContent(retryValidated.text, {
-          ...(input.dietaryRestriction ? { dietaryRestriction: input.dietaryRestriction } : {}),
-        });
+        const retryContentViolations = checkContent(retryValidated.text, contentCheckOpts);
         const retryCritic = await this.review(
           retryPrecheck,
           input.text,

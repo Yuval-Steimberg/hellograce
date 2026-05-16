@@ -183,6 +183,26 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       }
     }
 
+    // Medication type â€” drives the medication-contradiction guard
+    // (so Grace doesn't say "injection day" to a Rybelsus user).
+    const medicationType = inferMedicationType(user?.medication ?? null);
+
+    // Response modality â€” drives modality-specific guards (body-photo
+    // medical-leak, etc.). Image type comes from analyzeMedia's classifier.
+    let responseMode: 'text' | 'image_food' | 'image_body' | 'voice' = 'text';
+    if (input.media.some((m) => m.kind === 'audio')) {
+      responseMode = 'voice';
+    } else if (input.media.some((m) => m.kind === 'image')) {
+      if (description?.includes('IMAGE_TYPE: body')) responseMode = 'image_body';
+      else if (description?.includes('IMAGE_TYPE: food')) responseMode = 'image_food';
+    }
+
+    // Clean food dislikes for the content checker â€” strip natural-language
+    // prefixes the same way buildPersonalisedPrompt does.
+    const cleanFoodDislikes = (user?.food_dislikes ?? [])
+      .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+      .filter(Boolean);
+
     // Build personalised system prompt with user context.
     const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday, knownFacts, dietaryRestriction });
 
@@ -232,6 +252,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       systemPrompt,
       ...(dietaryRestriction ? { dietaryRestriction } : {}),
       ...(user?.first_name ? { userFirstName: user.first_name } : {}),
+      ...(cleanFoodDislikes.length > 0 ? { foodDislikes: cleanFoodDislikes } : {}),
+      medicationType,
+      responseMode,
       isFirstMessage: isNew,
     });
 
@@ -349,12 +372,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       if (user.medication) lines.push(`Medication: ${user.medication}`);
       // Surface medication type so the prompt's "Weekly injection / Daily pill /
       // Daily injection" branching can fire correctly.
-      const med = (user.medication || '').toLowerCase();
-      let medType = 'unknown';
-      if (/rybelsus/.test(med)) medType = 'daily_pill';
-      else if (/saxenda|victoza|liraglutide/.test(med)) medType = 'daily_injection';
-      else if (/ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide/.test(med)) medType = 'weekly_injection';
-      lines.push(`Medication type: ${medType}`);
+      lines.push(`Medication type: ${inferMedicationType(user.medication)}`);
       if (user.goals.length > 0) lines.push(`Goals: ${user.goals.join(', ')}`);
       if (user.food_dislikes.length > 0) {
         const clean = user.food_dislikes
@@ -549,6 +567,24 @@ const PESCATARIAN_ALLOWED = [
   'salmon', 'tuna', 'cod', 'shrimp', 'sardines', 'Greek yogurt',
   'cottage cheese', 'eggs', 'tofu', 'lentils', 'beans', 'protein shake',
 ];
+
+/**
+ * Map a medication name (free-text on the user record) to one of the four
+ * categories the content-checker recognizes. Single source of truth â€” used
+ * by buildPersonalisedPrompt and the orchestrator call.
+ */
+export function inferMedicationType(
+  medication: string | null,
+): 'weekly_injection' | 'daily_pill' | 'daily_injection' | 'unknown' {
+  if (!medication) return 'unknown';
+  const med = medication.toLowerCase();
+  if (/rybelsus/.test(med)) return 'daily_pill';
+  if (/saxenda|victoza|liraglutide/.test(med)) return 'daily_injection';
+  if (/ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide/.test(med)) {
+    return 'weekly_injection';
+  }
+  return 'unknown';
+}
 
 /**
  * Build a DietaryRestriction object from a known label. Used both by the

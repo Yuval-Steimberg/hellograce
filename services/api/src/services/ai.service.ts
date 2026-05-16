@@ -121,7 +121,10 @@ export class AIService {
           const confidenceNote = confidence === 'low'
             ? ' (rough estimate — photo was unclear)'
             : confidence === 'medium' ? ' (rough estimate)' : '';
-          augmentedText = `${userIntent}The user sent a meal photo. Here is the nutrition data for your reference only — do NOT repeat this breakdown to the user:\n\n${description}\n\n[REQUIRED: Call log_food with args {"food": ${JSON.stringify(foodArg)}} — pass this string EXACTLY. Then reply as Grace in 1–2 sentences max, conversational, no lists, no per-item breakdowns. Use the TOTAL protein number naturally. Example style: "That looks like about 30g of protein${confidenceNote}. You're at 55g today." NEVER output ITEMS/BREAKDOWN/TOTAL tables. Sound like a supportive friend, not a nutrition app.]`;
+          augmentedText = `${userIntent}The user sent a meal photo. Internal nutrition data for your reference ONLY — never recite this breakdown:\n\n${description}\n\n[REQUIRED:
+1. Call log_food with args {"food": ${JSON.stringify(foodArg)}} — pass this string EXACTLY.
+2. Reply in 1–2 short sentences using the TOTAL protein number naturally. Example: "That looks like about 30g of protein${confidenceNote}. You're at 55g today."
+NEVER ask the user to specify portions, grams, ounces, or what's in the photo — the estimate is already done. NEVER output ITEMS/BREAKDOWN/TOTAL tables. NEVER list per-item macros. Sound like a supportive friend, not a nutrition app. If confidence was low, you may add ONE light human clarifier (e.g. "Was that a snack or a full plate?") — never a quantity question.]`;
         } else if (description.includes('IMAGE_TYPE: body')) {
           augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 weight-loss journey and encourage them. CRITICAL: Do NOT mention pain, discomfort, injuries, or any medical conditions — this is a progress selfie, not a medical photo. Do NOT invent symptoms or anything not in the analysis above. Do NOT call any logging tools.]`;
         } else {

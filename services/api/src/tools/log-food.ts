@@ -36,21 +36,43 @@ export function makeLogFoodTool(deps: {
           {
             role: 'system',
             content:
-              'You are a nutrition expert estimating protein and calories from a casual food description. ' +
-              'CRITICAL: never ask for grams/ounces/portion sizes — confidently estimate from the description using typical USDA serving sizes. ' +
+              'You estimate protein and calories from a casual food description like a knowledgeable friend would — quickly, confidently, and approximately. ' +
+              'CRITICAL: never refuse to estimate. Never ask the caller for grams/ounces/portions/macros. Always produce a number using common-sense serving sizes. ' +
               'If a TOTAL is already provided in the text, use it directly. ' +
-              'For vague descriptions, infer a reasonable serving:\n' +
-              '  "eggs" → 2 eggs (12g protein, 140 kcal)\n' +
-              '  "a yogurt" → 1 cup Greek yogurt (15g, 100 kcal) unless context says otherwise\n' +
-              '  "chicken and rice" → typical lunch portion (30g, 450 kcal)\n' +
-              '  "protein shake" → 1 scoop whey (25g, 130 kcal)\n' +
-              '  "a burrito" → typical fast-casual burrito (22g, 600 kcal)\n' +
-              '  "salmon" → 5oz fillet (28g, 280 kcal)\n' +
-              '  "tuna" → 1 can (20g, 110 kcal)\n' +
-              '  "cottage cheese" → 1/2 cup (14g, 100 kcal)\n' +
+              'Common anchor servings (use these unless the description says otherwise):\n' +
+              '  "eggs" → 2 eggs · 12g · 140 kcal\n' +
+              '  "scrambled eggs" → 2 eggs · 12g · 180 kcal\n' +
+              '  "egg whites" → 4 whites · 14g · 70 kcal\n' +
+              '  "a yogurt" → 1 cup Greek · 17g · 100 kcal (regular: 6g · 150 kcal)\n' +
+              '  "greek yogurt and fruit" → 1 cup yogurt + berries · 17g · 180 kcal\n' +
+              '  "cottage cheese" → 1/2 cup · 14g · 100 kcal\n' +
+              '  "chicken and rice" → typical lunch · 30g · 450 kcal\n' +
+              '  "chicken salad" → typical bowl with chicken · 28g · 400 kcal\n' +
+              '  "salad with chicken" → bowl with grilled chicken · 25g · 380 kcal\n' +
+              '  "a burrito" → fast-casual size · 22g · 600 kcal\n' +
+              '  "chicken burrito" → 30g · 650 kcal\n' +
+              '  "protein shake" → 1 scoop whey + water/milk · 25g · 130 kcal\n' +
+              '  "smoothie" → typical fruit + protein · 18g · 280 kcal\n' +
+              '  "salmon" → 5oz fillet · 28g · 280 kcal\n' +
+              '  "steak" → 5oz · 35g · 350 kcal\n' +
+              '  "ground beef" → 4oz · 22g · 280 kcal\n' +
+              '  "tuna" → 1 can · 20g · 110 kcal\n' +
+              '  "tuna salad" → typical scoop · 18g · 220 kcal\n' +
+              '  "sushi" / "a sushi roll" → 1 standard roll · 12g · 250 kcal (for a full meal of 2 rolls: 24g · 500 kcal)\n' +
+              '  "pasta" → 1 cup plain · 8g · 220 kcal\n' +
+              '  "pasta with meat sauce" → typical plate · 20g · 500 kcal\n' +
+              '  "snack plate" / "cheese and nuts" → small board · 12g · 300 kcal\n' +
+              '  "oatmeal" → 1 cup cooked · 6g · 150 kcal (with protein powder: 25g · 280 kcal)\n' +
+              '  "toast and peanut butter" → 1 slice · 8g · 200 kcal\n' +
+              '  "sandwich" → typical deli · 22g · 450 kcal\n' +
+              '  "wrap" → typical with protein · 25g · 480 kcal\n' +
+              '  "pizza" → 2 slices · 22g · 540 kcal\n' +
+              '  "soup" → typical bowl · 8g · 220 kcal (with chicken/beans: 18g · 320 kcal)\n' +
+              '  "banana" / "apple" / "orange" → 1g · ~80 kcal\n' +
+              '  "coffee" / "tea" → 0g · 0–10 kcal\n' +
               'Respond ONLY with JSON: {"food": <concise label>, "protein_g": <number>, "calories": <number>, "confidence": "low"|"medium"|"high"}. ' +
-              'Confidence: "high" when the user specified quantity/type clearly, "medium" when inferred from common sense, "low" when truly ambiguous. ' +
-              'Never use 0 protein or 0 calories for a real food.',
+              'Confidence: "high" when the user specified quantity/type clearly, "medium" when inferred from common sense (default for vague descriptions), "low" only when truly ambiguous. ' +
+              'For real foods, never use 0 protein or 0 calories. Round protein to the nearest gram.',
           },
           { role: 'user', content: food },
         ],

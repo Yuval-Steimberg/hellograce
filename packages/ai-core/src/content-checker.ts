@@ -3,15 +3,17 @@
  *
  * Unlike format-enforcer (silent auto-fix), these are semantic violations
  * that cannot be fixed by string replacement — they require the LLM to
- * actually pick different words.
+ * actually pick different words. Any non-empty violation list forces the
+ * orchestrator to regen once with a targeted instruction.
  *
- * Currently checks:
- *   - Forbidden foods given a dietary restriction (chicken in a vegetarian
- *     reply, eggs in a vegan reply, etc.)
+ * Current checks:
+ *   - Forbidden foods given a dietary restriction
+ *   - Banned phrases ("Hang in there", "You've got this", etc.)
+ *   - Privacy leak ("I don't have a user named X", references to other users)
+ *   - "[link]" placeholder instead of a real settings URL
  *
- * Extending: add new check functions and return their violations alongside
- * the existing ones. The orchestrator force-regens once if any violation
- * is found.
+ * Add a new check by writing a function that returns ContentViolation[]
+ * and calling it from checkContent().
  */
 
 import type { DietaryRestriction } from '@grace/shared';
@@ -35,56 +37,224 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   if (opts.dietaryRestriction) {
     violations.push(...checkDietaryViolations(text, opts.dietaryRestriction));
   }
+  violations.push(...checkBannedPhrases(text));
+  violations.push(...checkLinkPlaceholder(text));
+  violations.push(...checkPrivacyLeak(text));
 
   return violations;
 }
 
+const NEGATION_WORDS = /\b(no|not|without|skip|avoid|never|except|exclude|other\s+than|aside\s+from|besides|free\s+of)\b/i;
+const SENTENCE_END = /[.!?]/;
+
 /**
- * Scan a response for any forbidden food words. We match on whole words
- * to avoid false positives ("turkey" in "Turkey the country" — vanishingly
- * unlikely in a GLP-1 chat but cheap to guard). Negation handling: if the
- * forbidden word appears right after "no ", "not ", "without ", "skip ",
- * "avoid ", or "no more " — Grace is excluding it, which is fine.
+ * Scan a response for any forbidden food words.
+ *
+ * Match rules:
+ *   - Whole-word boundaries (so "cottage cheese" matches but "cheese" inside
+ *     it doesn't double-flag — overlapping matches are deduped by position).
+ *   - Case-insensitive.
+ *   - Negation-aware at the SENTENCE level: if the same sentence contains
+ *     "no / not / without / skip / avoid / never / except / free of" BEFORE
+ *     the food word, the match is skipped. This propagates through list
+ *     connectors so "Avoid chicken, beef, and pork" skips all three.
+ *   - When a longer forbidden phrase ("cottage cheese") overlaps with a
+ *     shorter one ("cheese"), the longer one wins.
  */
 export function checkDietaryViolations(
   text: string,
   restriction: DietaryRestriction,
 ): ContentViolation[] {
   const lower = text.toLowerCase();
-  const hits: ContentViolation[] = [];
 
+  // First pass: collect every match with start/end positions.
+  const rawHits: Array<{ word: string; start: number; end: number }> = [];
   for (const word of restriction.forbidden) {
-    // Whole-word match. Multi-word entries ("cottage cheese") are also fine
-    // because the regex anchors at word boundaries on each end.
     const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(`\\b${escaped}\\b`, 'i');
-    const match = pattern.exec(lower);
-    if (!match) continue;
-
-    // Skip if it's a negation ("no chicken", "avoid fish", "without meat").
-    const start = match.index;
-    const lookback = lower.slice(Math.max(0, start - 20), start);
-    if (/\b(no|not|without|skip|avoid|never|except|no\s+more|other\s+than|aside\s+from|besides)\s+(any\s+)?$/i.test(lookback)) {
-      continue;
+    const pattern = new RegExp(`\\b${escaped}\\b`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(lower)) !== null) {
+      rawHits.push({ word, start: m.index, end: m.index + m[0].length });
+      // Guard against zero-width matches (shouldn't happen with \b…\b but
+      // pattern.lastIndex would loop forever if it did).
+      if (m.index === pattern.lastIndex) pattern.lastIndex += 1;
     }
+  }
 
-    hits.push({
+  // Sort by length desc so the longer match wins overlap (e.g. "cottage
+  // cheese" wins over "cheese" at the same position).
+  rawHits.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+
+  // Dedupe overlapping positions: keep the first (longest) hit for each
+  // span of characters.
+  const taken: Array<[number, number]> = [];
+  const dedupedByPos: typeof rawHits = [];
+  for (const h of rawHits) {
+    const overlaps = taken.some(([s, e]) => h.start < e && h.end > s);
+    if (overlaps) continue;
+    taken.push([h.start, h.end]);
+    dedupedByPos.push(h);
+  }
+
+  // Negation gate: for each remaining hit, check whether its sentence
+  // contains a negation word before the match.
+  const allowed: ContentViolation[] = [];
+  for (const h of dedupedByPos) {
+    if (isNegated(lower, h.start)) continue;
+    allowed.push({
       code: 'forbidden_food',
-      message: `mentioned "${word}" but user is ${restriction.label}`,
-      match: word,
+      message: `mentioned "${h.word}" but user is ${restriction.label}`,
+      match: h.word,
     });
   }
 
-  // Deduplicate by match — same word triggered twice is still one violation.
+  // Final dedupe by word so the same forbidden word reported multiple times
+  // is collapsed.
   const seen = new Set<string>();
   const unique: ContentViolation[] = [];
-  for (const h of hits) {
+  for (const h of allowed) {
     const key = h.match ?? h.code;
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(h);
   }
   return unique;
+}
+
+/**
+ * Returns true if the match position is preceded by a negation word within
+ * the current sentence. Sentence boundary = last [.!?] before the match.
+ */
+function isNegated(lowerText: string, matchStart: number): boolean {
+  // Find the start of the current sentence: walk back to the most recent
+  // sentence-end character (or beginning of string).
+  let sentenceStart = 0;
+  for (let i = matchStart - 1; i >= 0; i--) {
+    const ch = lowerText[i];
+    if (ch !== undefined && SENTENCE_END.test(ch)) {
+      sentenceStart = i + 1;
+      break;
+    }
+  }
+  const sentencePrefix = lowerText.slice(sentenceStart, matchStart);
+  return NEGATION_WORDS.test(sentencePrefix);
+}
+
+/**
+ * Phrases that the master prompt's "BANNED FOREVER" section forbids,
+ * narrowed to ones with effectively zero false-positive rate. Every one
+ * of these is a literal AI-clich tell.
+ *
+ * Add to this list as new violations are spotted in production. Test
+ * coverage in content-checker.test.ts means additions are cheap.
+ */
+const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
+  // AI-cliché openers
+  { pattern: /\bhang in there\b/i, reason: '"hang in there" — banned AI cliché' },
+  { pattern: /\byou'?ve got this\b/i, reason: '"you\'ve got this" — banned AI cliché' },
+  { pattern: /\btrust the process\b/i, reason: '"trust the process" — banned AI cliché' },
+  { pattern: /\bbe kind to yourself\b/i, reason: '"be kind to yourself" — banned AI cliché' },
+  { pattern: /\btake it one day at a time\b/i, reason: '"take it one day at a time" — banned AI cliché' },
+  { pattern: /\bjust remember\b/i, reason: '"just remember" — banned AI cliché' },
+
+  // Empathy clichés
+  { pattern: /\bi understand how you feel\b/i, reason: '"I understand how you feel" — banned phrase' },
+  { pattern: /\bthat'?s completely normal\b/i, reason: '"that\'s completely normal" — banned phrase' },
+  { pattern: /\bi'?m so glad you shared\b/i, reason: '"I\'m so glad you shared" — banned phrase' },
+  { pattern: /\bi hear you\b/i, reason: '"I hear you" — banned phrase' },
+  { pattern: /\bthinking of you\b/i, reason: '"thinking of you" — banned phrase' },
+  { pattern: /\byou'?re in my thoughts\b/i, reason: '"you\'re in my thoughts" — banned phrase' },
+
+  // Sycophantic acknowledgments
+  { pattern: /\bgreat question!?\b/i, reason: '"great question" — banned sycophancy' },
+  { pattern: /\boh,?\s*that'?s a great question\b/i, reason: '"that\'s a great question" — banned sycophancy' },
+  { pattern: /^absolutely!/im, reason: '"Absolutely!" opener — banned' },
+  { pattern: /^of course!/im, reason: '"Of course!" opener — banned' },
+  { pattern: /^hi there!/im, reason: '"Hi there!" opener — banned' },
+  { pattern: /^sure thing!?/im, reason: '"Sure thing" opener — banned' },
+
+  // Capability denials Grace must not say
+  { pattern: /\bi can'?t recommend specific meals\b/i, reason: '"I can\'t recommend specific meals" — Grace CAN recommend meals' },
+  { pattern: /\bi don'?t keep track of\b/i, reason: '"I don\'t keep track of" — say "I don\'t have that logged" instead' },
+  { pattern: /\bi'?m just an assistant\b/i, reason: '"I\'m just an assistant" — denies Grace\'s identity' },
+  { pattern: /\bi don'?t store personal details\b/i, reason: '"I don\'t store personal details" — Grace does remember' },
+
+  // Profile-recall language
+  { pattern: /\baccording to your profile\b/i, reason: '"according to your profile" — banned profile-recall language' },
+  { pattern: /\byour (profile|history) (shows|indicates)\b/i, reason: '"your profile/history shows" — banned profile-recall language' },
+  { pattern: /\bbased on your (profile|previous data)\b/i, reason: '"based on your profile" — banned profile-recall language' },
+
+  // Group normalization
+  { pattern: /\ba lot of (people|women) (mention|describe|experience)\b/i, reason: 'normalizing via "a lot of people/women" — banned' },
+
+  // Tag-line / app-voice phrases
+  { pattern: /\balways respect your own rhythm\b/i, reason: '"respect your own rhythm" — app tagline, not a friend' },
+  { pattern: /\bmy goal is to\b/i, reason: '"my goal is to" — banned corporate voice' },
+  { pattern: /\bi'?m here to (support|help) you\b/i, reason: '"I\'m here to support you" — banned corporate voice' },
+  { pattern: /\bi want you to know\b/i, reason: '"I want you to know" — banned filler' },
+];
+
+export function checkBannedPhrases(text: string): ContentViolation[] {
+  const hits: ContentViolation[] = [];
+  for (const { pattern, reason } of BANNED_PHRASES) {
+    const m = pattern.exec(text);
+    if (m) {
+      hits.push({
+        code: 'banned_phrase',
+        message: reason,
+        match: m[0],
+      });
+    }
+  }
+  return hits;
+}
+
+/**
+ * Detects the literal "[link]" placeholder, "<link>", "[settings link]", etc.
+ * The prompt requires Grace to emit the real URL (https://graceglp.com/settings).
+ */
+export function checkLinkPlaceholder(text: string): ContentViolation[] {
+  if (/\[(link|settings link|url|here)\]/i.test(text)) {
+    return [{
+      code: 'link_placeholder',
+      message: 'emitted a "[link]" placeholder instead of the real URL https://graceglp.com/settings',
+      match: text.match(/\[[^\]]+\]/)?.[0],
+    }];
+  }
+  if (/<link>/i.test(text)) {
+    return [{
+      code: 'link_placeholder',
+      message: 'emitted a "<link>" placeholder instead of the real URL https://graceglp.com/settings',
+      match: '<link>',
+    }];
+  }
+  return [];
+}
+
+/**
+ * Detects privacy leaks — Grace explicitly says she has (or doesn't have)
+ * information about another named user. Even denying knowledge of a person
+ * accidentally confirms Grace has contacts.
+ */
+export function checkPrivacyLeak(text: string): ContentViolation[] {
+  const patterns = [
+    /\bi don'?t have a user named\b/i,
+    /\bi don'?t have any user(s)? (named|called)\b/i,
+    /\bin (my|the) contacts?\b/i,
+    /\bi don'?t see (anyone|a user) (named|called)\b/i,
+    /\b(yes|no),?\s+i (have|don'?t have) (a|that) user\b/i,
+  ];
+  for (const p of patterns) {
+    const m = p.exec(text);
+    if (m) {
+      return [{
+        code: 'privacy_leak',
+        message: 'response references presence/absence of other users — must respond "I only know about you and your journey."',
+        match: m[0],
+      }];
+    }
+  }
+  return [];
 }
 
 /**
@@ -97,12 +267,34 @@ export function buildContentRegenInstruction(
   restriction?: DietaryRestriction,
 ): string {
   const parts: string[] = ['\n\nREVIEWER FEEDBACK on your previous draft:'];
-  const dietaryHits = violations.filter((v) => v.code === 'forbidden_food');
 
+  const dietaryHits = violations.filter((v) => v.code === 'forbidden_food');
   if (dietaryHits.length > 0 && restriction) {
     const offending = dietaryHits.map((v) => v.match).filter(Boolean).join(', ');
     parts.push(
-      `CRITICAL: Your draft suggested ${offending} to a ${restriction.label} user. ${restriction.label}s cannot eat ${offending}. Rewrite the response using ONLY these allowed proteins: ${restriction.allowed.join(', ')}. Do NOT mention any of: ${restriction.forbidden.join(', ')}.`,
+      `CRITICAL: Your draft suggested ${offending} to a ${restriction.label} user. ${restriction.label}s cannot eat ${offending}. Rewrite using ONLY these allowed proteins: ${restriction.allowed.join(', ')}. Do NOT mention any of: ${restriction.forbidden.join(', ')}.`,
+    );
+  }
+
+  const phraseHits = violations.filter((v) => v.code === 'banned_phrase');
+  if (phraseHits.length > 0) {
+    const list = phraseHits.map((v) => `"${v.match}"`).join(', ');
+    parts.push(
+      `Your draft contained banned phrases: ${list}. These are AI clichés and must be removed entirely. Rewrite with natural, varied language.`,
+    );
+  }
+
+  const linkHits = violations.filter((v) => v.code === 'link_placeholder');
+  if (linkHits.length > 0) {
+    parts.push(
+      `Your draft used a "[link]" placeholder. Replace it with the literal URL https://graceglp.com/settings — never write a placeholder.`,
+    );
+  }
+
+  const privacyHits = violations.filter((v) => v.code === 'privacy_leak');
+  if (privacyHits.length > 0) {
+    parts.push(
+      `Your draft confirmed or denied knowledge of another user. NEVER do this. Reply only: "I only know about you and your journey. I can't help with that."`,
     );
   }
 

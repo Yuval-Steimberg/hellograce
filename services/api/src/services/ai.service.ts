@@ -208,6 +208,8 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       toolsEnabled: flags.toolsEnabled,
       systemPrompt,
       ...(dietaryRestriction ? { dietaryRestriction } : {}),
+      ...(user?.first_name ? { userFirstName: user.first_name } : {}),
+      isFirstMessage: isNew,
     });
 
     // Offload persistence to BullMQ (non-blocking) or fall back to fire-and-forget.

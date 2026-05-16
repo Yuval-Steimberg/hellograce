@@ -76,7 +76,10 @@ export class AIOrchestrator {
     // Strip em dashes, markdown bold, numbered lists, etc. that Gemini Flash
     // emits despite the system prompt's "BANNED" rules. This always runs and
     // never triggers a regen — it's just a deterministic cleanup pass.
-    const formatted = enforceFormat(llmResp.text);
+    // The user's first name is also stripped here on non-welcome turns
+    // (NAME USAGE ZERO TOLERANCE).
+    const stripName = !input.isFirstMessage && input.userFirstName ? input.userFirstName : undefined;
+    const formatted = enforceFormat(llmResp.text, stripName ? { stripFirstName: stripName } : {});
     let validated = validateResponse(formatted.text);
     const precheck = precheckGrounding(validated.text, input.retrieved);
     let critic: CriticReport | undefined;
@@ -127,7 +130,7 @@ export class AIOrchestrator {
           temperature: 0.4,
           maxOutputTokens: 2048,
         });
-        const retryFormatted = enforceFormat(retryResp.text);
+        const retryFormatted = enforceFormat(retryResp.text, stripName ? { stripFirstName: stripName } : {});
         const retryValidated = validateResponse(retryFormatted.text);
         const retryPrecheck = precheckGrounding(retryValidated.text, input.retrieved);
         const retryContentViolations = checkContent(retryValidated.text, {

@@ -38,11 +38,12 @@ export function enforceFormat(input: string, opts?: { stripFirstName?: string })
   }
 
   // ─── " - " used as dash (single hyphen with spaces) → comma ────────────
-  // Be conservative: only when surrounded by spaces, NOT inside compound
-  // words like "easy-to-digest". Also skip leading hyphens that start a
-  // line (those are handled by the bullet-list rule below).
-  if (/\S\s+-\s+\S/.test(text)) {
-    text = text.replace(/(\S)\s+-\s+(\S)/g, '$1, $2');
+  // Be conservative: only when surrounded by spaces on a single line. Using
+  // [ \t]+ (not \s+) is critical — \s+ would span newlines and eat bullet
+  // list separators ("text\n- bullet" → "text, bullet"), corrupting the
+  // bullet-list rule below.
+  if (/\S[ \t]+-[ \t]+\S/.test(text)) {
+    text = text.replace(/(\S)[ \t]+-[ \t]+(\S)/g, '$1, $2');
     fixes.push('hyphen_dash_replaced');
   }
 
@@ -97,6 +98,25 @@ export function enforceFormat(input: string, opts?: { stripFirstName?: string })
     fixes.push('bullet_list_flattened');
   }
 
+  // ─── Greeting exclamation ("Good morning!" → "Good morning.") ──────────
+  // The prompt forbids "!" on greetings. Auto-strip the offender.
+  const greetingPattern = /^(Good morning|Good afternoon|Good evening|Good night|Morning|Afternoon|Evening|Hi|Hello|Hey)([,\s]+[A-Z][a-zA-Z]*)?!/m;
+  if (greetingPattern.test(text)) {
+    text = text.replace(greetingPattern, (m) => m.slice(0, -1) + '.');
+    fixes.push('greeting_exclamation_stripped');
+  }
+
+  // ─── "[link]" placeholder → real settings URL ──────────────────────────
+  // Cheap auto-fix saves a regen for the most common variants.
+  if (/\[(link|settings link|url|here)\]/i.test(text)) {
+    text = text.replace(/\[(link|settings link|url|here)\]/gi, 'https://graceglp.com/settings');
+    fixes.push('link_placeholder_replaced');
+  }
+  if (/<link>/i.test(text)) {
+    text = text.replace(/<link>/gi, 'https://graceglp.com/settings');
+    fixes.push('link_angle_placeholder_replaced');
+  }
+
   // ─── User's first name (if not first message + name provided) ──────────
   // The system prompt has a "NAME USAGE — ZERO TOLERANCE" rule but Gemini
   // still injects names in ~20% of responses. Strip every occurrence except
@@ -113,14 +133,20 @@ export function enforceFormat(input: string, opts?: { stripFirstName?: string })
         'gi',
       );
       if (namePattern.test(text)) {
-        text = text.replace(namePattern, (match) => {
-          // ", Name" → drop the comma too. "Name, " → drop the comma. "Name" alone → "".
-          if (/^\s*,\s*\S/.test(match)) return '';
-          if (/\S\s*,\s*$/.test(match)) return '';
-          return '';
-        });
-        // Clean double spaces left behind
-        text = text.replace(/  +/g, ' ').replace(/\s+([,.!?])/g, '$1');
+        text = text.replace(namePattern, () => '');
+        // Clean double spaces and orphaned punctuation left behind
+        text = text
+          .replace(/  +/g, ' ')
+          .replace(/\s+([,.!?])/g, '$1')
+          // Strip leading commas/spaces left by ", Name" → ""
+          .replace(/^[\s,]+/g, '')
+          // Strip leading commas mid-paragraph too (after . ! ?)
+          .replace(/([.!?])\s*[,\s]+/g, '$1 ');
+        // Recapitalize sentence starts (the next word after stripping a
+        // leading "Name, " was lowercase in the original).
+        text = text.replace(/(^|[.!?]\s+)([a-z])/g, (_, prefix, ch: string) =>
+          prefix + ch.toUpperCase(),
+        );
         fixes.push('user_name_stripped');
       }
     }

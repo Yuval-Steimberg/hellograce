@@ -52,6 +52,14 @@ export interface OrchestratorInput {
    *  present, the orchestrator post-checks the response for forbidden words
    *  and force-regens if any are found. */
   dietaryRestriction?: DietaryRestriction;
+  /** User's first name. When present AND isFirstMessage is false, the
+   *  format enforcer strips every occurrence from the draft (NAME USAGE
+   *  ZERO TOLERANCE rule). */
+  userFirstName?: string;
+  /** True if this is the user's very first message. Suppresses the
+   *  name-strip in the format enforcer (welcome messages are allowed to
+   *  use the user's name once). */
+  isFirstMessage?: boolean;
 }
 
 export interface OrchestratorOutput {

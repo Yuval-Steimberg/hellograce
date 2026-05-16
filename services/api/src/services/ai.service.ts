@@ -7,6 +7,7 @@ import type { LLMProvider } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { RagService } from '../rag/rag.service.js';
 import type { UserService } from '../user/user.service.js';
+import type { ContentRulesService } from './content-rules.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
 import { makeLogFoodTool } from '../tools/log-food.js';
@@ -50,6 +51,7 @@ export interface AIServiceDeps {
   turnQueue?: Queue<TurnPersistJob>;
   factExtractQueue?: Queue<FactExtractJob>;
   systemPrompt?: string;
+  contentRulesService?: ContentRulesService;
 }
 
 export class AIService {
@@ -243,6 +245,11 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     }
     const orchestrator = new AIOrchestrator({ llm: this.deps.llm, tools });
 
+    // Load DB content rules (60s cache â€” effectively free after first call).
+    const dbRules = this.deps.contentRulesService
+      ? await this.deps.contentRulesService.getActive('ai')
+      : [];
+
     const result = await orchestrator.run({
       userId: input.userId,
       text: isNew ? `[FIRST MESSAGE â€” greet the user warmly] ${augmentedText}` : augmentedText,
@@ -256,6 +263,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       medicationType,
       responseMode,
       isFirstMessage: isNew,
+      ...(dbRules.length > 0 ? { dbRules } : {}),
     });
 
     // Offload persistence to BullMQ (non-blocking) or fall back to fire-and-forget.

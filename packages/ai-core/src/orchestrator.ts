@@ -106,8 +106,39 @@ export class AIOrchestrator {
       ...(input.foodDislikes && input.foodDislikes.length > 0 ? { foodDislikes: input.foodDislikes } : {}),
       ...(input.medicationType ? { medicationType: input.medicationType } : {}),
       ...(input.responseMode ? { responseMode: input.responseMode } : {}),
+      ...(input.dbRules && input.dbRules.length > 0 ? { dbRules: input.dbRules } : {}),
     };
     const contentViolations: ContentViolation[] = checkContent(validated.text, contentCheckOpts);
+
+    // ── Block-severity gate ───────────────────────────────────────────────────
+    // Block rules (e.g. extra-dose commands, prescribing language) must never
+    // reach the user even after a regen — skip straight to safe fallback so
+    // no extra Gemini call is made.
+    const blockViolations = contentViolations.filter((v) => v.severity === 'block');
+    if (blockViolations.length > 0) {
+      return {
+        text: getNextSafeFallback(),
+        confidence: 'low',
+        intent: plan.intent,
+        toolResults,
+        usedRetrieval: input.retrieved.length > 0,
+        latencyMs: Date.now() - started,
+        usedSafeFallback: true,
+        critic: {
+          scores: { grounding: 1, safety: 1, on_task: 1, tone: 1 },
+          overall: 4,
+          pass: false,
+          issues: blockViolations.map((v) => v.message),
+          source: 'precheck',
+        },
+      };
+    }
+
+    // Only regen/undefined violations trigger regeneration; log violations are
+    // surfaced in telemetry but don't affect the response.
+    const regenViolations = contentViolations.filter(
+      (v) => !v.severity || v.severity === 'regen',
+    );
 
     // Detect mid-word/mid-sentence truncation (e.g. "...easy-to-" cut off by
     // hitting maxOutputTokens). Forces the critic→regen path so the user
@@ -117,24 +148,24 @@ export class AIOrchestrator {
 
     const needsReview =
       truncated ||
-      contentViolations.length > 0 ||
+      regenViolations.length > 0 ||
       precheck.unsupported.length > 0 ||
       this.shouldRunCritic(plan, validated);
 
     if (needsReview) {
       critic = await this.review(precheck, input.text, validated.text, input.retrieved);
 
-      // Treat a content-rule violation (forbidden food) as a hard fail even
-      // if the LLM-critic thinks the draft was fine — Gemini-as-judge often
-      // misses dietary slips because it doesn't track the conversation state.
-      const hardFail = !critic.pass || contentViolations.length > 0;
+      // Treat a content-rule violation (forbidden food, banned phrase, DB rule)
+      // as a hard fail even if the LLM-critic thinks the draft was fine — Gemini-
+      // as-judge often misses dietary slips and persona violations.
+      const hardFail = !critic.pass || regenViolations.length > 0;
 
       if (hardFail) {
         regenerated = true;
         const addendum =
           buildCriticAddendum(critic) +
-          (contentViolations.length > 0
-            ? buildContentRegenInstruction(contentViolations, input.dietaryRestriction)
+          (regenViolations.length > 0
+            ? buildContentRegenInstruction(regenViolations, input.dietaryRestriction)
             : '');
         const retryResp = await this.deps.llm.generate({
           messages: [
@@ -149,6 +180,12 @@ export class AIOrchestrator {
         const retryValidated = validateResponse(retryFormatted.text);
         const retryPrecheck = precheckGrounding(retryValidated.text, input.retrieved);
         const retryContentViolations = checkContent(retryValidated.text, contentCheckOpts);
+        // Re-check block violations on the retry; if the model still emits one,
+        // fall through to safe fallback below.
+        const retryBlockViolations = retryContentViolations.filter((v) => v.severity === 'block');
+        const retryRegenViolations = retryContentViolations.filter(
+          (v) => !v.severity || v.severity === 'regen',
+        );
         const retryCritic = await this.review(
           retryPrecheck,
           input.text,
@@ -156,7 +193,7 @@ export class AIOrchestrator {
           input.retrieved,
         );
 
-        if (retryCritic.pass && retryContentViolations.length === 0) {
+        if (retryCritic.pass && retryRegenViolations.length === 0 && retryBlockViolations.length === 0) {
           validated = retryValidated;
           critic = retryCritic;
         } else {

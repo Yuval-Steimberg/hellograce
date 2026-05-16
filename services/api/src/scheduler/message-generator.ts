@@ -1,6 +1,7 @@
-import type { LLMProvider } from '@grace/shared';
-import { GRACE_SYSTEM_PROMPT } from '@grace/ai-core';
+import type { LLMProvider, DbContentRule } from '@grace/shared';
+import { GRACE_SYSTEM_PROMPT, checkDbRules } from '@grace/ai-core';
 import type { GraceUser } from '../user/user.service.js';
+import type { ContentRulesService } from '../services/content-rules.service.js';
 
 const GOAL_MODE_MAP: Record<string, string> = {
   'Losing weight': 'protein',
@@ -86,8 +87,13 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
 
 export class MessageGenerator {
   private activeSystemPrompt: string | undefined;
+  private rulesService: ContentRulesService | undefined;
 
   constructor(private llm: LLMProvider) {}
+
+  updateRulesService(rs: ContentRulesService): void {
+    this.rulesService = rs;
+  }
 
   /**
    * Update the system prompt used for proactive (scheduled) messages.
@@ -118,7 +124,20 @@ export class MessageGenerator {
       });
 
       const sanitized = sanitizeProactiveOutput(resp.text, type === 'welcome' ? null : user.first_name);
-      return sanitized ?? fallback;
+      if (!sanitized) return fallback;
+
+      // Check DB content rules; any block or regen violation falls back to the
+      // canned response — proactive messages can't regen with chat history context.
+      if (this.rulesService) {
+        const rules: DbContentRule[] = await this.rulesService.getActive('scheduler');
+        if (rules.length > 0) {
+          const violations = checkDbRules(sanitized, rules);
+          const actionable = violations.filter((v) => v.severity === 'block' || v.severity === 'regen' || !v.severity);
+          if (actionable.length > 0) return fallback;
+        }
+      }
+
+      return sanitized;
     } catch {
       return fallback;
     }

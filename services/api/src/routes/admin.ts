@@ -571,4 +571,113 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     }
     return { ok: true, version, contentLength: content.length, message: 'Master prompt synced and activated. Hot-reloaded into AIService.' };
   });
+
+  // ─── Content Rules CRUD ──────────────────────────────────────────────────────
+
+  const ContentRuleCreateSchema = z.object({
+    rule_type: z.enum(['banned_phrase', 'medication_safety', 'medical_authority', 'emotional_safety', 'privacy']),
+    pattern: z.string().min(1).max(500),
+    is_regex: z.boolean().default(true),
+    flags: z.string().max(10).default('i'),
+    reason: z.string().min(1).max(300),
+    severity: z.enum(['log', 'regen', 'block']).default('regen'),
+    applies_to: z.enum(['ai', 'scheduler', 'all']).default('all'),
+  });
+
+  const ContentRuleUpdateSchema = ContentRuleCreateSchema.partial().extend({
+    is_active: z.boolean().optional(),
+  });
+
+  app.get('/admin/content-rules', async (req) => {
+    const q = req.query as { type?: string; severity?: string; active?: string; limit?: string; offset?: string };
+    const limit = Math.min(Number(q.limit ?? 100), 500);
+    const offset = Number(q.offset ?? 0);
+    const conditions = ['1=1'];
+    const params: unknown[] = [];
+    if (q.type) { params.push(q.type); conditions.push(`rule_type = $${params.length}`); }
+    if (q.severity) { params.push(q.severity); conditions.push(`severity = $${params.length}`); }
+    if (q.active !== undefined) { params.push(q.active !== 'false'); conditions.push(`is_active = $${params.length}`); }
+    params.push(limit, offset);
+    const where = conditions.join(' AND ');
+    const [{ rows }, { rows: total }] = await Promise.all([
+      deps.pool.query(
+        `SELECT * FROM content_rules WHERE ${where} ORDER BY severity, rule_type, id LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params,
+      ),
+      deps.pool.query(`SELECT count(*)::int AS n FROM content_rules WHERE ${where}`, params.slice(0, -2)),
+    ]);
+    return { rules: rows, total: total[0]?.n ?? 0, limit, offset };
+  });
+
+  app.post('/admin/content-rules', async (req) => {
+    const body = ContentRuleCreateSchema.parse(req.body);
+    // Validate regex before saving — don't let an invalid pattern reach the cache.
+    if (body.is_regex) {
+      try { new RegExp(body.pattern, body.flags); }
+      catch { throw new ValidationError('pattern', 'Invalid regular expression'); }
+    }
+    const { rows } = await deps.pool.query(
+      `INSERT INTO content_rules (rule_type, pattern, is_regex, flags, reason, severity, applies_to)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [body.rule_type, body.pattern, body.is_regex, body.flags, body.reason, body.severity, body.applies_to],
+    );
+    return { rule: rows[0] };
+  });
+
+  app.put('/admin/content-rules/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const body = ContentRuleUpdateSchema.parse(req.body);
+    if (body.is_regex && body.pattern && body.flags) {
+      try { new RegExp(body.pattern, body.flags); }
+      catch { throw new ValidationError('pattern', 'Invalid regular expression'); }
+    }
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    for (const [k, v] of Object.entries(body)) {
+      if (v !== undefined) { vals.push(v); sets.push(`${k} = $${vals.length}`); }
+    }
+    if (sets.length === 0) throw new ValidationError('body', 'No fields to update');
+    vals.push(id);
+    const { rows } = await deps.pool.query(
+      `UPDATE content_rules SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`,
+      vals,
+    );
+    if (rows.length === 0) throw new ValidationError('id', 'Rule not found');
+    return { rule: rows[0] };
+  });
+
+  app.delete('/admin/content-rules/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const { rows } = await deps.pool.query(
+      `UPDATE content_rules SET is_active = FALSE WHERE id = $1 RETURNING id`,
+      [id],
+    );
+    if (rows.length === 0) throw new ValidationError('id', 'Rule not found');
+    return { ok: true, id: rows[0].id, message: 'Rule deactivated (soft-delete)' };
+  });
+
+  // Test a piece of text against all active rules for a given channel.
+  app.post('/admin/content-rules/test', async (req) => {
+    const { text, target } = req.body as { text?: string; target?: string };
+    if (!text) throw new ValidationError('text', 'text is required');
+    const ch = (target === 'scheduler' ? 'scheduler' : 'ai') as 'ai' | 'scheduler';
+    const { rows } = await deps.pool.query<{
+      id: number; pattern: string; is_regex: boolean; flags: string; reason: string; severity: string;
+    }>(
+      `SELECT id, pattern, is_regex, flags, reason, severity
+       FROM content_rules
+       WHERE is_active = TRUE AND (applies_to = 'all' OR applies_to = $1)
+       ORDER BY CASE severity WHEN 'block' THEN 0 WHEN 'regen' THEN 1 ELSE 2 END, id`,
+      [ch],
+    );
+    const violations: Array<{ id: number; severity: string; reason: string; match: string }> = [];
+    for (const rule of rows) {
+      try {
+        const re = rule.is_regex ? new RegExp(rule.pattern, rule.flags) : new RegExp(rule.pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), rule.flags);
+        const m = re.exec(text);
+        if (m) violations.push({ id: rule.id, severity: rule.severity, reason: rule.reason, match: m[0] });
+      } catch { /* skip invalid */ }
+    }
+    return { text, target: ch, violations, clean: violations.length === 0 };
+  });
 }

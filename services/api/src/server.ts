@@ -23,6 +23,7 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
+import { ContentRulesService } from './services/content-rules.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { PromptOptimizer, type OptimizerRunReport } from './scheduler/prompt-optimizer.js';
@@ -56,6 +57,9 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   const users = new UserService(pool);
 
+  const contentRulesService = new ContentRulesService(pool, logger);
+  contentRulesService.start();
+
   const ai = new AIService({
     pool,
     llm,
@@ -71,6 +75,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     turnQueue,
     factExtractQueue,
     systemPrompt: await loadActivePrompt(),
+    contentRulesService,
   });
 
   const sender = new TwilioSender(
@@ -86,6 +91,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const generator = new MessageGenerator(llm);
   // Seed the proactive generator with the same active prompt the AI service uses.
   generator.updateSystemPrompt(await loadActivePrompt());
+  generator.updateRulesService(contentRulesService);
 
   // Hot-reload BOTH the reactive AIService and the proactive MessageGenerator
   // whenever the optimizer auto-activates a new prompt. No SIGHUP, no restart.
@@ -161,6 +167,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   const shutdown = async () => {
     app.log.info('shutdown.start');
+    contentRulesService.stop();
     scheduler.stop();
     await app.close();
     await stopWorkers();

@@ -16,7 +16,7 @@
  * and calling it from checkContent().
  */
 
-import type { DietaryRestriction } from '@grace/shared';
+import type { DietaryRestriction, DbContentRule } from '@grace/shared';
 
 export interface ContentViolation {
   /** Short code for telemetry: 'forbidden_food', 'banned_phrase', etc. */
@@ -25,6 +25,8 @@ export interface ContentViolation {
   message: string;
   /** The specific offending token (e.g. "chicken"). */
   match?: string;
+  /** Severity from the DB rule. Undefined = 'regen' (backward compat). */
+  severity?: 'log' | 'regen' | 'block';
 }
 
 export interface ContentCheckOpts {
@@ -35,6 +37,8 @@ export interface ContentCheckOpts {
   medicationType?: 'weekly_injection' | 'daily_pill' | 'daily_injection' | 'unknown';
   /** Response modality. 'image_body' triggers the medical-leak guard. */
   responseMode?: 'text' | 'image_food' | 'image_body' | 'voice';
+  /** Active DB-driven rules loaded by ContentRulesService. */
+  dbRules?: DbContentRule[];
 }
 
 export function checkContent(text: string, opts: ContentCheckOpts): ContentViolation[] {
@@ -55,8 +59,46 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   violations.push(...checkBannedPhrases(text));
   violations.push(...checkLinkPlaceholder(text));
   violations.push(...checkPrivacyLeak(text));
+  if (opts.dbRules && opts.dbRules.length > 0) {
+    violations.push(...checkDbRules(text, opts.dbRules));
+  }
 
   return violations;
+}
+
+/**
+ * Check text against DB-driven content rules loaded from the content_rules
+ * table. Each rule carries its own severity so the orchestrator can decide
+ * whether to block, regen, or just log the violation.
+ *
+ * Invalid regex patterns in the DB are silently skipped (never crash a user
+ * response because an admin saved a bad pattern).
+ */
+export function checkDbRules(text: string, rules: DbContentRule[]): ContentViolation[] {
+  const hits: ContentViolation[] = [];
+  for (const rule of rules) {
+    try {
+      const re = rule.is_regex
+        ? new RegExp(rule.pattern, rule.flags)
+        : new RegExp(escapeRegex(rule.pattern), rule.flags);
+      const m = re.exec(text);
+      if (m) {
+        hits.push({
+          code: `db_rule_${rule.id}`,
+          message: rule.reason,
+          match: m[0],
+          severity: rule.severity,
+        });
+      }
+    } catch {
+      // Invalid regex in DB — skip without crashing.
+    }
+  }
+  return hits;
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 const NEGATION_WORDS = /\b(no|not|without|skip|avoid|never|except|exclude|other\s+than|aside\s+from|besides|free\s+of)\b/i;
@@ -473,6 +515,14 @@ export function buildContentRegenInstruction(
   if (privacyHits.length > 0) {
     parts.push(
       `Your draft confirmed or denied knowledge of another user. NEVER do this. Reply only: "I only know about you and your journey. I can't help with that."`,
+    );
+  }
+
+  const dbRuleHits = violations.filter((v) => v.code.startsWith('db_rule_'));
+  if (dbRuleHits.length > 0) {
+    const items = dbRuleHits.map((v) => `"${v.match}" — ${v.message}`).join('; ');
+    parts.push(
+      `Your draft violated these content rules: ${items}. Rewrite without these phrases or claims.`,
     );
   }
 

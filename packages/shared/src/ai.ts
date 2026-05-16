@@ -40,6 +40,18 @@ export interface DietaryRestriction {
   allowed: string[];
 }
 
+/** A single row from the content_rules table. */
+export interface DbContentRule {
+  id: number;
+  rule_type: string;
+  pattern: string;
+  is_regex: boolean;
+  flags: string;
+  reason: string;
+  severity: 'log' | 'regen' | 'block';
+  applies_to: 'ai' | 'scheduler' | 'all';
+}
+
 export interface OrchestratorInput {
   userId: string;
   text: string;
@@ -71,6 +83,9 @@ export interface OrchestratorInput {
    *  'image_body' enables the medical-leak guard (Grace must not mention
    *  pain/injury/symptoms in response to a progress selfie). */
   responseMode?: 'text' | 'image_food' | 'image_body' | 'voice';
+  /** Active content rules loaded from the DB. block → immediate safe fallback;
+   *  regen → force regeneration; log → observe only. */
+  dbRules?: DbContentRule[];
 }
 
 export interface OrchestratorOutput {

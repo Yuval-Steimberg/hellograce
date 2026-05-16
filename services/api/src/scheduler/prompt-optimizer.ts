@@ -28,9 +28,22 @@ const OPTIMIZER_LOCK_KEY = 987654321;
 // Marker used to strip the previous additions block before appending new ones.
 const ADDITIONS_MARKER = '\n\n---\n## BEHAVIORAL ADJUSTMENTS (auto-learned from user feedback)\n';
 
+export type OptimizerRunStatus =
+  | 'activated'
+  | 'draft'
+  | 'skipped_lock_held'
+  | 'skipped_no_active_prompt'
+  | 'skipped_insufficient_data'
+  | 'skipped_generation_failed'
+  | 'error';
+
 export interface OptimizerRunReport {
+  status: OptimizerRunStatus;
+  /** True when a new prompt was auto-activated (status === 'activated'). */
   activated: boolean;
-  version: number;
+  /** Version of the newly-saved prompt. Undefined for skipped/error runs. */
+  version?: number;
+  /** Free-form explanation of what happened. */
   analysis: string;
   stats: {
     totalMessages: number;
@@ -80,10 +93,24 @@ export class PromptOptimizer {
       );
       if (!lockRows[0]?.locked) {
         this.logger.info('prompt_optimizer.skipped_lock_held_by_other_machine');
+        await this.emitReport({
+          status: 'skipped_lock_held',
+          activated: false,
+          analysis: 'Another Grace machine is already running the optimizer this cycle — skipped to avoid duplicate work.',
+          stats: emptyStats(),
+        });
         return;
       }
 
       await this.runWithLock(client);
+    } catch (err) {
+      this.logger.error({ err }, 'prompt_optimizer.failed');
+      await this.emitReport({
+        status: 'error',
+        activated: false,
+        analysis: `Optimizer crashed: ${err instanceof Error ? err.message : String(err)}`,
+        stats: emptyStats(),
+      });
     } finally {
       // Always release the lock and connection, even on crash.
       await client.query('SELECT pg_advisory_unlock($1)', [OPTIMIZER_LOCK_KEY]).catch(() => undefined);
@@ -91,86 +118,104 @@ export class PromptOptimizer {
     }
   }
 
-  private async runWithLock(_client: import('pg').PoolClient): Promise<void> {
+  private async emitReport(report: OptimizerRunReport): Promise<void> {
+    if (!this.hooks?.onRunComplete) return;
     try {
-      const currentPrompt = await this.getActivePrompt();
-      if (!currentPrompt) {
-        this.logger.warn('prompt_optimizer.no_active_prompt');
-        return;
-      }
-
-      const { negativeSamples, positiveSamples, fallbackCount, totalMessages } =
-        await this.gatherSignals(LOOKBACK_DAYS);
-
-      // Skip if there's not enough signal to learn from.
-      if (totalMessages < 10 && negativeSamples.length === 0) {
-        this.logger.info({ totalMessages }, 'prompt_optimizer.insufficient_data');
-        return;
-      }
-
-      this.logger.info(
-        { negativeSamples: negativeSamples.length, positiveSamples: positiveSamples.length, fallbackCount, totalMessages },
-        'prompt_optimizer.analyzing',
-      );
-
-      const result = await this.generateAdditions(currentPrompt, {
-        negativeSamples,
-        positiveSamples,
-        fallbackCount,
-        totalMessages,
-      });
-
-      if (!result) {
-        this.logger.warn('prompt_optimizer.generation_failed');
-        return;
-      }
-
-      // Strip any previous BEHAVIORAL ADJUSTMENTS block, then append fresh additions.
-      const basePrompt = currentPrompt.replace(new RegExp(`${ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*$`), '').trimEnd();
-      const newPrompt = `${basePrompt}${ADDITIONS_MARKER}${result.additions.trim()}`;
-
-      const safe = this.isSafe(newPrompt);
-      const version = await this.saveVersion(newPrompt, result.analysis, safe);
-
-      const stats = {
-        totalMessages,
-        negativeCount: negativeSamples.length,
-        positiveCount: positiveSamples.length,
-        fallbackCount,
-        satisfactionPct: (positiveSamples.length + negativeSamples.length) > 0
-          ? Math.round((positiveSamples.length / (positiveSamples.length + negativeSamples.length)) * 100)
-          : null,
-      };
-
-      if (safe) {
-        this.logger.info('prompt_optimizer.auto_activated_new_prompt');
-        if (this.hooks?.onPromptActivated) {
-          try {
-            await this.hooks.onPromptActivated(newPrompt);
-          } catch (err) {
-            this.logger.error({ err }, 'prompt_optimizer.hot_reload_failed');
-          }
-        }
-      } else {
-        this.logger.warn({ reason: result.analysis }, 'prompt_optimizer.saved_as_draft_failed_safety_check');
-      }
-
-      if (this.hooks?.onRunComplete) {
-        try {
-          await this.hooks.onRunComplete({
-            activated: safe,
-            version,
-            analysis: result.analysis,
-            stats,
-            draftReason: safe ? undefined : 'Safety gate: a required safety or behavior phrase was dropped from the combined prompt. Saved as draft for manual review.',
-          });
-        } catch (err) {
-          this.logger.error({ err }, 'prompt_optimizer.report_hook_failed');
-        }
-      }
+      await this.hooks.onRunComplete(report);
     } catch (err) {
-      this.logger.error({ err }, 'prompt_optimizer.failed');
+      this.logger.error({ err }, 'prompt_optimizer.report_hook_failed');
     }
+  }
+
+  private async runWithLock(_client: import('pg').PoolClient): Promise<void> {
+    const currentPrompt = await this.getActivePrompt();
+    if (!currentPrompt) {
+      this.logger.warn('prompt_optimizer.no_active_prompt');
+      await this.emitReport({
+        status: 'skipped_no_active_prompt',
+        activated: false,
+        analysis: 'No active prompt in the prompts table. POST /admin/prompts/sync-from-code to seed one.',
+        stats: emptyStats(),
+      });
+      return;
+    }
+
+    const { negativeSamples, positiveSamples, fallbackCount, totalMessages } =
+      await this.gatherSignals(LOOKBACK_DAYS);
+
+    const stats = {
+      totalMessages,
+      negativeCount: negativeSamples.length,
+      positiveCount: positiveSamples.length,
+      fallbackCount,
+      satisfactionPct: (positiveSamples.length + negativeSamples.length) > 0
+        ? Math.round((positiveSamples.length / (positiveSamples.length + negativeSamples.length)) * 100)
+        : null,
+    };
+
+    // Skip if there's not enough signal to learn from.
+    if (totalMessages < 10 && negativeSamples.length === 0) {
+      this.logger.info({ totalMessages }, 'prompt_optimizer.insufficient_data');
+      await this.emitReport({
+        status: 'skipped_insufficient_data',
+        activated: false,
+        analysis: `Only ${totalMessages} user message(s) in the last ${LOOKBACK_DAYS} days and zero 👎 ratings — not enough signal to learn from yet. Need ≥10 messages or any 👎 feedback.`,
+        stats,
+      });
+      return;
+    }
+
+    this.logger.info(
+      { negativeSamples: negativeSamples.length, positiveSamples: positiveSamples.length, fallbackCount, totalMessages },
+      'prompt_optimizer.analyzing',
+    );
+
+    const result = await this.generateAdditions(currentPrompt, {
+      negativeSamples,
+      positiveSamples,
+      fallbackCount,
+      totalMessages,
+    });
+
+    if (!result) {
+      this.logger.warn('prompt_optimizer.generation_failed');
+      await this.emitReport({
+        status: 'skipped_generation_failed',
+        activated: false,
+        analysis: 'Gemini did not return parseable behavioral additions — check Gemini API health and recent logs. The active prompt is unchanged.',
+        stats,
+      });
+      return;
+    }
+
+    // Strip any previous BEHAVIORAL ADJUSTMENTS block, then append fresh additions.
+    const basePrompt = currentPrompt.replace(new RegExp(`${ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*$`), '').trimEnd();
+    const newPrompt = `${basePrompt}${ADDITIONS_MARKER}${result.additions.trim()}`;
+
+    const safe = this.isSafe(newPrompt);
+    const version = await this.saveVersion(newPrompt, result.analysis, safe);
+
+    if (safe) {
+      this.logger.info('prompt_optimizer.auto_activated_new_prompt');
+      if (this.hooks?.onPromptActivated) {
+        try {
+          await this.hooks.onPromptActivated(newPrompt);
+        } catch (err) {
+          this.logger.error({ err }, 'prompt_optimizer.hot_reload_failed');
+        }
+      }
+    } else {
+      this.logger.warn({ reason: result.analysis }, 'prompt_optimizer.saved_as_draft_failed_safety_check');
+    }
+
+    await this.emitReport({
+      status: safe ? 'activated' : 'draft',
+      activated: safe,
+      version,
+      analysis: result.analysis,
+      stats,
+      draftReason: safe ? undefined : 'Safety gate: a required safety or behavior phrase was dropped from the combined prompt. Saved as draft for manual review.',
+    });
   }
 
   private async getActivePrompt(): Promise<string | null> {
@@ -392,4 +437,14 @@ Write 2–5 specific new behavioral rules to add to Grace's prompt that fix the 
 
     return nextVersion;
   }
+}
+
+function emptyStats(): OptimizerRunReport['stats'] {
+  return {
+    totalMessages: 0,
+    negativeCount: 0,
+    positiveCount: 0,
+    fallbackCount: 0,
+    satisfactionPct: null,
+  };
 }

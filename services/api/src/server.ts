@@ -192,33 +192,68 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 function buildOptimizerReport(r: OptimizerRunReport): string {
-  const { stats, activated, version, analysis, draftReason } = r;
+  const { status, stats, version, analysis, draftReason } = r;
   const pct = stats.satisfactionPct !== null ? `${stats.satisfactionPct}% positive` : 'no ratings';
   const statsLine = `${stats.totalMessages} msgs · ${stats.positiveCount}👍 ${stats.negativeCount}👎 · ${pct} · ${stats.fallbackCount} fallbacks`;
 
-  if (activated) {
-    return [
-      `🤖 Grace RLHF Report — v${version} activated`,
-      ``,
-      `📊 Last 14 days: ${statsLine}`,
-      ``,
-      `What changed: ${analysis}`,
-      ``,
-      `Same patterns prevented: the updated prompt now handles these cases with explicit rules. Review at graceglp.com/admin/prompts`,
-    ].join('\n');
-  }
+  switch (status) {
+    case 'activated':
+      return [
+        `🤖 Grace RLHF Report — v${version} activated`,
+        ``,
+        `📊 Last 14 days: ${statsLine}`,
+        ``,
+        `What changed: ${analysis}`,
+        ``,
+        `Review at graceglp.com/admin/prompts`,
+      ].join('\n');
 
-  return [
-    `🤖 Grace RLHF Report — v${version} saved as DRAFT`,
-    ``,
-    `📊 Last 14 days: ${statsLine}`,
-    ``,
-    `⚠️ Not auto-activated — ${draftReason}`,
-    ``,
-    `What the optimizer found: ${analysis}`,
-    ``,
-    `Action needed: review and manually activate at graceglp.com/admin/prompts`,
-  ].join('\n');
+    case 'draft':
+      return [
+        `🤖 Grace RLHF Report — v${version} saved as DRAFT`,
+        ``,
+        `📊 Last 14 days: ${statsLine}`,
+        ``,
+        `⚠️ Not auto-activated — ${draftReason ?? 'safety gate failed'}`,
+        ``,
+        `What the optimizer found: ${analysis}`,
+        ``,
+        `Action needed: review and manually activate at graceglp.com/admin/prompts`,
+      ].join('\n');
+
+    case 'skipped_insufficient_data':
+      return [
+        `🤖 Grace RLHF Report — skipped`,
+        ``,
+        `📊 Last 14 days: ${statsLine}`,
+        ``,
+        `Not enough signal to learn from yet. ${analysis}`,
+      ].join('\n');
+
+    case 'skipped_no_active_prompt':
+      return `🤖 Grace RLHF Report — skipped\n\n⚠️ ${analysis}`;
+
+    case 'skipped_lock_held':
+      return `🤖 Grace RLHF Report — skipped (lock held by other machine)`;
+
+    case 'skipped_generation_failed':
+      return [
+        `🤖 Grace RLHF Report — failed`,
+        ``,
+        `📊 Last 14 days: ${statsLine}`,
+        ``,
+        `⚠️ ${analysis}`,
+      ].join('\n');
+
+    case 'error':
+      return [
+        `🤖 Grace RLHF Report — crashed`,
+        ``,
+        `⚠️ ${analysis}`,
+        ``,
+        `Check fly logs --app grace-api for the stack trace.`,
+      ].join('\n');
+  }
 }
 
 export { buildServer };

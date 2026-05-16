@@ -51,10 +51,11 @@ export class ToolRegistry {
           setTimeout(() => reject(new Error(`tool_timeout:${call.name}`)), timeoutMs),
         ),
       ]);
-      return { name: call.name, ok: true, output, latencyMs: Date.now() - started };
+      return { name: call.name, args: call.args, ok: true, output, latencyMs: Date.now() - started };
     } catch (err) {
       return {
         name: call.name,
+        args: call.args,
         ok: false,
         error: err instanceof Error ? err.message : String(err),
         latencyMs: Date.now() - started,

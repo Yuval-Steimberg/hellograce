@@ -214,7 +214,7 @@ export class AIService {
           .query(
             `INSERT INTO tool_logs (user_id, conversation_id, tool_name, args, ok, output, error, latency_ms)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [input.userId, conversationId, tr.name, JSON.stringify({}), tr.ok, JSON.stringify(tr.output ?? null), tr.error ?? null, tr.latencyMs],
+            [input.userId, conversationId, tr.name, JSON.stringify(tr.args ?? {}), tr.ok, JSON.stringify(tr.output ?? null), tr.error ?? null, tr.latencyMs],
           )
           .catch((err) => logger.warn({ err }, 'tool_logs.insert.failed'));
       }
@@ -256,16 +256,25 @@ export class AIService {
 
     const lines: string[] = [];
     if (user) {
-      // Time-of-day awareness — user-local, not server-local.
+      // Time-of-day and weekday awareness — always in user-local timezone, never UTC.
+      const WEEK_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      let localWeekday = '';
+      let localTodayIdx = new Date().getDay(); // fallback: UTC (used only for injection day)
       try {
         const tz = user.timezone || 'America/New_York';
         const parts = new Intl.DateTimeFormat('en-US', {
           timeZone: tz, weekday: 'long', hour: '2-digit', hour12: false,
         }).formatToParts(new Date());
-        const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
+        localWeekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
         const hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10);
         const timeOfDay = hour < 5 ? 'night' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
-        if (weekday) lines.push(`Today is: ${weekday}`);
+        if (localWeekday) {
+          lines.push(`Today is: ${localWeekday}`);
+          // Use the user-local weekday for all day-of-week calculations so that
+          // midnight-boundary users (e.g. West Coast at 11pm = UTC next day) see the right day.
+          localTodayIdx = WEEK_DAYS.indexOf(localWeekday);
+          if (localTodayIdx === -1) localTodayIdx = new Date().getDay();
+        }
         lines.push(`Time of day for this user right now: ${timeOfDay}`);
       } catch {
         // Fall back silently if timezone is malformed.
@@ -288,12 +297,10 @@ export class AIService {
         lines.push(`Food dislikes — NEVER suggest these, paraphrase naturally (don't echo verbatim): ${clean.join(', ')}`);
       }
       if (user.injection_day) {
-        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        const todayIdx = new Date().getDay();
-        const injIdx = days.indexOf(user.injection_day);
+        const injIdx = WEEK_DAYS.indexOf(user.injection_day);
         let injStatus = user.injection_day;
         if (injIdx !== -1) {
-          let diff = injIdx - todayIdx;
+          let diff = injIdx - localTodayIdx;
           if (diff < 0) diff += 7;
           if (diff === 0) injStatus = `TODAY (${user.injection_day}) — injection day`;
           else if (diff === 1) injStatus = `TOMORROW (${user.injection_day}) — injection day is tomorrow`;

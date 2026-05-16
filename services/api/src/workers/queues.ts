@@ -1,18 +1,13 @@
 import { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
+import type { ToolResult } from '@grace/shared';
 
 export interface TurnPersistJob {
   userId: string;
   conversationId: string;
   userText: string;
   assistantText: string;
-  toolResults: Array<{
-    name: string;
-    ok: boolean;
-    output?: unknown;
-    error?: string;
-    latencyMs: number;
-  }>;
+  toolResults: ToolResult[];
 }
 
 let _turnQueue: Queue<TurnPersistJob> | null = null;

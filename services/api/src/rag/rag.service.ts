@@ -43,7 +43,7 @@ export class RagService {
               (1 - (embedding <=> $1::vector)) + COALESCE(feedback_score, 0) * 0.05 AS score
        FROM embeddings
        WHERE (user_id = $2 OR user_id IS NULL)
-       ORDER BY embedding <=> $1::vector
+       ORDER BY (1 - (embedding <=> $1::vector)) + COALESCE(feedback_score, 0) * 0.05 DESC
        LIMIT $3`,
       [vecLiteral, opts.userId, topK],
     );

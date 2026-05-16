@@ -25,7 +25,7 @@ export function createTurnPersistWorker(deps: {
         await deps.pool.query(
           `INSERT INTO tool_logs (user_id, conversation_id, tool_name, args, ok, output, error, latency_ms)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [userId, conversationId, tr.name, JSON.stringify({}), tr.ok, JSON.stringify(tr.output ?? null), tr.error ?? null, tr.latencyMs],
+          [userId, conversationId, tr.name, JSON.stringify(tr.args ?? {}), tr.ok, JSON.stringify(tr.output ?? null), tr.error ?? null, tr.latencyMs],
         );
       }
     },

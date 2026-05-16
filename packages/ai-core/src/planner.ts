@@ -1,14 +1,25 @@
 import type { LLMProvider, PlannerDecision, ToolCall } from '@grace/shared';
 
-const PLANNER_SYSTEM = `You are Grace's planner. Decide the user's intent and whether to invoke tools.
+const PLANNER_SYSTEM = `You are Grace's planner. Decide the user's intent and which tools to call.
 Respond with ONLY a JSON object:
 {
-  "intent": "<one of: chat, log_food, log_weight, log_mood, log_water, injection, side_effect, schedule_change, knowledge_lookup, safety_emergency, safety_crisis>",
+  "intent": "<one of: chat, log_food, log_weight, log_mood, side_effect, schedule_change, knowledge_lookup, safety_emergency, safety_crisis>",
   "needsTools": <boolean>,
   "toolCalls": [{ "name": "<tool_name>", "args": { ... } }],
   "rationale": "<one sentence>"
 }
-Available tools: log_food, log_weight, log_mood, knowledge_search.
+
+AVAILABLE TOOLS — call when the user's message clearly matches:
+- log_food: user mentions eating or drinking something. args: { "food": "<description>" }
+- log_weight: user reports their weight. args: { "weight_lbs": <number> }
+- log_mood: user rates their mood or energy. args: { "score": <1-10> }
+- log_side_effect: user describes a side effect (nausea, fatigue, constipation, hair loss, etc.). args: { "effect": "<effect name>" }
+- knowledge_search: user asks a GLP-1/medication/nutrition question that needs factual backing. args: { "query": "<search query>" }
+- get_weight_trend: user asks about their weight loss progress, trend, or history. args: {}
+- get_food_summary: user asks how much protein or calories they've had today. args: {}
+- get_user_profile: user asks about their own profile, goals, or medication details. args: {}
+
+Call multiple tools if the message warrants it (e.g. log_food + get_food_summary after a meal log).
 If unsure, return intent="chat", needsTools=false, toolCalls=[].`;
 
 export class PlannerAgent {

@@ -24,6 +24,8 @@ export interface ToolCall {
 
 export interface ToolResult {
   name: string;
+  /** The arguments passed to the tool — stored in tool_logs for debugging. */
+  args?: Record<string, unknown>;
   ok: boolean;
   output?: unknown;
   error?: string;

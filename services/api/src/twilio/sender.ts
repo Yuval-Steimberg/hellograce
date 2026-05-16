@@ -15,6 +15,54 @@ export interface OutboundMessage {
   body: string;
 }
 
+/**
+ * Last-line-of-defense sanitizer applied to EVERY outbound message,
+ * regardless of source (AI orchestrator, scheduler, hardcoded webhook
+ * replies, safety guard, etc).
+ *
+ * Catches two recurring failure modes that users complain about:
+ *  1. Em-dashes / en-dashes / double-dashes — AI-tell punctuation that
+ *     slips through when a message bypasses the orchestrator's enforceFormat.
+ *  2. Mid-sentence truncation — message ends in a hyphen, single letter,
+ *     or stranded preposition/article with no terminal punctuation.
+ */
+export function sanitizeOutbound(input: string): string {
+  let text = input;
+
+  // Replace em-dash, en-dash, and 2+ hyphens with comma (preserves words).
+  text = text.replace(/\s*[—–]\s*/g, ', ');
+  text = text.replace(/\s*--+\s*/g, ', ');
+  // " - " used as a dash on one line → comma.
+  text = text.replace(/(\S)[ \t]+-[ \t]+(\S)/g, '$1, $2');
+
+  // Mid-sentence truncation repair.
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return text;
+
+  const endsMidWord =
+    /[-–—]$/.test(trimmed) ||
+    /\s(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be)$/i.test(trimmed) ||
+    !/[.!?…)]$|[\p{Extended_Pictographic}]$/u.test(trimmed);
+
+  if (endsMidWord) {
+    // Find the last complete sentence terminator and trim everything after it.
+    const lastTerminator = Math.max(
+      trimmed.lastIndexOf('.'),
+      trimmed.lastIndexOf('!'),
+      trimmed.lastIndexOf('?'),
+      trimmed.lastIndexOf('…'),
+    );
+    if (lastTerminator > 0) {
+      text = trimmed.slice(0, lastTerminator + 1);
+    } else {
+      // No complete sentence at all — append a period rather than ship a stub.
+      text = trimmed.replace(/[-–—\s]+$/, '') + '.';
+    }
+  }
+
+  return text;
+}
+
 export class TwilioSender {
   private client: twilio.Twilio;
   constructor(private cfg: TwilioSenderConfig, private logger: Logger) {
@@ -27,8 +75,10 @@ export class TwilioSender {
     if (!from) throw new UpstreamError('No Twilio sender configured for channel');
     const to = useWhatsapp && !msg.to.startsWith('whatsapp:') ? `whatsapp:${msg.to}` : msg.to;
 
+    const body = sanitizeOutbound(msg.body);
+
     try {
-      const result = await this.client.messages.create({ from, to, body: msg.body });
+      const result = await this.client.messages.create({ from, to, body });
       this.logger.info({ sid: result.sid, channel: useWhatsapp ? 'whatsapp' : 'sms' }, 'twilio.send.ok');
       return { sid: result.sid };
     } catch (err) {

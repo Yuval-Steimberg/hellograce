@@ -152,6 +152,28 @@ export function enforceFormat(input: string, opts?: { stripFirstName?: string })
     }
   }
 
+  // ─── Hard length cap (WhatsApp readability) ─────────────────────────
+  // Responses over 600 characters are walls of text on mobile. Truncate at
+  // the last sentence ending (. ! ?) that fits within the limit. If the
+  // entire response is under the limit, this is a no-op.
+  const MAX_CHARS = 600;
+  if (text.length > MAX_CHARS) {
+    const window = text.slice(0, MAX_CHARS + 1);
+    const lastEnd = Math.max(
+      window.lastIndexOf('. '),
+      window.lastIndexOf('! '),
+      window.lastIndexOf('? '),
+      window.lastIndexOf('.\n'),
+      window.lastIndexOf('!\n'),
+      window.lastIndexOf('?\n'),
+    );
+    if (lastEnd > MAX_CHARS / 2) {
+      // Trim after the terminal punctuation (keep the '.' itself)
+      text = text.slice(0, lastEnd + 1).trim();
+      fixes.push('length_capped');
+    }
+  }
+
   // ─── Final whitespace cleanup ─────────────────────────────────────────
   // Drop leading/trailing whitespace per line, collapse 3+ blank lines.
   text = text

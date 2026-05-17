@@ -105,7 +105,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       const adminPhone = env.ADMIN_PHONE;
       if (!adminPhone) return;
       const msg = buildOptimizerReport(report);
-      await sender.send({ to: adminPhone, body: msg, channel: 'whatsapp' });
+      await sender.send({ to: adminPhone, body: msg, channel: 'whatsapp', raw: true });
       logger.info({ adminPhone, version: report.version }, 'prompt_optimizer.report_sent');
     },
   });

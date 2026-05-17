@@ -13,6 +13,8 @@ export interface OutboundMessage {
   to: string;
   channel: 'whatsapp' | 'sms';
   body: string;
+  /** Skip the AI-text sanitizer. Use for hardcoded admin/report messages. */
+  raw?: boolean;
 }
 
 /**
@@ -75,7 +77,7 @@ export class TwilioSender {
     if (!from) throw new UpstreamError('No Twilio sender configured for channel');
     const to = useWhatsapp && !msg.to.startsWith('whatsapp:') ? `whatsapp:${msg.to}` : msg.to;
 
-    const body = sanitizeOutbound(msg.body);
+    const body = msg.raw ? msg.body : sanitizeOutbound(msg.body);
 
     try {
       const result = await this.client.messages.create({ from, to, body });

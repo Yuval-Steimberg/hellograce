@@ -28,15 +28,15 @@ describe('precheckGrounding', () => {
     expect(r.unsupported).toHaveLength(0);
   });
 
-  it('flags a duration claim that has no support', () => {
+  it('does NOT flag a duration like "6 weeks" — removed to reduce false positives on nutrition advice', () => {
     const r = precheckGrounding('You should see results in 6 weeks.', [doc('GLP-1s reduce appetite.')]);
-    expect(r.unsupported.some((c) => c.kind === 'duration')).toBe(true);
+    expect(r.detected.some((c) => c.kind === 'dose')).toBe(false);
+    expect(r.unsupported).toHaveLength(0);
   });
 
-  it('flags a frequency claim', () => {
-    const r = precheckGrounding('Take it twice a week to be safe.', []);
-    expect(r.detected.some((c) => c.kind === 'frequency')).toBe(true);
-    expect(r.unsupported.length).toBeGreaterThan(0);
+  it('does NOT flag exercise frequency like "twice a week" — only drug doses trigger grounding', () => {
+    const r = precheckGrounding('Try resistance training twice a week.', []);
+    expect(r.detected).toHaveLength(0);
   });
 
   it('flags a percentage weight-loss claim without KB support', () => {
@@ -71,7 +71,7 @@ describe('precheckGrounding', () => {
       'Got it — you mentioned you started Ozempic last month.',
       [doc('Patient profile')],
     );
-    expect(r.detected.filter((c) => c.kind !== 'duration')).toHaveLength(0);
+    expect(r.detected).toHaveLength(0);
   });
 });
 

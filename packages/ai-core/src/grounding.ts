@@ -19,10 +19,12 @@ import type { RetrievedDoc } from '@grace/shared';
 
 export type ClaimKind =
   | 'dose'              // "2mg", "1.0 mg", "100 mcg"
-  | 'duration'          // "4 weeks", "for 3 days"
   | 'percentage'        // "20% weight loss"
-  | 'interaction'       // "safe to take X with Y", "fine to combine"
-  | 'frequency';        // "twice a week", "every 5 days"
+  | 'interaction';      // "safe to take X with Y", "fine to combine"
+  // NOTE: 'duration' and 'frequency' were removed — "4 weeks" and "twice a
+  // week" appear constantly in nutrition/exercise advice and cause too many
+  // false-positive regen cycles. Only drug doses and interaction-safety
+  // claims are genuinely dangerous when wrong.
 
 export interface DetectedClaim {
   kind: ClaimKind;
@@ -40,20 +42,15 @@ export interface GroundingResult {
 }
 
 const DOSE_RE = /\b\d+(?:\.\d+)?\s*(?:mg|mcg|µg|ml|units?)\b/gi;
-const DURATION_RE = /\b\d+\s*(?:second|minute|hour|day|week|month|year)s?\b/gi;
 // `%` is non-word, so a trailing `\b` would never match. Use word boundary
 // only when the literal token is "percent".
 const PERCENT_RE = /\b\d+(?:\.\d+)?\s*(?:%|percent\b)/gi;
-const FREQUENCY_RE =
-  /\b(?:once|twice|three times|four times|\d+\s*times?)\s*(?:a|per|every)\s*(?:day|week|month|year)\b/gi;
 const INTERACTION_RE =
   /\b(?:safe|fine|okay|ok|no problem|won't interact|doesn't interact|no interaction)\s+(?:to\s+)?(?:take|combine|mix|drink|use|eat)\b/gi;
 
 const CLAIM_DETECTORS: Array<{ kind: ClaimKind; re: RegExp }> = [
   { kind: 'dose', re: DOSE_RE },
-  { kind: 'duration', re: DURATION_RE },
   { kind: 'percentage', re: PERCENT_RE },
-  { kind: 'frequency', re: FREQUENCY_RE },
   { kind: 'interaction', re: INTERACTION_RE },
 ];
 
@@ -102,9 +99,7 @@ function isSupported(claim: DetectedClaim, haystackLower: string): boolean {
       // like "interaction" / "combined" / "contraindicates". No trailing \b.
       return /\b(?:interact|combin|contraindic|avoid taking)/i.test(haystackLower);
     case 'dose':
-    case 'duration':
-    case 'percentage':
-    case 'frequency': {
+    case 'percentage': {
       const num = lit.match(/\d+(?:\.\d+)?/)?.[0];
       return num !== undefined && haystackLower.includes(num);
     }

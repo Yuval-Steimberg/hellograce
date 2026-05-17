@@ -2,7 +2,15 @@ import type { Pool } from 'pg';
 import type { LLMProvider } from '@grace/shared';
 import type { Logger } from 'pino';
 
-const SAFE_FALLBACK_SNIPPET = "I'm not sure I caught all of that";
+// All safe fallback variants used by getNextSafeFallback() in orchestrator.ts.
+// Keep in sync with SAFE_FALLBACK_TEXTS there.
+const SAFE_FALLBACK_SNIPPETS = [
+  'Not sure I got all of that',
+  'I missed something there',
+  "didn't quite follow",
+  'make sure I get this right',
+  'missed part of what you meant',
+];
 const MIN_ADDITIONS_LENGTH = 20;
 
 // Phrases the canonical Grace prompt depends on. If the optimizer's generated
@@ -270,12 +278,13 @@ export class PromptOptimizer {
       [since, POS_SAMPLE_LIMIT],
     );
 
+    const fallbackConditions = SAFE_FALLBACK_SNIPPETS.map((_, i) => `content ILIKE $${i + 2}`).join(' OR ');
     const { rows: fallbackRows } = await this.pool.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM messages
        WHERE role = 'assistant'
-         AND content ILIKE $1
-         AND created_at > $2`,
-      [`%${SAFE_FALLBACK_SNIPPET}%`, since],
+         AND (${fallbackConditions})
+         AND created_at > $1`,
+      [since, ...SAFE_FALLBACK_SNIPPETS.map((s) => `%${s}%`)],
     );
 
     const { rows: totalRows } = await this.pool.query<{ count: string }>(

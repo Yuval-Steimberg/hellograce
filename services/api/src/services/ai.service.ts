@@ -549,6 +549,9 @@ const VEGETARIAN_FORBIDDEN = [
   'shrimp', 'prawns', 'crab', 'lobster', 'scallops', 'oysters', 'mussels', 'clams',
   'bacon', 'ham', 'sausage', 'pepperoni', 'salami', 'prosciutto', 'jerky',
   'meat', 'poultry', 'seafood',
+  // Eggs are excluded by many vegetarians (lacto-vegetarian, strict/Hindu vegetarian).
+  // Safer to omit and let users ask specifically if they eat eggs.
+  'eggs',
 ];
 const VEGAN_FORBIDDEN = [
   ...VEGETARIAN_FORBIDDEN,
@@ -562,7 +565,7 @@ const PESCATARIAN_FORBIDDEN = [
 ];
 
 const VEGETARIAN_ALLOWED = [
-  'Greek yogurt', 'cottage cheese', 'eggs', 'cheese', 'milk', 'edamame',
+  'Greek yogurt', 'cottage cheese', 'cheese', 'milk', 'edamame',
   'tofu', 'tempeh', 'seitan', 'lentils', 'beans', 'chickpeas',
   'quinoa', 'nuts', 'nut butters', 'protein shake (whey or plant)',
 ];

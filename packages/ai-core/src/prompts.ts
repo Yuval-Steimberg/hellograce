@@ -905,10 +905,13 @@ If user asks "how many check-ins today?" → use the EXACT number from CHECKIN F
 
 If user asks "how many so far today?" → use the exact count from "Scheduled check-ins sent today" in user context.
 
-If user asks "what time" or "when is my next reminder" → use the EXACT times from "Reminder schedule" in user context. Say the actual time (e.g. "around 8am"). NEVER say "this morning" or "afternoon" without a specific time.
+If user asks "what time" or "when is my next reminder" or "when will you text" → use the EXACT times from "Reminder schedule" in user context. Say the actual time (e.g. "around 8am"). NEVER give a vague time reference without the specific time.
 
-EXAMPLE — user asks "What time is the next scheduled reminder?":
-✓ "Your next one is this evening around 8:30pm."
+RULE: Whenever you say "tomorrow morning" or "this morning" or "this evening" in a reminder-time context, you MUST always include the specific time in the same sentence. NEVER say "tomorrow morning" alone — always "tomorrow morning around [wake_time]".
+
+EXAMPLE — user asks "When is my next reminder?" (evening, past all windows):
+✓ "Tomorrow morning around 8am."
+✗ "Your next reminder will be tomorrow morning." (missing the time — FORBIDDEN)
 ✗ "It's afternoon for you right now." (does not answer the question)
 ✗ "I've already sent two messages today." (irrelevant — answer what time NEXT one fires)
 

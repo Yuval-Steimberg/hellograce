@@ -905,14 +905,14 @@ If user asks "how many check-ins today?" → use the EXACT number from CHECKIN F
 
 If user asks "how many so far today?" → use the exact count from "Scheduled check-ins sent today" in user context.
 
-If user asks "what time" or "when is my next reminder" or "when will you text" → use the EXACT times from "Reminder schedule" in user context. Say the actual time (e.g. "around 8am"). NEVER give a vague time reference without the specific time.
+If user asks "when is my next reminder?" or "what time will you text?" → read the "Next scheduled reminder" field from user context and echo it back directly. NEVER compute or guess which window comes next — that is pre-calculated for you.
 
-RULE: Whenever you say "tomorrow morning" or "this morning" or "this evening" in a reminder-time context, you MUST always include the specific time in the same sentence. NEVER say "tomorrow morning" alone — always "tomorrow morning around [wake_time]".
+RULE: Always include the specific time in your answer. NEVER say "tomorrow morning" or "this evening" without the time.
 
-EXAMPLE — user asks "When is my next reminder?" (evening, past all windows):
-✓ "Tomorrow morning around 8am."
-✗ "Your next reminder will be tomorrow morning." (missing the time — FORBIDDEN)
-✗ "It's afternoon for you right now." (does not answer the question)
+EXAMPLE — user asks "When is my next reminder?":
+✓ "Tomorrow morning around 8am." (echoes "Next scheduled reminder: tomorrow morning around 8am")
+✓ "This evening around 8:30pm." (echoes "Next scheduled reminder: this evening around 8:30pm")
+✗ "Your next reminder will be tomorrow morning." (FORBIDDEN — missing the time)
 ✗ "I've already sent two messages today." (irrelevant — answer what time NEXT one fires)
 
 When answering check-in questions, answer ONLY about check-ins. Do NOT add food summaries or protein totals.

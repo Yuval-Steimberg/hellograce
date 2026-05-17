@@ -424,17 +424,53 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       if (user.hydration_struggle) lines.push('User struggles with hydration — gently mention water when relevant.');
 
       // Schedule context — lets Grace answer "what time is my next reminder?" accurately.
-      if (user.wake_time && user.sleep_time) {
+      if (user.wake_time) {
         const [wh, wm] = user.wake_time.split(':').map(Number);
-        const [sh, sm] = user.sleep_time.split(':').map(Number);
-        // Evening fires 90 min before sleep_time
-        const eveningTotalMin = sh! * 60 + sm! - 90;
-        const eveningLabel = formatHour(Math.floor(eveningTotalMin / 60), eveningTotalMin % 60);
-        lines.push(`Wake time: ${formatHour(wh!, wm!)} | Sleep time: ${formatHour(sh!, sm!)}`);
-        lines.push(`Reminder schedule: morning ~${formatHour(wh!, wm!)} | midday Mon/Wed/Fri ~11am-2pm | evening Tue/Thu/Sun ~${eveningLabel}`);
-      } else if (user.wake_time) {
-        const [wh, wm] = user.wake_time.split(':').map(Number);
-        lines.push(`Wake time: ${formatHour(wh!, wm!)}`);
+        const morningLabel = formatHour(wh!, wm!);
+        let eveningMin = -1;
+        let eveningLabel = '';
+        if (user.sleep_time) {
+          const [sh, sm] = user.sleep_time.split(':').map(Number);
+          eveningMin = sh! * 60 + sm! - 90;
+          eveningLabel = formatHour(Math.floor(eveningMin / 60), eveningMin % 60);
+          lines.push(`Wake time: ${morningLabel} | Sleep time: ${formatHour(sh!, sm!)}`);
+          lines.push(`Reminder schedule: morning ~${morningLabel} | midday Mon/Wed/Fri ~11am-2pm | evening Tue/Thu/Sun ~${eveningLabel}`);
+        } else {
+          lines.push(`Wake time: ${morningLabel}`);
+        }
+        // Compute next reminder explicitly in code so Grace never has to reason about
+        // which window has passed — she just reads the pre-computed label.
+        try {
+          const tz = user.timezone || 'America/New_York';
+          const timeParts = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+          }).formatToParts(new Date());
+          const nowH = parseInt(timeParts.find((p) => p.type === 'hour')?.value ?? '0', 10);
+          const nowM = parseInt(timeParts.find((p) => p.type === 'minute')?.value ?? '0', 10);
+          const nowMin = nowH * 60 + nowM;
+          const wakeMin = wh! * 60 + wm!;
+          // Evening days: Sun(0), Tue(2), Thu(4). Midday days: Mon(1), Wed(3), Fri(5).
+          const isEveningDay = [0, 2, 4].includes(localTodayIdx);
+          const isMiddayDay = [1, 3, 5].includes(localTodayIdx);
+          // Generous buffer: morning window closes 60 min after wake_time to
+          // avoid flip-flopping if the message fires slightly late.
+          const morningPast = nowMin > wakeMin + 60;
+          const middayPast = nowMin > 14 * 60; // after 2pm, midday window closed
+          const eveningPast = eveningMin > 0 && nowMin > eveningMin;
+          let nextReminder: string;
+          if (!morningPast) {
+            nextReminder = `this morning around ${morningLabel}`;
+          } else if (isMiddayDay && !middayPast) {
+            nextReminder = `today around midday (11am-2pm window)`;
+          } else if (isEveningDay && eveningMin > 0 && !eveningPast) {
+            nextReminder = `this evening around ${eveningLabel}`;
+          } else {
+            nextReminder = `tomorrow morning around ${morningLabel}`;
+          }
+          lines.push(`Next scheduled reminder: ${nextReminder}`);
+        } catch {
+          // ignore — best-effort
+        }
       }
 
       // Frequency + today's send count — used by the prompt's "HOW GRACE EXPLAINS

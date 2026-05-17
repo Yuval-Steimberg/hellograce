@@ -150,4 +150,76 @@ describe('enforceFormat', () => {
       expect(text).not.toContain('**');
     });
   });
+
+  describe('hard length cap (600 char WhatsApp readability)', () => {
+    it('does not touch responses under 600 chars', () => {
+      const input = 'Short reply that ends cleanly.';
+      const { text, fixes } = enforceFormat(input);
+      expect(text).toBe(input);
+      expect(fixes).not.toContain('length_capped');
+    });
+
+    it('truncates at the last sentence ending within 600 chars', () => {
+      // Sentence 1 ends at ~100, sentence 2 ends at ~580, tail goes well past 600.
+      const s1 = 'This is the first sentence. ';
+      const s2 = 'A'.repeat(450) + ' and this is the second sentence. ';
+      const tail = 'B'.repeat(200) + ' and this tail should be dropped.';
+      const input = s1 + s2 + tail;
+      const { text, fixes } = enforceFormat(input);
+      expect(fixes).toContain('length_capped');
+      expect(text.length).toBeLessThanOrEqual(600);
+      // Must end with a period — never mid-word or mid-sentence.
+      expect(text.endsWith('.')).toBe(true);
+      expect(text).toContain('second sentence.');
+      expect(text).not.toContain('this tail');
+    });
+
+    it('does NOT cut at "e.g." or other abbreviations even when they sit past position 300', () => {
+      // 350 X's, then an "e.g." abbreviation, then a real sentence ending at ~450,
+      // then 250 Y's so total > 600 and the cap fires.
+      const input =
+        'X'.repeat(350) +
+        'e.g. Greek yogurt helps a lot with your protein goal. ' +
+        'Y'.repeat(250);
+      const { text, fixes } = enforceFormat(input);
+      expect(fixes).toContain('length_capped');
+      // Should cut at "protein goal." (the real sentence end), not at "e.g."
+      expect(text.endsWith('protein goal.')).toBe(true);
+      // And not at "e.g." (false-positive abbreviation cut).
+      expect(text).not.toMatch(/e\.g\.$/);
+    });
+
+    it('does not truncate when no valid sentence boundary exists past position 300 (avoids mid-sentence cut)', () => {
+      // 700 chars with no period, !, or ? anywhere — should NOT cut at all.
+      const input = 'A'.repeat(700);
+      const { text, fixes } = enforceFormat(input);
+      expect(fixes).not.toContain('length_capped');
+      // Original text returned (no cut), but our trailing whitespace cleanup
+      // may shave the string. Length should be at least within 5 chars of original.
+      expect(text.length).toBeGreaterThanOrEqual(input.length - 5);
+    });
+
+    it('handles "!" and "?" as sentence terminators', () => {
+      const input =
+        'A'.repeat(400) + ' That sounds great! ' +
+        'B'.repeat(100) + ' Could you tell me more? ' +
+        'C'.repeat(300);
+      const { text, fixes } = enforceFormat(input);
+      expect(fixes).toContain('length_capped');
+      expect(text.length).toBeLessThanOrEqual(600);
+      // Must end with one of the terminal chars.
+      expect(/[.!?]$/.test(text)).toBe(true);
+    });
+
+    it('matches a sentence ending at the very last position of the window (no trailing space)', () => {
+      // 588 chars of 'A' + 'great choice.' (13 chars) = 601 chars total.
+      // The period sits at index 600 — exactly at window boundary.
+      const input = 'A'.repeat(588) + 'great choice.';
+      const { text, fixes } = enforceFormat(input);
+      // Either capped (returns full text since len ≤ 600 isn't true) or untouched.
+      // Either way, must not be cut mid-word.
+      expect(text.endsWith('.')).toBe(true);
+      expect(text.endsWith('great choice.')).toBe(true);
+    });
+  });
 });

@@ -159,10 +159,14 @@ export class Scheduler {
     }
 
     // ── Evening wind-down (Tue/Thu/Sun, ~90 min before sleep, randomized ±15)
-    // Base time = sleep_hour - 1:30; jitter 0-30 shifts to roughly -1:30 to -1:00.
+    // Base time = sleep_hour - 1:30; jitter 0–30 shifts to roughly -1:30 to -1:00.
+    // Cap jitter so the full 5-minute delivery window ends before quiet hours
+    // (21:00 = 1260 min). Without this cap, sleep_time='22:00' users with
+    // jitter near 30 get a window straddling 9pm — 4 of 5 ticks are blocked.
     const sleepHour = parseInt(user.sleep_time.split(':')[0]!, 10);
     const eveningBaseMin = (sleepHour - 2) * 60 + 30;
-    const eveningOffset = jitterMinutes(`${user.phone}-${todayStr}-evening`, 30);
+    const eveningMaxJitter = Math.max(0, Math.min(30, 21 * 60 - 6 - eveningBaseMin));
+    const eveningOffset = eveningMaxJitter > 0 ? jitterMinutes(`${user.phone}-${todayStr}-evening`, eveningMaxJitter) : 0;
     const eveningTargetMin = eveningBaseMin + eveningOffset;
     const isEveningWindow =
       EVENING_DAYS.has(dayOfWeek) &&

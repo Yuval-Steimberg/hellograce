@@ -199,6 +199,9 @@ describe('AIOrchestrator', () => {
       'Most patients lose 25% of their weight in 12 weeks.',
       // Retry stays bad — precheck still fails:
       'Studies show 25% loss within 12 weeks consistently.',
+      // Web-search fallback returns empty → tryWebSearchFallback returns null
+      // and we fall through to safe fallback.
+      '',
     ]);
     const tools = new ToolRegistry();
     const orch = new AIOrchestrator({ llm, tools });
@@ -233,6 +236,8 @@ describe('AIOrchestrator', () => {
       failingCriticJson,
       'Take double the dose tomorrow, easy fix.',
       failingCriticJson,
+      // Web-search fallback returns empty so we fall through to safe fallback.
+      '',
     ]);
     const tools = new ToolRegistry();
     const orch = new AIOrchestrator({ llm, tools });

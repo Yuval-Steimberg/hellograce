@@ -131,9 +131,11 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
 
         const responseText = result?.text ?? '';
         if (responseText.length > 0) {
+          // RLHF prompt is appended for ALL replies (including safe fallbacks)
+          // so users can flag bad fallbacks too — that signal is the most
+          // valuable for tuning the safe-fallback trigger thresholds.
           const isRlhfUser = user?.rlhf_enabled ?? false;
-          const isFallback = !!(result?.usedSafeFallback);
-          const body = (isRlhfUser && !isFallback)
+          const body = isRlhfUser
             ? `${responseText}\n\nRate this: 👍 👎\nOr start your reply with # to share a thought.`
             : responseText;
           await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });

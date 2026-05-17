@@ -144,6 +144,11 @@ export interface LLMRequest {
   temperature?: number;
   maxOutputTokens?: number;
   responseFormat?: 'text' | 'json';
+  /** Enable Gemini's built-in Google Search grounding — used as a last
+   *  resort when the KB has no answer (e.g. recent clinical research
+   *  Grace doesn't have indexed). Mutually exclusive with responseFormat
+   *  = 'json'. */
+  useGoogleSearch?: boolean;
 }
 
 export interface LLMResponse {

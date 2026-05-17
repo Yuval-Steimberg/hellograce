@@ -197,13 +197,31 @@ export class AIOrchestrator {
           validated = retryValidated;
           critic = retryCritic;
         } else {
-          validated = {
-            text: getNextSafeFallback(),
-            confidence: 'low',
-            flags: ['safe_fallback'],
-          };
-          critic = retryCritic;
-          usedSafeFallback = true;
+          // Last resort BEFORE the canned safe fallback: ask Gemini to answer
+          // with Google Search grounding. If the KB has nothing on a topic
+          // (e.g. recent research, GLP-1 muscle-loss percentages we don't index)
+          // the web has the answer. The model is forced to cite, and content
+          // checks still apply. Only blocks if web search ALSO returns nothing
+          // usable or violates a block-severity rule.
+          const webResult = await this.tryWebSearchFallback(
+            baseSystem,
+            input.text,
+            input.history,
+            contentCheckOpts,
+            stripName,
+          );
+          if (webResult) {
+            validated = webResult;
+            critic = retryCritic;
+          } else {
+            validated = {
+              text: getNextSafeFallback(),
+              confidence: 'low',
+              flags: ['safe_fallback'],
+            };
+            critic = retryCritic;
+            usedSafeFallback = true;
+          }
         }
       }
     }
@@ -219,6 +237,53 @@ export class AIOrchestrator {
       ...(regenerated ? { regenerated } : {}),
       ...(usedSafeFallback ? { usedSafeFallback } : {}),
     };
+  }
+
+  /**
+   * Last-resort: call Gemini with Google Search grounding enabled. Used
+   * when both the primary attempt and the regen failed. Returns the cleaned
+   * text on success, or null if web search also produced something we can't
+   * send (block violation, empty, or generation error).
+   *
+   * Grounding precheck is skipped here — the model's response IS grounded
+   * by Google. Block-severity content rules still apply (e.g. "I prescribe"
+   * is never OK, even if the web says it).
+   */
+  private async tryWebSearchFallback(
+    baseSystem: string,
+    userText: string,
+    history: OrchestratorInput['history'],
+    contentCheckOpts: Parameters<typeof checkContent>[1],
+    stripName: string | undefined,
+  ): Promise<ValidationResult | null> {
+    try {
+      const webResp = await this.deps.llm.generate({
+        messages: [
+          {
+            role: 'system',
+            content:
+              baseSystem +
+              '\n\nIMPORTANT: Your knowledge base did not have a confident answer for this question. ' +
+              'You may use Google Search to find scientific or medical information. ' +
+              'Stay in Grace\'s voice — warm, brief, no clinical jargon, no markdown. ' +
+              'If web search also returns nothing useful, say so honestly in one sentence.',
+          },
+          ...renderHistory(history),
+          { role: 'user', content: userText },
+        ],
+        temperature: 0.4,
+        maxOutputTokens: 2048,
+        useGoogleSearch: true,
+      });
+      const formatted = enforceFormat(webResp.text, stripName ? { stripFirstName: stripName } : {});
+      const validated = validateResponse(formatted.text);
+      if (!validated.text || validated.text.trim().length === 0) return null;
+      const violations = checkContent(validated.text, contentCheckOpts);
+      if (violations.some((v) => v.severity === 'block')) return null;
+      return validated;
+    } catch {
+      return null;
+    }
   }
 
   /**

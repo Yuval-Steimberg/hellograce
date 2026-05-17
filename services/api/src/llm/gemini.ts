@@ -51,9 +51,18 @@ export class GeminiProvider implements LLMProvider {
     contents: Content[],
     req: LLMRequest,
   ): Promise<LLMResponse> {
+    // Google Search grounding: enabled for last-resort web lookups when the
+    // KB has nothing. Cannot be combined with JSON mode. The SDK's Tool type
+    // doesn't yet declare `googleSearch`, but the Gemini 2.x REST API accepts
+    // it — cast to bypass the stale type.
+    const tools = req.useGoogleSearch && req.responseFormat !== 'json'
+      ? ([{ googleSearch: {} }] as unknown as Parameters<typeof this.client.getGenerativeModel>[0]['tools'])
+      : undefined;
+
     const model = this.client.getGenerativeModel({
       model: this.cfg.model,
       ...(systemInstruction ? { systemInstruction } : {}),
+      ...(tools ? { tools } : {}),
       generationConfig: {
         temperature: req.temperature ?? 0.6,
         maxOutputTokens: req.maxOutputTokens ?? 400,

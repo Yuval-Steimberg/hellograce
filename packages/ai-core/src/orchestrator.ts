@@ -263,10 +263,17 @@ export class AIOrchestrator {
             role: 'system',
             content:
               baseSystem +
-              '\n\nIMPORTANT: Your knowledge base did not have a confident answer for this question. ' +
-              'You may use Google Search to find scientific or medical information. ' +
-              'Stay in Grace\'s voice — warm, brief, no clinical jargon, no markdown. ' +
-              'If web search also returns nothing useful, say so honestly in one sentence.',
+              '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' +
+              '\nWEB RESEARCH MODE — last resort before falling back' +
+              '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' +
+              '\nYour knowledge base had no confident answer. Use Google Search to find:' +
+              '\n  1. Peer-reviewed research, clinical studies, or systematic reviews on GLP-1 medications' +
+              '\n  2. Guidelines from major medical bodies (Endocrine Society, ADA, FDA, NIH)' +
+              '\n  3. Recent (last 2 years) evidence-based GLP-1 nutrition and exercise research' +
+              '\nPrefer scientific sources over blogs or product sites.' +
+              '\n' +
+              '\nThen answer in Grace\'s voice: warm, brief (2-4 sentences), no clinical jargon, no markdown, no citations or URLs in the reply (you don\'t need to name sources).' +
+              '\nIf web search also returns nothing useful, say honestly in one sentence that you couldn\'t find a reliable answer and suggest the user ask their prescriber.',
           },
           ...renderHistory(history),
           { role: 'user', content: userText },

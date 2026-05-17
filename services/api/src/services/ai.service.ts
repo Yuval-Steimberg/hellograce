@@ -423,6 +423,20 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       if (user.protein_focus_boost) lines.push('User struggles with protein intake — nudge toward protein-rich options when relevant.');
       if (user.hydration_struggle) lines.push('User struggles with hydration — gently mention water when relevant.');
 
+      // Schedule context — lets Grace answer "what time is my next reminder?" accurately.
+      if (user.wake_time && user.sleep_time) {
+        const [wh, wm] = user.wake_time.split(':').map(Number);
+        const [sh, sm] = user.sleep_time.split(':').map(Number);
+        // Evening fires 90 min before sleep_time
+        const eveningTotalMin = sh! * 60 + sm! - 90;
+        const eveningLabel = formatHour(Math.floor(eveningTotalMin / 60), eveningTotalMin % 60);
+        lines.push(`Wake time: ${formatHour(wh!, wm!)} | Sleep time: ${formatHour(sh!, sm!)}`);
+        lines.push(`Reminder schedule: morning ~${formatHour(wh!, wm!)} | midday Mon/Wed/Fri ~11am-2pm | evening Tue/Thu/Sun ~${eveningLabel}`);
+      } else if (user.wake_time) {
+        const [wh, wm] = user.wake_time.split(':').map(Number);
+        lines.push(`Wake time: ${formatHour(wh!, wm!)}`);
+      }
+
       // Frequency + today's send count — used by the prompt's "HOW GRACE EXPLAINS
       // CHECK-INS" section so Grace can answer "how many today?" with the exact
       // number instead of a vague "a couple."
@@ -584,6 +598,12 @@ const PESCATARIAN_ALLOWED = [
  * categories the content-checker recognizes. Single source of truth — used
  * by buildPersonalisedPrompt and the orchestrator call.
  */
+function formatHour(h: number, m: number): string {
+  const period = h < 12 ? 'am' : 'pm';
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
+}
+
 export function inferMedicationType(
   medication: string | null,
 ): 'weekly_injection' | 'daily_pill' | 'daily_injection' | 'unknown' {

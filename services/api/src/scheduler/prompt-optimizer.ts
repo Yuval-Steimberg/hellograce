@@ -13,14 +13,25 @@ const SAFE_FALLBACK_SNIPPETS = [
 ];
 const MIN_ADDITIONS_LENGTH = 20;
 
-// Phrases the canonical Grace prompt depends on. If the optimizer's generated
-// additions somehow drop these from the COMBINED prompt, we reject auto-activation.
-// In practice, additions are appended to the base prompt, so these always survive.
+// Phrases that must remain in the COMBINED prompt.
+// In practice additions are appended to the base, so these always survive from the base.
 const REQUIRED_SAFETY_PHRASES = ['988', '911', 'doctor'];
 const REQUIRED_BEHAVIOR_PHRASES = [
   'BANNED',
   'graceglp.com/settings',
   'GLP-1',
+];
+
+// Patterns that must NEVER appear in the ADDITIONS text itself.
+// These catch the LLM contradicting or overriding critical existing rules.
+const FORBIDDEN_ADDITION_PATTERNS: Array<{ re: RegExp; reason: string }> = [
+  { re: /suggest.*dose|recommend.*dose|dose.*is.*\d/i, reason: 'dose suggestion override' },
+  { re: /ignore.{0,30}(previous|above|existing|rule|instruction)/i, reason: 'ignore-rules injection' },
+  { re: /override|disregard|supersede/i, reason: 'override injection' },
+  { re: /you (can|may|should) (suggest|recommend|advise).{0,30}(dose|drug|medication|inject)/i, reason: 'medical advice override' },
+  { re: /it.{0,10}(is )?(safe|okay|ok|fine) to (take|inject|use|double)/i, reason: 'unsafe safety claim' },
+  { re: /no need to.{0,30}(doctor|clinician|prescriber)/i, reason: 'doctor redirect removal' },
+  { re: /alcohol.{0,20}(safe|ok|fine|okay|allowed)/i, reason: 'alcohol safety override' },
 ];
 
 // Samples + lookback window.
@@ -196,6 +207,23 @@ export class PromptOptimizer {
       return;
     }
 
+    // Guard: reject additions that contain any forbidden override patterns.
+    // This prevents the LLM from contradicting hard safety rules even if the
+    // combined prompt still passes the phrase-presence check.
+    const forbiddenHit = FORBIDDEN_ADDITION_PATTERNS.find((p) => p.re.test(result.additions));
+    if (forbiddenHit) {
+      this.logger.warn({ reason: forbiddenHit.reason, additions: result.additions.slice(0, 300) }, 'prompt_optimizer.additions_blocked_forbidden_pattern');
+      await this.emitReport({
+        status: 'draft',
+        activated: false,
+        analysis: `Additions blocked — contained a forbidden pattern (${forbiddenHit.reason}). Saved as draft for manual review. The active prompt is unchanged.`,
+        stats,
+      });
+      // Save as draft so it's reviewable but NOT activated.
+      await this.saveVersion(`${currentPrompt.replace(new RegExp(`${ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*$`), '').trimEnd()}${ADDITIONS_MARKER}${result.additions.trim()}`, result.analysis, false);
+      return;
+    }
+
     // Strip any previous BEHAVIORAL ADJUSTMENTS block, then append fresh additions.
     const basePrompt = currentPrompt.replace(new RegExp(`${ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*$`), '').trimEnd();
     const newPrompt = `${basePrompt}${ADDITIONS_MARKER}${result.additions.trim()}`;
@@ -341,15 +369,21 @@ export class PromptOptimizer {
           role: 'system',
           content: `You are an expert at improving AI behavioral rules based on real user feedback.
 
-Grace is a WhatsApp companion for people on GLP-1 medications. You will write 2–5 SHORT, SPECIFIC behavioral rules to add to her existing prompt based on recent 👍/👎 feedback.
+Grace is a WhatsApp companion for people on GLP-1 medications. You will write 2–5 SHORT, SPECIFIC behavioral rules to ADD to her existing prompt based on recent 👍/👎 feedback.
 
-Rules for your output:
+HARD CONSTRAINTS — your output will be automatically rejected if violated:
+- NEVER suggest, override, or weaken any medical safety rule (doses, drug interactions, alcohol safety)
+- NEVER tell Grace to ignore, override, or supersede any existing rule
+- NEVER remove the doctor/clinician redirect for medical questions
+- ONLY ADD new rules — never rewrite, remove, or contradict existing ones
+- Rules must be purely about TONE, STYLE, SPECIFICITY, or COMMUNICATION PATTERNS
+- If you cannot find a safe improvement, write 1 minor style improvement
+
+Rules for your output format:
 - Each rule should be 1–2 sentences, written as an imperative instruction to Grace
 - Rules must directly address patterns visible in the 👎 feedback
 - Do NOT repeat rules that are clearly already in the existing prompt excerpt shown
-- Do NOT rewrite the full prompt — only write the new additions
 - Write rules in the same style as the existing prompt (direct, specific, WhatsApp-aware)
-- If the feedback is mostly positive or there are no clear failures, write 1 small improvement
 
 Respond with ONLY a JSON object — no markdown code fences, no prose, no commentary before or after.
 Schema: {"analysis": "<2-3 sentences explaining patterns and rules>", "additions": "<bullet list of new rules>"}

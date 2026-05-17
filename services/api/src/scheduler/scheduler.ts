@@ -243,7 +243,7 @@ export class Scheduler {
       const message = await this.deps.generator.generate(type, user, opts);
       // RLHF users get a feedback prompt on proactive messages too, not just reactive.
       const body = user.rlhf_enabled
-        ? `${message}\n\nRate this: 👍 👎`
+        ? `${message}\n\nRate this: 👍 👎\nOr start your reply with # to share a thought.`
         : message;
       await this.deps.sender.send({ to: user.phone, body, channel: 'whatsapp' });
       await this.deps.users.recordCheckIn({

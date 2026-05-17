@@ -134,7 +134,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           const isRlhfUser = user?.rlhf_enabled ?? false;
           const isFallback = !!(result?.usedSafeFallback);
           const body = (isRlhfUser && !isFallback)
-            ? `${responseText}\n\nRate this: 👍 👎`
+            ? `${responseText}\n\nRate this: 👍 👎\nOr start your reply with # to share a thought.`
             : responseText;
           await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
         }

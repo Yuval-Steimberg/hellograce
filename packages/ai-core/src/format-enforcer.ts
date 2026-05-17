@@ -159,17 +159,16 @@ export function enforceFormat(input: string, opts?: { stripFirstName?: string })
   const MAX_CHARS = 600;
   if (text.length > MAX_CHARS) {
     const window = text.slice(0, MAX_CHARS + 1);
-    const lastEnd = Math.max(
-      window.lastIndexOf('. '),
-      window.lastIndexOf('! '),
-      window.lastIndexOf('? '),
-      window.lastIndexOf('.\n'),
-      window.lastIndexOf('!\n'),
-      window.lastIndexOf('?\n'),
-    );
+    // Regex lookahead matches . ! ? followed by whitespace OR end-of-string,
+    // so we never miss a sentence that ends right at the window boundary.
+    let lastEnd = -1;
+    const sentenceRe = /[.!?](?=\s|$)/g;
+    let m: RegExpExecArray | null;
+    while ((m = sentenceRe.exec(window)) !== null) {
+      lastEnd = m.index + 1; // position just after the punctuation char
+    }
     if (lastEnd > MAX_CHARS / 2) {
-      // Trim after the terminal punctuation (keep the '.' itself)
-      text = text.slice(0, lastEnd + 1).trim();
+      text = text.slice(0, lastEnd).trim();
       fixes.push('length_capped');
     }
   }

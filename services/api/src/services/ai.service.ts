@@ -449,25 +449,40 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
           const nowM = parseInt(timeParts.find((p) => p.type === 'minute')?.value ?? '0', 10);
           const nowMin = nowH * 60 + nowM;
           const wakeMin = wh! * 60 + wm!;
-          // Evening days: Sun(0), Tue(2), Thu(4). Midday days: Mon(1), Wed(3), Fri(5).
-          const isEveningDay = [0, 2, 4].includes(localTodayIdx);
-          const isMiddayDay = [1, 3, 5].includes(localTodayIdx);
-          // Generous buffer: morning window closes 60 min after wake_time to
-          // avoid flip-flopping if the message fires slightly late.
-          const morningPast = nowMin > wakeMin + 60;
-          const middayPast = nowMin > 14 * 60; // after 2pm, midday window closed
-          const eveningPast = eveningMin > 0 && nowMin > eveningMin;
-          let nextReminder: string;
-          if (!morningPast) {
-            nextReminder = `this morning around ${morningLabel}`;
-          } else if (isMiddayDay && !middayPast) {
-            nextReminder = `today around midday (11am-2pm window)`;
-          } else if (isEveningDay && eveningMin > 0 && !eveningPast) {
-            nextReminder = `this evening around ${eveningLabel}`;
+
+          // On injection day the entire regular schedule (morning/midday/evening)
+          // is replaced by the injection flow. Surface this explicitly so Grace
+          // gives an accurate answer instead of quoting the regular schedule.
+          const WEEK_DAYS_LOCAL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+          const todayIsInjectionDay = user.injection_day && user.injection_day === WEEK_DAYS_LOCAL[localTodayIdx];
+          if (todayIsInjectionDay) {
+            const morningPast = nowMin > wakeMin + 60;
+            const nextInj = morningPast
+              ? `later today or this evening (injection day follow-up)`
+              : `this morning around ${morningLabel} (injection day message)`;
+            lines.push(`Next scheduled reminder: ${nextInj}`);
+            lines.push(`Injection day note: today's regular morning/midday/evening check-ins are REPLACED by injection-specific messages. Do NOT say regular check-ins are coming — they are not.`);
           } else {
-            nextReminder = `tomorrow morning around ${morningLabel}`;
+            // Evening days: Sun(0), Tue(2), Thu(4). Midday days: Mon(1), Wed(3), Fri(5).
+            const isEveningDay = [0, 2, 4].includes(localTodayIdx);
+            const isMiddayDay = [1, 3, 5].includes(localTodayIdx);
+            // Generous buffer: morning window closes 60 min after wake_time to
+            // avoid flip-flopping if the message fires slightly late.
+            const morningPast = nowMin > wakeMin + 60;
+            const middayPast = nowMin > 14 * 60; // after 2pm, midday window closed
+            const eveningPast = eveningMin > 0 && nowMin > eveningMin;
+            let nextReminder: string;
+            if (!morningPast) {
+              nextReminder = `this morning around ${morningLabel}`;
+            } else if (isMiddayDay && !middayPast) {
+              nextReminder = `today around midday (11am-2pm window)`;
+            } else if (isEveningDay && eveningMin > 0 && !eveningPast) {
+              nextReminder = `this evening around ${eveningLabel}`;
+            } else {
+              nextReminder = `tomorrow morning around ${morningLabel}`;
+            }
+            lines.push(`Next scheduled reminder: ${nextReminder}`);
           }
-          lines.push(`Next scheduled reminder: ${nextReminder}`);
         } catch {
           // ignore — best-effort
         }

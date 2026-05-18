@@ -106,7 +106,7 @@ export class Scheduler {
     const morningOffset = jitterMinutes(`${user.phone}-${todayStr}-morning`, 55);
     const morningTargetMin = wakeHour * 60 + morningOffset;
     const nowMin = hour * 60 + minute;
-    const isMorningWindow = nowMin >= morningTargetMin && nowMin < morningTargetMin + 5;
+    const isMorningWindow = nowMin >= morningTargetMin && nowMin < morningTargetMin + 15;
     const morningAlreadySent = user.last_morning_sent_at &&
       toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) === todayStr;
 

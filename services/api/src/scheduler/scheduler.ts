@@ -69,6 +69,13 @@ export class Scheduler {
     // ── Quiet hours: never send proactive messages between 21:00 and 07:00 local
     if (hour >= 21 || hour < 7) return;
 
+    // Parse wake/sleep times once — used throughout this function.
+    const [wHour = 8, wMin = 0] = user.wake_time.split(':').map(Number);
+    const [sHour = 22, sMin = 0] = user.sleep_time.split(':').map(Number);
+    const wakeBaseMin = wHour * 60 + wMin;
+    const sleepBaseMin = sHour * 60 + sMin;
+    const nowMin = hour * 60 + minute;
+
     // ── Injection day flow (runs any day matching injection_day)
     if (user.injection_day && user.injection_day === DAYS[dayOfWeek]) {
       await this.handleInjectionFlow(user, hour);
@@ -78,7 +85,7 @@ export class Scheduler {
     // ── Day-after injection (stage = followup_sent → next morning message)
     if (user.injection_flow_stage === 'followup_sent' && user.injection_flow_started_at) {
       const flowDay = localNow(user.timezone, new Date(user.injection_flow_started_at));
-      if (toDateStr(flowDay) !== todayStr && hour >= parseInt(user.wake_time.split(':')[0]!, 10)) {
+      if (toDateStr(flowDay) !== todayStr && nowMin >= wakeBaseMin) {
         await this.sendAndRecord(user, 'injection_dayafter');
         await this.deps.users.setInjectionStage(user.phone, null, {
           injection_evening_followup_due: false,
@@ -100,13 +107,11 @@ export class Scheduler {
 
     // ── Morning window (covers both trial reminder and regular check-in)
     // Humanized timing: each user gets a deterministic per-day offset of 0-55
-    // minutes from their wake_hour so messages don't all fire at exactly 7:00.
+    // minutes from their wake_time so messages don't all fire at exactly 7:00.
     // Window is 90 min wide so a machine waking late (e.g. after a webhook) still
     // catches up — morningAlreadySent prevents double-sends within the same day.
-    const wakeHour = parseInt(user.wake_time.split(':')[0]!, 10);
     const morningOffset = jitterMinutes(`${user.phone}-${todayStr}-morning`, 55);
-    const morningTargetMin = wakeHour * 60 + morningOffset;
-    const nowMin = hour * 60 + minute;
+    const morningTargetMin = wakeBaseMin + morningOffset;
     const isMorningWindow = nowMin >= morningTargetMin && nowMin < morningTargetMin + 90;
     const morningAlreadySent = user.last_morning_sent_at &&
       toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) === todayStr;
@@ -141,7 +146,7 @@ export class Scheduler {
     const middayTargetMin = middayBaseMin + middayOffset;
     const isMiddayWindow =
       MIDDAY_DAYS.has(dayOfWeek) &&
-      nowMin >= middayTargetMin && nowMin < middayTargetMin + 5;
+      nowMin >= middayTargetMin && nowMin < middayTargetMin + 15;
     if (
       isMiddayWindow &&
       !user.midday_skip &&
@@ -154,19 +159,16 @@ export class Scheduler {
       return;
     }
 
-    // ── Evening wind-down (Tue/Thu/Sun, ~90 min before sleep, randomized ±15)
-    // Base time = sleep_hour - 1:30; jitter 0–30 shifts to roughly -1:30 to -1:00.
-    // Cap jitter so the full 5-minute delivery window ends before quiet hours
-    // (21:00 = 1260 min). Without this cap, sleep_time='22:00' users with
-    // jitter near 30 get a window straddling 9pm — 4 of 5 ticks are blocked.
-    const sleepHour = parseInt(user.sleep_time.split(':')[0]!, 10);
-    const eveningBaseMin = (sleepHour - 2) * 60 + 30;
-    const eveningMaxJitter = Math.max(0, Math.min(30, 21 * 60 - 6 - eveningBaseMin));
+    // ── Evening wind-down (Tue/Thu/Sun, ~90 min before sleep, randomized ±30)
+    // Base = sleep_time - 90 min; jitter shifts slightly later.
+    // Cap jitter so the full 15-min delivery window ends before 21:00 quiet hours.
+    const eveningBaseMin = sleepBaseMin - 90;
+    const eveningMaxJitter = Math.max(0, Math.min(30, 21 * 60 - 16 - eveningBaseMin));
     const eveningOffset = eveningMaxJitter > 0 ? jitterMinutes(`${user.phone}-${todayStr}-evening`, eveningMaxJitter) : 0;
     const eveningTargetMin = eveningBaseMin + eveningOffset;
     const isEveningWindow =
       EVENING_DAYS.has(dayOfWeek) &&
-      nowMin >= eveningTargetMin && nowMin < eveningTargetMin + 5;
+      nowMin >= eveningTargetMin && nowMin < eveningTargetMin + 15;
     if (
       isEveningWindow &&
       // Hard cap: never send evening to a user who hasn't actively chatted today
@@ -181,11 +183,12 @@ export class Scheduler {
 
   private async handleInjectionFlow(user: GraceUser, hour: number): Promise<void> {
     const stage = user.injection_flow_stage;
-    const wakeHour = parseInt(user.wake_time.split(':')[0]!, 10);
+    const [wHour = 8, wMin = 0] = user.wake_time.split(':').map(Number);
+    const wakeBaseMin = wHour * 60 + wMin;
     const todayStr = toDateStr(localNow(user.timezone));
     const minute = localNow(user.timezone).getMinutes();
     const injectionOffset = jitterMinutes(`${user.phone}-${todayStr}-injection`, 45);
-    const injectionTargetMin = wakeHour * 60 + injectionOffset;
+    const injectionTargetMin = wakeBaseMin + injectionOffset;
     const nowMin = hour * 60 + minute;
 
     // Stage 0: Send injection morning message during randomized morning window

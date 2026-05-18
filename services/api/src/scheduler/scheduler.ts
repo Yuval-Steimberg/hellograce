@@ -69,9 +69,14 @@ export class Scheduler {
     // ── Quiet hours: never send proactive messages between 21:00 and 07:00 local
     if (hour >= 21 || hour < 7) return;
 
+    // Guard: skip users missing schedule config — avoids null.split() crash.
+    // Defensive defaults so existing users without onboarding data still work.
+    const wake_time = user.wake_time || '08:00';
+    const sleep_time = user.sleep_time || '22:00';
+
     // Parse wake/sleep times once — used throughout this function.
-    const [wHour = 8, wMin = 0] = user.wake_time.split(':').map(Number);
-    const [sHour = 22, sMin = 0] = user.sleep_time.split(':').map(Number);
+    const [wHour = 8, wMin = 0] = wake_time.split(':').map(Number);
+    const [sHour = 22, sMin = 0] = sleep_time.split(':').map(Number);
     const wakeBaseMin = wHour * 60 + wMin;
     const sleepBaseMin = sHour * 60 + sMin;
     const nowMin = hour * 60 + minute;
@@ -183,7 +188,7 @@ export class Scheduler {
 
   private async handleInjectionFlow(user: GraceUser, hour: number): Promise<void> {
     const stage = user.injection_flow_stage;
-    const [wHour = 8, wMin = 0] = user.wake_time.split(':').map(Number);
+    const [wHour = 8, wMin = 0] = (user.wake_time || '08:00').split(':').map(Number);
     const wakeBaseMin = wHour * 60 + wMin;
     const todayStr = toDateStr(localNow(user.timezone));
     const minute = localNow(user.timezone).getMinutes();

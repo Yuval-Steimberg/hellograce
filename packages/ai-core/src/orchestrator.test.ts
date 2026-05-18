@@ -221,6 +221,39 @@ describe('AIOrchestrator', () => {
     expect(out.text.length).toBeGreaterThan(0);
   });
 
+  it('discards a web-search result that contains a regen-severity content violation', async () => {
+    // Scenario: primary + retry both fail the LLM critic (safety_ intent gates
+    // the critic). The web-search fallback returns a response that contains
+    // a banned phrase (regen-severity, no explicit severity field). Before this
+    // fix, that response would have been returned to the user. After the fix,
+    // it is discarded and the safe fallback is used instead.
+    //
+    // Responses are written without interaction-safety language ("safe to take")
+    // so the grounding precheck stays clean and the LLM critic is the gate.
+    const llm = new MockLLM([
+      JSON.stringify({ intent: 'safety_dosing', needsTools: false, toolCalls: [], rationale: '' }),
+      'Yeah just take it whenever you want — no real timing requirement.',
+      failingCriticJson,
+      'Take it whenever you feel like it, timing is not a concern.',
+      failingCriticJson,
+      // Web-search fallback — "hang in there" is a banned phrase (regen severity).
+      'Hang in there — talk to your prescriber about the right schedule.',
+    ]);
+    const tools = new ToolRegistry();
+    const orch = new AIOrchestrator({ llm, tools });
+
+    const out = await orch.run({
+      userId: 'u1',
+      text: 'when can I take my injection?',
+      history: [],
+      retrieved: [],
+      toolsEnabled: true,
+    });
+
+    expect(out.usedSafeFallback).toBe(true);
+    expect(out.text.toLowerCase()).not.toContain('hang in there');
+  });
+
   it('falls back to a safe canned response when both attempts fail the critic', async () => {
     // Uses safety_ intent because knowledge_lookup no longer triggers the LLM-critic
     // (only the grounding precheck can gate it). These responses lack quantitative

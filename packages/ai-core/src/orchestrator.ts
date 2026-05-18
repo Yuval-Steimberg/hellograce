@@ -285,8 +285,12 @@ export class AIOrchestrator {
       const formatted = enforceFormat(webResp.text, stripName ? { stripFirstName: stripName } : {});
       const validated = validateResponse(formatted.text);
       if (!validated.text || validated.text.trim().length === 0) return null;
-      const violations = checkContent(validated.text, contentCheckOpts);
-      if (violations.some((v) => v.severity === 'block')) return null;
+      const webViolations = checkContent(validated.text, contentCheckOpts);
+      // Block AND regen violations both disqualify the web result. We can't
+      // regen here (no chat history + web grounding context), so if the web
+      // answer still contains a banned phrase or forbidden food we fall through
+      // to the safe fallback rather than delivering a guideline-violating reply.
+      if (webViolations.some((v) => v.severity === 'block' || !v.severity || v.severity === 'regen')) return null;
       return validated;
     } catch {
       return null;

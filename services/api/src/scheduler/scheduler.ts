@@ -101,12 +101,13 @@ export class Scheduler {
     // ── Morning window (covers both trial reminder and regular check-in)
     // Humanized timing: each user gets a deterministic per-day offset of 0-55
     // minutes from their wake_hour so messages don't all fire at exactly 7:00.
-    // Deterministic so retries within the same day land in the same window.
+    // Window is 90 min wide so a machine waking late (e.g. after a webhook) still
+    // catches up — morningAlreadySent prevents double-sends within the same day.
     const wakeHour = parseInt(user.wake_time.split(':')[0]!, 10);
     const morningOffset = jitterMinutes(`${user.phone}-${todayStr}-morning`, 55);
     const morningTargetMin = wakeHour * 60 + morningOffset;
     const nowMin = hour * 60 + minute;
-    const isMorningWindow = nowMin >= morningTargetMin && nowMin < morningTargetMin + 15;
+    const isMorningWindow = nowMin >= morningTargetMin && nowMin < morningTargetMin + 90;
     const morningAlreadySent = user.last_morning_sent_at &&
       toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) === todayStr;
 
@@ -148,14 +149,9 @@ export class Scheduler {
       (!user.last_reply_at || Date.now() - new Date(user.last_reply_at).getTime() > 3 * 3_600_000) &&
       (engagedToday || silentDays < 1)
     ) {
-      // Only send midday if morning was sent today (don't double-cold-start)
-      const morningToday = user.last_morning_sent_at &&
-        toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) === todayStr;
-      if (morningToday) {
-        await this.sendAndRecord(user, 'midday');
-        await this.deps.users.update(user.phone, { last_midday_sent_at: new Date() });
-        return;
-      }
+      await this.sendAndRecord(user, 'midday');
+      await this.deps.users.update(user.phone, { last_midday_sent_at: new Date() });
+      return;
     }
 
     // ── Evening wind-down (Tue/Thu/Sun, ~90 min before sleep, randomized ±15)

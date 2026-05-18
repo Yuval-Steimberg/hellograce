@@ -53,7 +53,16 @@ export class Scheduler {
   private async tick(): Promise<void> {
     try {
       const users = await this.deps.users.listActiveUsers();
-      await Promise.allSettled(users.map((u) => this.processUser(u)));
+      const results = await Promise.allSettled(users.map((u) => this.processUser(u)));
+      // Surface per-user failures — Promise.allSettled normally swallows them.
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          this.deps.logger.error(
+            { err: r.reason, phone: users[i]?.phone },
+            'scheduler.process_user.error',
+          );
+        }
+      });
     } catch (err) {
       this.deps.logger.error({ err }, 'scheduler.tick.error');
     }
@@ -235,17 +244,26 @@ export class Scheduler {
     // message type to the same user on the same day. TTL = 23h so the key
     // expires before tomorrow's window opens. NX means only the first
     // machine to acquire the lock proceeds; the second skips silently.
+    // Failure-open: if Redis is unavailable (rate-limited, network error),
+    // we proceed without the lock rather than blocking reminders entirely.
+    // Worst case: a user gets a duplicate message — vastly better than none.
     const todayStr = toDateStr(localNow(user.timezone));
     const lockKey = `sched:${user.phone}:${type}:${todayStr}`;
-    const acquired = await this.deps.redis.set(lockKey, '1', 'EX', 82800, 'NX');
-    if (!acquired) {
-      this.deps.logger.debug({ phone: user.phone, type }, 'scheduler.skipped_duplicate');
-      return;
+    let lockAcquired = false;
+    try {
+      const acquired = await this.deps.redis.set(lockKey, '1', 'EX', 82800, 'NX');
+      if (!acquired) {
+        this.deps.logger.debug({ phone: user.phone, type }, 'scheduler.skipped_duplicate');
+        return;
+      }
+      lockAcquired = true;
+    } catch (err) {
+      this.deps.logger.warn({ err: (err as Error).message, phone: user.phone, type }, 'scheduler.lock_failed_proceeding_without_lock');
+      // Continue without lock — DB-level last_*_sent_at gates still prevent same-machine duplicates.
     }
 
     try {
       const message = await this.deps.generator.generate(type, user, opts);
-      // RLHF users get a feedback prompt on proactive messages too, not just reactive.
       const body = user.rlhf_enabled
         ? `${message}\n\nRate this: 👍 👎\nOr start your reply with # to share a thought.`
         : message;
@@ -258,8 +276,9 @@ export class Scheduler {
       });
       this.deps.logger.info({ phone: user.phone, type }, 'scheduler.sent');
     } catch (err) {
-      // Release the lock on failure so the next tick can retry.
-      await this.deps.redis.del(lockKey);
+      if (lockAcquired) {
+        await this.deps.redis.del(lockKey).catch(() => undefined);
+      }
       this.deps.logger.error({ err, phone: user.phone, type }, 'scheduler.send.failed');
     }
   }

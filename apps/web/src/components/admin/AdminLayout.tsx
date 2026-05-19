@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAdminAuth } from './AdminAuth';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -19,6 +19,7 @@ import {
   Activity,
   Menu,
   X,
+  ChevronRight,
 } from 'lucide-react';
 
 const NAV = [
@@ -51,16 +52,9 @@ const SIDEBAR_STYLE = {
   borderColor: 'rgba(255,255,255,0.06)',
 };
 
-function SidebarContent({
-  handleLogout,
-  onNavClick,
-}: {
-  handleLogout: () => void;
-  onNavClick?: () => void;
-}) {
+function DesktopSidebarContent({ handleLogout }: { handleLogout: () => void }) {
   return (
     <>
-      {/* Logo */}
       <div
         className="px-5 py-5 flex items-center gap-2.5"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
@@ -78,7 +72,6 @@ function SidebarContent({
         </div>
       </div>
 
-      {/* Nav */}
       <motion.nav
         className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto"
         variants={stagger}
@@ -90,7 +83,6 @@ function SidebarContent({
             <NavLink
               to={to}
               end={end}
-              onClick={onNavClick}
               className={({ isActive }) =>
                 cn(
                   'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-all duration-200 group min-h-[44px]',
@@ -123,7 +115,6 @@ function SidebarContent({
         ))}
       </motion.nav>
 
-      {/* Sign out */}
       <div
         className="px-2 pb-4 pt-2"
         style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
@@ -143,6 +134,7 @@ function SidebarContent({
 export default function AdminLayout() {
   const { isAuthed, logout } = useAdminAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   if (!isAuthed) {
@@ -155,6 +147,10 @@ export default function AdminLayout() {
     navigate('/admin/login');
   };
 
+  const currentPage = NAV.find((n) =>
+    n.end ? location.pathname === n.to : location.pathname.startsWith(n.to),
+  );
+
   return (
     <div className="admin-shell flex h-screen bg-background overflow-hidden">
       {/* Desktop sidebar */}
@@ -162,41 +158,98 @@ export default function AdminLayout() {
         className="hidden md:flex w-56 flex-shrink-0 flex-col border-r"
         style={SIDEBAR_STYLE}
       >
-        <SidebarContent handleLogout={handleLogout} />
+        <DesktopSidebarContent handleLogout={handleLogout} />
       </aside>
 
-      {/* Mobile: overlay + slide-in drawer */}
+      {/* Mobile: full-screen overlay nav */}
       <AnimatePresence>
         {mobileOpen && (
-          <>
-            <motion.div
-              key="backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-40 bg-black/60 md:hidden"
-              onClick={() => setMobileOpen(false)}
-            />
-            <motion.aside
-              key="drawer"
-              initial={{ x: -224 }}
-              animate={{ x: 0 }}
-              exit={{ x: -224 }}
-              transition={{ type: 'spring', stiffness: 350, damping: 30 }}
-              className="fixed inset-y-0 left-0 z-50 w-56 flex flex-col border-r md:hidden"
-              style={SIDEBAR_STYLE}
+          <motion.div
+            key="mobile-nav"
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.97 }}
+            transition={{ duration: 0.16, ease: [0.4, 0, 0.2, 1] }}
+            className="fixed inset-0 z-50 flex flex-col md:hidden"
+            style={{ background: 'linear-gradient(160deg, #0d1829 0%, #0a1120 100%)' }}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+              style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
             >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-primary/90 flex items-center justify-center shadow-lg shadow-primary/40">
+                  <Zap className="h-4.5 w-4.5 text-white" strokeWidth={2.5} />
+                </div>
+                <div className="leading-tight">
+                  <div className="font-semibold text-base text-foreground" style={{ letterSpacing: '-0.02em' }}>
+                    grace
+                  </div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">
+                    Admin
+                  </div>
+                </div>
+              </div>
               <button
                 onClick={() => setMobileOpen(false)}
-                className="absolute top-4 right-3 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-muted-foreground active:scale-95 transition-transform"
+                style={{ background: 'rgba(255,255,255,0.07)' }}
                 aria-label="Close menu"
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
-              <SidebarContent handleLogout={handleLogout} onNavClick={() => setMobileOpen(false)} />
-            </motion.aside>
-          </>
+            </div>
+
+            {/* Nav items */}
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
+              {NAV.map(({ to, label, icon: Icon, end }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={end}
+                  onClick={() => setMobileOpen(false)}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center gap-4 px-4 py-3.5 rounded-xl text-[15px] font-medium transition-all duration-150 min-h-[52px]',
+                      isActive
+                        ? 'bg-primary/15 text-primary'
+                        : 'text-muted-foreground active:bg-white/5',
+                    )
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <Icon
+                        className={cn(
+                          'h-5 w-5 flex-shrink-0',
+                          isActive ? 'text-primary' : 'text-muted-foreground',
+                        )}
+                      />
+                      <span className="flex-1">{label}</span>
+                      {isActive && (
+                        <ChevronRight className="h-4 w-4 text-primary/60 flex-shrink-0" />
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+
+            {/* Sign out */}
+            <div
+              className="px-3 pb-10 pt-3 flex-shrink-0"
+              style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-4 px-4 py-3.5 rounded-xl text-[15px] font-medium text-muted-foreground active:bg-white/5 transition-all duration-150 min-h-[52px]"
+              >
+                <LogOut className="h-5 w-5 flex-shrink-0" />
+                Sign out
+              </button>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -204,25 +257,29 @@ export default function AdminLayout() {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Mobile top bar */}
         <div
-          className="md:hidden flex items-center gap-3 px-4 h-14 border-b flex-shrink-0"
+          className="md:hidden flex items-center gap-3 px-4 h-14 flex-shrink-0"
           style={{
-            background: 'rgba(15,23,42,0.97)',
-            borderColor: 'rgba(255,255,255,0.06)',
+            background: 'rgba(10,17,32,0.98)',
+            borderBottom: '1px solid rgba(255,255,255,0.07)',
           }}
         >
           <button
             onClick={() => setMobileOpen(true)}
-            className="p-2 -ml-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-muted-foreground active:scale-95 transition-transform"
+            style={{ background: 'rgba(255,255,255,0.07)' }}
             aria-label="Open menu"
           >
             <Menu className="h-5 w-5" />
           </button>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-primary/90 flex items-center justify-center shadow-md shadow-primary/30">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="w-6 h-6 rounded-lg bg-primary/90 flex items-center justify-center flex-shrink-0">
               <Zap className="h-3 w-3 text-white" strokeWidth={2.5} />
             </div>
-            <span className="font-semibold text-sm text-foreground" style={{ letterSpacing: '-0.02em' }}>
-              grace admin
+            <span
+              className="font-semibold text-sm text-foreground truncate"
+              style={{ letterSpacing: '-0.02em' }}
+            >
+              {currentPage?.label ?? 'Admin'}
             </span>
           </div>
         </div>

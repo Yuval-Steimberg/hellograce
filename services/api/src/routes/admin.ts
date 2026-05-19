@@ -895,18 +895,28 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   // ─── System health ───────────────────────────────────────────────────────────
 
   app.get('/admin/system-health', async () => {
-    const [dbRow, messageVolumeRows, fallbackRow, toolHealthRow] = await Promise.all([
-      deps.pool.query<{ db_ok: boolean }>('SELECT TRUE AS db_ok').then(
-        () => ({ ok: true, pool_total: (deps.pool as unknown as { totalCount: number }).totalCount ?? 0 }),
-        () => ({ ok: false, pool_total: 0 }),
+    const safeRows = async <T extends Record<string, unknown>>(sql: string): Promise<T[]> => {
+      try {
+        const r = await deps.pool.query<T>(sql);
+        return r.rows;
+      } catch (err) {
+        app.log.warn({ err, sql: sql.slice(0, 80) }, 'system-health query failed, returning empty');
+        return [];
+      }
+    };
+
+    const [dbStatus, messageVolumeRows, fallbackRows, toolHealthRows] = await Promise.all([
+      deps.pool.query('SELECT TRUE AS db_ok').then(
+        () => ({ ok: true }),
+        () => ({ ok: false }),
       ),
-      deps.pool.query<{ hour: string; count: string }>(`
+      safeRows<{ hour: string; count: string }>(`
         SELECT DATE_TRUNC('hour', created_at)::text AS hour, COUNT(*)::text AS count
         FROM messages
         WHERE created_at > NOW() - INTERVAL '24 hours'
         GROUP BY 1 ORDER BY 1
       `),
-      deps.pool.query<{ count: string }>(`
+      safeRows<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM messages
         WHERE role = 'assistant' AND created_at > NOW() - INTERVAL '24 hours'
           AND (content ILIKE '%Not sure I got all of that%'
@@ -915,7 +925,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
             OR content ILIKE '%make sure I get this right%'
             OR content ILIKE '%missed part of what you meant%')
       `),
-      deps.pool.query<{ total: string; failed: string; avg_ms: string }>(`
+      safeRows<{ total: string; failed: string; avg_ms: string }>(`
         SELECT COUNT(*)::text AS total,
                SUM(CASE WHEN NOT ok THEN 1 ELSE 0 END)::text AS failed,
                ROUND(AVG(latency_ms))::text AS avg_ms
@@ -934,21 +944,22 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       }
     } catch { /* redis down */ }
 
-    const toolH = toolHealthRow.rows[0];
-    const totalMessages24h = messageVolumeRows.rows.reduce((s, r) => s + parseInt(r.count, 10), 0);
+    const toolH = toolHealthRows[0];
+    const totalMessages24h = messageVolumeRows.reduce((s, r) => s + parseInt(r.count, 10), 0);
+    const fallbackCount = parseInt(fallbackRows[0]?.count ?? '0', 10);
 
     return {
-      db: { ok: dbRow.ok },
+      db: { ok: dbStatus.ok },
       redis: { ok: redisOk, latency_ms: redisLatencyMs },
       messages_24h: totalMessages24h,
-      fallbacks_24h: parseInt(fallbackRow.rows[0]?.count ?? '0', 10),
+      fallbacks_24h: fallbackCount,
       fallback_rate_24h: totalMessages24h > 0
-        ? Math.round((parseInt(fallbackRow.rows[0]?.count ?? '0', 10) / totalMessages24h) * 100)
+        ? Math.round((fallbackCount / totalMessages24h) * 100)
         : 0,
       tool_calls_24h: parseInt(toolH?.total ?? '0', 10),
       tool_failures_24h: parseInt(toolH?.failed ?? '0', 10),
       tool_avg_latency_ms: toolH?.avg_ms ? parseInt(toolH.avg_ms, 10) : null,
-      message_volume: messageVolumeRows.rows.map((r) => ({ hour: r.hour, count: parseInt(r.count, 10) })),
+      message_volume: messageVolumeRows.map((r) => ({ hour: r.hour, count: parseInt(r.count, 10) })),
     };
   });
 }

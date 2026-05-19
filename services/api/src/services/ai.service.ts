@@ -18,6 +18,7 @@ import { makeGetUserProfileTool } from '../tools/get-user-profile.js';
 import { makeGetWeightTrendTool } from '../tools/get-weight-trend.js';
 import { makeGetFoodSummaryTool } from '../tools/get-food-summary.js';
 import { makeLogSideEffectTool } from '../tools/log-side-effect.js';
+import { makeSearchFoodIdeasTool } from '../tools/search-food-ideas.js';
 import type { TurnPersistJob, FactExtractJob } from '../workers/queues.js';
 
 const SIDE_EFFECT_KEYWORDS: Record<string, string> = {
@@ -241,6 +242,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       }
       if (toolSettings['log_side_effect'] !== false) {
         tools.register(makeLogSideEffectTool({ users, userId: input.userId, phone: user?.phone ?? input.userId }));
+      }
+      if (toolSettings['search_food_ideas'] !== false) {
+        tools.register(makeSearchFoodIdeasTool({ llm: this.deps.llm, logger, userId: input.userId }));
       }
     }
     const orchestrator = new AIOrchestrator({ llm: this.deps.llm, tools });

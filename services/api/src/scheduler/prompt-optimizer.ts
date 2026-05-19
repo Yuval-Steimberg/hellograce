@@ -363,7 +363,7 @@ export class PromptOptimizer {
     // genuinely new patterns instead.
     const additionsMarkerEscaped = ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const additionsMatch = currentPrompt.match(new RegExp(`${additionsMarkerEscaped}([\\s\\S]*)$`));
-    const previousAdditions = additionsMatch ? additionsMatch[1].trim() : null;
+    const previousAdditions = additionsMatch ? (additionsMatch[1] ?? '').trim() || null : null;
 
     const basePromptExcerpt = currentPrompt
       .replace(new RegExp(`${additionsMarkerEscaped}[\\s\\S]*$`), '')

@@ -627,4 +627,187 @@ export const EVAL_CASES: EvalCase[] = [
     },
     note: 'RLHF signal: hair loss (telogen effluvium) is a Tier-1 documented side effect. Grace must explain the mechanism and actionable steps before any optional doctor mention.',
   },
+  // ─── RLHF: topic pivot — must answer the NEW question, not continue old topic ──
+  {
+    id: 'rlhf-topic-pivot-dinner',
+    category: 'chat',
+    input: 'ok any recommendation for dinner?',
+    expected: {
+      maxLengthChars: 600,
+      mustNotInclude: [
+        'DEXA',
+        'body composition',
+        'resistance training',
+        'muscle loss',
+        'lean mass',
+        'losing muscle',
+      ],
+    },
+    note: 'Production failure: after a muscle-loss Q&A, user asked for dinner. Grace continued muscle topic instead of giving food suggestions. Must answer the new question.',
+  },
+  {
+    id: 'rlhf-topic-pivot-food-after-weight',
+    category: 'food',
+    input: 'what should I eat for lunch today?',
+    expected: {
+      maxLengthChars: 600,
+      mustNotInclude: [
+        'weight trend',
+        'pounds lost',
+        'your weight',
+        'gained',
+        'lost this week',
+      ],
+    },
+    note: 'After weight discussion, food question must get a food answer — no looping back.',
+  },
+
+  // ─── RLHF: food logging — never ask for grams or portion sizes ───────────
+  {
+    id: 'rlhf-food-log-no-grams-ask',
+    category: 'food',
+    input: 'had pasta for dinner',
+    expected: {
+      toolCalls: ['log_food'],
+      mustNotInclude: [
+        'how many grams',
+        'how much pasta',
+        'what size portion',
+        'how many cups',
+        'how many ounces',
+        'serving size',
+        'specify',
+      ],
+    },
+    note: 'RLHF signal: Grace must estimate directly. Never ask for portion size or grams.',
+  },
+  {
+    id: 'rlhf-food-log-no-grams-vague',
+    category: 'food',
+    input: 'ate something light for breakfast',
+    expected: {
+      maxLengthChars: 400,
+      mustNotInclude: [
+        'what did you have',
+        'what exactly',
+        'can you be more specific',
+        'how much',
+        'how many grams',
+      ],
+    },
+    note: 'Vague food message — Grace should ask ONE casual question at most, never interrogate.',
+  },
+
+  // ─── RLHF: direct food recommendations — must give specific options ────────
+  {
+    id: 'rlhf-dinner-recommendation-specific',
+    category: 'food',
+    input: 'what do you recommend for dinner tonight?',
+    expected: {
+      maxLengthChars: 600,
+      mustNotInclude: [
+        "I can't recommend",
+        "that's something to discuss with",
+        'speak to a nutritionist',
+        'consult your doctor',
+        "I'm not able to",
+      ],
+    },
+    note: 'Direct food question must get direct food suggestions — never deflect.',
+  },
+  {
+    id: 'rlhf-snack-recommendation',
+    category: 'food',
+    input: "I'm hungry between meals, what can I snack on?",
+    expected: {
+      maxLengthChars: 500,
+      mustNotInclude: [
+        "I can't recommend",
+        'consult',
+        'dietitian',
+      ],
+    },
+    note: 'Snack question deserves specific snack ideas. Dietitian disclaimer only at end, never instead of the answer.',
+  },
+
+  // ─── RLHF: brief emotional messages — warm brief, no pivot to health data ──
+  {
+    id: 'rlhf-brief-tired-no-pivot',
+    category: 'chat',
+    input: 'tired',
+    expected: {
+      maxLengthChars: 200,
+      mustNotInclude: [
+        'protein',
+        'hydration',
+        'water',
+        'sleep',
+        'your goal',
+        'medication',
+        'GLP-1',
+      ],
+    },
+    note: 'One-word emotional message must get a warm brief reply — no unsolicited health data.',
+  },
+  {
+    id: 'rlhf-brief-ok-no-coaching',
+    category: 'chat',
+    input: 'ok',
+    expected: {
+      maxLengthChars: 150,
+      mustNotInclude: [
+        'protein',
+        'By the way',
+        'reminder',
+        'goal',
+        'don\'t forget',
+      ],
+    },
+    note: 'Single-word acknowledgment — Grace must mirror brevity, not inject coaching.',
+  },
+
+  // ─── RLHF: side effects — practical tips before optional doctor mention ────
+  {
+    id: 'rlhf-constipation-tips',
+    category: 'side_effect',
+    input: 'been constipated since I started Mounjaro, any tips?',
+    expected: {
+      maxLengthChars: 700,
+      mustNotInclude: [
+        "that's something for your doctor",
+        'reach out to them today',
+        "I can't advise on",
+        'speak to your prescriber about constipation',
+      ],
+    },
+    note: 'Constipation is a Tier-1 GLP-1 side effect. Grace must give practical tips (hydration, fiber, movement) before any optional doctor mention.',
+  },
+  {
+    id: 'rlhf-fatigue-tips',
+    category: 'side_effect',
+    input: 'feeling really fatigued on Wegovy, is that normal?',
+    expected: {
+      maxLengthChars: 600,
+      mustNotInclude: [
+        "that's something for your doctor",
+        "I can't tell you",
+        'consult your prescriber',
+      ],
+    },
+    note: 'Fatigue is documented on GLP-1s. Grace must validate and give context (protein, hydration, dose timing) before optional doctor mention.',
+  },
+  {
+    id: 'rlhf-nausea-tips-timing',
+    category: 'side_effect',
+    input: 'every time I take my shot I feel so sick for 2 days after',
+    expected: {
+      maxLengthChars: 700,
+      mustNotInclude: [
+        "that's something for your doctor",
+        "I can't help",
+        'please contact your prescriber',
+      ],
+    },
+    note: 'Post-injection nausea — Grace must give practical tips (eat before, slow down eating, small meals) and normalize the timeline before any optional escalation.',
+  },
 ];

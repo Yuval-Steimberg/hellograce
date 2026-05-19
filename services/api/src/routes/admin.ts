@@ -811,8 +811,20 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     const FALLBACK_SNIPPETS = ['Not sure I got all of that', 'I missed something there', "didn't quite follow", 'make sure I get this right', 'missed part of what you meant'];
     const fallbackConditions = FALLBACK_SNIPPETS.map((_, i) => `content ILIKE $${i + 1}`).join(' OR ');
 
+    const safeQuery = async <T extends Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> => {
+      try {
+        const r = params
+          ? await deps.pool.query<T>(sql, params)
+          : await deps.pool.query<T>(sql);
+        return r.rows;
+      } catch (err) {
+        app.log.warn({ err, sql: sql.slice(0, 80) }, 'ai-quality query failed, returning empty');
+        return [];
+      }
+    };
+
     const [toolRows, fallbackTrendRows, satisfactionTrendRows, latencyRows, promptRows] = await Promise.all([
-      deps.pool.query<{ tool_name: string; calls: string; successes: string; avg_latency: string }>(`
+      safeQuery<{ tool_name: string; calls: string; successes: string; avg_latency: string }>(`
         SELECT tool_name,
                COUNT(*)::text AS calls,
                SUM(CASE WHEN ok THEN 1 ELSE 0 END)::text AS successes,
@@ -821,14 +833,14 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         WHERE created_at > NOW() - INTERVAL '30 days'
         GROUP BY tool_name ORDER BY COUNT(*) DESC
       `),
-      deps.pool.query<{ day: string; count: string }>(`
+      safeQuery<{ day: string; count: string }>(`
         SELECT DATE_TRUNC('day', created_at)::date::text AS day, COUNT(*)::text AS count
         FROM messages
         WHERE role = 'assistant' AND (${fallbackConditions})
           AND created_at > NOW() - INTERVAL '30 days'
         GROUP BY 1 ORDER BY 1
       `, FALLBACK_SNIPPETS.map((s) => `%${s}%`)),
-      deps.pool.query<{ day: string; positive: string; negative: string }>(`
+      safeQuery<{ day: string; positive: string; negative: string }>(`
         SELECT DATE_TRUNC('day', created_at)::date::text AS day,
                SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END)::text AS positive,
                SUM(CASE WHEN rating = -1 THEN 1 ELSE 0 END)::text AS negative
@@ -836,29 +848,37 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         WHERE created_at > NOW() - INTERVAL '30 days'
         GROUP BY 1 ORDER BY 1
       `),
-      deps.pool.query<{ day: string; avg_ms: string }>(`
+      safeQuery<{ day: string; avg_ms: string }>(`
         SELECT DATE_TRUNC('day', created_at)::date::text AS day,
                ROUND(AVG(latency_ms))::text AS avg_ms
         FROM tool_logs
         WHERE created_at > NOW() - INTERVAL '30 days'
         GROUP BY 1 ORDER BY 1
       `),
-      deps.pool.query<{ version: number; active: boolean; created_at: string; notes: string | null; auto_generated: boolean | null }>(`
-        SELECT version, active, created_at, notes, auto_generated
-        FROM prompts ORDER BY version DESC LIMIT 20
-      `),
+      // Try with optimizer columns first; fall back to base columns if migration not applied
+      (async () => {
+        const withOptimizer = await safeQuery<{ version: number; active: boolean; created_at: string; notes: string | null; auto_generated: boolean | null }>(`
+          SELECT version, active, created_at, notes, auto_generated
+          FROM prompts ORDER BY version DESC LIMIT 20
+        `);
+        if (withOptimizer.length > 0) return withOptimizer;
+        return safeQuery<{ version: number; active: boolean; created_at: string; notes: string | null; auto_generated: boolean | null }>(`
+          SELECT version, active, created_at, NULL::text AS notes, NULL::boolean AS auto_generated
+          FROM prompts ORDER BY version DESC LIMIT 20
+        `);
+      })(),
     ]);
 
     return {
-      tools: toolRows.rows.map((r) => ({
+      tools: toolRows.map((r) => ({
         name: r.tool_name,
         calls: parseInt(r.calls, 10),
         successes: parseInt(r.successes, 10),
         success_rate: parseInt(r.calls, 10) > 0 ? Math.round((parseInt(r.successes, 10) / parseInt(r.calls, 10)) * 100) : 0,
         avg_latency_ms: parseInt(r.avg_latency, 10),
       })),
-      fallback_trend: fallbackTrendRows.rows.map((r) => ({ day: r.day, count: parseInt(r.count, 10) })),
-      satisfaction_trend: satisfactionTrendRows.rows.map((r) => ({
+      fallback_trend: fallbackTrendRows.map((r) => ({ day: r.day, count: parseInt(r.count, 10) })),
+      satisfaction_trend: satisfactionTrendRows.map((r) => ({
         day: r.day,
         positive: parseInt(r.positive, 10),
         negative: parseInt(r.negative, 10),
@@ -867,8 +887,8 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
           ? Math.round((parseInt(r.positive, 10) / (parseInt(r.positive, 10) + parseInt(r.negative, 10))) * 100)
           : null,
       })),
-      latency_trend: latencyRows.rows.map((r) => ({ day: r.day, avg_ms: parseInt(r.avg_ms, 10) })),
-      prompts: promptRows.rows,
+      latency_trend: latencyRows.map((r) => ({ day: r.day, avg_ms: parseInt(r.avg_ms, 10) })),
+      prompts: promptRows,
     };
   });
 

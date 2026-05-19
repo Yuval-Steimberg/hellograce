@@ -156,7 +156,7 @@ Subscription gate in `webhook.ts` fires paywall message if trial expired and not
 
 ---
 
-## Tools (8 registered per-request, admin-toggleable)
+## Tools (9 registered per-request, admin-toggleable)
 
 | Tool | What it does |
 |---|---|
@@ -168,6 +168,7 @@ Subscription gate in `webhook.ts` fires paywall message if trial expired and not
 | `get_weight_trend` | Last 10 weight entries + up/down/stable trend |
 | `get_food_summary` | Today's protein + calories + protein_goal_met (≥80g target) |
 | `log_side_effect` | Sets side_effect_flow → schedules 4h follow-up message |
+| `search_food_ideas` | Calls Gemini with Google Search grounding to find current, varied, diet-specific meal/snack ideas. Builds query with dietary restriction + food dislikes + "GLP-1 friendly". Grace calls this for all food recommendation requests. |
 
 ---
 
@@ -306,6 +307,7 @@ Roadmap (in progress, in this order):
 | 8 | Master prompt operationalization: full prompt rewrite from `gracemasterprompt.md`, unified safety message (988+911), reminder-style proactive messages, in-chat frequency change, natural-language opt-out, runtime context (Today is / Time of day / Total protein TODAY / Scheduled check-ins sent today / Medication type) | ✅ |
 | 9 | Production quality pass: proactive message label/truncation fix, humanized timing jitter, trial Day 2 reminder, RLHF on proactive messages, admin WhatsApp optimizer report, food recommendation rules, every-response-unique rule, critic tuned for food facts, safe fallback improved, name stripping in code | ✅ 2026-05-15 |
 | 10 | DB-driven content guardbands: `content_rules` table (48 rules: 4 block + 44 regen), `ContentRulesService` with 60s cache, applied to both reactive AI and proactive scheduler paths. Admin CRUD + test endpoint. Redis distributed lock on scheduler to prevent duplicate messages across Fly machines. | ✅ 2026-05-16 |
+| 11 | AI quality pass: GREETING RULE (pure greeting → one sentence, topic reset), FOOD VARIETY rule + 40-food pool, `search_food_ideas` tool (Google Search grounding for food questions), two-pass scientific food image analysis (Pass 1: visual ID with USDA anchors; Pass 2: text-only macro calculation with 50-food USDA table). | ✅ 2026-05-19 |
 
 ---
 
@@ -313,7 +315,7 @@ Roadmap (in progress, in this order):
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
-3. Active branch: `claude/icloud-access-clarification-5hsRr` (not yet merged to main). Latest commit: `0c9f73f` — Redis distributed lock on scheduler.
+3. Active branch: `claude/icloud-access-clarification-5hsRr` (not yet merged to main). Latest commit: `2e5372c` — Two-pass food image analysis with USDA table.
 4. Production is live at `https://grace-api.fly.dev` (API) and `https://grace-admin-silk.vercel.app` (web). Tail logs with `fly logs --app grace-api`.
 5. Top open items: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn, rotate DB password.
 
@@ -492,6 +494,46 @@ curl -s -X POST https://grace-api.fly.dev/admin/content-rules/test \
 # → {"violations":[{"id":1,"severity":"block","reason":"Advising an extra dose...","match":"take an extra dose"}],"clean":false}
 ```
 
+### Phase 11 — AI quality pass: response accuracy + food variety + image analysis (2026-05-19)
+
+All changes on branch `claude/icloud-access-clarification-5hsRr`.
+
+**`packages/ai-core/src/prompts.ts`**
+- **GREETING RULE** (new section): pure greetings ("hi", "hey", "hey grace", "hello") → ONE warm sentence only, topic reset. Greetings must NOT continue the previous topic. Includes exact production failure as ✗ example (user said "Hey Grace" → Grace responded with drink paragraph from old history).
+- **FOOD VARIETY — HARD RULE** (new section): never suggest same food twice in one conversation. Wide food pool added: 30+ plant-based options (tempeh, chickpea curry, falafel, black bean tacos, quinoa bowl, kefir, hemp seeds, etc.) + 15+ meat options (only suggested when user has no stated restriction). Two example pairs showing different foods on first vs second ask.
+- **SEARCH_FOOD_IDEAS TOOL guidance** (added to FOOD RECOMMENDATIONS section): instructs Grace to call `search_food_ideas` for all food recommendation requests. Specifies how to build the query (dietary restriction + food dislikes + "GLP-1 friendly" + meal type). Example queries included.
+- **TOPIC PIVOT HARD RULE** (added in previous session, now documented): self-check before sending — "Is my reply answering the message the user JUST sent or still answering the previous one?"
+
+**`services/api/src/tools/search-food-ideas.ts`** (NEW)
+- `makeSearchFoodIdeasTool(deps)` — calls Gemini with `useGoogleSearch: true` (Google Search grounding)
+- Builds a targeted query with dietary restriction, dislikes, meal type, "GLP-1 friendly"
+- Returns structured JSON array: `[{ name, protein_g, why }]`
+- Falls back gracefully (returns `{ ok: false }`) if search or parse fails
+- Enabled by default; admin-toggleable via `tool_settings` (no DB migration needed — new tools are allowed when no row exists)
+
+**`services/api/src/services/ai.service.ts`** (MODIFIED)
+- Imports and registers `search_food_ideas` tool alongside the existing 8 tools
+- Passes `llm` provider to the tool so it can make grounded Gemini calls
+
+**`services/api/src/multimodal/analyze.ts`** (MODIFIED — food path only)
+- **Two-pass food image analysis** (see Multimodal section above for full detail)
+- `IMAGE_CLASSIFY_AND_IDENTIFY_PROMPT`: enhanced Pass 1 with visual anchors and cooking-method detection
+- `USDA_PROTEIN_TABLE`: embedded 50-food reference (poultry, seafood, eggs/dairy, plant proteins, grains, vegetables)
+- `buildFoodMacroCalculationPrompt(pass1)`: constructs Pass 2 text-only prompt with USDA table + step-by-step methodology
+- Body/audio/other paths: zero changes
+
+**`services/api/src/scheduler/prompt-optimizer.ts`** (MODIFIED)
+- `generateAdditions()` now extracts previous BEHAVIORAL ADJUSTMENTS from the active prompt and passes them to Gemini as "ALREADY IN PLACE" context — prevents optimizer from re-deriving the same rules every nightly run
+- LLM instructed: "Do NOT repeat rules already covered. Refine with concrete examples if they're not working."
+- `TS2532` fix: `previousAdditions` extraction uses `?? ''` null guard
+
+**`services/api/eval/cases.ts`** (MODIFIED)
+- Added 11 eval cases targeting known 👎 failure patterns: topic pivot, food-logging over-asking, food deflection, brief emotional replies, side effect deflection
+
+**Known production bugs fixed (2026-05-19):**
+- `tryWebSearchFallback()` now rejects regen-severity violations (was only checking block) — prevents banned phrases from reaching users via the web search path
+- Morning reminders weren't firing for Israel users: root cause was DB default timezone `'America/New_York'`. At 08:00 Israel = 01:00 EDT → quiet hours blocked. Fixed per-user via admin PUT to `Asia/Jerusalem`. **New users still default to `'America/New_York'` in the migration — update timezone immediately after manual user creation.**
+
 ### Phase 7+8 — known follow-ups not yet shipped
 
 - **`is_paused` flag** on `users` table to support pause-mode in the re-engagement ladder. Currently `paused: boolean` exists but isn't toggled by chat — needs a separate handler for "pause" / "I'm back" phrases.
@@ -543,16 +585,20 @@ curl -s -X POST https://grace-api.fly.dev/admin/content-rules/test \
 
 `services/api/src/multimodal/analyze.ts` is the single entry point for all media.
 
-**Images** — two-step: classify first (one Gemini call), then route:
-- `food` → inline base64 + detailed USDA nutrition prompt → `log_food` tool fires automatically
-- `body` → inline base64 + GLP-1-aware progress analysis prompt → Grace replies warmly, no tool call
-- `other` → Grace handles gracefully
+**Images — food (two-pass scientific algorithm, 2026-05-19):**
+- Pass 1 (vision): classify image + detailed visual identification — lists every item with weight estimate using calibrated visual anchors (standard dinner plate = 25–27cm, palm-sized protein = ~85–100g cooked, egg = ~50g, etc.) and cooking method. NO macro calculation in this pass.
+- Pass 2 (text-only, food only): takes Pass 1 output → scientific USDA calculation. Uses embedded reference table (50+ foods, g protein/100g from USDA FoodData Central). Explicit per-item formula: `weight_g / 100 × USDA_value`. Outputs `CALCULATION_NOTES` with USDA matches used. Falls back to Pass 1 result if Pass 2 fails.
+- Output format: identical to before (`IMAGE_TYPE: food`, `ITEMS:`, `BREAKDOWN:`, `TOTAL:`, `CONFIDENCE:`, `NOTES:`) — no changes needed in `ai.service.ts` or `buildFoodLogArg()`.
+- `body` → Pass 1 only (unchanged) → GLP-1-aware progress analysis, no tool call
+- `other` → Pass 1 only (unchanged) → Grace handles gracefully
 
 **Audio** (WhatsApp voice notes, `audio/ogg`) — Gemini inline base64 doesn't reliably support ogg.
 Uses the File API instead: write buffer to OS temp file → `GoogleAIFileManager.uploadFile()` → reference by `fileUri` → delete after. Twilio media URLs require Basic auth (`SID:token`) — passed via `AIServiceDeps.twilioSid/twilioToken` → `analyzeMedia opts.twilio`.
 
 **Injection point** in `ai.service.ts`: augmented text is built before the orchestrator runs.
-Food images get an explicit `[Use log_food tool...]` instruction. Body images get `[Do NOT call tools, reply warmly]`. This prevents the orchestrator from guessing the intent wrong.
+- Food images: Pass 2 result contains `IMAGE_TYPE: food` + `TOTAL:` → `buildFoodLogArg()` extracts items+total → `log_food` auto-called. Grace replies with TOTAL protein in 1–2 sentences.
+- Body images: Pass 1 result contains `IMAGE_TYPE: body` → Grace replies warmly, no tool call.
+- This prevents the orchestrator from guessing intent wrong.
 
 ---
 

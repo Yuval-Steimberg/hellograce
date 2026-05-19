@@ -140,27 +140,52 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
   });
 
   app.get('/admin/feedback', async (req) => {
-    const { userId } = (req.query ?? {}) as { userId?: string };
-    if (userId) {
-      // Per-user feed: includes the Grace reply each rating points at, so
-      // Uri/Danny-style signals are diagnose-able in one query.
-      const { rows } = await deps.pool.query(
-        `SELECT f.id, f.user_id, f.message_id, f.signal_type, f.rating, f.comment,
-                f.created_at, m.content AS assistant_message
-         FROM feedback f
-         LEFT JOIN messages m ON m.id = f.message_id
-         WHERE f.user_id = $1
-         ORDER BY f.created_at DESC
-         LIMIT 500`,
-        [userId],
-      );
-      return { feedback: rows };
+    const q = (req.query ?? {}) as {
+      userId?: string;
+      date?: string;       // 'today' | '7d' | '30d' | 'all'
+      signalType?: string; // 'rating' | 'comment' | ...
+      rating?: string;     // '1' | '-1'
+      limit?: string;
+      offset?: string;
+    };
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (q.userId) {
+      params.push(q.userId);
+      conditions.push(`f.user_id = $${params.length}`);
     }
+
+    if (q.date && q.date !== 'all') {
+      const interval = q.date === 'today' ? '1 day' : q.date === '7d' ? '7 days' : '30 days';
+      conditions.push(`f.created_at > NOW() - INTERVAL '${interval}'`);
+    }
+
+    if (q.signalType) {
+      params.push(q.signalType);
+      conditions.push(`f.signal_type = $${params.length}`);
+    }
+
+    if (q.rating) {
+      params.push(parseInt(q.rating, 10));
+      conditions.push(`f.rating = $${params.length}`);
+    }
+
+    const limit = Math.min(parseInt(q.limit ?? '1000', 10), 1000);
+    const offset = parseInt(q.offset ?? '0', 10);
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
     const { rows } = await deps.pool.query(
-      `SELECT id, user_id, message_id, signal_type, rating, comment, created_at
-       FROM feedback
-       ORDER BY created_at DESC
-       LIMIT 200`,
+      `SELECT f.id, f.user_id, f.message_id, f.signal_type, f.rating, f.comment,
+              f.created_at, m.content AS assistant_message
+       FROM feedback f
+       LEFT JOIN messages m ON m.id = f.message_id
+       ${where}
+       ORDER BY f.created_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      params,
     );
     return { feedback: rows };
   });

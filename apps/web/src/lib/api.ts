@@ -68,6 +68,16 @@ export interface FeedbackEntry {
   rating: number | null;
   comment: string | null;
   created_at: string;
+  assistant_message?: string | null;
+}
+
+export interface FeedbackFilters {
+  userId?: string;
+  date?: 'today' | '7d' | '30d' | 'all';
+  signalType?: string;
+  rating?: '1' | '-1';
+  limit?: number;
+  offset?: number;
 }
 
 export interface Prompt {
@@ -153,7 +163,17 @@ export const api = {
     apiFetch<{ messages: Message[] }>(`/admin/conversations/${userId}/messages`),
 
   feedback: {
-    list: () => apiFetch<{ feedback: FeedbackEntry[] }>('/admin/feedback'),
+    list: (filters?: FeedbackFilters) => {
+      const params = new URLSearchParams();
+      if (filters?.userId) params.set('userId', filters.userId);
+      if (filters?.date && filters.date !== 'all') params.set('date', filters.date);
+      if (filters?.signalType) params.set('signalType', filters.signalType);
+      if (filters?.rating) params.set('rating', filters.rating);
+      if (filters?.limit) params.set('limit', String(filters.limit));
+      if (filters?.offset) params.set('offset', String(filters.offset));
+      const qs = params.toString();
+      return apiFetch<{ feedback: FeedbackEntry[] }>(`/admin/feedback${qs ? `?${qs}` : ''}`);
+    },
     post: (body: {
       userId: string;
       signalType: string;

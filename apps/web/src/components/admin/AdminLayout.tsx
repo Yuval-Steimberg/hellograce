@@ -162,104 +162,106 @@ export default function AdminLayout() {
         <DesktopSidebarContent handleLogout={handleLogout} />
       </aside>
 
-      {/* Mobile: full-screen overlay nav — rendered as portal so ancestor
-          overflow/stacking-context cannot block pointer events */}
-      {createPortal(
-        <AnimatePresence>
-          {mobileOpen && (
-            <motion.div
-              key="mobile-nav"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="fixed inset-0 flex flex-col"
+      {/* Mobile: full-screen overlay nav — portal at document.body root */}
+      {mobileOpen && createPortal(
+        <div
+          className="admin-shell fixed inset-0 flex flex-col"
+          style={{
+            zIndex: 9999,
+            background: 'linear-gradient(160deg, hsl(217 33% 8%) 0%, hsl(217 33% 6%) 100%)',
+          }}
+        >
+          {/* Header */}
+          <div
+            className="flex items-center justify-between px-5 py-4 flex-shrink-0"
+            style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center shadow-lg"
+                style={{ background: '#6366f1', boxShadow: '0 4px 12px rgba(99,102,241,0.35)' }}
+              >
+                <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
+              </div>
+              <div className="leading-tight">
+                <div className="font-semibold text-base" style={{ color: '#e2e8f0', letterSpacing: '-0.02em' }}>
+                  grace
+                </div>
+                <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
+                  Admin
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMobileOpen(false)}
               style={{
-                zIndex: 9999,
-                background: 'linear-gradient(160deg, #0d1829 0%, #0a1120 100%)',
+                width: 44, height: 44,
+                borderRadius: 12,
+                background: 'rgba(255,255,255,0.08)',
+                border: 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#94a3b8',
+                cursor: 'pointer',
+                WebkitAppearance: 'none',
+              }}
+              aria-label="Close menu"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {/* Nav items */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+            {NAV.map(({ to, label, icon: Icon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                onClick={() => setMobileOpen(false)}
+                style={({ isActive }) => ({
+                  display: 'flex', alignItems: 'center', gap: 16,
+                  padding: '14px 16px',
+                  borderRadius: 12,
+                  fontSize: 15, fontWeight: 500,
+                  textDecoration: 'none',
+                  marginBottom: 2,
+                  background: isActive ? 'rgba(99,102,241,0.15)' : 'transparent',
+                  color: isActive ? '#818cf8' : '#94a3b8',
+                })}
+              >
+                {({ isActive }) => (
+                  <>
+                    <Icon size={20} style={{ flexShrink: 0, color: isActive ? '#818cf8' : '#64748b' }} />
+                    <span style={{ flex: 1 }}>{label}</span>
+                    {isActive && <ChevronRight size={16} style={{ color: '#818cf8', opacity: 0.6 }} />}
+                  </>
+                )}
+              </NavLink>
+            ))}
+          </div>
+
+          {/* Sign out */}
+          <div
+            style={{ padding: '12px 12px 40px', borderTop: '1px solid rgba(255,255,255,0.08)' }}
+          >
+            <button
+              type="button"
+              onClick={handleLogout}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 16,
+                padding: '14px 16px', borderRadius: 12,
+                fontSize: 15, fontWeight: 500,
+                color: '#64748b', background: 'none', border: 'none',
+                cursor: 'pointer', WebkitAppearance: 'none',
+                minHeight: 52,
               }}
             >
-              {/* Header */}
-              <div
-                className="flex items-center justify-between px-5 py-4 flex-shrink-0"
-                style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-primary/90 flex items-center justify-center shadow-lg shadow-primary/40">
-                    <Zap className="h-4 w-4 text-white" strokeWidth={2.5} />
-                  </div>
-                  <div className="leading-tight">
-                    <div className="font-semibold text-base text-foreground" style={{ letterSpacing: '-0.02em' }}>
-                      grace
-                    </div>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-medium">
-                      Admin
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setMobileOpen(false)}
-                  className="w-11 h-11 rounded-xl flex items-center justify-center"
-                  style={{ background: 'rgba(255,255,255,0.08)', color: 'hsl(214 32% 75%)' }}
-                  aria-label="Close menu"
-                >
-                  <X className="h-5 w-5 pointer-events-none" />
-                </button>
-              </div>
-
-              {/* Nav items */}
-              <div className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
-                {NAV.map(({ to, label, icon: Icon, end }) => (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    end={end}
-                    onClick={() => setMobileOpen(false)}
-                    className={({ isActive }) =>
-                      cn(
-                        'flex items-center gap-4 px-4 py-3.5 rounded-xl text-[15px] font-medium transition-colors duration-150 min-h-[52px]',
-                        isActive
-                          ? 'bg-primary/15 text-primary'
-                          : 'text-muted-foreground',
-                      )
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <Icon
-                          className={cn(
-                            'h-5 w-5 flex-shrink-0 pointer-events-none',
-                            isActive ? 'text-primary' : 'text-muted-foreground',
-                          )}
-                        />
-                        <span className="flex-1 pointer-events-none">{label}</span>
-                        {isActive && (
-                          <ChevronRight className="h-4 w-4 text-primary/60 flex-shrink-0 pointer-events-none" />
-                        )}
-                      </>
-                    )}
-                  </NavLink>
-                ))}
-              </div>
-
-              {/* Sign out */}
-              <div
-                className="px-3 pb-10 pt-3 flex-shrink-0"
-                style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
-              >
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="w-full flex items-center gap-4 px-4 py-3.5 rounded-xl text-[15px] font-medium text-muted-foreground min-h-[52px]"
-                >
-                  <LogOut className="h-5 w-5 flex-shrink-0 pointer-events-none" />
-                  <span className="pointer-events-none">Sign out</span>
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>,
+              <LogOut size={20} style={{ flexShrink: 0 }} />
+              Sign out
+            </button>
+          </div>
+        </div>,
         document.body,
       )}
 

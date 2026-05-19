@@ -11,6 +11,11 @@ import {
   Users,
   LogOut,
   Zap,
+  TrendingUp,
+  Calendar,
+  Cpu,
+  Shield,
+  Activity,
 } from 'lucide-react';
 
 const NAV = [
@@ -20,6 +25,11 @@ const NAV = [
   { to: '/admin/feedback', label: 'RLHF Feedback', icon: ThumbsUp, end: false },
   { to: '/admin/prompts', label: 'Prompt Manager', icon: FileText, end: false },
   { to: '/admin/tools', label: 'Tool Settings', icon: Wrench, end: false },
+  { to: '/admin/business', label: 'Business', icon: TrendingUp, end: false },
+  { to: '/admin/scheduler', label: 'Scheduler', icon: Calendar, end: false },
+  { to: '/admin/ai-quality', label: 'AI Quality', icon: Cpu, end: false },
+  { to: '/admin/content-rules', label: 'Content Rules', icon: Shield, end: false },
+  { to: '/admin/system-health', label: 'System Health', icon: Activity, end: false },
 ];
 
 const stagger = {

@@ -15,6 +15,7 @@ export interface AdminDeps {
   promptOptimizer?: PromptOptimizer;
   /** Hot-reload callback wired in server.ts — pushes the active prompt to AIService and MessageGenerator. */
   reloadActivePrompt?: () => Promise<void>;
+  redis?: unknown;
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
@@ -704,5 +705,230 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       } catch { /* skip invalid */ }
     }
     return { text, target: ch, violations, clean: violations.length === 0 };
+  });
+
+  // ─── Business metrics ────────────────────────────────────────────────────────
+
+  app.get('/admin/business', async () => {
+    const STANDARD_PRICE = 9.99;
+    const PRO_PRICE = 24.99;
+
+    const [usersRow, weeklyRow, activeRow, retentionRow] = await Promise.all([
+      deps.pool.query<{ total: string; paid: string; pro: string; trial_active: string; trial_converted: string }>(`
+        SELECT
+          COUNT(*)::text AS total,
+          SUM(CASE WHEN is_paid AND NOT is_pro THEN 1 ELSE 0 END)::text AS paid,
+          SUM(CASE WHEN is_pro THEN 1 ELSE 0 END)::text AS pro,
+          SUM(CASE WHEN trial_start IS NOT NULL AND NOT is_paid AND NOT is_pro
+                     AND trial_start > NOW() - INTERVAL '3 days' THEN 1 ELSE 0 END)::text AS trial_active,
+          SUM(CASE WHEN trial_start IS NOT NULL AND (is_paid OR is_pro) THEN 1 ELSE 0 END)::text AS trial_converted
+        FROM users
+      `),
+      deps.pool.query<{ week: string; count: string }>(`
+        SELECT DATE_TRUNC('week', trial_start)::date::text AS week, COUNT(*)::text AS count
+        FROM users
+        WHERE trial_start > NOW() - INTERVAL '8 weeks'
+        GROUP BY 1 ORDER BY 1
+      `),
+      deps.pool.query<{ active_7d: string; active_30d: string }>(`
+        SELECT
+          SUM(CASE WHEN last_reply_at > NOW() - INTERVAL '7 days' THEN 1 ELSE 0 END)::text AS active_7d,
+          SUM(CASE WHEN last_reply_at > NOW() - INTERVAL '30 days' THEN 1 ELSE 0 END)::text AS active_30d
+        FROM users WHERE is_paid OR is_pro
+      `),
+      deps.pool.query<{ cohort: string; signed_up: string; retained: string }>(`
+        SELECT cohort, COUNT(*) AS signed_up,
+               SUM(CASE WHEN last_reply_at > trial_start + (cohort_days || ' days')::interval THEN 1 ELSE 0 END) AS retained
+        FROM (
+          SELECT trial_start, last_reply_at,
+                 unnest(ARRAY[1,3,7,30]) AS cohort_days,
+                 unnest(ARRAY['D1','D3','D7','D30']) AS cohort
+          FROM users WHERE trial_start IS NOT NULL
+        ) t
+        WHERE trial_start < NOW() - (cohort_days || ' days')::interval
+        GROUP BY cohort, cohort_days ORDER BY cohort_days
+      `),
+    ]);
+
+    const u = usersRow.rows[0]!;
+    const totalPaid = parseInt(u.paid, 10) + parseInt(u.pro, 10);
+    const trialConverted = parseInt(u.trial_converted, 10);
+    const trialTotal = trialConverted + parseInt(u.trial_active, 10) +
+      (totalPaid - trialConverted > 0 ? totalPaid - trialConverted : 0);
+
+    return {
+      totals: {
+        users: parseInt(u.total, 10),
+        paid: parseInt(u.paid, 10),
+        pro: parseInt(u.pro, 10),
+        trial_active: parseInt(u.trial_active, 10),
+        mrr: parseFloat(((parseInt(u.paid, 10) * STANDARD_PRICE) + (parseInt(u.pro, 10) * PRO_PRICE)).toFixed(2)),
+        conversion_pct: trialTotal > 0 ? Math.round((trialConverted / trialTotal) * 100) : 0,
+      },
+      active: {
+        active_7d: parseInt(activeRow.rows[0]?.active_7d ?? '0', 10),
+        active_30d: parseInt(activeRow.rows[0]?.active_30d ?? '0', 10),
+      },
+      weekly_signups: weeklyRow.rows.map((r) => ({ week: r.week, count: parseInt(r.count, 10) })),
+      retention: retentionRow.rows.map((r) => ({
+        cohort: r.cohort,
+        signed_up: parseInt(String(r.signed_up), 10),
+        retained: parseInt(String(r.retained), 10),
+        pct: parseInt(String(r.signed_up), 10) > 0
+          ? Math.round((parseInt(String(r.retained), 10) / parseInt(String(r.signed_up), 10)) * 100)
+          : 0,
+      })),
+    };
+  });
+
+  // ─── Scheduler status ────────────────────────────────────────────────────────
+
+  app.get('/admin/scheduler-status', async () => {
+    const { rows } = await deps.pool.query<{
+      phone: string; first_name: string | null; timezone: string | null;
+      wake_time: number | null; sleep_time: number | null;
+      injection_day: string | null; injection_flow_stage: string | null;
+      last_morning_sent_at: string | null; last_midday_sent_at: string | null;
+      last_evening_sent_at: string | null; last_reply_at: string | null;
+      is_paid: boolean; is_pro: boolean; trial_start: string | null;
+      checkin_count_per_day: number | null; side_effect_flow: string | null;
+    }>(`
+      SELECT phone, first_name, timezone, wake_time, sleep_time,
+             injection_day, injection_flow_stage,
+             last_morning_sent_at, last_midday_sent_at, last_evening_sent_at,
+             last_reply_at, is_paid, is_pro, trial_start,
+             checkin_count_per_day, side_effect_flow
+      FROM users
+      ORDER BY last_reply_at DESC NULLS LAST
+      LIMIT 200
+    `);
+    return { users: rows };
+  });
+
+  // ─── AI quality metrics ──────────────────────────────────────────────────────
+
+  app.get('/admin/ai-quality', async () => {
+    const FALLBACK_SNIPPETS = ['Not sure I got all of that', 'I missed something there', "didn't quite follow", 'make sure I get this right', 'missed part of what you meant'];
+    const fallbackConditions = FALLBACK_SNIPPETS.map((_, i) => `content ILIKE $${i + 1}`).join(' OR ');
+
+    const [toolRows, fallbackTrendRows, satisfactionTrendRows, latencyRows, promptRows] = await Promise.all([
+      deps.pool.query<{ tool_name: string; calls: string; successes: string; avg_latency: string }>(`
+        SELECT tool_name,
+               COUNT(*)::text AS calls,
+               SUM(CASE WHEN ok THEN 1 ELSE 0 END)::text AS successes,
+               ROUND(AVG(latency_ms))::text AS avg_latency
+        FROM tool_logs
+        WHERE created_at > NOW() - INTERVAL '30 days'
+        GROUP BY tool_name ORDER BY COUNT(*) DESC
+      `),
+      deps.pool.query<{ day: string; count: string }>(`
+        SELECT DATE_TRUNC('day', created_at)::date::text AS day, COUNT(*)::text AS count
+        FROM messages
+        WHERE role = 'assistant' AND (${fallbackConditions})
+          AND created_at > NOW() - INTERVAL '30 days'
+        GROUP BY 1 ORDER BY 1
+      `, FALLBACK_SNIPPETS.map((s) => `%${s}%`)),
+      deps.pool.query<{ day: string; positive: string; negative: string }>(`
+        SELECT DATE_TRUNC('day', created_at)::date::text AS day,
+               SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END)::text AS positive,
+               SUM(CASE WHEN rating = -1 THEN 1 ELSE 0 END)::text AS negative
+        FROM feedback
+        WHERE created_at > NOW() - INTERVAL '30 days'
+        GROUP BY 1 ORDER BY 1
+      `),
+      deps.pool.query<{ day: string; avg_ms: string }>(`
+        SELECT DATE_TRUNC('day', created_at)::date::text AS day,
+               ROUND(AVG(latency_ms))::text AS avg_ms
+        FROM tool_logs
+        WHERE created_at > NOW() - INTERVAL '30 days'
+        GROUP BY 1 ORDER BY 1
+      `),
+      deps.pool.query<{ version: number; active: boolean; created_at: string; notes: string | null; auto_generated: boolean | null }>(`
+        SELECT version, active, created_at, notes, auto_generated
+        FROM prompts ORDER BY version DESC LIMIT 20
+      `),
+    ]);
+
+    return {
+      tools: toolRows.rows.map((r) => ({
+        name: r.tool_name,
+        calls: parseInt(r.calls, 10),
+        successes: parseInt(r.successes, 10),
+        success_rate: parseInt(r.calls, 10) > 0 ? Math.round((parseInt(r.successes, 10) / parseInt(r.calls, 10)) * 100) : 0,
+        avg_latency_ms: parseInt(r.avg_latency, 10),
+      })),
+      fallback_trend: fallbackTrendRows.rows.map((r) => ({ day: r.day, count: parseInt(r.count, 10) })),
+      satisfaction_trend: satisfactionTrendRows.rows.map((r) => ({
+        day: r.day,
+        positive: parseInt(r.positive, 10),
+        negative: parseInt(r.negative, 10),
+        total: parseInt(r.positive, 10) + parseInt(r.negative, 10),
+        pct: (parseInt(r.positive, 10) + parseInt(r.negative, 10)) > 0
+          ? Math.round((parseInt(r.positive, 10) / (parseInt(r.positive, 10) + parseInt(r.negative, 10))) * 100)
+          : null,
+      })),
+      latency_trend: latencyRows.rows.map((r) => ({ day: r.day, avg_ms: parseInt(r.avg_ms, 10) })),
+      prompts: promptRows.rows,
+    };
+  });
+
+  // ─── System health ───────────────────────────────────────────────────────────
+
+  app.get('/admin/system-health', async () => {
+    const [dbRow, messageVolumeRows, fallbackRow, toolHealthRow] = await Promise.all([
+      deps.pool.query<{ db_ok: boolean }>('SELECT TRUE AS db_ok').then(
+        () => ({ ok: true, pool_total: (deps.pool as unknown as { totalCount: number }).totalCount ?? 0 }),
+        () => ({ ok: false, pool_total: 0 }),
+      ),
+      deps.pool.query<{ hour: string; count: string }>(`
+        SELECT DATE_TRUNC('hour', created_at)::text AS hour, COUNT(*)::text AS count
+        FROM messages
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+        GROUP BY 1 ORDER BY 1
+      `),
+      deps.pool.query<{ count: string }>(`
+        SELECT COUNT(*)::text AS count FROM messages
+        WHERE role = 'assistant' AND created_at > NOW() - INTERVAL '24 hours'
+          AND (content ILIKE '%Not sure I got all of that%'
+            OR content ILIKE '%I missed something there%'
+            OR content ILIKE '%didn''t quite follow%'
+            OR content ILIKE '%make sure I get this right%'
+            OR content ILIKE '%missed part of what you meant%')
+      `),
+      deps.pool.query<{ total: string; failed: string; avg_ms: string }>(`
+        SELECT COUNT(*)::text AS total,
+               SUM(CASE WHEN NOT ok THEN 1 ELSE 0 END)::text AS failed,
+               ROUND(AVG(latency_ms))::text AS avg_ms
+        FROM tool_logs WHERE created_at > NOW() - INTERVAL '24 hours'
+      `),
+    ]);
+
+    let redisOk = false;
+    let redisLatencyMs: number | null = null;
+    try {
+      if (deps.redis) {
+        const t0 = Date.now();
+        await (deps.redis as { ping: () => Promise<unknown> }).ping();
+        redisLatencyMs = Date.now() - t0;
+        redisOk = true;
+      }
+    } catch { /* redis down */ }
+
+    const toolH = toolHealthRow.rows[0];
+    const totalMessages24h = messageVolumeRows.rows.reduce((s, r) => s + parseInt(r.count, 10), 0);
+
+    return {
+      db: { ok: dbRow.ok },
+      redis: { ok: redisOk, latency_ms: redisLatencyMs },
+      messages_24h: totalMessages24h,
+      fallbacks_24h: parseInt(fallbackRow.rows[0]?.count ?? '0', 10),
+      fallback_rate_24h: totalMessages24h > 0
+        ? Math.round((parseInt(fallbackRow.rows[0]?.count ?? '0', 10) / totalMessages24h) * 100)
+        : 0,
+      tool_calls_24h: parseInt(toolH?.total ?? '0', 10),
+      tool_failures_24h: parseInt(toolH?.failed ?? '0', 10),
+      tool_avg_latency_ms: toolH?.avg_ms ? parseInt(toolH.avg_ms, 10) : null,
+      message_volume: messageVolumeRows.rows.map((r) => ({ hour: r.hour, count: parseInt(r.count, 10) })),
+    };
   });
 }

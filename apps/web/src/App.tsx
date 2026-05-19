@@ -25,6 +25,11 @@ const FeedbackPage = lazy(() => import("./pages/admin/FeedbackPage.tsx"));
 const PromptsPage = lazy(() => import("./pages/admin/PromptsPage.tsx"));
 const ToolsPage = lazy(() => import("./pages/admin/ToolsPage.tsx"));
 const UsersPage = lazy(() => import("./pages/admin/UsersPage.tsx"));
+const BusinessPage = lazy(() => import("./pages/admin/BusinessPage.tsx"));
+const SchedulerPage = lazy(() => import("./pages/admin/SchedulerPage.tsx"));
+const AIQualityPage = lazy(() => import("./pages/admin/AIQualityPage.tsx"));
+const ContentRulesPage = lazy(() => import("./pages/admin/ContentRulesPage.tsx"));
+const SystemHealthPage = lazy(() => import("./pages/admin/SystemHealthPage.tsx"));
 
 const queryClient = new QueryClient();
 
@@ -55,6 +60,11 @@ const App = () => (
                 <Route path="prompts" element={<PromptsPage />} />
                 <Route path="tools" element={<ToolsPage />} />
                 <Route path="users" element={<UsersPage />} />
+                <Route path="business" element={<BusinessPage />} />
+                <Route path="scheduler" element={<SchedulerPage />} />
+                <Route path="ai-quality" element={<AIQualityPage />} />
+                <Route path="content-rules" element={<ContentRulesPage />} />
+                <Route path="system-health" element={<SystemHealthPage />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />

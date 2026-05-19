@@ -152,6 +152,57 @@ export interface UserDetail {
   updated_at: string;
 }
 
+export interface BusinessData {
+  totals: { users: number; paid: number; pro: number; trial_active: number; mrr: number; conversion_pct: number };
+  active: { active_7d: number; active_30d: number };
+  weekly_signups: { week: string; count: number }[];
+  retention: { cohort: string; signed_up: number; retained: number; pct: number }[];
+}
+
+export interface SchedulerUser {
+  phone: string; first_name: string | null; timezone: string | null;
+  wake_time: number | null; sleep_time: number | null;
+  injection_day: string | null; injection_flow_stage: string | null;
+  last_morning_sent_at: string | null; last_midday_sent_at: string | null;
+  last_evening_sent_at: string | null; last_reply_at: string | null;
+  is_paid: boolean; is_pro: boolean; trial_start: string | null;
+  checkin_count_per_day: number | null; side_effect_flow: string | null;
+}
+
+export interface AIQualityData {
+  tools: { name: string; calls: number; successes: number; success_rate: number; avg_latency_ms: number }[];
+  fallback_trend: { day: string; count: number }[];
+  satisfaction_trend: { day: string; positive: number; negative: number; total: number; pct: number | null }[];
+  latency_trend: { day: string; avg_ms: number }[];
+  prompts: { version: number; active: boolean; created_at: string; notes: string | null; auto_generated: boolean | null }[];
+}
+
+export interface SystemHealth {
+  db: { ok: boolean };
+  redis: { ok: boolean; latency_ms: number | null };
+  messages_24h: number;
+  fallbacks_24h: number;
+  fallback_rate_24h: number;
+  tool_calls_24h: number;
+  tool_failures_24h: number;
+  tool_avg_latency_ms: number | null;
+  message_volume: { hour: string; count: number }[];
+}
+
+export interface ContentRule {
+  id: number;
+  rule_type: string;
+  pattern: string;
+  is_regex: boolean;
+  flags: string;
+  reason: string;
+  severity: 'block' | 'regen' | 'log';
+  applies_to: 'ai' | 'scheduler' | 'all';
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export const api = {
@@ -242,4 +293,26 @@ export const api = {
     method: 'POST',
     body: JSON.stringify(body),
   }),
+
+  business: () => apiFetch<BusinessData>('/admin/business'),
+  schedulerStatus: () => apiFetch<{ users: SchedulerUser[] }>('/admin/scheduler-status'),
+  aiQuality: () => apiFetch<AIQualityData>('/admin/ai-quality'),
+  systemHealth: () => apiFetch<SystemHealth>('/admin/system-health'),
+  contentRules: {
+    list: (params?: { type?: string; severity?: string; active?: string }) => {
+      const qs = params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
+      return apiFetch<{ rules: ContentRule[]; total: number }>(`/admin/content-rules${qs}`);
+    },
+    create: (body: Partial<ContentRule>) =>
+      apiFetch<{ rule: ContentRule }>('/admin/content-rules', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: number, body: Partial<ContentRule>) =>
+      apiFetch<{ rule: ContentRule }>(`/admin/content-rules/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    deactivate: (id: number) =>
+      apiFetch<{ ok: boolean }>(`/admin/content-rules/${id}`, { method: 'DELETE' }),
+    test: (text: string) =>
+      apiFetch<{ violations: unknown[]; clean: boolean }>('/admin/content-rules/test', {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      }),
+  },
 };

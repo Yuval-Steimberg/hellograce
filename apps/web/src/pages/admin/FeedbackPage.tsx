@@ -112,8 +112,8 @@ export default function FeedbackPage() {
   );
 
   return (
-    <div className="p-6">
-      <div className="mb-5 flex items-start justify-between flex-wrap gap-3">
+    <div className="p-4 md:p-6">
+      <div className="mb-4 md:mb-5 flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-semibold text-foreground" style={{ letterSpacing: '-0.02em' }}>
             RLHF Feedback
@@ -528,10 +528,10 @@ function FeedbackRow({
 
 function FeedbackSkeleton() {
   return (
-    <div className="p-6">
+    <div className="p-4 md:p-6">
       <Skeleton className="h-7 w-40 mb-1" />
       <Skeleton className="h-4 w-64 mb-6" />
-      <div className="grid grid-cols-4 gap-3 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
         {[...Array(4)].map((_, i) => (
           <div key={i} className="rounded-xl border p-4" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
             <Skeleton className="h-3 w-20 mb-3" />

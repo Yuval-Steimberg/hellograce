@@ -72,17 +72,17 @@ export default function ConversationsPage() {
   ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      <div className="mb-5">
+    <div className="p-4 md:p-6 h-full flex flex-col">
+      <div className="mb-4 md:mb-5">
         <h1 className="text-xl font-semibold text-foreground" style={{ letterSpacing: '-0.02em' }}>
           Conversations
         </h1>
         <p className="text-sm text-muted-foreground mt-0.5">Live view of user threads</p>
       </div>
 
-      <div className="flex gap-4 flex-1 min-h-0">
+      <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
         {/* Conversation list */}
-        <div className="w-72 flex-shrink-0 flex flex-col rounded-xl overflow-hidden" style={cardStyle}>
+        <div className="w-full md:w-72 flex-shrink-0 flex flex-col rounded-xl overflow-hidden h-52 md:h-auto" style={cardStyle}>
           <div className="px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Active conversations

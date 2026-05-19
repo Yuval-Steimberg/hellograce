@@ -235,8 +235,8 @@ export default function MetricsPage() {
 
 function PageShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="p-6">
-      <div className="mb-6">
+    <div className="p-4 md:p-6">
+      <div className="mb-4 md:mb-6">
         <h1 className="text-xl font-semibold text-foreground" style={{ letterSpacing: '-0.02em' }}>
           Metrics
         </h1>

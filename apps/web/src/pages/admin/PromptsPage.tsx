@@ -60,8 +60,8 @@ export default function PromptsPage() {
   const prompts = data?.prompts ?? [];
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      <div className="flex items-center justify-between mb-5">
+    <div className="p-4 md:p-6 h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4 md:mb-5 flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-semibold text-foreground" style={{ letterSpacing: '-0.02em' }}>
             Prompt Manager

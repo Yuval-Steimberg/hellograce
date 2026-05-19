@@ -44,7 +44,7 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
 
 function PageShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="p-6 space-y-6 max-w-7xl">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6 max-w-7xl">
       <div>
         <h1 className="text-xl font-semibold text-foreground" style={{ letterSpacing: '-0.02em' }}>Business Metrics</h1>
         <p className="text-sm text-muted-foreground mt-0.5">Revenue, growth, and retention overview</p>

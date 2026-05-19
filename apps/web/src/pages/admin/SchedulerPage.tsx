@@ -42,7 +42,7 @@ const STATUS_BADGE: Record<string, { bg: string; text: string; label: string }> 
 
 function PageShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="p-6 space-y-6 max-w-7xl">
+    <div className="p-4 md:p-6 space-y-4 md:space-y-6 max-w-7xl">
       {children}
     </div>
   );
@@ -95,7 +95,7 @@ export default function SchedulerPage() {
       </div>
 
       {/* Stats row */}
-      <motion.div variants={stagger} initial="hidden" animate="show" className="grid grid-cols-3 gap-3">
+      <motion.div variants={stagger} initial="hidden" animate="show" className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <motion.div variants={fadeUp}>
           <div className="rounded-xl p-5 border" style={CARD_STYLE}>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Total Users</p>

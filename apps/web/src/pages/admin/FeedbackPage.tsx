@@ -57,6 +57,7 @@ export default function FeedbackPage() {
 
   const [filters, setFilters] = useState<FeedbackFilters>({ date: 'all' });
   const [userInput, setUserInput] = useState('');
+  const [view, setView] = useState<'all' | 'by-user' | 'by-day'>('all');
 
   // Apply user filter with debounce-style: only filter when user clears or after commit
   const activeFilters: FeedbackFilters = {
@@ -109,8 +110,6 @@ export default function FeedbackPage() {
   const userKeys = Object.keys(byUser).sort((a, b) =>
     (byUser[b]?.length ?? 0) - (byUser[a]?.length ?? 0),
   );
-
-  const [view, setView] = useState<'all' | 'by-user' | 'by-day'>('all');
 
   return (
     <div className="p-6">

@@ -396,6 +396,52 @@ describe('PromptOptimizer — happy path', () => {
     expect(count).toBe(1);
   });
 
+  it('passes previous BEHAVIORAL ADJUSTMENTS to the LLM so it does not repeat them', async () => {
+    // Regression test: before this fix the optimizer stripped previous additions
+    // from the LLM context, causing it to re-derive the same rules every run.
+    // Now previous additions appear in the user message as "ALREADY IN PLACE".
+    const promptWithOldAdditions = `${BASE_PROMPT}\n\n---\n## BEHAVIORAL ADJUSTMENTS (auto-learned from user feedback)\n- Old rule: never use the word "journey" in responses.`;
+
+    let capturedUserMessage = '';
+    const spyLLM: LLMProvider = {
+      id: 'spy',
+      generate: vi.fn(async (req: LLMRequest) => {
+        // Capture the user turn to inspect it below.
+        const userTurn = req.messages.find((m) => m.role === 'user');
+        if (userTurn) capturedUserMessage = String(userTurn.content);
+        return {
+          text: JSON.stringify({
+            analysis: 'New pattern found not covered by previous rules.',
+            additions: '- When user asks about side effects, give one concrete tip before suggesting the clinician.',
+          }),
+          finishReason: 'stop' as const,
+        };
+      }),
+    };
+
+    const pool = buildPool([
+      { pattern: 'FROM prompts WHERE active', rows: [{ content: promptWithOldAdditions }] },
+      { pattern: 'f.rating = -1', rows: [{ assistant_message: 'See your clinician.', user_message: 'nausea?', comment: null, rating: -1 }] },
+      { pattern: 'f.rating = 1', rows: [] },
+      { pattern: 'ILIKE', rows: [{ count: '0' }] },
+      { pattern: "role = 'user' AND created_at", rows: [{ count: '20' }] },
+      { pattern: 'MAX(version)', rows: [{ max: 4 }] },
+      { pattern: 'BEGIN', rows: [] },
+      { pattern: 'UPDATE prompts SET active = FALSE', rows: [] },
+      { pattern: 'INSERT INTO prompts', rows: [] },
+      { pattern: 'COMMIT', rows: [] },
+    ]);
+
+    const report = await runOptimizer(pool, spyLLM);
+
+    expect(report.status).toBe('activated');
+    // The user message sent to Gemini must contain the previous additions.
+    expect(capturedUserMessage).toContain('ALREADY IN PLACE');
+    expect(capturedUserMessage).toContain('Old rule: never use the word "journey"');
+    // And it must warn the model not to repeat them.
+    expect(capturedUserMessage).toContain('Do NOT repeat or restate rules already covered');
+  });
+
   it('commits activation in a DB transaction (BEGIN/UPDATE/INSERT/COMMIT)', async () => {
     const pool = happyPool(
       [{ assistant_message: 'generic', user_message: 'hi', comment: null, rating: -1 }],

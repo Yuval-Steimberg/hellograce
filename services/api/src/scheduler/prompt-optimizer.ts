@@ -357,11 +357,21 @@ export class PromptOptimizer {
       ? signals.positiveSamples.map(formatSample).join('\n\n')
       : 'None in this period.';
 
-    // Strip previous additions so the model doesn't see them as part of the
-    // "current prompt" — it should reason about the base behavior only.
+    // Extract any previous BEHAVIORAL ADJUSTMENTS that are already in the active
+    // prompt. Passing them explicitly as "ALREADY IN PLACE" stops the LLM from
+    // re-deriving the same rules every run — it will refine them or focus on
+    // genuinely new patterns instead.
+    const additionsMarkerEscaped = ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const additionsMatch = currentPrompt.match(new RegExp(`${additionsMarkerEscaped}([\\s\\S]*)$`));
+    const previousAdditions = additionsMatch ? additionsMatch[1].trim() : null;
+
     const basePromptExcerpt = currentPrompt
-      .replace(new RegExp(`${ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*$`), '')
+      .replace(new RegExp(`${additionsMarkerEscaped}[\\s\\S]*$`), '')
       .slice(-3000); // Last 3000 chars of the base prompt gives context for what's already there
+
+    const previousAdditionsBlock = previousAdditions
+      ? `\nBEHAVIORAL ADJUSTMENTS ALREADY IN PLACE (from previous optimizer runs):\n${previousAdditions}\n\nIMPORTANT: Do NOT repeat or restate rules already covered above. If the 👎 feedback shows those rules are not working, REFINE them with more specific guidance. Focus on patterns NOT already addressed.`
+      : '';
 
     const resp = await this.llm.generate({
       messages: [
@@ -382,7 +392,8 @@ HARD CONSTRAINTS — your output will be automatically rejected if violated:
 Rules for your output format:
 - Each rule should be 1–2 sentences, written as an imperative instruction to Grace
 - Rules must directly address patterns visible in the 👎 feedback
-- Do NOT repeat rules that are clearly already in the existing prompt excerpt shown
+- Do NOT repeat rules that are clearly already in the existing prompt excerpt or previous adjustments shown
+- If a previous rule covers the same problem but users still complain, rewrite it with more concrete examples
 - Write rules in the same style as the existing prompt (direct, specific, WhatsApp-aware)
 
 Respond with ONLY a JSON object — no markdown code fences, no prose, no commentary before or after.
@@ -393,8 +404,9 @@ Example output:
         },
         {
           role: 'user',
-          content: `EXISTING PROMPT EXCERPT (end of current prompt — context for what's already covered):
+          content: `EXISTING PROMPT EXCERPT (end of base prompt — context for what's already covered):
 ${basePromptExcerpt}
+${previousAdditionsBlock}
 
 PERFORMANCE DATA — LAST ${LOOKBACK_DAYS} DAYS:
 - Total user messages: ${signals.totalMessages}
@@ -410,7 +422,7 @@ ${negativeBlock}
 POSITIVE EXAMPLES (what's working — do more of this):
 ${positiveBlock}
 
-Write 2–5 specific new behavioral rules to add to Grace's prompt that fix the patterns you see in the negative feedback. Respond with ONLY the JSON object.`,
+Write 2–5 specific new behavioral rules to add to Grace's prompt that fix the patterns you see in the negative feedback. If the same issue appears in both the previous adjustments AND the current feedback, the previous rule wasn't specific enough — rewrite it with a concrete example. Respond with ONLY the JSON object.`,
         },
       ],
       temperature: 0.3,

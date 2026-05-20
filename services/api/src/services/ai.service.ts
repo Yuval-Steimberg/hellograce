@@ -384,6 +384,19 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       } catch {
         // Fall back silently if timezone is malformed.
       }
+
+      // Conversation-gap signal — prevents Grace from referencing stale topics
+      // from days-old history. When it has been >24h since the user's last
+      // message we inject a FRESH START banner so the LLM knows the history is
+      // not the active context for this turn.
+      if (user.last_reply_at) {
+        const hoursSinceLast = (Date.now() - new Date(user.last_reply_at).getTime()) / 3_600_000;
+        if (hoursSinceLast > 24) {
+          const daysSince = Math.floor(hoursSinceLast / 24);
+          lines.push(`CONVERSATION GAP: ${daysSince} day${daysSince !== 1 ? 's' : ''} since the user's last message — FRESH START. Respond only to what they just said. Do NOT reference any previous topic from history.`);
+        }
+      }
+
       if (user.first_name) lines.push(`Name: ${user.first_name}`);
       if (user.medication) lines.push(`Medication: ${user.medication}`);
       // Surface medication type so the prompt's "Weekly injection / Daily pill /

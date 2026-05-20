@@ -37,7 +37,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const redis = getRedisClient(env.REDIS_URL);
   const cache = new Cache(redis);
 
-  const llm = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL }, logger, cache);
+  const llm = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL }, logger, cache);
   const memory = new MemoryService(pool);
   const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'gemini-embedding-001', cache);
   const rag = new RagService(pool, embedder, logger);

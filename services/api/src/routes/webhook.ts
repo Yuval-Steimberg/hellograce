@@ -144,8 +144,8 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         }
 
         const result = await withRetry(() => deps.ai.handleMessage(normalized), {
-          attempts: 3,
-          delayMs: 1500,
+          attempts: 4,
+          delayMs: 2500,
           retryIf: (err) => err instanceof UpstreamError,
         });
 

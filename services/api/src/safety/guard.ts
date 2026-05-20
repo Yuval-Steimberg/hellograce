@@ -28,10 +28,57 @@ const SAFETY_RESPONSE =
 const MEDICAL_ADVICE_RESPONSE =
   'That\'s really one for your prescribing clinician — they can give you the right answer for your specific dose and schedule. If something feels off, message them today or call your pharmacy\'s nurse line.';
 
+const NEGATION_RE =
+  /\b(don'?t|do not|doesn'?t|does not|didn'?t|did not|won'?t|will not|cannot|can'?t|isn'?t|aren'?t|wasn'?t|weren'?t|never|no (?:thoughts|plan|intention|reason|urge|desire)|not (?:going|planning|thinking)|i'?m not|i am not|no longer|nobody|never had|never want)\b/;
+
+/**
+ * True if EVERY occurrence of the keyword in `lower` is preceded by a
+ * negation within the same sentence — e.g. "I don't want to die",
+ * "no thoughts of suicide". If ANY occurrence is non-negated, the
+ * keyword counts as a real match. Substring .includes() alone produces
+ * dangerous false positives on phrases like the ones above; the crisis
+ * response sends 988 + 911 so a false positive is alarming.
+ */
+function allOccurrencesNegated(lower: string, keyword: string): boolean {
+  let from = 0;
+  let found = false;
+  while (true) {
+    const idx = lower.indexOf(keyword, from);
+    if (idx < 0) break;
+    found = true;
+    // Look at up to 80 chars before this occurrence, scoped to the same
+    // sentence (don't carry negation across "." / "!" / "?" / newline).
+    const start = Math.max(0, idx - 80);
+    const before = lower.slice(start, idx);
+    const sentenceStart = Math.max(
+      before.lastIndexOf('.'),
+      before.lastIndexOf('!'),
+      before.lastIndexOf('?'),
+      before.lastIndexOf('\n'),
+    );
+    const window = sentenceStart >= 0 ? before.slice(sentenceStart + 1) : before;
+    if (!NEGATION_RE.test(window)) return false;
+    from = idx + keyword.length;
+  }
+  return found; // true only if at least one occurrence existed and all were negated
+}
+
 export function classifyMessage(text: string): SafetyCheck {
   const lower = text.toLowerCase();
-  for (const k of EMERGENCY) if (lower.includes(k)) return { class: 'emergency', matched: k, response: SAFETY_RESPONSE };
-  for (const k of CRISIS) if (lower.includes(k)) return { class: 'crisis', matched: k, response: SAFETY_RESPONSE };
-  for (const k of MEDICAL_ADVICE) if (lower.includes(k)) return { class: 'medical_advice', matched: k, response: MEDICAL_ADVICE_RESPONSE };
+  for (const k of EMERGENCY) {
+    if (lower.includes(k) && !allOccurrencesNegated(lower, k)) {
+      return { class: 'emergency', matched: k, response: SAFETY_RESPONSE };
+    }
+  }
+  for (const k of CRISIS) {
+    if (lower.includes(k) && !allOccurrencesNegated(lower, k)) {
+      return { class: 'crisis', matched: k, response: SAFETY_RESPONSE };
+    }
+  }
+  for (const k of MEDICAL_ADVICE) {
+    if (lower.includes(k) && !allOccurrencesNegated(lower, k)) {
+      return { class: 'medical_advice', matched: k, response: MEDICAL_ADVICE_RESPONSE };
+    }
+  }
   return { class: 'safe' };
 }

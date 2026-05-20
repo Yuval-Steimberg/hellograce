@@ -1,7 +1,8 @@
 import type { LLMProvider, DbContentRule } from '@grace/shared';
-import { GRACE_SYSTEM_PROMPT, checkDbRules } from '@grace/ai-core';
+import { GRACE_SYSTEM_PROMPT, checkContent } from '@grace/ai-core';
 import type { GraceUser } from '../user/user.service.js';
 import type { ContentRulesService } from '../services/content-rules.service.js';
+import { inferMedicationType } from '../services/ai.service.js';
 
 const GOAL_MODE_MAP: Record<string, string> = {
   'Losing weight': 'protein',
@@ -126,16 +127,29 @@ export class MessageGenerator {
       const sanitized = sanitizeProactiveOutput(resp.text, type === 'welcome' ? null : user.first_name);
       if (!sanitized) return fallback;
 
-      // Check DB content rules; any block or regen violation falls back to the
-      // canned response — proactive messages can't regen with chat history context.
-      if (this.rulesService) {
-        const rules: DbContentRule[] = await this.rulesService.getActive('scheduler');
-        if (rules.length > 0) {
-          const violations = checkDbRules(sanitized, rules);
-          const actionable = violations.filter((v) => v.severity === 'block' || v.severity === 'regen' || !v.severity);
-          if (actionable.length > 0) return fallback;
-        }
-      }
+      // Full content check on proactive messages — same coverage as the
+      // reactive path. Until this was added, only DB rules ran here while the
+      // reactive AIService had a 4-layer checker (banned phrases, dietary
+      // violations, food dislikes, medication contradiction). Now both paths
+      // share the same final guard. Any block/regen violation falls back to
+      // the canned response since proactive messages can't regen with chat
+      // history context.
+      const rules: DbContentRule[] = this.rulesService
+        ? await this.rulesService.getActive('scheduler').catch(() => [])
+        : [];
+      const cleanDislikes = (user.food_dislikes ?? [])
+        .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+        .filter(Boolean);
+      const violations = checkContent(sanitized, {
+        foodDislikes: cleanDislikes,
+        medicationType: inferMedicationType(user.medication),
+        responseMode: 'text',
+        dbRules: rules,
+      });
+      const actionable = violations.filter(
+        (v) => v.severity === 'block' || v.severity === 'regen' || !v.severity,
+      );
+      if (actionable.length > 0) return fallback;
 
       return sanitized;
     } catch {

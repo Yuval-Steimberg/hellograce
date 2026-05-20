@@ -22,12 +22,21 @@ export interface OutboundMessage {
  * regardless of source (AI orchestrator, scheduler, hardcoded webhook
  * replies, safety guard, etc).
  *
- * Catches two recurring failure modes that users complain about:
+ * Catches recurring failure modes that users complain about:
  *  1. Em-dashes / en-dashes / double-dashes — AI-tell punctuation that
  *     slips through when a message bypasses the orchestrator's enforceFormat.
  *  2. Mid-sentence truncation — message ends in a hyphen, single letter,
  *     or stranded preposition/article with no terminal punctuation.
+ *  3. Unfilled template placeholders ({first_name}, [link], <url>) that
+ *     escape the LLM or template substitution and would be shipped raw.
+ *  4. Hallucinated role markers ("System:", "Assistant:", "User:") that
+ *     occasionally leak when the LLM mimics its own prompt structure.
+ *  5. Empty / whitespace-only bodies — never ship a blank message.
  */
+export class EmptyOutboundError extends Error {
+  constructor() { super('Outbound body is empty after sanitization'); }
+}
+
 export function sanitizeOutbound(input: string): string {
   let text = input;
 
@@ -37,9 +46,31 @@ export function sanitizeOutbound(input: string): string {
   // " - " used as a dash on one line → comma.
   text = text.replace(/(\S)[ \t]+-[ \t]+(\S)/g, '$1, $2');
 
+  // Strip hallucinated role markers (LLM occasionally echoes its own prompt
+  // structure: "Assistant: blah" / "System: blah" / "User: blah"). Only at
+  // line start — words like "User:" mid-sentence are legitimate prose.
+  text = text.replace(/^(System|Assistant|User|Human|Model)\s*:\s*/gim, '');
+
+  // Strip unfilled template placeholders. Two patterns:
+  //   {snake_case_var}  — common from string substitution failures
+  //   [bracketed]       — common from LLM "[link]" / "[settings link]"
+  //   <angle_var>       — common from prompt template leakage
+  // For [bracketed]: only strip ones that look like placeholders (lowercase,
+  // 2-30 chars, no spaces) — keep legitimate uses like "[laughs]" / "[2/5]".
+  text = text.replace(/\{[a-z_][a-z0-9_]{0,30}\}/g, '');
+  text = text.replace(/<[a-z_][a-z0-9_]{0,30}>/g, '');
+  text = text.replace(/\[(link|settings link|url|here|first_name|name|phone)\]/gi, '');
+
+  // Collapse double spaces left behind by placeholder strips.
+  text = text.replace(/[ \t]{2,}/g, ' ').replace(/\s+([.,!?])/g, '$1');
+
   // Mid-sentence truncation repair.
   const trimmed = text.trim();
-  if (trimmed.length === 0) return text;
+  if (trimmed.length === 0) {
+    // After sanitization the body is empty. Signal so the caller can pick a
+    // safe fallback instead of shipping whitespace to the user.
+    throw new EmptyOutboundError();
+  }
 
   const endsMidWord =
     /[-–—]$/.test(trimmed) ||
@@ -77,7 +108,23 @@ export class TwilioSender {
     if (!from) throw new UpstreamError('No Twilio sender configured for channel');
     const to = useWhatsapp && !msg.to.startsWith('whatsapp:') ? `whatsapp:${msg.to}` : msg.to;
 
-    const body = msg.raw ? msg.body : sanitizeOutbound(msg.body);
+    let body: string;
+    if (msg.raw) {
+      body = msg.body;
+    } else {
+      try {
+        body = sanitizeOutbound(msg.body);
+      } catch (err) {
+        if (err instanceof EmptyOutboundError) {
+          // Sanitizer produced an empty body — log and substitute a neutral
+          // fallback so the user is not left with silence.
+          this.logger.warn({ original: msg.body }, 'twilio.send.empty_after_sanitize');
+          body = "I'm here — could you say that again?";
+        } else {
+          throw err;
+        }
+      }
+    }
 
     try {
       const result = await this.client.messages.create({ from, to, body });

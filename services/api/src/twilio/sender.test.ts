@@ -79,9 +79,11 @@ describe('sanitizeOutbound — mid-sentence truncation', () => {
     expect(out).toBe("You're crushing it this week.");
   });
 
-  it('handles empty / whitespace-only input gracefully', () => {
-    expect(sanitizeOutbound('')).toBe('');
-    expect(sanitizeOutbound('   ')).toBe('   ');
+  it('throws EmptyOutboundError on empty / whitespace-only input', () => {
+    // Empty bodies should never reach the user. The sender catches this and
+    // substitutes a neutral fallback rather than shipping silence.
+    expect(() => sanitizeOutbound('')).toThrow();
+    expect(() => sanitizeOutbound('   ')).toThrow();
   });
 });
 
@@ -103,5 +105,33 @@ describe('sanitizeOutbound — real production failure modes', () => {
   it('cleans a scheduler proactive message that has an em-dash', () => {
     const out = sanitizeOutbound('Morning 🌿 Mid-week check — how are you feeling?');
     expect(out).not.toContain('—');
+  });
+});
+
+describe('sanitizeOutbound — placeholder & role-marker stripping', () => {
+  it('strips unfilled {first_name} placeholders', () => {
+    const out = sanitizeOutbound('Hey {first_name}, hope you are doing okay today.');
+    expect(out).not.toContain('{');
+    expect(out).not.toContain('}');
+  });
+
+  it('strips [link] placeholders', () => {
+    const out = sanitizeOutbound('Head to [link] to subscribe.');
+    expect(out).not.toContain('[link]');
+  });
+
+  it('strips hallucinated role markers at line start', () => {
+    const out = sanitizeOutbound('Assistant: Hey, hope you are well today.');
+    expect(out).not.toMatch(/^Assistant:/);
+  });
+
+  it('keeps legitimate bracketed content like [laughs]', () => {
+    const out = sanitizeOutbound('Tried that yesterday [laughs], it worked.');
+    expect(out).toContain('[laughs]');
+  });
+
+  it('does not strip mid-sentence words that contain "User"', () => {
+    const out = sanitizeOutbound('User testing went well today.');
+    expect(out).toContain('User testing');
   });
 });

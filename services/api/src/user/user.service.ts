@@ -98,13 +98,29 @@ export class UserService {
     return rows[0]!;
   }
 
-  /** Check if user has sent any messages before (first-time detection). */
+  /**
+   * Check if user is genuinely new (first interaction ever).
+   *
+   * Uses BOTH message count AND account age so a reset-memory operation on
+   * an established user doesn't make Grace treat them like a stranger and
+   * greet them with "really glad to connect, Yuval!" — that's a name + welcome
+   * combo that violates the ZERO TOLERANCE rules. Account >24h old = NOT new
+   * regardless of message count.
+   */
   async isNewUser(userId: string): Promise<boolean> {
-    const { rows } = await this.pool.query<{ count: string }>(
-      `SELECT count(*)::text FROM messages WHERE user_id = $1 LIMIT 2`,
+    const { rows } = await this.pool.query<{ msg_count: string; account_age_hours: number | null }>(
+      `SELECT
+         (SELECT count(*)::text FROM messages WHERE user_id = $1) AS msg_count,
+         EXTRACT(EPOCH FROM (now() - created_at)) / 3600 AS account_age_hours
+       FROM users
+       WHERE phone = $1 OR id::text = $1
+       LIMIT 1`,
       [userId],
     );
-    return Number(rows[0]?.count ?? 0) === 0;
+    const msgCount = Number(rows[0]?.msg_count ?? 0);
+    const accountAgeHours = rows[0]?.account_age_hours ?? null;
+    // Truly new = no messages AND account is less than 24h old.
+    return msgCount === 0 && (accountAgeHours === null || accountAgeHours < 24);
   }
 
   /** Update arbitrary user fields. */

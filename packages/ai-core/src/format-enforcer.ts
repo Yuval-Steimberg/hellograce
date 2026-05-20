@@ -173,6 +173,14 @@ export function enforceFormat(input: string, opts?: { stripFirstName?: string })
     }
   }
 
+  // ─── ".,"-style double punctuation (period immediately followed by comma) ─
+  // Produced when a list item ending in "." is joined with ", ". Replace with
+  // just ", " (stripping the period).
+  if (/\.,/.test(text)) {
+    text = text.replace(/\.\s*,\s*/g, ', ');
+    fixes.push('dot_comma_fixed');
+  }
+
   // ─── Final whitespace cleanup ─────────────────────────────────────────
   // Drop leading/trailing whitespace per line, collapse 3+ blank lines.
   text = text
@@ -186,11 +194,13 @@ export function enforceFormat(input: string, opts?: { stripFirstName?: string })
 }
 
 function flattenList(items: string[]): string {
-  if (items.length === 0) return '';
-  if (items.length === 1) return items[0]!;
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  const head = items.slice(0, -1).join(', ');
-  return `${head}, and ${items[items.length - 1]}`;
+  // Strip trailing sentence punctuation so "item., next" doesn't happen
+  const clean = items.map((s) => s.replace(/[.!?]+$/, '').trim());
+  if (clean.length === 0) return '';
+  if (clean.length === 1) return clean[0]!;
+  if (clean.length === 2) return `${clean[0]} and ${clean[1]}`;
+  const head = clean.slice(0, -1).join(', ');
+  return `${head}, and ${clean[clean.length - 1]}`;
 }
 
 function escapeRegex(s: string): string {

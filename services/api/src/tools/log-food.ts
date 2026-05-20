@@ -118,11 +118,29 @@ export function makeLogFoodTool(deps: {
         return { ...parsed, deduped: true };
       }
 
+      // Query the live daily running total AFTER the insert so Grace reports
+      // the correct cumulative number, not the stale pre-turn system-prompt snapshot.
+      const totalsResult = await deps.pool.query<{ total_protein_g: number; total_calories: number }>(
+        `WITH user_tz AS (
+           SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
+           FROM users WHERE phone = $1
+         )
+         SELECT COALESCE(SUM(fl.protein_g), 0) AS total_protein_g,
+                COALESCE(SUM(fl.calories), 0) AS total_calories
+         FROM food_logs fl, user_tz
+         WHERE fl.user_id = $1
+           AND (fl.created_at AT TIME ZONE user_tz.tz)::date
+               = (now() AT TIME ZONE user_tz.tz)::date`,
+        [deps.userId],
+      );
+      const dailyProteinG = Math.round(totalsResult.rows[0]?.total_protein_g ?? 0);
+      const dailyCalories = Math.round(totalsResult.rows[0]?.total_calories ?? 0);
+
       deps.logger.info(
-        { userId: deps.userId, food: parsed.food, protein: parsed.protein_g, source },
+        { userId: deps.userId, food: parsed.food, protein: parsed.protein_g, dailyProteinG, source },
         'tool.log_food.ok',
       );
-      return parsed;
+      return { ...parsed, daily_protein_g: dailyProteinG, daily_calories: dailyCalories };
     },
   };
 }

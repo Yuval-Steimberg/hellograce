@@ -160,7 +160,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   });
 
   registerHealthRoutes(app, pool);
-  registerWebhookRoutes(app, { env, ai, sender, users });
+  registerWebhookRoutes(app, { env, ai, sender, users, redis });
   registerUserRoutes(app, { pool, users, sender, generator });
   registerChatRoutes(app, ai, pool);
   registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import type { Redis } from 'ioredis';
 import type { Env } from '../config/env.js';
 import type { AIService } from '../services/ai.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
@@ -12,6 +13,7 @@ export interface WebhookDeps {
   ai: AIService;
   sender: TwilioSender;
   users?: UserService;
+  redis?: Redis;
 }
 
 export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): void {
@@ -32,6 +34,24 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
     }
 
     const normalized = normalizeTwilio(params as unknown as RawTwilioPayload);
+
+    // Deduplicate by Twilio MessageSid — Twilio retries webhooks if our server
+    // is slow (e.g. Fly cold start). Without this, a timed-out 8 AM message
+    // can replay hours later with the original text instead of answering the
+    // current question. TTL 2h covers all realistic retry windows.
+    if (deps.redis && normalized.providerMessageId) {
+      const dedupKey = `twilio:seen:${normalized.providerMessageId}`;
+      const alreadySeen = await deps.redis.set(dedupKey, '1', 'EX', 7200, 'NX');
+      if (alreadySeen === null) {
+        req.log.warn(
+          { msgSid: normalized.providerMessageId, userId: normalized.userId },
+          'webhook.duplicate_sid_dropped',
+        );
+        reply.header('content-type', 'text/xml');
+        return reply.send('<?xml version="1.0" encoding="UTF-8"?><Response/>');
+      }
+    }
+
     req.log.info(
       { userId: normalized.userId, channel: normalized.channel, type: normalized.type },
       'webhook.received',

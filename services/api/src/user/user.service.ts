@@ -190,8 +190,8 @@ export class UserService {
               COALESCE(calories, 0) AS calories
        FROM food_logs, user_tz
        WHERE user_id = $1
-         AND (created_at AT TIME ZONE user_tz.tz)::date
-             = (now() AT TIME ZONE user_tz.tz)::date
+         AND (created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
+             = (now()       AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
        ORDER BY created_at DESC`,
       [userId],
     );

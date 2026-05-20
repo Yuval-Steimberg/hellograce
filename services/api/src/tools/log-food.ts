@@ -129,8 +129,8 @@ export function makeLogFoodTool(deps: {
                 COALESCE(SUM(fl.calories), 0) AS total_calories
          FROM food_logs fl, user_tz
          WHERE fl.user_id = $1
-           AND (fl.created_at AT TIME ZONE user_tz.tz)::date
-               = (now() AT TIME ZONE user_tz.tz)::date`,
+           AND (fl.created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
+               = (now()        AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date`,
         [deps.userId],
       );
       const dailyProteinG = Math.round(totalsResult.rows[0]?.total_protein_g ?? 0);

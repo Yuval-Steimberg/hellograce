@@ -18,8 +18,10 @@ AVAILABLE TOOLS — call when the user's message clearly matches:
 - get_weight_trend: user asks about their weight loss progress, trend, or history. args: {}
 - get_food_summary: user asks how much protein or calories they've had today. args: {}
 - get_user_profile: user asks about their own profile, goals, or medication details. args: {}
+- remove_food: user wants to delete a food they logged by mistake, says something was from yesterday, or asks to remove a specific food. args: { "food": "<food name to remove>" }
 
 Call multiple tools if the message warrants it (e.g. log_food + get_food_summary after a meal log).
+IMPORTANT: if the user says "remove", "delete", "that was from yesterday", or "undo" a food — use remove_food, NOT log_food.
 If unsure, return intent="chat", needsTools=false, toolCalls=[].`;
 
 export class PlannerAgent {

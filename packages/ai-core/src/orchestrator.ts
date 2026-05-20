@@ -56,9 +56,10 @@ export class AIOrchestrator {
   async run(input: OrchestratorInput): Promise<OrchestratorOutput> {
     const started = Date.now();
 
+    const chatFallbackPlan: PlannerDecision = { intent: 'chat', needsTools: false, toolCalls: [], rationale: 'tools_disabled' };
     const plan: PlannerDecision = input.toolsEnabled
-      ? await this.planner.plan(input.text)
-      : { intent: 'chat', needsTools: false, toolCalls: [], rationale: 'tools_disabled' };
+      ? await this.planner.plan(input.text).catch(() => chatFallbackPlan)
+      : chatFallbackPlan;
 
     let toolResults: ToolResult[] = [];
     if (plan.needsTools && plan.toolCalls.length > 0) {

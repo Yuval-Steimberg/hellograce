@@ -493,6 +493,42 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     return { ok: true };
   });
 
+  /** List today's food log entries for a user (admin view + debug tool). */
+  app.get('/admin/users/:phone/food-logs', async (req) => {
+    const { phone } = req.params as { phone: string };
+    const dateParam = (req.query as Record<string, string>)['date']; // YYYY-MM-DD or omit for today
+    const { rows } = await deps.pool.query(
+      `WITH user_tz AS (
+         SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
+         FROM users WHERE phone = $1
+       )
+       SELECT fl.id, fl.food, fl.protein_g, fl.calories, fl.confidence,
+              fl.source, fl.raw_text, fl.created_at,
+              (fl.created_at AT TIME ZONE user_tz.tz)::text AS created_at_local
+       FROM food_logs fl, user_tz
+       WHERE fl.user_id = $1
+         AND CASE
+           WHEN $2::date IS NOT NULL
+             THEN (fl.created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date = $2::date
+           ELSE (fl.created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
+                = (now() AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
+         END
+       ORDER BY fl.created_at DESC`,
+      [phone, dateParam ?? null],
+    );
+    const totalProtein = rows.reduce((s: number, r: { protein_g: number }) => s + (r.protein_g ?? 0), 0);
+    const totalCalories = rows.reduce((s: number, r: { calories: number }) => s + (r.calories ?? 0), 0);
+    return { items: rows, total_protein_g: Math.round(totalProtein), total_calories: Math.round(totalCalories) };
+  });
+
+  /** Delete a specific food log entry by ID. */
+  app.delete('/admin/food-logs/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const { rowCount } = await deps.pool.query(`DELETE FROM food_logs WHERE id = $1`, [id]);
+    if (!rowCount) throw new ValidationError('Food log entry not found');
+    return { ok: true };
+  });
+
   /** Reset conversation memory without deleting the profile. */
   app.post('/admin/users/:phone/reset-memory', async (req) => {
     const { phone } = req.params as { phone: string };

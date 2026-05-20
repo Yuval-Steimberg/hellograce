@@ -115,10 +115,20 @@ export class AIService {
 
     // Fold media description into the prompt (only after Promise.all resolves).
     let augmentedText = input.text;
+
+    // Pre-compute gap so the inline instruction blocks for voice/image can be
+    // gap-aware. Same threshold as buildPersonalisedPrompt: >24h = stale history.
+    const hoursSinceLastReply = user?.last_reply_at
+      ? (Date.now() - new Date(user.last_reply_at).getTime()) / 3_600_000
+      : 0;
+    const staleHistoryNote = hoursSinceLastReply > 24
+      ? ` CONVERSATION GAP: ${Math.floor(hoursSinceLastReply / 24)} day(s) since last message — do NOT reference any previous conversation topics from history.`
+      : '';
+
     if (description) {
       const kind = input.media[0]?.kind;
       if (kind === 'audio' && !input.text) {
-        augmentedText = `[Voice note — auto-transcribed, may have filler words or fragments. Respond naturally.]\n${description}`;
+        augmentedText = `[Voice note — auto-transcribed, may have filler words or fragments. Respond naturally.${staleHistoryNote}]\n${description}`;
       } else if (kind === 'image') {
         const userIntent = input.text ? `The user said: "${input.text}"\n\n` : '';
         if (description.includes('IMAGE_TYPE: food')) {
@@ -130,11 +140,11 @@ export class AIService {
           augmentedText = `${userIntent}The user sent a meal photo. Internal nutrition data for your reference ONLY — never recite this breakdown:\n\n${description}\n\n[REQUIRED:
 1. Call log_food with args {"food": ${JSON.stringify(foodArg)}} — pass this string EXACTLY.
 2. Reply in 1–2 short sentences using the TOTAL protein number naturally. Example: "That looks like about 30g of protein${confidenceNote}. You're at 55g today."
-NEVER ask the user to specify portions, grams, ounces, or what's in the photo — the estimate is already done. NEVER output ITEMS/BREAKDOWN/TOTAL tables. NEVER list per-item macros. Sound like a supportive friend, not a nutrition app. If confidence was low, you may add ONE light human clarifier (e.g. "Was that a snack or a full plate?") — never a quantity question.]`;
+NEVER ask the user to specify portions, grams, ounces, or what's in the photo — the estimate is already done. NEVER output ITEMS/BREAKDOWN/TOTAL tables. NEVER list per-item macros. Sound like a supportive friend, not a nutrition app. If confidence was low, you may add ONE light human clarifier (e.g. "Was that a snack or a full plate?") — never a quantity question.${staleHistoryNote}]`;
         } else if (description.includes('IMAGE_TYPE: body')) {
-          augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 weight-loss journey and encourage them. CRITICAL: Do NOT mention pain, discomfort, injuries, or any medical conditions — this is a progress selfie, not a medical photo. Do NOT invent symptoms or anything not in the analysis above. Do NOT call any logging tools.]`;
+          augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 weight-loss journey and encourage them. CRITICAL: Do NOT mention pain, discomfort, injuries, or any medical conditions — this is a progress selfie, not a medical photo. Do NOT invent symptoms or anything not in the analysis above. Do NOT call any logging tools.${staleHistoryNote}]`;
         } else {
-          augmentedText = `${userIntent}The user sent an image. ${description}`;
+          augmentedText = `${userIntent}The user sent an image. ${description}${staleHistoryNote ? ' ' + staleHistoryNote.trim() : ''}`;
         }
       } else {
         augmentedText = `${input.text}\n\n[media: ${description}]`.trim();

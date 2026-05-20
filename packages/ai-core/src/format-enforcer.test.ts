@@ -215,7 +215,7 @@ describe('enforceFormat', () => {
       // 588 chars of 'A' + 'great choice.' (13 chars) = 601 chars total.
       // The period sits at index 600 — exactly at window boundary.
       const input = 'A'.repeat(588) + 'great choice.';
-      const { text, fixes } = enforceFormat(input);
+      const { text } = enforceFormat(input);
       // Either capped (returns full text since len ≤ 600 isn't true) or untouched.
       // Either way, must not be cut mid-word.
       expect(text.endsWith('.')).toBe(true);

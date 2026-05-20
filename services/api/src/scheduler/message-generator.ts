@@ -2,7 +2,14 @@ import type { LLMProvider, DbContentRule } from '@grace/shared';
 import { GRACE_SYSTEM_PROMPT, checkContent } from '@grace/ai-core';
 import type { GraceUser } from '../user/user.service.js';
 import type { ContentRulesService } from '../services/content-rules.service.js';
+import type { MessageTemplatesService } from '../services/message-templates.service.js';
 import { inferMedicationType } from '../services/ai.service.js';
+
+const DEFAULT_UPGRADE_URL = 'https://graceglp.com/upgrade';
+
+function buildUpgradeUrl(phone: string): string {
+  return `${DEFAULT_UPGRADE_URL}?phone=${encodeURIComponent(phone)}`;
+}
 
 const GOAL_MODE_MAP: Record<string, string> = {
   'Losing weight': 'protein',
@@ -89,11 +96,22 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
 export class MessageGenerator {
   private activeSystemPrompt: string | undefined;
   private rulesService: ContentRulesService | undefined;
+  private templatesService: MessageTemplatesService | undefined;
 
   constructor(private llm: LLMProvider) {}
 
   updateRulesService(rs: ContentRulesService): void {
     this.rulesService = rs;
+  }
+
+  /**
+   * Optional templates service used to substitute the welcome / trial-reminder
+   * fallbacks with the admin-editable versions from message_templates table.
+   * Falls back to the static FALLBACKS[type] map if not provided or template
+   * lookup fails.
+   */
+  updateTemplatesService(ts: MessageTemplatesService): void {
+    this.templatesService = ts;
   }
 
   /**
@@ -107,7 +125,11 @@ export class MessageGenerator {
   }
 
   async generate(type: MsgType, user: GraceUser, opts?: GenerateOpts): Promise<string> {
-    const fallback = FALLBACKS[type](user, opts);
+    // For subscription-related messages (welcome, trial reminder) ops can
+    // override the canned fallback via the message_templates table. If the
+    // template lookup fails for any reason, fall through to the hard-coded
+    // FALLBACKS map so the user is never left silent.
+    const fallback = await this.resolveFallback(type, user, opts);
     try {
       const userCtx = this.buildUserCtx(user);
       const prompt = this.buildPrompt(type, user, opts);
@@ -154,6 +176,38 @@ export class MessageGenerator {
       return sanitized;
     } catch {
       return fallback;
+    }
+  }
+
+  /**
+   * Pick the right fallback string for the message type. For subscription
+   * messages (welcome, trial reminder) we consult the message_templates
+   * table so admins can edit them without a deploy. Variable substitution:
+   *   {first_name} -> user.first_name (or "there")
+   *   {medication} -> user.medication (or "your GLP-1")
+   *   {goal}       -> user.goals[0]   (or "general wellness")
+   *   {upgrade_url} -> https://graceglp.com/upgrade?phone={phone}
+   */
+  private async resolveFallback(type: MsgType, user: GraceUser, opts?: GenerateOpts): Promise<string> {
+    const staticFallback = FALLBACKS[type](user, opts);
+    if (!this.templatesService) return staticFallback;
+    const templateKey = type === 'welcome' ? 'welcome'
+      : type === 'trial_expiry_reminder' ? 'trial_reminder'
+      : null;
+    if (!templateKey) return staticFallback;
+    try {
+      return await this.templatesService.render(
+        templateKey,
+        {
+          first_name: user.first_name ?? 'there',
+          medication: user.medication ?? 'your GLP-1',
+          goal: user.goals[0] ?? 'general wellness',
+          upgrade_url: buildUpgradeUrl(user.phone),
+        },
+        staticFallback,
+      );
+    } catch {
+      return staticFallback;
     }
   }
 

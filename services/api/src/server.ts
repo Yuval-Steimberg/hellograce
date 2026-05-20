@@ -24,6 +24,7 @@ import { registerChatRoutes } from './routes/chat.js';
 import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
 import { ContentRulesService } from './services/content-rules.service.js';
+import { MessageTemplatesService } from './services/message-templates.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { PromptOptimizer, type OptimizerRunReport } from './scheduler/prompt-optimizer.js';
@@ -60,6 +61,8 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const contentRulesService = new ContentRulesService(pool, logger);
   contentRulesService.start();
 
+  const messageTemplatesService = new MessageTemplatesService(pool, logger);
+
   const ai = new AIService({
     pool,
     llm,
@@ -92,6 +95,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   // Seed the proactive generator with the same active prompt the AI service uses.
   generator.updateSystemPrompt(await loadActivePrompt());
   generator.updateRulesService(contentRulesService);
+  generator.updateTemplatesService(messageTemplatesService);
 
   // Hot-reload BOTH the reactive AIService and the proactive MessageGenerator
   // whenever the optimizer auto-activates a new prompt. No SIGHUP, no restart.
@@ -160,10 +164,10 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   });
 
   registerHealthRoutes(app, pool);
-  registerWebhookRoutes(app, { env, ai, sender, users, redis });
+  registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService });
   registerUserRoutes(app, { pool, users, sender, generator });
   registerChatRoutes(app, ai, pool);
-  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
+  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
 
   const shutdown = async () => {
     app.log.info('shutdown.start');

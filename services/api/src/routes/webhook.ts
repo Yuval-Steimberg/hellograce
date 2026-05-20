@@ -4,9 +4,12 @@ import type { Env } from '../config/env.js';
 import type { AIService } from '../services/ai.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
 import type { UserService, GraceUser } from '../user/user.service.js';
+import type { MessageTemplatesService } from '../services/message-templates.service.js';
 import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { UnauthorizedError, UpstreamError } from '../errors.js';
+
+const DEFAULT_UPGRADE_URL = 'https://graceglp.com/upgrade';
 
 export interface WebhookDeps {
   env: Env;
@@ -14,6 +17,7 @@ export interface WebhookDeps {
   sender: TwilioSender;
   users?: UserService;
   redis?: Redis;
+  templates?: MessageTemplatesService;
 }
 
 export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): void {
@@ -131,14 +135,35 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             }
           }
 
+          // ── In-chat upgrade intent ("upgrade", "go pro", "subscribe" …).
+          // Sent to ANY user — both trial and paid users may want to manage
+          // their plan. Replies with the admin-editable upgrade_nudge template
+          // containing a Stripe checkout link.
+          if (user && detectUpgradeIntent(normalized.text)) {
+            const upgradeUrl = buildUpgradeUrl(user.phone);
+            const reply = deps.templates
+              ? await deps.templates.render(
+                  'upgrade_nudge',
+                  { upgrade_url: upgradeUrl, first_name: user.first_name ?? '' },
+                  `You can upgrade or manage your subscription anytime at ${upgradeUrl} 🧡`,
+                )
+              : `You can upgrade or manage your subscription anytime at ${upgradeUrl} 🧡`;
+            await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: reply });
+            return;
+          }
+
           // Subscription gate — users with an expired trial and no active subscription
           // get a soft paywall nudge instead of the AI response.
           if (user && !isAccessAllowed(user)) {
-            await deps.sender.send({
-              to: normalized.userId,
-              channel: normalized.channel,
-              body: `Your 3-day Grace trial has ended 🧡 To keep your daily check-ins going, head to graceglp.com to subscribe. Questions? Reply HELP.`,
-            });
+            const upgradeUrl = buildUpgradeUrl(user.phone);
+            const body = deps.templates
+              ? await deps.templates.render(
+                  'paywall',
+                  { upgrade_url: upgradeUrl, first_name: user.first_name ?? '' },
+                  `Your 3-day Grace trial has ended 🧡 To keep your daily check-ins going, head to ${upgradeUrl} to subscribe. Questions? Reply HELP.`,
+                )
+              : `Your 3-day Grace trial has ended 🧡 To keep your daily check-ins going, head to ${upgradeUrl} to subscribe. Questions? Reply HELP.`;
+            await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
             return;
           }
         }
@@ -364,4 +389,34 @@ function parseFeedbackSignal(text: string): { rating: number; comment?: string }
     return { rating: -1, comment: commentMatch[1].trim() };
   }
   return null;
+}
+
+// ─── Upgrade intent ──────────────────────────────────────────────────────────
+// Catches "upgrade", "go pro", "subscribe", "pricing", "how much", etc. Limited
+// to short messages (≤8 words) so questions like "what would I have to do to
+// upgrade my workout routine" don't match. Long sentences that include the
+// word "upgrade" are out of scope — Grace handles those conversationally.
+const UPGRADE_PHRASES: RegExp[] = [
+  /\b(upgrade|subscribe|subscription|go\s+pro|grace\s+pro|pro\s+plan|upgrade\s+me|upgrade\s+now)\b/i,
+  /\b(how\s+much|pricing|price|cost|plans|what\s+plans)\b/i,
+  /\b(manage\s+(my\s+)?(plan|subscription|account))\b/i,
+];
+
+export function detectUpgradeIntent(text: string): boolean {
+  const trimmed = text.trim();
+  // Limit to short messages — long sentences with "upgrade" are usually
+  // conversational, not subscription requests.
+  if (trimmed.split(/\s+/).length > 8) return false;
+  return UPGRADE_PHRASES.some((re) => re.test(trimmed));
+}
+
+/**
+ * Build the Stripe checkout / management URL. Includes the user's phone as
+ * a query param so the landing page can pre-fill the form. Hosted by the
+ * existing v1 Supabase edge function (create-checkout) which then redirects
+ * to Stripe Checkout.
+ */
+export function buildUpgradeUrl(phone: string): string {
+  const encoded = encodeURIComponent(phone);
+  return `${DEFAULT_UPGRADE_URL}?phone=${encoded}`;
 }

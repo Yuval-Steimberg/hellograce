@@ -17,6 +17,7 @@ import {
   Calendar,
   Cpu,
   Shield,
+  CreditCard,
   Activity,
   Menu,
   X,
@@ -34,6 +35,7 @@ const NAV = [
   { to: '/admin/scheduler', label: 'Scheduler', icon: Calendar, end: false },
   { to: '/admin/ai-quality', label: 'AI Quality', icon: Cpu, end: false },
   { to: '/admin/content-rules', label: 'Content Rules', icon: Shield, end: false },
+  { to: '/admin/subscription-messages', label: 'Subscription Messages', icon: CreditCard, end: false },
   { to: '/admin/system-health', label: 'System Health', icon: Activity, end: false },
 ];
 

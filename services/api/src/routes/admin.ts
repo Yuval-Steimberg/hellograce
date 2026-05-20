@@ -6,6 +6,7 @@ import { UnauthorizedError, ValidationError } from '../errors.js';
 import type { Cache } from '../cache/cache.js';
 import type { LLMProvider } from '@grace/shared';
 import type { PromptOptimizer } from '../scheduler/prompt-optimizer.js';
+import type { MessageTemplatesService } from '../services/message-templates.service.js';
 
 export interface AdminDeps {
   pool: Pool;
@@ -16,6 +17,7 @@ export interface AdminDeps {
   /** Hot-reload callback wired in server.ts — pushes the active prompt to AIService and MessageGenerator. */
   reloadActivePrompt?: () => Promise<void>;
   redis?: unknown;
+  templates?: MessageTemplatesService;
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
@@ -997,5 +999,53 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       tool_avg_latency_ms: toolH?.avg_ms ? parseInt(toolH.avg_ms, 10) : null,
       message_volume: messageVolumeRows.map((r) => ({ hour: r.hour, count: parseInt(r.count, 10) })),
     };
+  });
+
+  // ─── Subscription message templates ────────────────────────────────────────
+  // GET / PUT for the four editable subscription messages (paywall, trial
+  // reminder, welcome, upgrade_nudge). Variable substitution is literal
+  // {name} replacement; declared variables shown in the response so the
+  // admin UI can render hint chips.
+
+  app.get('/admin/message-templates', async () => {
+    if (!deps.templates) return { templates: [] };
+    const templates = await deps.templates.list();
+    return { templates };
+  });
+
+  const TemplateUpdateSchema = z.object({
+    template: z.string().min(1).max(2000),
+  });
+
+  app.put('/admin/message-templates/:key', async (req) => {
+    if (!deps.templates) throw new ValidationError('templates service not configured');
+    const { key } = req.params as { key: string };
+    const parsed = TemplateUpdateSchema.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError(parsed.error.issues.map((i) => i.message).join('; '));
+
+    // Sanity: reject hardcoded role-marker leaks / blank-only updates. The
+    // outbound sanitizer would catch these at send time, but failing fast
+    // here gives the admin clear feedback at edit time.
+    const t = parsed.data.template.trim();
+    if (t.length === 0) throw new ValidationError('template cannot be empty');
+    if (/^(system|assistant|user|human|model)\s*:/i.test(t)) {
+      throw new ValidationError('template cannot start with a role marker');
+    }
+
+    await deps.templates.update(key, t);
+    const updated = await deps.templates.get(key);
+    return { ok: true, template: updated };
+  });
+
+  // Render a template with the supplied variables — admin UI uses this to
+  // preview the message exactly as the user would see it.
+  app.post('/admin/message-templates/:key/preview', async (req) => {
+    if (!deps.templates) throw new ValidationError('templates service not configured');
+    const { key } = req.params as { key: string };
+    const vars = (req.body as { variables?: Record<string, string> })?.variables ?? {};
+    const tpl = await deps.templates.get(key);
+    if (!tpl) throw new ValidationError(`template "${key}" not found`);
+    const rendered = await deps.templates.render(key, vars, tpl.template);
+    return { rendered };
   });
 }

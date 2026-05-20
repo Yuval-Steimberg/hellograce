@@ -189,6 +189,16 @@ export interface SystemHealth {
   message_volume: { hour: string; count: number }[];
 }
 
+export interface MessageTemplate {
+  id: number;
+  key: string;
+  template: string;
+  description: string | null;
+  variables: string[];
+  is_active: boolean;
+  updated_at: string;
+}
+
 export interface ContentRule {
   id: number;
   rule_type: string;
@@ -313,6 +323,19 @@ export const api = {
       apiFetch<{ violations: unknown[]; clean: boolean }>('/admin/content-rules/test', {
         method: 'POST',
         body: JSON.stringify({ text }),
+      }),
+  },
+  messageTemplates: {
+    list: () => apiFetch<{ templates: MessageTemplate[] }>('/admin/message-templates'),
+    update: (key: string, template: string) =>
+      apiFetch<{ ok: true; template: MessageTemplate }>(`/admin/message-templates/${key}`, {
+        method: 'PUT',
+        body: JSON.stringify({ template }),
+      }),
+    preview: (key: string, variables: Record<string, string>) =>
+      apiFetch<{ rendered: string }>(`/admin/message-templates/${key}/preview`, {
+        method: 'POST',
+        body: JSON.stringify({ variables }),
       }),
   },
 };

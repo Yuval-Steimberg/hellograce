@@ -92,13 +92,19 @@ function getTypedFallback(type: MessageType): string {
  * which makes Grace look like she ignored what the user just did.
  */
 function getToolAwareFallback(type: MessageType, toolResults: ToolResult[]): string {
-  // Successfully logged food → reference the actual protein count
-  const foodLogged = toolResults.find((r) => r.name === 'log_food' && r.ok && r.output);
+  // Successfully logged food → reference the actual protein count.
+  // Note: outer `r.ok` means the tool didn't throw; the tool's internal
+  // logic may still have failed (output.ok === false). Check both.
+  const foodLogged = toolResults.find((r) => {
+    if (r.name !== 'log_food' || !r.ok || !r.output) return false;
+    const out = r.output as Record<string, unknown>;
+    return out['ok'] !== false && typeof out['protein_g'] === 'number';
+  });
   if (foodLogged) {
     const out = foodLogged.output as Record<string, unknown>;
-    const proteinG = typeof out['protein_g'] === 'number' ? Math.round(out['protein_g'] as number) : null;
+    const proteinG = Math.round(out['protein_g'] as number);
     const dailyG = typeof out['daily_protein_g'] === 'number' ? Math.round(out['daily_protein_g'] as number) : null;
-    if (proteinG != null) {
+    if (proteinG > 0) {
       if (dailyG != null && dailyG !== proteinG) {
         return `Got it — about ${proteinG}g protein for that. You're at ${dailyG}g for today.`;
       }

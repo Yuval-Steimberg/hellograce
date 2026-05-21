@@ -10,7 +10,7 @@ Respond with ONLY a JSON object:
 }
 
 AVAILABLE TOOLS — call when the user's message clearly matches:
-- log_food: user mentions eating or drinking something. args: { "food": "<description>" }
+- log_food: user mentions eating or drinking something. args: { "food": "<full description, all items in one string>" }
 - log_weight: user reports their weight. args: { "weight_lbs": <number> }
 - log_mood: user rates their mood or energy. args: { "score": <1-10> }
 - log_side_effect: user describes a side effect (nausea, fatigue, constipation, hair loss, etc.). args: { "effect": "<effect name>" }
@@ -19,6 +19,12 @@ AVAILABLE TOOLS — call when the user's message clearly matches:
 - get_food_summary: user asks how much protein or calories they've had today. args: {}
 - get_user_profile: user asks about their own profile, goals, or medication details. args: {}
 - remove_food: user wants to delete a food they logged by mistake, says something was from yesterday, or asks to remove a specific food. args: { "food": "<food name to remove>" }
+
+CRITICAL — COMPOUND FOOD MEALS:
+When the user logs multiple items in ONE meal ("salad and omelet", "chicken with rice and broccoli", "yogurt, granola, and banana"), make ONE log_food call with the FULL description as the food arg — never split into multiple log_food calls.
+✓ "ate salad and an omelet with 2 eggs" → [{name:"log_food", args:{food:"salad and an omelet with 2 eggs"}}]
+✗ split into [{food:"salad"}, {food:"omelet with 2 eggs"}] — the tool sums correctly itself
+✗ drop items: {food:"salad"} alone loses the omelet
 
 Call multiple tools if the message warrants it (e.g. log_food + get_food_summary after a meal log).
 IMPORTANT: if the user says "remove", "delete", "that was from yesterday", or "undo" a food — use remove_food, NOT log_food.

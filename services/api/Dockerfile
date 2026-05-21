@@ -16,7 +16,9 @@ COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 COPY packages/ai-core packages/ai-core
 COPY services/api services/api
-RUN pnpm --filter @grace/api build
+RUN pnpm --filter @grace/shared build \
+ && pnpm --filter @grace/ai-core build \
+ && pnpm --filter @grace/api build
 
 # ─── runtime ───────────────────────────────────────────────────────
 FROM node:20-alpine AS runtime

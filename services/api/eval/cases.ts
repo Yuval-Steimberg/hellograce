@@ -810,4 +810,224 @@ export const EVAL_CASES: EvalCase[] = [
     },
     note: 'Post-injection nausea — Grace must give practical tips (eat before, slow down eating, small meals) and normalize the timeline before any optional escalation.',
   },
+
+  // ─── Edge: gibberish / emoji-only ─────────────────────────────────────────
+  {
+    id: 'edge-gibberish-emoji-only',
+    category: 'chat',
+    input: '😊😊😊',
+    expected: {
+      maxLengthChars: 200,
+      mustNotInclude: ['can you rephrase', 'say it another way', 'I didn\'t follow'],
+    },
+    note: 'Emoji-only message. Grace should respond warmly and open-endedly, not confusedly.',
+  },
+  {
+    id: 'edge-gibberish-random-chars',
+    category: 'chat',
+    input: 'asdfkjhsdf 123 ????',
+    expected: {
+      maxLengthChars: 200,
+      mustNotInclude: ['can you rephrase', 'I didn\'t follow'],
+    },
+    note: 'Gibberish input. Grace should respond gently and invite the user to share what\'s on their mind.',
+  },
+
+  // ─── Edge: greetings ────────────────────────────────────────────────────────
+  {
+    id: 'edge-greeting-simple',
+    category: 'chat',
+    input: 'Hey Grace',
+    expected: {
+      maxLengthChars: 200,
+      mustNotInclude: ['protein', 'medication', 'weight', 'logged', 'check-in', 'remind'],
+    },
+    note: 'Greeting must get a warm one-sentence reply — topic reset. No health coaching injected.',
+  },
+  {
+    id: 'edge-greeting-good-morning',
+    category: 'chat',
+    input: 'Good morning!',
+    expected: {
+      maxLengthChars: 200,
+      mustNotInclude: ['protein', 'medication', 'your goal'],
+    },
+    note: 'Morning greeting — warm brief welcome only.',
+  },
+
+  // ─── Edge: multi-question in one message ────────────────────────────────────
+  {
+    id: 'edge-multi-question',
+    category: 'chat',
+    input: 'How much protein should I have? Also what time should I take my shot?',
+    expected: {
+      maxLengthChars: 700,
+      mustNotInclude: ['consult your doctor', "I can't answer both", 'only one question'],
+    },
+    note: 'Multiple questions in one message — Grace should address both briefly rather than refusing or ignoring one.',
+  },
+
+  // ─── Edge: very long food log ───────────────────────────────────────────────
+  {
+    id: 'edge-long-food-log',
+    category: 'food',
+    input: 'For breakfast I had 2 scrambled eggs, a slice of whole wheat toast with avocado, and black coffee. Lunch was a big salad with grilled chicken, cherry tomatoes, cucumber, and olive oil dressing. Snack was a handful of almonds and a string cheese. Dinner was salmon with roasted broccoli and sweet potato.',
+    expected: {
+      toolCalls: ['log_food'],
+      maxLengthChars: 500,
+      mustNotInclude: ['can you be more specific', 'how much exactly'],
+    },
+    note: 'Detailed multi-meal log. Grace must log all items and reply briefly — no interrogating portion sizes.',
+  },
+
+  // ─── Edge: mixed language (Hebrew words common in Israeli user base) ─────────
+  {
+    id: 'edge-mixed-lang-food',
+    category: 'food',
+    input: 'אכלתי salad with chicken היום',
+    expected: {
+      maxLengthChars: 500,
+      mustNotInclude: ['I don\'t understand', 'please write in English', 'can you rephrase'],
+    },
+    note: 'Mixed Hebrew-English. Grace should recognize the food content and respond helpfully.',
+  },
+
+  // ─── Edge: complaint about Grace ───────────────────────────────────────────
+  {
+    id: 'edge-complaint-too-many-messages',
+    category: 'chat',
+    input: "You text me way too much, it's annoying",
+    expected: {
+      maxLengthChars: 300,
+      mustNotInclude: ['I\'m sorry you feel that way', 'that\'s not true', 'I only send'],
+      mustInclude: ['settings'],
+    },
+    note: 'Frequency complaint — Grace must apologize briefly and direct to settings to adjust, not defend herself.',
+  },
+  {
+    id: 'edge-complaint-unhelpful',
+    category: 'chat',
+    input: "Your responses are never helpful, you just repeat the same things",
+    expected: {
+      maxLengthChars: 400,
+      mustNotInclude: ['I\'m sorry you feel that way', 'I try my best', 'I apologize for any'],
+    },
+    note: 'Quality complaint — Grace should acknowledge, not defensively justify herself.',
+  },
+
+  // ─── Edge: missed dose ──────────────────────────────────────────────────────
+  {
+    id: 'edge-missed-dose',
+    category: 'knowledge',
+    input: 'I forgot to take my Ozempic yesterday, what should I do?',
+    expected: {
+      maxLengthChars: 500,
+      mustNotInclude: ['I can\'t advise', 'speak to your doctor about this', 'only your doctor can say'],
+      mustInclude: ['5'],
+    },
+    note: 'Missed dose — Grace must give the standard GLP-1 guideline (take within 5 days if weekly) rather than fully deflecting to the doctor.',
+  },
+
+  // ─── Edge: body image / Ozempic face ────────────────────────────────────────
+  {
+    id: 'edge-body-image-face',
+    category: 'chat',
+    input: "My face looks so gaunt and hollow since losing weight on Ozempic, I hate it",
+    expected: {
+      maxLengthChars: 700,
+      mustNotInclude: ['see a doctor', 'consult a professional', 'I can\'t comment on'],
+    },
+    note: 'Ozempic face / body image — Grace should validate the feeling, explain the mechanism compassionately, and give practical context (protein, timeline).',
+  },
+
+  // ─── Edge: sarcasm / frustration ────────────────────────────────────────────
+  {
+    id: 'edge-sarcasm-plateau',
+    category: 'chat',
+    input: "Great, another week with zero weight loss. This medication is obviously working perfectly.",
+    expected: {
+      maxLengthChars: 600,
+      mustNotInclude: ['great', 'that\'s awesome', 'congratulations', 'amazing progress'],
+    },
+    note: 'Sarcastic frustration about a plateau. Grace must read the tone and respond with empathy, not positivity.',
+  },
+
+  // ─── Edge: single-word emotional ────────────────────────────────────────────
+  {
+    id: 'edge-single-word-ugh',
+    category: 'chat',
+    input: 'ugh',
+    expected: {
+      maxLengthChars: 150,
+      mustNotInclude: ['protein', 'medication', 'weight', 'goal', 'reminder', 'By the way'],
+    },
+    note: 'Single-word expression of frustration. Grace must mirror brevity and warmth, no health coaching.',
+  },
+
+  // ─── Edge: user sharing win ─────────────────────────────────────────────────
+  {
+    id: 'edge-celebrating-win',
+    category: 'chat',
+    input: 'I fit into my old jeans today!!!',
+    expected: {
+      maxLengthChars: 300,
+      mustNotInclude: ['protein', 'medication', 'how much weight', 'goal weight', 'still have to'],
+    },
+    note: 'User celebrating a non-scale victory. Grace should celebrate with them — no pivoting to data or goals.',
+  },
+
+  // ─── Edge: late-night / cannot sleep ────────────────────────────────────────
+  {
+    id: 'edge-late-night-message',
+    category: 'chat',
+    input: "can't sleep, feeling anxious about my injection tomorrow",
+    expected: {
+      maxLengthChars: 500,
+      mustNotInclude: ['see a doctor', 'professional help', 'you should speak to'],
+    },
+    note: 'Late-night anxiety about injection. Grace should be warm and reassuring, provide practical context.',
+  },
+
+  // ─── Edge: asking about Grace herself ────────────────────────────────────────
+  {
+    id: 'edge-meta-what-are-you',
+    category: 'chat',
+    input: 'Are you a real person or AI?',
+    expected: {
+      maxLengthChars: 300,
+      mustNotInclude: ['I cannot', 'I\'m unable to', 'please consult'],
+    },
+    note: 'Grace should be honest about being an AI companion without breaking persona.',
+  },
+
+  // ─── Edge: weight plateau ────────────────────────────────────────────────────
+  {
+    id: 'edge-weight-plateau-explanation',
+    category: 'knowledge',
+    input: "I haven't lost any weight in 3 weeks, is something wrong with me?",
+    expected: {
+      maxLengthChars: 700,
+      mustNotInclude: ['see your doctor', 'I can\'t say', 'you need to ask your prescriber'],
+    },
+    note: 'Weight plateau — Grace must explain the biology (metabolic adaptation, body recomposition, GLP-1 dose adjustment) before any optional doctor mention.',
+  },
+
+  // ─── Edge: rapid multiple food logs ─────────────────────────────────────────
+  {
+    id: 'edge-food-log-no-asking-back',
+    category: 'food',
+    input: 'Just ate salad and an omelet with 2 eggs',
+    expected: {
+      toolCalls: ['log_food'],
+      maxLengthChars: 300,
+      mustNotInclude: [
+        'can you say it another way',
+        'I didn\'t catch that',
+        'Not sure I got all of that',
+        'how many grams',
+        'what size',
+      ],
+    },
+    note: 'Regression: this exact message triggered safe fallback when API was crashing. Must log food and reply briefly.',
+  },
 ];

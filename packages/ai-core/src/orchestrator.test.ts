@@ -31,11 +31,9 @@ const failingCriticJson = JSON.stringify({
 
 describe('AIOrchestrator', () => {
   it('runs the full pipeline and returns a validated response', async () => {
-    // chat intent + clean response → planner JSON, generation. No critic.
-    const llm = new MockLLM([
-      JSON.stringify({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'casual' }),
-      'Sounds good — tell me more.',
-    ]);
+    // 'hey grace' is classified as a greeting → planner is skipped.
+    // Only one LLM call: the generation.
+    const llm = new MockLLM(['Sounds good — tell me more.']);
     const tools = new ToolRegistry();
     const orch = new AIOrchestrator({ llm, tools });
 

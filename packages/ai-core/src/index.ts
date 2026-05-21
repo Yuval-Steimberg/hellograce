@@ -1,3 +1,4 @@
+export * from './classify.js';
 export * from './content-checker.js';
 export * from './prompts.js';
 export * from './planner.js';

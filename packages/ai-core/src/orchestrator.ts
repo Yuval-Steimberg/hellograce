@@ -8,6 +8,7 @@ import type {
   ToolResult,
 } from '@grace/shared';
 import { checkContent, buildContentRegenInstruction, type ContentViolation } from './content-checker.js';
+import { classifyMessage, type MessageType } from './classify.js';
 import { LLMCritic } from './critic.js';
 import { enforceFormat } from './format-enforcer.js';
 import { precheckGrounding, summarizeUnsupported, type GroundingResult } from './grounding.js';
@@ -23,18 +24,66 @@ export interface OrchestratorDeps {
   critic?: LLMCritic;
 }
 
-const SAFE_FALLBACK_TEXTS = [
-  "Not sure I got all of that. Can you say it another way?",
-  "I missed something there. Can you give me a bit more to go on?",
-  "Hmm, I didn't quite follow. Can you rephrase that?",
-  "I want to make sure I get this right. Can you say more?",
-  "I think I missed part of what you meant. What's going on?",
-];
-let _safeFallbackIdx = 0;
-function getNextSafeFallback(): string {
-  const text = SAFE_FALLBACK_TEXTS[_safeFallbackIdx % SAFE_FALLBACK_TEXTS.length]!;
-  _safeFallbackIdx++;
-  return text;
+// Typed fallbacks — each message type gets contextually appropriate recovery
+// text so users never see "can you rephrase?" after logging a meal.
+const TYPED_FALLBACKS: Record<MessageType, string[]> = {
+  food_log: [
+    "Got it — what else have you had today?",
+    "Logged. How are you feeling after that?",
+    "Noted. Anything else worth tracking today?",
+  ],
+  food_question: [
+    "Let me think on that — what are you in the mood for?",
+    "Good question. Any foods you're trying to avoid right now?",
+    "Happy to help with ideas — what sounds good to you?",
+  ],
+  weight_log: [
+    "Got it, I'll track that. How are you feeling today overall?",
+    "Noted. How has the week been going?",
+    "Logged. How are you doing?",
+  ],
+  mood_log: [
+    "Thanks for sharing that. Tell me more about how you're feeling.",
+    "I hear you. What's been going on today?",
+    "Got it. What's on your mind?",
+  ],
+  greeting: [
+    "Hey! How are you doing today?",
+    "Hi! What's on your mind?",
+    "Good to hear from you! How's it going?",
+  ],
+  emotional: [
+    "I hear you. Tell me more about what's going on.",
+    "That sounds tough. I'm here — what's happening?",
+    "Thanks for sharing that with me. How are you feeling right now?",
+  ],
+  scheduling: [
+    "Of course — what works better for you?",
+    "Got it. You can always update your check-in frequency at grace-admin-silk.vercel.app/settings.",
+  ],
+  knowledge: [
+    "That's a great question. Can you tell me a bit more about what you're experiencing?",
+    "I want to give you a good answer on that — can you share a bit more context?",
+    "Good question. Let me think through that with you — what prompted this?",
+  ],
+  gibberish: [
+    "Hey! What's on your mind today?",
+    "I'm here — what would you like to talk about?",
+    "What's going on? Feel free to share anything.",
+  ],
+  general: [
+    "I want to make sure I get this right — can you say a bit more?",
+    "I think I missed part of what you meant. What's going on?",
+    "Can you give me a bit more to go on?",
+  ],
+};
+
+const _fallbackIdx: Record<string, number> = {};
+function getTypedFallback(type: MessageType): string {
+  const arr = TYPED_FALLBACKS[type];
+  const idx = (_fallbackIdx[type] ?? 0) % arr.length;
+  _fallbackIdx[type] = idx + 1;
+  return arr[idx]!;
 }
 
 // Only run the LLM critic for genuinely dangerous intent categories.
@@ -56,8 +105,13 @@ export class AIOrchestrator {
   async run(input: OrchestratorInput): Promise<OrchestratorOutput> {
     const started = Date.now();
 
+    // Fast deterministic classifier — drives typed fallbacks and planner skip.
+    // Greetings and gibberish never need a Gemini planning call.
+    const classification = classifyMessage(input.text);
+    const skipPlanner = classification.type === 'greeting' || classification.type === 'gibberish';
+
     const chatFallbackPlan: PlannerDecision = { intent: 'chat', needsTools: false, toolCalls: [], rationale: 'tools_disabled' };
-    const plan: PlannerDecision = input.toolsEnabled
+    const plan: PlannerDecision = (input.toolsEnabled && !skipPlanner)
       ? await this.planner.plan(input.text).catch(() => chatFallbackPlan)
       : chatFallbackPlan;
 
@@ -118,7 +172,7 @@ export class AIOrchestrator {
     const blockViolations = contentViolations.filter((v) => v.severity === 'block');
     if (blockViolations.length > 0) {
       return {
-        text: getNextSafeFallback(),
+        text: getTypedFallback(classification.type),
         confidence: 'low',
         intent: plan.intent,
         toolResults,
@@ -216,7 +270,7 @@ export class AIOrchestrator {
             critic = retryCritic;
           } else {
             validated = {
-              text: getNextSafeFallback(),
+              text: getTypedFallback(classification.type),
               confidence: 'low',
               flags: ['safe_fallback'],
             };

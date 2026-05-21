@@ -2,9 +2,10 @@ import type { Logger } from 'pino';
 import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
 import type { DietaryRestriction, InboundMessage, OrchestratorOutput } from '@grace/shared';
-import { AIOrchestrator, ToolRegistry } from '@grace/ai-core';
-import type { LLMProvider } from '@grace/shared';
+import { AIOrchestrator, PlannerAgent, ToolRegistry, classifyMessage as classifyIntent } from '@grace/ai-core';
+import type { LLMProvider, PlannerDecision } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
+import type { UserMemoryService } from '../memory/user-memory.service.js';
 import type { RagService } from '../rag/rag.service.js';
 import type { UserService } from '../user/user.service.js';
 import type { ContentRulesService } from './content-rules.service.js';
@@ -54,6 +55,7 @@ export interface AIServiceDeps {
   factExtractQueue?: Queue<FactExtractJob>;
   systemPrompt?: string;
   contentRulesService?: ContentRulesService;
+  userMemory?: UserMemoryService;
 }
 
 export class AIService {
@@ -162,8 +164,24 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       }
     }
 
-    // RAG retrieval runs on the augmented text (may include media context).
-    const retrieved = flags.ragEnabled ? await rag.retrieve(augmentedText, { userId: input.userId, topK: 5 }) : [];
+    // Latency optimization: run RAG retrieval, the planner, and long-term
+    // memory retrieval in parallel. The planner only needs input.text; RAG
+    // needs the augmented text; memory needs the augmented text. None depend
+    // on each other, so Promise.all saves ~600â€“1500ms per message.
+    const intentClass = classifyIntent(augmentedText);
+    const skipPlanner =
+      intentClass.type === 'greeting' || intentClass.type === 'gibberish' || !flags.toolsEnabled;
+    const planner = new PlannerAgent(this.deps.llm);
+
+    const [retrieved, userMemories, prePlannedDecision] = await Promise.all([
+      flags.ragEnabled ? rag.retrieve(augmentedText, { userId: input.userId, topK: 5 }) : Promise.resolve([]),
+      this.deps.userMemory
+        ? this.deps.userMemory.retrieve(input.userId, augmentedText, 3)
+        : Promise.resolve([] as string[]),
+      skipPlanner
+        ? Promise.resolve<PlannerDecision>({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'classifier_fast_path' })
+        : planner.plan(augmentedText).catch((): PlannerDecision => ({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'planner_error' })),
+    ]);
 
     // Detect side effects in the user's message and update their flow.
     if (user) await this.detectAndSetSideEffectFlow(user.phone, augmentedText, user.side_effect_flow);
@@ -282,6 +300,8 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       responseMode,
       isFirstMessage: isNew,
       ...(dbRules.length > 0 ? { dbRules } : {}),
+      prePlannedDecision,
+      ...(userMemories.length > 0 ? { userMemories } : {}),
     });
 
     // Offload persistence to BullMQ (non-blocking) or fall back to fire-and-forget.
@@ -304,6 +324,20 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       void this.deps.factExtractQueue
         .add('extract', { userId: input.userId, userText: input.text })
         .catch((err) => logger.warn({ err }, 'fact-extract-queue.add.failed'));
+    }
+
+    // Long-term semantic memory extraction â€” runs async after the response
+    // is already on its way to the user. Skips trivially short turns to
+    // avoid wasting Gemini calls on "ok" / "thanks".
+    if (
+      this.deps.userMemory &&
+      input.text.trim().length >= 20 &&
+      result.text.trim().length >= 20 &&
+      !result.usedSafeFallback
+    ) {
+      void this.deps.userMemory
+        .extractAndStore(input.userId, input.text, result.text)
+        .catch((err) => logger.warn({ err }, 'user_memory.extract.failed'));
     }
 
     if (!this.deps.turnQueue) {

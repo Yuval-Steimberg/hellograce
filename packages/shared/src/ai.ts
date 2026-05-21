@@ -86,6 +86,13 @@ export interface OrchestratorInput {
   /** Active content rules loaded from the DB. block → immediate safe fallback;
    *  regen → force regeneration; log → observe only. */
   dbRules?: DbContentRule[];
+  /** Pre-computed planner decision. When the caller ran the planner in
+   *  parallel with RAG retrieval (latency optimization), pass the result
+   *  here and the orchestrator will skip its own planner call. */
+  prePlannedDecision?: PlannerDecision;
+  /** Top-k long-term semantic memories about this user, retrieved from
+   *  the user_memories table. Injected verbatim into the system prompt. */
+  userMemories?: string[];
 }
 
 export interface OrchestratorOutput {

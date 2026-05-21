@@ -13,6 +13,7 @@ import { GeminiProvider } from './llm/gemini.js';
 import { GeminiEmbedder } from './rag/gemini-embedder.js';
 import { RagService } from './rag/rag.service.js';
 import { MemoryService } from './memory/memory.service.js';
+import { UserMemoryService } from './memory/user-memory.service.js';
 import { AIService } from './services/ai.service.js';
 import { TwilioSender } from './twilio/sender.js';
 import { getTurnQueue, getFactExtractQueue, closeQueues } from './workers/queues.js';
@@ -63,6 +64,8 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   const messageTemplatesService = new MessageTemplatesService(pool, logger);
 
+  const userMemory = new UserMemoryService(pool, embedder, llm, logger);
+
   const ai = new AIService({
     pool,
     llm,
@@ -79,6 +82,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     factExtractQueue,
     systemPrompt: await loadActivePrompt(),
     contentRulesService,
+    userMemory,
   });
 
   const sender = new TwilioSender(

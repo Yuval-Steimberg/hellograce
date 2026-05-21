@@ -111,17 +111,28 @@ export class AIOrchestrator {
     const skipPlanner = classification.type === 'greeting' || classification.type === 'gibberish';
 
     const chatFallbackPlan: PlannerDecision = { intent: 'chat', needsTools: false, toolCalls: [], rationale: 'tools_disabled' };
-    const plan: PlannerDecision = (input.toolsEnabled && !skipPlanner)
-      ? await this.planner.plan(input.text).catch(() => chatFallbackPlan)
-      : chatFallbackPlan;
+    // If the caller ran the planner in parallel with RAG (ai.service.ts does
+    // this for latency), use that result directly. Otherwise plan now.
+    const plan: PlannerDecision = input.prePlannedDecision
+      ? input.prePlannedDecision
+      : (input.toolsEnabled && !skipPlanner)
+        ? await this.planner.plan(input.text).catch(() => chatFallbackPlan)
+        : chatFallbackPlan;
 
     let toolResults: ToolResult[] = [];
     if (plan.needsTools && plan.toolCalls.length > 0) {
       toolResults = await this.deps.tools.executeMany(plan.toolCalls);
     }
 
+    // Long-term semantic memories about this user — top-k retrieved by
+    // ai.service.ts from the user_memories table.
+    const memoryBlock = input.userMemories && input.userMemories.length > 0
+      ? `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nWHAT YOU REMEMBER ABOUT THIS USER (from past conversations):\n${input.userMemories.map((m) => `- ${m}`).join('\n')}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+      : '';
+
     const baseSystem =
       (input.systemPrompt ?? GRACE_SYSTEM_PROMPT) +
+      memoryBlock +
       renderRetrievalContext(input.retrieved) +
       (toolResults.length > 0 ? `\n\nTool results: ${JSON.stringify(toolResults)}` : '');
 
@@ -133,9 +144,9 @@ export class AIOrchestrator {
       ],
       temperature: 0.6,
       // Gemini 2.5 Flash burns budget on internal thinking BEFORE output.
-      // 700 was producing mid-word truncation (e.g. "easy-to-" cut off).
-      // 2048 leaves plenty of room for thinking + a 1–3 sentence reply.
-      maxOutputTokens: 2048,
+      // 800 is enough for 1-3 sentences + thinking; 2048 was producing
+      // 25-second responses on Pro and unnecessarily long Flash latency.
+      maxOutputTokens: 800,
     });
 
     // ─── Format enforcement (silent auto-fix) ─────────────────────────
@@ -229,7 +240,7 @@ export class AIOrchestrator {
             { role: 'user', content: input.text },
           ],
           temperature: 0.4,
-          maxOutputTokens: 2048,
+          maxOutputTokens: 800,
         });
         const retryFormatted = enforceFormat(retryResp.text, stripName ? { stripFirstName: stripName } : {});
         const retryValidated = validateResponse(retryFormatted.text);
@@ -334,7 +345,7 @@ export class AIOrchestrator {
           { role: 'user', content: userText },
         ],
         temperature: 0.4,
-        maxOutputTokens: 2048,
+        maxOutputTokens: 1200,
         useGoogleSearch: true,
       });
       const formatted = enforceFormat(webResp.text, stripName ? { stripFirstName: stripName } : {});

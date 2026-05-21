@@ -168,7 +168,9 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const PRO_PRICE_ID = "price_1TLla9E0DcWyPH4XZnep2X7G";
+    // Read from Supabase secret so this matches upgrade-to-pro + create-checkout.
+    // Going live = set STRIPE_PRO_PRICE_ID in secrets, no code change needed.
+    const PRO_PRICE_ID = Deno.env.get("STRIPE_PRO_PRICE_ID") ?? "price_1TLla9E0DcWyPH4XZnep2X7G";
 
     // ─── Subscription lifecycle events ─────────────────────────────────────
     if (

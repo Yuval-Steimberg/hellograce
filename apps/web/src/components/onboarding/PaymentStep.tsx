@@ -6,7 +6,13 @@ import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import QuizButton from "./QuizButton";
 
-const stripePromise = loadStripe("pk_test_51TWfwcLMk6wjvxD9YRSKqpEGOd93kuzD1g29iK67bvdlkfpdvriGGdeGXwpuoPJf3DwxyOZ77MimOIvzc4kOXCxK00Ny75zsRB");
+// Publishable key is set via Vercel env var VITE_STRIPE_PUBLISHABLE_KEY so we
+// can swap test → live without a code change. Falls back to the test key for
+// local dev only — production MUST set VITE_STRIPE_PUBLISHABLE_KEY to pk_live_*.
+const STRIPE_PUBLISHABLE_KEY =
+  (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined) ??
+  "pk_test_51TWfwcLMk6wjvxD9YRSKqpEGOd93kuzD1g29iK67bvdlkfpdvriGGdeGXwpuoPJf3DwxyOZ77MimOIvzc4kOXCxK00Ny75zsRB";
+const stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY);
 
 interface PaymentStepProps {
   userId: string;

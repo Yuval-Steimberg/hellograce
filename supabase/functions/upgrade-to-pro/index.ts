@@ -6,10 +6,12 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const BASE_PRICE_ID = "price_1TWgb5LMk6wjvxD9Y9azDUfZ";
-// TODO: PRO_PRICE_ID must be created in Stripe account acct_1TWfwc ($24/mo) and updated here.
-// The current ID below is from the old account and will cause a Stripe "No such price" error.
-const PRO_PRICE_ID = "price_1TLla9E0DcWyPH4XZnep2X7G";
+// Both price IDs are env-driven so test → live is a Supabase secret update,
+// not a code deploy. Set STRIPE_BASE_PRICE_ID + STRIPE_PRO_PRICE_ID in the
+// live Stripe account (the fallback PRO_PRICE_ID below is from the old
+// account and will throw "No such price" — must be overridden in prod).
+const BASE_PRICE_ID = Deno.env.get("STRIPE_BASE_PRICE_ID") ?? "price_1TWgb5LMk6wjvxD9Y9azDUfZ";
+const PRO_PRICE_ID = Deno.env.get("STRIPE_PRO_PRICE_ID") ?? "price_1TLla9E0DcWyPH4XZnep2X7G";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {

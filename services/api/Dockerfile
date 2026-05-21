@@ -4,11 +4,11 @@ RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 
 # ─── deps ──────────────────────────────────────────────────────────
 FROM base AS deps
-COPY pnpm-workspace.yaml package.json ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY services/api/package.json services/api/
 COPY packages/shared/package.json packages/shared/
 COPY packages/ai-core/package.json packages/ai-core/
-RUN pnpm install --frozen-lockfile=false
+RUN pnpm install --frozen-lockfile
 
 # ─── build ─────────────────────────────────────────────────────────
 FROM deps AS build

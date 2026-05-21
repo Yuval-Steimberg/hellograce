@@ -207,7 +207,11 @@ export class AIOrchestrator {
     // The user's first name is also stripped here on non-welcome turns
     // (NAME USAGE ZERO TOLERANCE).
     const stripName = !input.isFirstMessage && input.userFirstName ? input.userFirstName : undefined;
-    const formatted = enforceFormat(llmResp.text, stripName ? { stripFirstName: stripName } : {});
+    const enforceOpts = {
+      ...(stripName ? { stripFirstName: stripName } : {}),
+      messageContext: classification.type,
+    };
+    const formatted = enforceFormat(llmResp.text, enforceOpts);
     let validated = validateResponse(formatted.text);
     const precheck = precheckGrounding(validated.text, input.retrieved);
     let critic: CriticReport | undefined;
@@ -293,7 +297,7 @@ export class AIOrchestrator {
           temperature: 0.4,
           maxOutputTokens: 1400,
         });
-        const retryFormatted = enforceFormat(retryResp.text, stripName ? { stripFirstName: stripName } : {});
+        const retryFormatted = enforceFormat(retryResp.text, enforceOpts);
         const retryValidated = validateResponse(retryFormatted.text);
         const retryPrecheck = precheckGrounding(retryValidated.text, input.retrieved);
         const retryContentViolations = checkContent(retryValidated.text, contentCheckOpts);
@@ -399,7 +403,7 @@ export class AIOrchestrator {
         maxOutputTokens: 1200,
         useGoogleSearch: true,
       });
-      const formatted = enforceFormat(webResp.text, stripName ? { stripFirstName: stripName } : {});
+      const formatted = enforceFormat(webResp.text, { ...(stripName ? { stripFirstName: stripName } : {}) });
       const validated = validateResponse(formatted.text);
       if (!validated.text || validated.text.trim().length === 0) return null;
       const webViolations = checkContent(validated.text, contentCheckOpts);

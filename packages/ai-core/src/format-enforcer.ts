@@ -19,9 +19,112 @@ export interface FormatEnforcementResult {
   fixes: string[];
 }
 
-export function enforceFormat(input: string, opts?: { stripFirstName?: string }): FormatEnforcementResult {
+export type MessageContext =
+  | 'food_log'
+  | 'food_question'
+  | 'weight_log'
+  | 'mood_log'
+  | 'greeting'
+  | 'emotional'
+  | 'scheduling'
+  | 'knowledge'
+  | 'gibberish'
+  | 'general';
+
+// ─── Runtime-context dump openers ──────────────────────────────────────────
+// Grace's system prompt has runtime context (today's protein, weight, mood).
+// She sometimes opens with this data even when the user didn't ask about it.
+// These patterns catch the most common dumps; we strip the first sentence
+// when the user's message type doesn't justify it.
+const FOOD_CONTEXT_OPENERS: RegExp[] = [
+  /^You'?ve had \d+\s*g (of )?protein[^.!?]*[.!?]\s*/i,
+  /^You'?re at \d+\s*g (of )?protein[^.!?]*[.!?]\s*/i,
+  /^You'?ve had \d+(\.\d+)?\s*(calories|kcal)[^.!?]*[.!?]\s*/i,
+  /^You'?ve logged \d+\s*g[^.!?]*[.!?]\s*/i,
+  /^Today you'?ve had[^.!?]*[.!?]\s*/i,
+  /^So far today[^.!?]*\d+\s*g[^.!?]*[.!?]\s*/i,
+  /^Your (current )?protein (intake|total) is[^.!?]*[.!?]\s*/i,
+];
+
+const WEIGHT_CONTEXT_OPENERS: RegExp[] = [
+  /^Your (current )?weight is \d+[^.!?]*[.!?]\s*/i,
+  /^You'?re (currently )?at \d+\s*(lbs?|pounds?|kg)[^.!?]*[.!?]\s*/i,
+  /^You'?ve lost \d+(\.\d+)?\s*(lbs?|pounds?|kg)[^.!?]*[.!?]\s*/i,
+];
+
+const MOOD_CONTEXT_OPENERS: RegExp[] = [
+  /^Your mood (score|today) (is|was) \d+[^.!?]*[.!?]\s*/i,
+];
+
+// Generic AI-speak / filler openers that add no value
+const FILLER_OPENERS: RegExp[] = [
+  /^I (totally |completely |really |truly |fully )?understand (your concern|how you feel|what you'?re saying)[,.!]?\s*/i,
+  /^Thanks (so much |very much )?for sharing (that|this)( with me)?[,.!]?\s*/i,
+  /^As (an AI|a language model|an assistant)[,.!]?\s*[^.!?]*[.!?]\s*/i,
+  /^Let me (start by|begin by) saying[,.!]?\s*/i,
+];
+
+// Map: each context type allows these specific runtime-data openers.
+// Everything else gets stripped.
+const ALLOWED_OPENERS_BY_CONTEXT: Record<MessageContext, RegExp[][]> = {
+  food_log: [FOOD_CONTEXT_OPENERS],
+  food_question: [FOOD_CONTEXT_OPENERS],
+  weight_log: [WEIGHT_CONTEXT_OPENERS],
+  mood_log: [MOOD_CONTEXT_OPENERS],
+  greeting: [],
+  emotional: [],
+  scheduling: [],
+  knowledge: [],
+  gibberish: [],
+  general: [],
+};
+
+const ALL_CONTEXT_OPENERS: RegExp[] = [
+  ...FOOD_CONTEXT_OPENERS,
+  ...WEIGHT_CONTEXT_OPENERS,
+  ...MOOD_CONTEXT_OPENERS,
+];
+
+export function enforceFormat(input: string, opts?: { stripFirstName?: string; messageContext?: MessageContext }): FormatEnforcementResult {
   let text = input;
   const fixes: string[] = [];
+
+  // ─── Irrelevant context-dump opener strip ────────────────────────────────
+  // Grace sometimes opens with runtime context ("You've had 15g protein
+  // today...", "Your weight is...", "Your mood score was...") even when
+  // the user asked about something totally different (muscle loss, side
+  // effects, emotions, etc.). Strip the opener when it doesn't match the
+  // question type. Universal rule — applies to every response.
+  if (opts?.messageContext) {
+    const allowedPatternBanks = ALLOWED_OPENERS_BY_CONTEXT[opts.messageContext] ?? [];
+    const allowedPatterns = allowedPatternBanks.flat();
+    for (const pattern of ALL_CONTEXT_OPENERS) {
+      if (allowedPatterns.includes(pattern)) continue;
+      if (pattern.test(text)) {
+        const stripped = text.replace(pattern, '').trim();
+        if (stripped.length > 30) {
+          text = stripped;
+          fixes.push('irrelevant_context_opener_stripped');
+          break;
+        }
+      }
+    }
+  }
+
+  // ─── Generic AI-filler opener strip (universal — every response) ─────────
+  // "I understand your concern..." / "Thanks for sharing..." / "As an AI..."
+  // These are corporate-AI tells that add no value. Strip them unconditionally.
+  for (const pattern of FILLER_OPENERS) {
+    if (pattern.test(text)) {
+      const stripped = text.replace(pattern, '').trim();
+      if (stripped.length > 30) {
+        // Capitalize the new first letter
+        text = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+        fixes.push('filler_opener_stripped');
+        break;
+      }
+    }
+  }
 
   // ─── Em dash (—) and en dash (–) → comma ───────────────────────────────
   // Used as punctuation only. We collapse surrounding whitespace so we

@@ -151,27 +151,28 @@ describe('enforceFormat', () => {
     });
   });
 
-  describe('hard length cap (600 char WhatsApp readability)', () => {
-    it('does not touch responses under 600 chars', () => {
+  describe('hard length cap (WhatsApp readability)', () => {
+    it('does not touch responses under the context cap', () => {
       const input = 'Short reply that ends cleanly.';
-      const { text, fixes } = enforceFormat(input);
+      const { text, fixes } = enforceFormat(input, { messageContext: 'general' });
       expect(text).toBe(input);
       expect(fixes).not.toContain('length_capped');
     });
 
-    it('truncates at the last sentence ending within 600 chars', () => {
-      // Sentence 1 ends at ~100, sentence 2 ends at ~580, tail goes well past 600.
-      const s1 = 'This is the first sentence. ';
-      const s2 = 'A'.repeat(450) + ' and this is the second sentence. ';
-      const tail = 'B'.repeat(200) + ' and this tail should be dropped.';
+    it('truncates at the last sentence ending within the context cap (general=400)', () => {
+      // s1 ends at ~117, s2 ends at ~334 (both within the 400-char window).
+      // Tail starts at 334 and pushes total > 400, so it gets dropped.
+      const s1 = 'A'.repeat(100) + ' first sentence. ';   // 118 chars, period at 116
+      const s2 = 'B'.repeat(200) + ' second sentence. ';  // starts at 118, period at ~334
+      const tail = 'C'.repeat(200) + ' tail should be dropped.'; // starts at ~336
       const input = s1 + s2 + tail;
-      const { text, fixes } = enforceFormat(input);
+      const { text, fixes } = enforceFormat(input, { messageContext: 'general' });
       expect(fixes).toContain('length_capped');
-      expect(text.length).toBeLessThanOrEqual(600);
+      expect(text.length).toBeLessThanOrEqual(400);
       // Must end with a period — never mid-word or mid-sentence.
       expect(text.endsWith('.')).toBe(true);
       expect(text).toContain('second sentence.');
-      expect(text).not.toContain('this tail');
+      expect(text).not.toContain('tail should');
     });
 
     it('does NOT cut at "e.g." or other abbreviations even when they sit past position 300', () => {

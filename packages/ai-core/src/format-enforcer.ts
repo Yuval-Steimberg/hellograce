@@ -255,11 +255,32 @@ export function enforceFormat(input: string, opts?: { stripFirstName?: string; m
     }
   }
 
+  // ─── Collapse multi-paragraph responses into a single paragraph ──────
+  // Gemini sometimes emits multi-paragraph responses with double newlines.
+  // On WhatsApp, paragraph breaks look like separate messages and encourage
+  // wall-of-text reading. Collapse them to a single space (one paragraph).
+  if (/\n{2,}/.test(text)) {
+    text = text.replace(/\n{2,}/g, ' ').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
+    fixes.push('paragraphs_collapsed');
+  }
+
   // ─── Hard length cap (WhatsApp readability) ─────────────────────────
-  // Responses over 600 characters are walls of text on mobile. Truncate at
-  // the last sentence ending (. ! ?) that fits within the limit. If the
-  // entire response is under the limit, this is a no-op.
-  const MAX_CHARS = 600;
+  // Per-context limits are stricter than the universal 420-char fallback.
+  // Responses over the cap are truncated at the last sentence boundary
+  // that fits. If the response is already under the limit this is a no-op.
+  const CONTEXT_MAX: Record<MessageContext, number> = {
+    greeting:      160,  // one warm sentence
+    emotional:     260,  // 2 sentences of warmth, no unsolicited tips
+    mood_log:      220,  // acknowledge the score + one warm observation
+    weight_log:    240,  // confirm the log + brief reaction
+    food_log:      480,  // protein number + daily total + optional brief tip
+    food_question: 420,  // 3-4 food options with brief reasoning
+    scheduling:    220,  // confirm the change and done
+    knowledge:     400,  // factual sentence + user tie-in + optional soft redirect
+    gibberish:     160,  // short clarifying question
+    general:       400,  // default cap
+  };
+  const MAX_CHARS = opts?.messageContext ? (CONTEXT_MAX[opts.messageContext] ?? 420) : 420;
   if (text.length > MAX_CHARS) {
     const window = text.slice(0, MAX_CHARS + 1);
     // Regex lookahead matches . ! ? followed by whitespace OR end-of-string,
@@ -270,7 +291,7 @@ export function enforceFormat(input: string, opts?: { stripFirstName?: string; m
     while ((m = sentenceRe.exec(window)) !== null) {
       lastEnd = m.index + 1; // position just after the punctuation char
     }
-    if (lastEnd > MAX_CHARS / 2) {
+    if (lastEnd > MAX_CHARS / 3) {
       text = text.slice(0, lastEnd).trim();
       fixes.push('length_capped');
     }

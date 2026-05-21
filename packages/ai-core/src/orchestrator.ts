@@ -135,6 +135,44 @@ function getToolAwareFallback(type: MessageType, toolResults: ToolResult[]): str
   return getTypedFallback(type);
 }
 
+/**
+ * Build a topic-focus marker that injects right before the new user turn.
+ * Gemini Flash gets primed by long previous assistant messages in history
+ * and continues the OLD topic. This marker forces attention on the current
+ * intent without bloating the main system prompt.
+ *
+ * Returns null when no focus injection is needed (low-confidence general
+ * messages don't benefit from the steer).
+ */
+function buildFocusMarker(type: MessageType, toolResults: ToolResult[]): string | null {
+  // For food-summary queries with a fresh tool result, the answer IS the
+  // number — be explicit.
+  const foodSummary = toolResults.find((r) => r.name === 'get_food_summary' && r.ok && r.output);
+  if (foodSummary) {
+    const out = foodSummary.output as Record<string, unknown>;
+    const total = typeof out['protein_g'] === 'number' ? Math.round(out['protein_g'] as number) : null;
+    const goal = typeof out['protein_goal_grams'] === 'number' ? Math.round(out['protein_goal_grams'] as number) : null;
+    if (total != null) {
+      return `[USER IS ASKING ABOUT TODAY'S PROTEIN TOTAL. Answer with the exact number: ${total}g${goal != null ? ` (goal ${goal}g)` : ''}. One or two short sentences. Do NOT continue any previous topic from history.]`;
+    }
+  }
+
+  // For other clear intents, just steer toward the current intent.
+  const intentDescription: Partial<Record<MessageType, string>> = {
+    food_log: 'logging a food they ate. Acknowledge + state the protein from the tool result. Do NOT continue any previous topic.',
+    food_question: 'asking a question about food or nutrition. Answer their question directly. Do NOT continue any previous topic.',
+    weight_log: 'reporting their weight. Acknowledge + respond warmly. Do NOT continue any previous topic.',
+    mood_log: 'sharing their mood or energy level. Respond with empathy. Do NOT continue any previous topic.',
+    greeting: 'just greeting you. Reply with ONE warm sentence. Topic reset — do NOT reference any prior conversation.',
+    emotional: 'sharing a feeling or struggle. Validate first. Do NOT continue any previous topic.',
+    scheduling: 'asking about message frequency. Direct them to settings if appropriate. Do NOT continue any previous topic.',
+    knowledge: 'asking a GLP-1 / medication / nutrition knowledge question. Answer directly with facts. Do NOT continue any previous topic.',
+  };
+  const description = intentDescription[type];
+  if (!description) return null;
+  return `[USER's CURRENT MESSAGE IS: ${description}]`;
+}
+
 // Only run the LLM critic for genuinely dangerous intent categories.
 // `knowledge_lookup` was here but it's too broad — food/nutrition questions
 // get treated as risky and the critic then fails on USDA protein-gram facts
@@ -185,12 +223,21 @@ export class AIOrchestrator {
       renderRetrievalContext(input.retrieved) +
       (toolResults.length > 0 ? `\n\nTool results: ${JSON.stringify(toolResults)}` : '');
 
+    // Topic-focus injection. When the classifier identifies a clear, distinct
+    // intent (food question, weight log, knowledge etc.), Gemini Flash gets
+    // primed by the previous long assistant message in history and continues
+    // the OLD topic instead of answering the new question. A short system
+    // message right before the user turn anchors attention.
+    const focusMarker = buildFocusMarker(classification.type, toolResults);
+    const generationMessages = [
+      { role: 'system' as const, content: baseSystem },
+      ...renderHistory(input.history),
+      ...(focusMarker ? [{ role: 'system' as const, content: focusMarker }] : []),
+      { role: 'user' as const, content: input.text },
+    ];
+
     const llmResp = await this.deps.llm.generate({
-      messages: [
-        { role: 'system', content: baseSystem },
-        ...renderHistory(input.history),
-        { role: 'user', content: input.text },
-      ],
+      messages: generationMessages,
       temperature: 0.6,
       // Gemini 2.5 Flash burns budget on internal thinking BEFORE output.
       // 800 was too tight when memories + tool results + retrieval context
@@ -292,6 +339,7 @@ export class AIOrchestrator {
           messages: [
             { role: 'system', content: baseSystem + addendum },
             ...renderHistory(input.history),
+            ...(focusMarker ? [{ role: 'system' as const, content: focusMarker }] : []),
             { role: 'user', content: input.text },
           ],
           temperature: 0.4,

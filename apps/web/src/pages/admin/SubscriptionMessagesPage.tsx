@@ -25,10 +25,10 @@ const TEMPLATE_LABELS: Record<string, string> = {
 };
 
 const PREVIEW_VARS: Record<string, Record<string, string>> = {
-  paywall: { upgrade_url: 'https://graceglp.com/upgrade?phone=+15551234567', first_name: 'Sam' },
-  trial_reminder: { upgrade_url: 'https://graceglp.com/upgrade?phone=+15551234567' },
+  paywall: { upgrade_url: 'https://grace-admin-silk.vercel.app/upgrade?phone=+15551234567', first_name: 'Sam' },
+  trial_reminder: { upgrade_url: 'https://grace-admin-silk.vercel.app/upgrade?phone=+15551234567' },
   welcome: { first_name: 'Sam', medication: 'Mounjaro', goal: 'losing weight', upgrade_url: '' },
-  upgrade_nudge: { upgrade_url: 'https://graceglp.com/upgrade?phone=+15551234567', first_name: 'Sam' },
+  upgrade_nudge: { upgrade_url: 'https://grace-admin-silk.vercel.app/upgrade?phone=+15551234567', first_name: 'Sam' },
 };
 
 function TemplateCard({ template }: { template: MessageTemplate }) {

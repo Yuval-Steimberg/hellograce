@@ -54,7 +54,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    const origin = req.headers.get("origin") || "https://graceglp.com";
+    const fallbackWebUrl = Deno.env.get("PUBLIC_WEB_URL") || "https://grace-admin-silk.vercel.app";
+    const rawOrigin = req.headers.get("origin") || fallbackWebUrl;
+    // graceglp.com apex 307-redirects to www and strips query params, breaking
+    // Stripe's return_url session_id round-trip. Force the canonical Vercel URL
+    // when the request came from the apex domain.
+    const origin = /^https?:\/\/(www\.)?graceglp\.com/i.test(rawOrigin) ? fallbackWebUrl : rawOrigin;
 
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: searchResult.data[0].id,

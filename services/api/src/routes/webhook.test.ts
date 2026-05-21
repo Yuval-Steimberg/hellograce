@@ -33,9 +33,21 @@ describe('detectUpgradeIntent', () => {
 });
 
 describe('buildUpgradeUrl', () => {
-  it('URL-encodes the phone number', () => {
+  it('URL-encodes the phone number with the default web URL', () => {
     expect(buildUpgradeUrl('+15551234567')).toBe(
-      'https://graceglp.com/upgrade?phone=%2B15551234567',
+      'https://grace-admin-silk.vercel.app/upgrade?phone=%2B15551234567',
+    );
+  });
+
+  it('respects a custom web URL', () => {
+    expect(buildUpgradeUrl('+15551234567', 'https://example.com')).toBe(
+      'https://example.com/upgrade?phone=%2B15551234567',
+    );
+  });
+
+  it('trims trailing slash from the web URL', () => {
+    expect(buildUpgradeUrl('+15551234567', 'https://example.com/')).toBe(
+      'https://example.com/upgrade?phone=%2B15551234567',
     );
   });
 });

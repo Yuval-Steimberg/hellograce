@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const TWILIO_API_BASE = "https://api.twilio.com/2010-04-01/Accounts";
+const WEB_URL = (Deno.env.get("PUBLIC_WEB_URL") || "https://grace-admin-silk.vercel.app").replace(/\/$/, "");
 
 async function sendSMSOnly(to: string, body: string) {
   const TWILIO_ACCOUNT_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
@@ -286,7 +287,7 @@ Deno.serve(async (req) => {
               supabase,
               user,
               "subscription_past_due",
-              "Heads up, your last payment didn't go through. Update your card here so we don't miss a beat: graceglp.com/settings",
+              `Heads up, your last payment didn't go through. Update your card here so we don't miss a beat: ${WEB_URL}/settings`,
             );
           }
         }
@@ -297,7 +298,7 @@ Deno.serve(async (req) => {
             supabase,
             user,
             "subscription_ended",
-            "Your access has ended for now. If you want to come back, head to graceglp.com. I'll be here.",
+            `Your access has ended for now. If you want to come back, head to ${WEB_URL}/upgrade. I'll be here.`,
           );
         }
       }
@@ -316,7 +317,7 @@ Deno.serve(async (req) => {
             user,
             "payment_failed",
             invoiceId,
-            "Heads up, your last payment didn't go through. Update your card here so we don't miss a beat: graceglp.com/settings",
+            `Heads up, your last payment didn't go through. Update your card here so we don't miss a beat: ${WEB_URL}/settings`,
           );
         }
       }

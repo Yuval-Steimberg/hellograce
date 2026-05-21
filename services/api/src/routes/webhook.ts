@@ -9,7 +9,7 @@ import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { UnauthorizedError, UpstreamError } from '../errors.js';
 
-const DEFAULT_UPGRADE_URL = 'https://graceglp.com/upgrade';
+const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 
 export interface WebhookDeps {
   env: Env;
@@ -87,7 +87,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           // Literal STOP/UNSUBSCRIBE are handled by Twilio at the carrier level;
           // these phrases still need an in-conversation response.
           if (user) {
-            const optOutReply = detectNaturalOptOut(normalized.text);
+            const optOutReply = detectNaturalOptOut(normalized.text, deps.env.PUBLIC_WEB_URL);
             if (optOutReply) {
               await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: optOutReply });
               return;
@@ -140,7 +140,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           // their plan. Replies with the admin-editable upgrade_nudge template
           // containing a Stripe checkout link.
           if (user && detectUpgradeIntent(normalized.text)) {
-            const upgradeUrl = buildUpgradeUrl(user.phone);
+            const upgradeUrl = buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL);
             const reply = deps.templates
               ? await deps.templates.render(
                   'upgrade_nudge',
@@ -155,7 +155,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           // Subscription gate — users with an expired trial and no active subscription
           // get a soft paywall nudge instead of the AI response.
           if (user && !isAccessAllowed(user)) {
-            const upgradeUrl = buildUpgradeUrl(user.phone);
+            const upgradeUrl = buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL);
             const body = deps.templates
               ? await deps.templates.render(
                   'paywall',
@@ -224,11 +224,13 @@ const OPT_OUT_PHRASES: RegExp[] = [
   /\bturn\s+(this|these|the\s+messages)\s+off\b/i,
 ];
 
-const OPT_OUT_REPLY =
-  'Done — you can manage your preferences here: https://graceglp.com/settings. And if you ever want to come back, I\'ll be here.';
+function buildOptOutReply(webUrl: string): string {
+  const base = webUrl.replace(/\/$/, '');
+  return `Done — you can manage your preferences here: ${base}/settings. And if you ever want to come back, I'll be here.`;
+}
 
-function detectNaturalOptOut(text: string): string | null {
-  for (const re of OPT_OUT_PHRASES) if (re.test(text)) return OPT_OUT_REPLY;
+function detectNaturalOptOut(text: string, webUrl: string): string | null {
+  for (const re of OPT_OUT_PHRASES) if (re.test(text)) return buildOptOutReply(webUrl);
   return null;
 }
 
@@ -416,7 +418,8 @@ export function detectUpgradeIntent(text: string): boolean {
  * existing v1 Supabase edge function (create-checkout) which then redirects
  * to Stripe Checkout.
  */
-export function buildUpgradeUrl(phone: string): string {
+export function buildUpgradeUrl(phone: string, webUrl: string = DEFAULT_WEB_URL): string {
   const encoded = encodeURIComponent(phone);
-  return `${DEFAULT_UPGRADE_URL}?phone=${encoded}`;
+  const base = webUrl.replace(/\/$/, '');
+  return `${base}/upgrade?phone=${encoded}`;
 }

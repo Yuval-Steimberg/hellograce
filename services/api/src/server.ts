@@ -96,6 +96,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   generator.updateSystemPrompt(await loadActivePrompt());
   generator.updateRulesService(contentRulesService);
   generator.updateTemplatesService(messageTemplatesService);
+  generator.updateWebUrl(env.PUBLIC_WEB_URL);
 
   // Hot-reload BOTH the reactive AIService and the proactive MessageGenerator
   // whenever the optimizer auto-activates a new prompt. No SIGHUP, no restart.

@@ -5,10 +5,11 @@ import type { ContentRulesService } from '../services/content-rules.service.js';
 import type { MessageTemplatesService } from '../services/message-templates.service.js';
 import { inferMedicationType } from '../services/ai.service.js';
 
-const DEFAULT_UPGRADE_URL = 'https://graceglp.com/upgrade';
+const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 
-function buildUpgradeUrl(phone: string): string {
-  return `${DEFAULT_UPGRADE_URL}?phone=${encodeURIComponent(phone)}`;
+function buildUpgradeUrl(phone: string, webUrl: string = DEFAULT_WEB_URL): string {
+  const base = webUrl.replace(/\/$/, '');
+  return `${base}/upgrade?phone=${encodeURIComponent(phone)}`;
 }
 
 const GOAL_MODE_MAP: Record<string, string> = {
@@ -88,8 +89,9 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
     const med = u.medication ?? 'your GLP-1';
     return `Hi ${name} — I'm Grace, your ${med} companion 🤍 I'll check in lightly each day, never overwhelm you. Text me anything, anytime — even just "tired" works.`;
   },
-  trial_expiry_reminder: () => {
-    return `Your Grace trial ends tomorrow 🧡 Head to graceglp.com anytime to keep your check-ins going — no pressure, whenever you're ready.`;
+  trial_expiry_reminder: (u) => {
+    const upgradeUrl = buildUpgradeUrl(u.phone);
+    return `Your Grace trial ends tomorrow 🧡 Head to ${upgradeUrl} anytime to keep your check-ins going — no pressure, whenever you're ready.`;
   },
 };
 
@@ -97,6 +99,7 @@ export class MessageGenerator {
   private activeSystemPrompt: string | undefined;
   private rulesService: ContentRulesService | undefined;
   private templatesService: MessageTemplatesService | undefined;
+  private webUrl: string = DEFAULT_WEB_URL;
 
   constructor(private llm: LLMProvider) {}
 
@@ -112,6 +115,11 @@ export class MessageGenerator {
    */
   updateTemplatesService(ts: MessageTemplatesService): void {
     this.templatesService = ts;
+  }
+
+  /** Set the public web URL used for upgrade + settings links in scheduled messages. */
+  updateWebUrl(url: string): void {
+    this.webUrl = url;
   }
 
   /**
@@ -202,7 +210,7 @@ export class MessageGenerator {
           first_name: user.first_name ?? 'there',
           medication: user.medication ?? 'your GLP-1',
           goal: user.goals[0] ?? 'general wellness',
-          upgrade_url: buildUpgradeUrl(user.phone),
+          upgrade_url: buildUpgradeUrl(user.phone, this.webUrl),
         },
         staticFallback,
       );
@@ -294,7 +302,10 @@ export class MessageGenerator {
       side_effect_fatigue: `${base}Context: they reported fatigue. Validate it's real, suggest one gentle helper. No quiz.`,
       side_effect_constipation: `${base}Context: they reported constipation. Soft check-in with one tip woven in. No question barrage.`,
       welcome: `${base}Context: their very first message. Welcome them warmly. Use their first name ONCE. Mention their medication (${user.medication ?? 'GLP-1'}) and main goal (${goal}). ${dislikes ? `If you reference food dislikes, paraphrase naturally — e.g. "I'll keep [item] off the menu" or "I remember you don't like X". NEVER echo their dislike text verbatim (do not write "you're not a fan of i don't like rice" — that's broken English).` : ''} Make clear you'll be light-touch. ONE or TWO short sentences max. Do NOT send a second follow-up message.`,
-      trial_expiry_reminder: `${base}Context: this is Day 2 of the user's 3-day free trial — their trial ends tomorrow. Send a warm, pressure-free reminder that their trial ends tomorrow and they can subscribe at graceglp.com. NEVER use their name. NEVER use "upgrade" language — say "continue" or "keep going." NEVER exclamation marks. NEVER salesy tone. ONE or TWO short sentences max. Example: "Your Grace trial ends tomorrow 🧡 Head to graceglp.com anytime to keep your check-ins going."`,
+      trial_expiry_reminder: (() => {
+        const upgradeUrl = buildUpgradeUrl(user.phone, this.webUrl);
+        return `${base}Context: this is Day 2 of the user's 3-day free trial — their trial ends tomorrow. Send a warm, pressure-free reminder that their trial ends tomorrow and they can subscribe at ${upgradeUrl}. ALWAYS include the literal URL ${upgradeUrl} — never write a placeholder. NEVER use their name. NEVER use "upgrade" language — say "continue" or "keep going." NEVER exclamation marks. NEVER salesy tone. ONE or TWO short sentences max. Example: "Your Grace trial ends tomorrow 🧡 Head to ${upgradeUrl} anytime to keep your check-ins going."`;
+      })(),
     };
 
     return instructions[type] + (opts?.extra ? `\n\nExtra context: ${opts.extra}` : '');

@@ -6,6 +6,8 @@ const EnvSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
   PUBLIC_BASE_URL: z.string().url(),
+  /** Public-facing web app URL for upgrade + settings links in outbound messages. */
+  PUBLIC_WEB_URL: z.string().url().default('https://grace-admin-silk.vercel.app'),
 
   DATABASE_URL: z.string().min(1),
   DATABASE_SSL: z

@@ -15,6 +15,7 @@ const Privacy = lazy(() => import("./pages/Privacy.tsx"));
 const Terms = lazy(() => import("./pages/Terms.tsx"));
 const Disclaimer = lazy(() => import("./pages/Disclaimer.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
+const Upgrade = lazy(() => import("./pages/Upgrade.tsx"));
 
 // Admin dashboard (auth-gated)
 const AdminLogin = lazy(() => import("./pages/admin/AdminLogin.tsx"));
@@ -51,6 +52,7 @@ const App = () => (
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/terms" element={<Terms />} />
               <Route path="/disclaimer" element={<Disclaimer />} />
+              <Route path="/upgrade" element={<Upgrade />} />
 
               {/* Admin dashboard */}
               <Route path="/admin/login" element={<AdminLogin />} />

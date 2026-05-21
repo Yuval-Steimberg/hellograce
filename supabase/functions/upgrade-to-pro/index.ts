@@ -7,6 +7,8 @@ const corsHeaders = {
 };
 
 const BASE_PRICE_ID = "price_1TWgb5LMk6wjvxD9Y9azDUfZ";
+// TODO: PRO_PRICE_ID must be created in Stripe account acct_1TWfwc ($24/mo) and updated here.
+// The current ID below is from the old account and will cause a Stripe "No such price" error.
 const PRO_PRICE_ID = "price_1TLla9E0DcWyPH4XZnep2X7G";
 
 Deno.serve(async (req) => {

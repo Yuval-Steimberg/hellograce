@@ -28,9 +28,9 @@ export interface OrchestratorDeps {
 // text so users never see "can you rephrase?" after logging a meal.
 const TYPED_FALLBACKS: Record<MessageType, string[]> = {
   food_log: [
-    "Got it — what else have you had today?",
-    "Logged. How are you feeling after that?",
-    "Noted. Anything else worth tracking today?",
+    "Logged that for you. How are you feeling after that meal?",
+    "Got it, that's tracked. How's your day going?",
+    "Noted — tell me a bit more about what you had if you want a protein estimate.",
   ],
   food_question: [
     "Let me think on that — what are you in the mood for?",
@@ -84,6 +84,45 @@ function getTypedFallback(type: MessageType): string {
   const idx = (_fallbackIdx[type] ?? 0) % arr.length;
   _fallbackIdx[type] = idx + 1;
   return arr[idx]!;
+}
+
+/**
+ * Tool-aware fallback. When generation fails but a tool ran successfully,
+ * we have real data — use it instead of a generic "got it, what else?"
+ * which makes Grace look like she ignored what the user just did.
+ */
+function getToolAwareFallback(type: MessageType, toolResults: ToolResult[]): string {
+  // Successfully logged food → reference the actual protein count
+  const foodLogged = toolResults.find((r) => r.name === 'log_food' && r.ok && r.output);
+  if (foodLogged) {
+    const out = foodLogged.output as Record<string, unknown>;
+    const proteinG = typeof out['protein_g'] === 'number' ? Math.round(out['protein_g'] as number) : null;
+    const dailyG = typeof out['daily_protein_g'] === 'number' ? Math.round(out['daily_protein_g'] as number) : null;
+    if (proteinG != null) {
+      if (dailyG != null && dailyG !== proteinG) {
+        return `Got it — about ${proteinG}g protein for that. You're at ${dailyG}g for today.`;
+      }
+      return `Got it — about ${proteinG}g protein for that.`;
+    }
+  }
+
+  // Successfully logged weight
+  const weightLogged = toolResults.find((r) => r.name === 'log_weight' && r.ok);
+  if (weightLogged) return "Got it, I've logged that. How are you feeling today?";
+
+  // Successfully logged mood
+  const moodLogged = toolResults.find((r) => r.name === 'log_mood' && r.ok);
+  if (moodLogged) return "Thanks for checking in. What's on your mind?";
+
+  // Food summary requested
+  const foodSummary = toolResults.find((r) => r.name === 'get_food_summary' && r.ok && r.output);
+  if (foodSummary) {
+    const out = foodSummary.output as Record<string, unknown>;
+    const total = typeof out['total_protein_g'] === 'number' ? Math.round(out['total_protein_g'] as number) : null;
+    if (total != null) return `You're at ${total}g protein for today.`;
+  }
+
+  return getTypedFallback(type);
 }
 
 // Only run the LLM critic for genuinely dangerous intent categories.
@@ -183,7 +222,7 @@ export class AIOrchestrator {
     const blockViolations = contentViolations.filter((v) => v.severity === 'block');
     if (blockViolations.length > 0) {
       return {
-        text: getTypedFallback(classification.type),
+        text: getToolAwareFallback(classification.type, toolResults),
         confidence: 'low',
         intent: plan.intent,
         toolResults,
@@ -281,7 +320,7 @@ export class AIOrchestrator {
             critic = retryCritic;
           } else {
             validated = {
-              text: getTypedFallback(classification.type),
+              text: getToolAwareFallback(classification.type, toolResults),
               confidence: 'low',
               flags: ['safe_fallback'],
             };

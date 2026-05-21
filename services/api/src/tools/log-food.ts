@@ -36,42 +36,76 @@ export function makeLogFoodTool(deps: {
           {
             role: 'system',
             content:
-              'You estimate protein and calories from a casual food description like a knowledgeable friend would — quickly, confidently, and approximately. ' +
+              'You estimate protein and calories from a casual food description using USDA FoodData Central reference values. Accuracy matters — these numbers feed daily protein tracking. ' +
               'CRITICAL: never refuse to estimate. Never ask the caller for grams/ounces/portions/macros. Always produce a number using common-sense serving sizes. ' +
               'If a TOTAL is already provided in the text, use it directly. ' +
-              'Common anchor servings (use these unless the description says otherwise):\n' +
-              '  "eggs" → 2 eggs · 12g · 140 kcal\n' +
-              '  "scrambled eggs" → 2 eggs · 12g · 180 kcal\n' +
-              '  "egg whites" → 4 whites · 14g · 70 kcal\n' +
-              '  "a yogurt" → 1 cup Greek · 17g · 100 kcal (regular: 6g · 150 kcal)\n' +
-              '  "greek yogurt and fruit" → 1 cup yogurt + berries · 17g · 180 kcal\n' +
-              '  "cottage cheese" → 1/2 cup · 14g · 100 kcal\n' +
-              '  "chicken and rice" → typical lunch · 30g · 450 kcal\n' +
-              '  "chicken salad" → typical bowl with chicken · 28g · 400 kcal\n' +
-              '  "salad with chicken" → bowl with grilled chicken · 25g · 380 kcal\n' +
-              '  "a burrito" → fast-casual size · 22g · 600 kcal\n' +
-              '  "chicken burrito" → 30g · 650 kcal\n' +
-              '  "protein shake" → 1 scoop whey + water/milk · 25g · 130 kcal\n' +
-              '  "smoothie" → typical fruit + protein · 18g · 280 kcal\n' +
-              '  "salmon" → 5oz fillet · 28g · 280 kcal\n' +
-              '  "steak" → 5oz · 35g · 350 kcal\n' +
-              '  "ground beef" → 4oz · 22g · 280 kcal\n' +
-              '  "tuna" → 1 can · 20g · 110 kcal\n' +
-              '  "tuna salad" → typical scoop · 18g · 220 kcal\n' +
-              '  "sushi" / "a sushi roll" → 1 standard roll · 12g · 250 kcal (for a full meal of 2 rolls: 24g · 500 kcal)\n' +
-              '  "pasta" → 1 cup plain · 8g · 220 kcal\n' +
-              '  "pasta with meat sauce" → typical plate · 20g · 500 kcal\n' +
-              '  "snack plate" / "cheese and nuts" → small board · 12g · 300 kcal\n' +
-              '  "oatmeal" → 1 cup cooked · 6g · 150 kcal (with protein powder: 25g · 280 kcal)\n' +
-              '  "toast and peanut butter" → 1 slice · 8g · 200 kcal\n' +
-              '  "sandwich" → typical deli · 22g · 450 kcal\n' +
-              '  "wrap" → typical with protein · 25g · 480 kcal\n' +
-              '  "pizza" → 2 slices · 22g · 540 kcal\n' +
-              '  "soup" → typical bowl · 8g · 220 kcal (with chicken/beans: 18g · 320 kcal)\n' +
-              '  "banana" / "apple" / "orange" → 1g · ~80 kcal\n' +
-              '  "coffee" / "tea" → 0g · 0–10 kcal\n' +
-              'Respond ONLY with JSON: {"food": <concise label>, "protein_g": <number>, "calories": <number>, "confidence": "low"|"medium"|"high"}. ' +
-              'Confidence: "high" when the user specified quantity/type clearly, "medium" when inferred from common sense (default for vague descriptions), "low" only when truly ambiguous. ' +
+              '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' +
+              '\nCOMPOUND MEAL RULE — ALWAYS DECOMPOSE FIRST' +
+              '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' +
+              '\nIf the description has multiple items joined by "and", "with", "plus", or commas, do this in your head:' +
+              '\n  1. Split into individual items' +
+              '\n  2. Look each up below' +
+              '\n  3. SUM the protein and calories' +
+              '\n  4. Return the total as one entry' +
+              '\nNEVER match the full compound description to a single line in the anchors. ALWAYS break it down.' +
+              '\n\nExamples of correct decomposition:' +
+              '\n  "salad and an omelet with 2 eggs" → salad (3g) + 2-egg omelet (12g) = 15g, ~280 kcal' +
+              '\n  "chicken breast and broccoli" → chicken 4oz (30g) + broccoli (2g) = 32g, ~250 kcal' +
+              '\n  "toast and peanut butter and a banana" → toast+PB (8g) + banana (1g) = 9g, ~280 kcal' +
+              '\n  "yogurt and granola" → yogurt (17g) + granola (4g) = 21g, ~280 kcal' +
+              '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' +
+              '\nUSDA ANCHOR VALUES (per typical serving)' +
+              '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' +
+              '\nEGGS & DAIRY:\n' +
+              '  1 egg · 6g · 70 kcal | 2 eggs / 2-egg omelet · 12g · 140 kcal (omelet plain: 180 kcal)\n' +
+              '  3 eggs / 3-egg omelet · 18g · 210 kcal (omelet plain: 270 kcal)\n' +
+              '  egg whites (4) · 14g · 70 kcal\n' +
+              '  Greek yogurt 1 cup · 17g · 100 kcal | regular yogurt 1 cup · 6g · 150 kcal\n' +
+              '  cottage cheese 1/2 cup · 14g · 100 kcal\n' +
+              '  cheese 1 slice · 6g · 110 kcal\n' +
+              '  milk 1 cup · 8g · 120 kcal\n' +
+              'POULTRY & MEAT:\n' +
+              '  chicken breast 4oz (cooked) · 30g · 180 kcal\n' +
+              '  chicken thigh 4oz · 26g · 220 kcal\n' +
+              '  turkey breast 4oz · 28g · 160 kcal\n' +
+              '  ground beef 4oz · 22g · 280 kcal | steak 5oz · 35g · 350 kcal\n' +
+              '  ground turkey 4oz · 24g · 180 kcal | bacon 2 slices · 6g · 80 kcal\n' +
+              'FISH:\n' +
+              '  salmon 5oz · 28g · 280 kcal | tuna 1 can · 20g · 110 kcal\n' +
+              '  shrimp 4oz · 24g · 100 kcal | white fish 4oz · 22g · 110 kcal\n' +
+              'PLANT PROTEIN:\n' +
+              '  tofu 4oz · 10g · 80 kcal | tempeh 3oz · 16g · 160 kcal\n' +
+              '  black beans 1/2 cup · 8g · 110 kcal | chickpeas 1/2 cup · 7g · 120 kcal\n' +
+              '  lentils 1/2 cup · 9g · 115 kcal | edamame 1/2 cup · 9g · 95 kcal\n' +
+              '  peanut butter 2 tbsp · 8g · 190 kcal | almonds 1oz · 6g · 165 kcal\n' +
+              '  hummus 1/4 cup · 4g · 100 kcal\n' +
+              'GRAINS:\n' +
+              '  rice 1 cup cooked · 4g · 200 kcal | quinoa 1 cup · 8g · 220 kcal\n' +
+              '  oatmeal 1 cup cooked · 6g · 150 kcal\n' +
+              '  toast 1 slice · 3g · 80 kcal | bagel 1 · 10g · 280 kcal\n' +
+              '  pasta 1 cup plain · 8g · 220 kcal\n' +
+              'VEGETABLES (always low protein, count them anyway):\n' +
+              '  salad (plain greens, dressing) · 3g · 100 kcal\n' +
+              '  big salad (greens + veggies) · 4g · 130 kcal\n' +
+              '  broccoli/cauliflower/spinach 1 cup · 2g · 30 kcal\n' +
+              '  sweet potato 1 medium · 2g · 100 kcal\n' +
+              '  potato 1 medium · 3g · 130 kcal | fries side · 4g · 320 kcal\n' +
+              'FRUITS: banana / apple / orange / berries · 1g · ~80 kcal\n' +
+              'PREPARED MEALS (one-line shortcuts when description matches exactly):\n' +
+              '  "chicken and rice" → 30g · 450 kcal\n' +
+              '  "salad with chicken" / "chicken salad" → 25g · 380 kcal\n' +
+              '  "protein shake" 1 scoop · 25g · 130 kcal | "smoothie" with protein · 18g · 280 kcal\n' +
+              '  "sandwich" deli · 22g · 450 kcal | "wrap" with protein · 25g · 480 kcal\n' +
+              '  "pizza" 2 slices · 22g · 540 kcal | "burrito" fast-casual · 22g · 600 kcal\n' +
+              '  "sushi roll" 1 · 12g · 250 kcal\n' +
+              '  "soup" plain · 8g · 220 kcal | "soup with chicken/beans" · 18g · 320 kcal\n' +
+              '  "snack plate" / "cheese and nuts" · 12g · 300 kcal\n' +
+              '  coffee/tea 0g, 0-10 kcal\n' +
+              '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' +
+              '\nOUTPUT FORMAT' +
+              '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' +
+              '\nRespond ONLY with JSON: {"food": <concise label of full meal>, "protein_g": <integer>, "calories": <integer>, "confidence": "low"|"medium"|"high"}. ' +
+              'Confidence: "high" when quantity/type was specified clearly OR you decomposed cleanly, "medium" for inferred portions, "low" only when truly ambiguous. ' +
               'For real foods, never use 0 protein or 0 calories. Round protein to the nearest gram.',
           },
           { role: 'user', content: food },

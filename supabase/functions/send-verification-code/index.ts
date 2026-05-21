@@ -146,11 +146,23 @@ Deno.serve(async (req) => {
     const code = String(Math.floor(100000 + Math.random() * 900000));
 
     // Mark old codes as used
-    await supabase.from("verification_codes").update({ used: true }).eq("phone", lookupKey).eq("used", false);
+    const { error: updErr } = await supabase.from("verification_codes").update({ used: true }).eq("phone", lookupKey).eq("used", false);
+    if (updErr) console.error("[send-verification-code] update existing failed:", updErr);
 
     // Insert new code (phone column stores the identifier — phone or email)
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    await supabase.from("verification_codes").insert({ phone: lookupKey, code, expires_at: expiresAt });
+    const { error: insErr, data: insData } = await supabase
+      .from("verification_codes")
+      .insert({ phone: lookupKey, code, expires_at: expiresAt })
+      .select()
+      .maybeSingle();
+    if (insErr) {
+      console.error("[send-verification-code] insert failed:", insErr);
+      return new Response(JSON.stringify({ error: `DB insert failed: ${insErr.message}` }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    console.log("[send-verification-code] inserted row:", JSON.stringify(insData));
 
     if (method === "phone") {
       await sendSMS(lookupKey, `Your grace verification code is: ${code}`);

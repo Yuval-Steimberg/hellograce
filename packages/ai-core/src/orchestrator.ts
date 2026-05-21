@@ -120,12 +120,16 @@ function getToolAwareFallback(type: MessageType, toolResults: ToolResult[]): str
   const moodLogged = toolResults.find((r) => r.name === 'log_mood' && r.ok);
   if (moodLogged) return "Thanks for checking in. What's on your mind?";
 
-  // Food summary requested
+  // Food summary requested — tool returns `protein_g` (today's total)
   const foodSummary = toolResults.find((r) => r.name === 'get_food_summary' && r.ok && r.output);
   if (foodSummary) {
     const out = foodSummary.output as Record<string, unknown>;
-    const total = typeof out['total_protein_g'] === 'number' ? Math.round(out['total_protein_g'] as number) : null;
-    if (total != null) return `You're at ${total}g protein for today.`;
+    const total = typeof out['protein_g'] === 'number' ? Math.round(out['protein_g'] as number) : null;
+    const goal = typeof out['protein_goal_grams'] === 'number' ? Math.round(out['protein_goal_grams'] as number) : null;
+    if (total != null) {
+      if (goal != null) return `You're at ${total}g protein today — your goal is ${goal}g.`;
+      return `You're at ${total}g protein today.`;
+    }
   }
 
   return getTypedFallback(type);
@@ -189,9 +193,11 @@ export class AIOrchestrator {
       ],
       temperature: 0.6,
       // Gemini 2.5 Flash burns budget on internal thinking BEFORE output.
-      // 800 is enough for 1-3 sentences + thinking; 2048 was producing
-      // 25-second responses on Pro and unnecessarily long Flash latency.
-      maxOutputTokens: 800,
+      // 800 was too tight when memories + tool results + retrieval context
+      // were all packed in — Flash returned empty text and the orchestrator
+      // fell through to the safe fallback. 1400 leaves enough thinking
+      // budget for the 71k-char system prompt without going back to 2048.
+      maxOutputTokens: 1400,
     });
 
     // ─── Format enforcement (silent auto-fix) ─────────────────────────
@@ -285,7 +291,7 @@ export class AIOrchestrator {
             { role: 'user', content: input.text },
           ],
           temperature: 0.4,
-          maxOutputTokens: 800,
+          maxOutputTokens: 1400,
         });
         const retryFormatted = enforceFormat(retryResp.text, stripName ? { stripFirstName: stripName } : {});
         const retryValidated = validateResponse(retryFormatted.text);

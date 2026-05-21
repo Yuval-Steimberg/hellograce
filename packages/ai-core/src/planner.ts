@@ -20,6 +20,12 @@ AVAILABLE TOOLS — call when the user's message clearly matches:
 - get_user_profile: user asks about their own profile, goals, or medication details. args: {}
 - remove_food: user wants to delete a food they logged by mistake, says something was from yesterday, or asks to remove a specific food. args: { "food": "<food name to remove>" }
 
+CRITICAL — "HOW MUCH PROTEIN TODAY" QUESTIONS:
+When the user asks about their daily/today totals ("how many proteins did i eat today", "how much protein so far", "what's my protein count", "my calories today"), use get_food_summary — NEVER log_food, even if the phrase contains "ate" or "had".
+✓ "how many proteins i ate today" → [{name:"get_food_summary"}]
+✓ "what's my protein count" → [{name:"get_food_summary"}]
+✗ Do NOT call log_food on these — they are queries, not new food entries.
+
 CRITICAL — COMPOUND FOOD MEALS:
 When the user logs multiple items in ONE meal ("salad and omelet", "chicken with rice and broccoli", "yogurt, granola, and banana"), make ONE log_food call with the FULL description as the food arg — never split into multiple log_food calls.
 ✓ "ate salad and an omelet with 2 eggs" → [{name:"log_food", args:{food:"salad and an omelet with 2 eggs"}}]

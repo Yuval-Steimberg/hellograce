@@ -30,8 +30,19 @@ export interface ClassifyResult {
 
 // ─── Pattern banks ─────────────────────────────────────────────────────────────
 
+// Question patterns — must check BEFORE food log patterns because
+// "how many proteins did i eat today" contains "ate" but is a question
+// about totals, not a logging event.
+const FOOD_SUMMARY_QUESTION: RegExp[] = [
+  /\bhow (much|many)\s+(protein|calorie|carb|gram)/i,
+  /\b(what'?s|whats) my (protein|calorie|total)/i,
+  /\bhow (much|many) did i (eat|have|consume) (today|this (week|day))/i,
+  /\b(my|today'?s) (protein|calorie) (count|total|so far)/i,
+  /\b(at|on) (how much|how many|what)\b.{0,30}(today|so far)/i,
+];
+
 const FOOD_LOG: RegExp[] = [
-  /\b(just |already )?(had|ate|eaten|finished|grabbed|made|cooked|ordered|got) (a |an |some |the )?\w/i,
+  /^(i )?(just |already )?(had|ate|eaten|finished|grabbed|made|cooked|ordered|got) (a |an |some |the )?\w/i,
   /\b(breakfast|lunch|dinner|snack|meal)\s*(was|had|:\s*)/i,
   /\bfor (breakfast|lunch|dinner|snack)[,: ]/i,
   /\b\d+\s*(eggs?|slices?|cups?|grams?|oz|ounces?|servings?|pieces?|bites?)\b/i,
@@ -125,6 +136,9 @@ function matches(text: string, patterns: RegExp[]): boolean {
 export function classifyMessage(text: string): ClassifyResult {
   if (isGibberish(text)) return { type: 'gibberish', confidence: 0.9 };
   if (matches(text, GREETING)) return { type: 'greeting', confidence: 0.95 };
+  // Food summary questions MUST come before food_log — "how many proteins
+  // i ate today" contains "ate" but is asking about totals, not logging.
+  if (matches(text, FOOD_SUMMARY_QUESTION)) return { type: 'food_question', confidence: 0.95 };
   if (matches(text, WEIGHT_LOG)) return { type: 'weight_log', confidence: 0.9 };
   if (matches(text, FOOD_LOG)) return { type: 'food_log', confidence: 0.85 };
   if (matches(text, FOOD_QUESTION)) return { type: 'food_question', confidence: 0.85 };

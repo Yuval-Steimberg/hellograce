@@ -4,7 +4,7 @@ import { api, type ContentRule } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
-import { Plus, ChevronDown, ChevronUp, Play } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp, Play, BookOpen } from 'lucide-react';
 
 const CARD_STYLE = {
   background: 'hsl(217 33% 11%)',
@@ -83,6 +83,161 @@ const BLANK_FORM: Partial<ContentRule> = {
   applies_to: 'all',
   is_active: true,
 };
+
+interface RuleExample {
+  title: string;
+  reason: string;
+  pattern: string;
+  flags: string;
+  severity: 'block' | 'regen' | 'log';
+  rule_type: string;
+  applies_to: 'ai' | 'scheduler' | 'all';
+  note: string;
+}
+
+const RULE_EXAMPLES: RuleExample[] = [
+  {
+    title: 'Block dangerous dosing advice',
+    reason: 'Never tell users to take extra/double doses — could cause hypoglycemia or other serious harm.',
+    pattern: '\\btake\\s+(an?\\s+)?(extra|another|double)\\s+(dose|injection|shot|pill)\\b',
+    flags: 'i',
+    severity: 'block',
+    rule_type: 'medication_safety',
+    applies_to: 'all',
+    note: 'Severity "block" → message is dropped immediately, no regen attempt. Use only when there is no safe rewrite.',
+  },
+  {
+    title: 'Regen prescriptive language',
+    reason: 'Grace should never command — phrases like "you must eat" / "you need to drink" feel coercive.',
+    pattern: '\\byou\\s+(must|need\\s+to|have\\s+to|should)\\s+(eat|drink|take|stop|start)\\b',
+    flags: 'i',
+    severity: 'regen',
+    rule_type: 'banned_phrase',
+    applies_to: 'all',
+    note: 'Severity "regen" → the model is asked to rewrite without the banned phrase. Safe fallback if retry still fails.',
+  },
+  {
+    title: 'Regen overused doctor deflection',
+    reason: 'Sending users to a doctor for every small question feels dismissive. Use only for true medical escalations.',
+    pattern: "\\b(see|ask|consult|talk\\s+to)\\s+(your|a)\\s+(doctor|provider|physician)\\b",
+    flags: 'i',
+    severity: 'regen',
+    rule_type: 'medical_authority',
+    applies_to: 'ai',
+    note: '"applies_to: ai" → only applied to reactive AI replies, not scheduler proactive messages.',
+  },
+];
+
+function CodePill({ children }: { children: React.ReactNode }) {
+  return (
+    <code className="px-1.5 py-0.5 rounded bg-white/10 text-[11px] font-mono text-amber-200 break-all">
+      {children}
+    </code>
+  );
+}
+
+function RuleHelpPanel() {
+  const [open, setOpen] = useState(true);
+  return (
+    <div
+      className="rounded-lg border mb-4"
+      style={{ background: 'rgba(99,102,241,0.06)', borderColor: 'rgba(99,102,241,0.25)' }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left"
+      >
+        <span className="flex items-center gap-2 text-[13px] font-semibold text-foreground">
+          <BookOpen className="h-3.5 w-3.5 text-primary" />
+          How to write an accurate rule
+        </span>
+        {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 space-y-4 text-[12.5px] leading-relaxed text-muted-foreground">
+          {/* Mental model */}
+          <div className="space-y-1.5">
+            <p className="text-foreground font-semibold">Mental model</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                <span className="text-foreground">Pattern</span> is a <strong>JavaScript regex</strong> (case-insensitive by default).
+                If you just want to match plain text, you can paste it as-is — but escape any special characters: <CodePill>{`. * + ? ( ) [ ] { } | \\ ^ $`}</CodePill>
+              </li>
+              <li>
+                <span className="text-foreground">Severity</span> decides what happens when a match is found:
+                <CodePill>block</CodePill> → drop the message, send safe fallback;
+                <CodePill>regen</CodePill> → ask the model to rewrite (one retry, then fallback);
+                <CodePill>log</CodePill> → record only, message still sends.
+              </li>
+              <li>
+                <span className="text-foreground">Applies to</span>: <CodePill>ai</CodePill> = reactive replies only,
+                <CodePill>scheduler</CodePill> = proactive check-ins only,
+                <CodePill>all</CodePill> = both.
+              </li>
+            </ul>
+          </div>
+
+          {/* Core tips */}
+          <div className="space-y-1.5">
+            <p className="text-foreground font-semibold">Tips for an accurate pattern</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Wrap whole words with <CodePill>{`\\b`}</CodePill> (word boundary) so <CodePill>{`\\bdose\\b`}</CodePill> matches "dose" but NOT "doses" or "overdose".</li>
+              <li>Use <CodePill>{`\\s+`}</CodePill> for "one or more spaces" — handles double-spaces, tabs, newlines.</li>
+              <li>Use grouping <CodePill>{`(a|b|c)`}</CodePill> to match alternatives — e.g. <CodePill>{`(must|need to|have to)`}</CodePill>.</li>
+              <li>Optional pieces use <CodePill>{`?`}</CodePill> — e.g. <CodePill>{`an?`}</CodePill> matches both "a" and "an".</li>
+              <li>Always set flag <CodePill>i</CodePill> so capitalization differences don't slip through.</li>
+              <li>Write the <span className="text-foreground">reason</span> as a full sentence — it's what the model sees when asked to regenerate.</li>
+              <li>Test every new rule with the "Test Text Against Rules" panel above before saving.</li>
+            </ul>
+          </div>
+
+          {/* Common pitfalls */}
+          <div className="space-y-1.5">
+            <p className="text-foreground font-semibold">Common pitfalls — avoid</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Patterns that are too broad: <CodePill>doctor</CodePill> would match "I'm a doctor" in a user-quoted message. Always anchor with context.</li>
+              <li>Forgetting <CodePill>{`\\b`}</CodePill>: <CodePill>diet</CodePill> matches "dietary", "dieting", "audited" — almost never what you want.</li>
+              <li>Using <CodePill>block</CodePill> for soft violations (overused phrases). Block only when no rewrite is acceptable (real safety risks).</li>
+              <li>Empty or vague <span className="text-foreground">reason</span>: model can't fix what it doesn't understand.</li>
+            </ul>
+          </div>
+
+          {/* Worked examples */}
+          <div className="space-y-2">
+            <p className="text-foreground font-semibold">Worked examples</p>
+            {RULE_EXAMPLES.map((ex, i) => (
+              <div
+                key={i}
+                className="rounded-lg p-3 space-y-1.5 border"
+                style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.08)' }}
+              >
+                <div className="flex items-center gap-2">
+                  <SeverityBadge sev={ex.severity} />
+                  <span className="text-foreground text-[12.5px] font-medium">{ex.title}</span>
+                </div>
+                <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11.5px]">
+                  <span className="text-muted-foreground">Type</span>
+                  <span className="text-foreground">{ex.rule_type.replace(/_/g, ' ')}</span>
+                  <span className="text-muted-foreground">Applies to</span>
+                  <span className="text-foreground">{ex.applies_to}</span>
+                  <span className="text-muted-foreground">Pattern</span>
+                  <CodePill>{ex.pattern}</CodePill>
+                  <span className="text-muted-foreground">Flags</span>
+                  <CodePill>{ex.flags}</CodePill>
+                  <span className="text-muted-foreground">Reason</span>
+                  <span className="text-foreground">{ex.reason}</span>
+                </div>
+                <p className="text-[11.5px] text-muted-foreground italic pt-1">{ex.note}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PageShell({ children }: { children: React.ReactNode }) {
   return (
@@ -259,6 +414,7 @@ export default function ContentRulesPage() {
         <motion.div variants={fadeUp} initial="hidden" animate="show"
           className="rounded-xl p-5 border" style={CARD_STYLE}>
           <p className="text-[13px] font-semibold text-foreground mb-4" style={{ letterSpacing: '-0.01em' }}>Create New Rule</p>
+          <RuleHelpPanel />
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
             <SelectInput label="Type" value={form.rule_type ?? 'banned_phrase'}
               onChange={(v) => setForm((f) => ({ ...f, rule_type: v }))}

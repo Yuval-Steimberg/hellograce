@@ -148,6 +148,10 @@ export interface UserDetail {
   is_pro: boolean;
   rlhf_enabled: boolean;
   trial_start: string | null;
+  age: number | null;
+  protein_goal_grams: number | null;
+  glp1_start_date: string | null;
+  checkin_count_per_day: number | null;
   created_at: string;
   updated_at: string;
 }

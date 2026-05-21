@@ -61,6 +61,10 @@ export default function UserDrawer({ user, onClose }: Props) {
     food_dislikes: '',
     current_weight: '',
     goal_weight: '',
+    age: '',
+    protein_goal_grams: '',
+    glp1_start_date: '',
+    checkin_count_per_day: '',
   });
 
   useEffect(() => {
@@ -76,6 +80,10 @@ export default function UserDrawer({ user, onClose }: Props) {
       food_dislikes: (detail.food_dislikes ?? []).join(', '),
       current_weight: detail.current_weight?.toString() ?? '',
       goal_weight: detail.goal_weight?.toString() ?? '',
+      age: detail.age?.toString() ?? '',
+      protein_goal_grams: detail.protein_goal_grams?.toString() ?? '',
+      glp1_start_date: detail.glp1_start_date ? detail.glp1_start_date.split('T')[0] : '',
+      checkin_count_per_day: detail.checkin_count_per_day?.toString() ?? '',
     });
   }, [detail]);
 
@@ -134,6 +142,10 @@ export default function UserDrawer({ user, onClose }: Props) {
       food_dislikes: form.food_dislikes ? form.food_dislikes.split(',').map((s) => s.trim()).filter(Boolean) : [],
       current_weight: form.current_weight ? Number(form.current_weight) : null,
       goal_weight: form.goal_weight ? Number(form.goal_weight) : null,
+      age: form.age ? Number(form.age) : null,
+      protein_goal_grams: form.protein_goal_grams ? Number(form.protein_goal_grams) : null,
+      glp1_start_date: form.glp1_start_date || null,
+      checkin_count_per_day: form.checkin_count_per_day ? Number(form.checkin_count_per_day) : undefined,
     });
   }
 
@@ -269,6 +281,22 @@ export default function UserDrawer({ user, onClose }: Props) {
                       <div className="space-y-1">
                         <Label className="text-xs">Goal weight (lbs)</Label>
                         <Input type="number" value={form.goal_weight} onChange={(e) => setForm({ ...form, goal_weight: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Age</Label>
+                        <Input type="number" placeholder="e.g. 42" value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Protein goal (g/day)</Label>
+                        <Input type="number" placeholder="e.g. 100" value={form.protein_goal_grams} onChange={(e) => setForm({ ...form, protein_goal_grams: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">GLP-1 start date</Label>
+                        <Input type="date" value={form.glp1_start_date} onChange={(e) => setForm({ ...form, glp1_start_date: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Check-ins / day (1–4)</Label>
+                        <Input type="number" min={1} max={4} placeholder="1" value={form.checkin_count_per_day} onChange={(e) => setForm({ ...form, checkin_count_per_day: e.target.value })} />
                       </div>
                       <div className="col-span-2 space-y-1">
                         <Label className="text-xs">Goals (comma-separated)</Label>

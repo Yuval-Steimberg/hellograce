@@ -149,7 +149,8 @@ Deno.serve(async (req) => {
     await supabase.from("verification_codes").update({ used: true }).eq("phone", lookupKey).eq("used", false);
 
     // Insert new code (phone column stores the identifier — phone or email)
-    await supabase.from("verification_codes").insert({ phone: lookupKey, code });
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await supabase.from("verification_codes").insert({ phone: lookupKey, code, expires_at: expiresAt });
 
     if (method === "phone") {
       await sendSMS(lookupKey, `Your grace verification code is: ${code}`);

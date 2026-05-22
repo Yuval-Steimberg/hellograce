@@ -26,6 +26,10 @@ import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
 import { ContentRulesService } from './services/content-rules.service.js';
 import { MessageTemplatesService } from './services/message-templates.service.js';
+import { ResponseFingerprintService } from './services/response-fingerprint.service.js';
+import { ConversationSummaryService } from './services/conversation-summary.service.js';
+import { TopicTrackerService } from './services/topic-tracker.service.js';
+import { AnomalyDetectorService } from './scheduler/anomaly-detector.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { PromptOptimizer, type OptimizerRunReport } from './scheduler/prompt-optimizer.js';
@@ -66,6 +70,13 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   const userMemory = new UserMemoryService(pool, embedder, llm, logger);
 
+  // Phase 4 additive services. None of these change existing behavior — they
+  // record/observe alongside the current flow and surface in admin metrics.
+  const fingerprint = new ResponseFingerprintService(redis, logger);
+  const conversationSummary = new ConversationSummaryService(pool, llm, logger);
+  const topicTracker = new TopicTrackerService(pool, logger);
+  const anomalyDetector = new AnomalyDetectorService(pool, logger);
+
   const ai = new AIService({
     pool,
     llm,
@@ -83,6 +94,9 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     systemPrompt: await loadActivePrompt(),
     contentRulesService,
     userMemory,
+    fingerprint,
+    conversationSummary,
+    topicTracker,
   });
 
   const sender = new TwilioSender(
@@ -118,7 +132,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       logger.info({ adminPhone, version: report.version }, 'prompt_optimizer.report_sent');
     },
   });
-  const scheduler = new Scheduler({ users, sender, generator, logger, redis, promptOptimizer });
+  const scheduler = new Scheduler({ users, sender, generator, logger, redis, promptOptimizer, anomalyDetector });
 
   // Shared hot-reload routine — used by SIGHUP and the admin sync endpoint.
   const reloadActivePrompt = async (): Promise<void> => {

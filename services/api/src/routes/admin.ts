@@ -1052,4 +1052,36 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     const rendered = await deps.templates.render(key, vars, tpl.template);
     return { rendered };
   });
+
+  // ─── Phase 4: behavioral anomalies ─────────────────────────────────────
+  // Open (unresolved) anomalies detected by the nightly job. Joins to users
+  // for phone + first_name so admins can act on them.
+  app.get('/admin/anomalies', async (req) => {
+    const q = req.query as Record<string, string>;
+    const limit = Math.min(Number(q['limit'] ?? 100), 500);
+    const resolved = q['resolved'] === 'true';
+    const { rows } = await deps.pool.query(
+      `SELECT a.id, a.user_id, a.kind, a.severity, a.details, a.resolved,
+              a.created_at, a.resolved_at,
+              u.phone, u.first_name
+         FROM user_anomalies a
+         JOIN users u ON u.id = a.user_id
+        WHERE a.resolved = $1
+        ORDER BY a.created_at DESC
+        LIMIT $2`,
+      [resolved, limit],
+    );
+    return { anomalies: rows };
+  });
+
+  app.put('/admin/anomalies/:id/resolve', async (req) => {
+    const { id } = req.params as { id: string };
+    await deps.pool.query(
+      `UPDATE user_anomalies
+          SET resolved = TRUE, resolved_at = now()
+        WHERE id = $1`,
+      [Number(id)],
+    );
+    return { ok: true };
+  });
 }

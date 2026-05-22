@@ -9,6 +9,9 @@ import type { UserMemoryService } from '../memory/user-memory.service.js';
 import type { RagService } from '../rag/rag.service.js';
 import type { UserService } from '../user/user.service.js';
 import type { ContentRulesService } from './content-rules.service.js';
+import type { ResponseFingerprintService } from './response-fingerprint.service.js';
+import type { ConversationSummaryService } from './conversation-summary.service.js';
+import type { TopicTrackerService } from './topic-tracker.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
 import { makeLogFoodTool } from '../tools/log-food.js';
@@ -56,6 +59,9 @@ export interface AIServiceDeps {
   systemPrompt?: string;
   contentRulesService?: ContentRulesService;
   userMemory?: UserMemoryService;
+  fingerprint?: ResponseFingerprintService;
+  conversationSummary?: ConversationSummaryService;
+  topicTracker?: TopicTrackerService;
 }
 
 export class AIService {
@@ -113,6 +119,14 @@ export class AIService {
       users.getTodaysFoodSummary(input.userId).catch(() => ({ protein_g: 0, calories: 0, items: [] })),
       this.countTodaysCheckIns(input.userId).catch(() => 0),
       users.getKnownFacts(input.userId, 30).catch(() => []),
+    ]);
+
+    // Phase 4 additive context — fetched after conversationId is resolved.
+    // Both are optional; if the services aren't injected the values are null
+    // and nothing is added to the prompt.
+    const [conversationSummary, activeTopic] = await Promise.all([
+      this.deps.conversationSummary ? this.deps.conversationSummary.get(conversationId).catch(() => null) : Promise.resolve(null),
+      this.deps.topicTracker ? this.deps.topicTracker.get(conversationId).catch(() => null) : Promise.resolve(null),
     ]);
 
     // Fold media description into the prompt (only after Promise.all resolves).
@@ -236,7 +250,14 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       .filter(Boolean);
 
     // Build personalised system prompt with user context.
-    const systemPrompt = this.buildPersonalisedPrompt(user, isNew, { todaysFood, checkinsToday, knownFacts, dietaryRestriction });
+    const systemPrompt = this.buildPersonalisedPrompt(user, isNew, {
+      todaysFood,
+      checkinsToday,
+      knownFacts,
+      dietaryRestriction,
+      ...(conversationSummary ? { conversationSummary: conversationSummary.summary } : {}),
+      ...(activeTopic ? { activeTopic } : {}),
+    });
 
     // Track which modality drove this request so log_food rows are tagged
     // correctly (text vs image vs voice) — used by analytics + dedup.
@@ -340,6 +361,39 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         .catch((err) => logger.warn({ err }, 'user_memory.extract.failed'));
     }
 
+    // ─── Phase 4 additive features (Critical phase 3 + Mid-tier gaps) ─────
+    // All purely fire-and-forget. None block the response.
+
+    // Response fingerprinting (Critical phase 3). Check overlap with prior
+    // Grace messages from this user; log only — no enforcement yet.
+    if (this.deps.fingerprint && result.text.trim().length >= 30 && !result.usedSafeFallback) {
+      const fp = this.deps.fingerprint;
+      void fp
+        .checkOverlap(input.userId, result.text)
+        .then((overlap) => {
+          if (overlap.jaccard > 0.15 || overlap.matchingNgrams >= 5) {
+            logger.warn(
+              { userId: input.userId, jaccard: overlap.jaccard, matchingNgrams: overlap.matchingNgrams },
+              'response_fingerprint.high_overlap',
+            );
+          }
+          // Record the new message into the user's set.
+          void fp.record(input.userId, result.text).catch(() => {});
+        })
+        .catch(() => {});
+    }
+
+    // Topic tracker: record the current classified topic on the conversation.
+    if (this.deps.topicTracker) {
+      const intentTopic = classifyIntent(input.text).type;
+      void this.deps.topicTracker.record(conversationId, intentTopic).catch(() => {});
+    }
+
+    // Conversation summary: maybe regenerate (every 20 turns).
+    if (this.deps.conversationSummary && !result.usedSafeFallback) {
+      void this.deps.conversationSummary.maybeSummarize(conversationId).catch(() => {});
+    }
+
     if (!this.deps.turnQueue) {
       void memory
         .appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
@@ -399,6 +453,10 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       checkinsToday?: number;
       knownFacts?: Array<{ fact: string; category: string; confidence: string }>;
       dietaryRestriction?: DietaryRestriction | null;
+      /** Phase 4: compressed earlier-conversation context. Null when absent. */
+      conversationSummary?: string;
+      /** Phase 4: current active topic + age. Null when stale or absent. */
+      activeTopic?: { topic: string; ageMinutes: number };
     },
   ): string {
     const base = this.systemPrompt ?? undefined;
@@ -567,6 +625,21 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         lines.push(`Total protein TODAY: ${f.protein_g}g${f.calories ? ` (${f.calories} kcal)` : ''}`);
         if (f.items.length > 0) lines.push(`Foods logged today: ${f.items.slice(0, 8).join('; ')}`);
       }
+
+      // Phase 4: active conversation topic (decays after 2h silence). When
+      // present, tells Grace whether the user is mid-thread on a topic.
+      if (runtime?.activeTopic && runtime.activeTopic.topic !== 'greeting') {
+        lines.push(
+          `Active conversation topic: ${runtime.activeTopic.topic} (last touched ${runtime.activeTopic.ageMinutes} min ago — treat as still live if the user's new message relates to it).`,
+        );
+      }
+    }
+
+    // Phase 4: compressed summary of earlier conversation. Lets Grace recall
+    // durable context from messages older than the 12-turn history window.
+    if (runtime?.conversationSummary) {
+      lines.push('', 'EARLIER CONVERSATION CONTEXT (summary of messages older than recent history):');
+      lines.push(runtime.conversationSummary);
     }
 
     if (isNew) lines.push('This is the user\'s FIRST message. Welcome them warmly and personally.');

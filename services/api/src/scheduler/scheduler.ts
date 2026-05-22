@@ -5,6 +5,7 @@ import type { UserService, GraceUser } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
 import type { MessageGenerator, GenerateOpts } from './message-generator.js';
 import type { PromptOptimizer } from './prompt-optimizer.js';
+import type { AnomalyDetectorService } from './anomaly-detector.service.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const MIDDAY_DAYS = new Set([1, 3, 5]); // Mon, Wed, Fri
@@ -17,6 +18,8 @@ interface SchedulerDeps {
   logger: Logger;
   redis: Redis;
   promptOptimizer?: PromptOptimizer;
+  /** Phase 4: behavioral anomaly detector. Runs nightly at 4:30am UTC. */
+  anomalyDetector?: AnomalyDetectorService;
 }
 
 export class Scheduler {
@@ -39,6 +42,14 @@ export class Scheduler {
     if (this.deps.promptOptimizer) {
       this.tasks.push(
         cron.schedule('0 4 * * *', () => void this.deps.promptOptimizer!.run()),
+      );
+    }
+    // Phase 4: behavioral anomaly detection — runs 30 min after the prompt
+    // optimizer to keep nightly load spread out. Read-only scan over recent
+    // user logs; results go to the user_anomalies table for admin visibility.
+    if (this.deps.anomalyDetector) {
+      this.tasks.push(
+        cron.schedule('30 4 * * *', () => void this.deps.anomalyDetector!.run()),
       );
     }
     this.deps.logger.info('scheduler.started');

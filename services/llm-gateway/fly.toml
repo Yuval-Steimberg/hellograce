@@ -1,0 +1,42 @@
+# fly deploy --config services/llm-gateway/fly.toml --app grace-llm-gateway
+app = "grace-llm-gateway"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3010"
+  LOG_LEVEL = "info"
+  GEMINI_FLASH_MODEL = "gemini-2.5-flash"
+  GEMINI_PRO_MODEL = "gemini-2.5-pro"
+  CONTEXT_CACHE_ENABLED = "true"
+  RATE_LIMIT_RPM = "120"
+  NODE_ENV = "production"
+
+# Secrets (set via `fly secrets set --app grace-llm-gateway`):
+#   GEMINI_API_KEY
+#   REDIS_URL
+
+[[services]]
+  internal_port = 3010
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

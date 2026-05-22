@@ -1,0 +1,22 @@
+name = "grace-edge-filter"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# Deploy this worker as a route in front of your grace-api.fly.dev domain.
+# Route config:
+#   Pattern: grace-api.fly.dev/webhook/twilio
+#   Worker:  grace-edge-filter
+#
+# Or use a Custom Domain + Route via the Cloudflare dashboard.
+
+[vars]
+# Upstream URL — the real Grace API. Override per environment below.
+UPSTREAM_URL = "https://grace-api.fly.dev"
+
+[env.production.vars]
+UPSTREAM_URL = "https://grace-api.fly.dev"
+
+# Secrets (set via `wrangler secret put`):
+#   TWILIO_ACCOUNT_SID
+#   TWILIO_AUTH_TOKEN
+#   TWILIO_WHATSAPP_FROM

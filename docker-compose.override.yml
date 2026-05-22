@@ -1,0 +1,102 @@
+# Grace Feature Layer — docker-compose.override.yml
+#
+# Docker Compose automatically merges this file with docker-compose.yml.
+# No changes to the base file are needed.
+#
+# Adds:
+#   llm-gateway        — Feature 2: Gemini context caching + model routing
+#   twilio-proxy       — Feature 3: async Twilio webhook + edge safety filter
+#   temporal-orchestrator — Feature 4: Day-2 / Day-6 injection lifecycle triggers
+#
+# Usage:
+#   docker compose up -d          # starts everything, including these services
+#   docker compose up api         # starts only the base stack (overlay is still parsed but inactive)
+#
+# Wiring:
+#   - Twilio webhook URL → http://localhost:3020/webhook/twilio  (twilio-proxy)
+#   - twilio-proxy forwards to api:3001 transparently
+#   - llm-gateway is standalone; connect by setting LLM_GATEWAY_URL=http://llm-gateway:3010
+
+services:
+
+  # ── Feature 2: LLM Gateway ─────────────────────────────────────────────────
+  llm-gateway:
+    build:
+      context: ./services/llm-gateway
+      dockerfile: Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      PORT: "3010"
+      LOG_LEVEL: info
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY}
+      GEMINI_FLASH_MODEL: gemini-2.5-flash
+      GEMINI_PRO_MODEL: gemini-2.5-pro
+      REDIS_URL: redis://redis:6379
+      CONTEXT_CACHE_ENABLED: "true"
+      RATE_LIMIT_RPM: "120"
+    ports:
+      - "3010:3010"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3010/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Feature 3: Twilio Async Proxy ──────────────────────────────────────────
+  twilio-proxy:
+    build:
+      context: ./services/twilio-proxy
+      dockerfile: Dockerfile
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      PORT: "3020"
+      LOG_LEVEL: info
+      UPSTREAM_URL: http://api:3001
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-AC_dev}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-dev}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-+10000000000}
+      RATE_LIMIT_RPM: "30"
+      VALIDATE_TWILIO_SIG: "false"
+    ports:
+      - "3020:3020"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3020/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Feature 4: Temporal Orchestrator ───────────────────────────────────────
+  temporal-orchestrator:
+    build:
+      context: ./services/temporal-orchestrator
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      LOG_LEVEL: info
+      DATABASE_URL: postgres://grace:grace@postgres:5432/grace
+      DATABASE_SSL: "false"
+      REDIS_URL: redis://redis:6379
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY}
+      GEMINI_MODEL: gemini-2.5-flash
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-AC_dev}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-dev}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-+10000000000}
+      # Day 2 window: 47–50 hours post-injection
+      DAY2_HOURS_MIN: "47"
+      DAY2_HOURS_MAX: "50"
+      # Day 6 window: 143–146 hours post-injection
+      DAY6_HOURS_MIN: "143"
+      DAY6_HOURS_MAX: "146"
+    restart: unless-stopped

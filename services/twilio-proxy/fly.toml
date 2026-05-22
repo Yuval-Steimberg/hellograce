@@ -1,0 +1,41 @@
+# fly deploy --config services/twilio-proxy/fly.toml --app grace-twilio-proxy
+# After deploy: update Twilio webhook URL to https://grace-twilio-proxy.fly.dev/webhook/twilio
+app = "grace-twilio-proxy"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3020"
+  LOG_LEVEL = "info"
+  UPSTREAM_URL = "https://grace-api.fly.dev"
+  RATE_LIMIT_RPM = "30"
+  VALIDATE_TWILIO_SIG = "true"
+  NODE_ENV = "production"
+
+# Secrets:
+#   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM
+
+[[services]]
+  internal_port = 3020
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

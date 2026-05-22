@@ -1,0 +1,24 @@
+# fly deploy --config services/temporal-orchestrator/fly.toml --app grace-temporal
+app = "grace-temporal"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  LOG_LEVEL = "info"
+  GEMINI_MODEL = "gemini-2.5-flash"
+  DAY2_HOURS_MIN = "47"
+  DAY2_HOURS_MAX = "50"
+  DAY6_HOURS_MIN = "143"
+  DAY6_HOURS_MAX = "146"
+  NODE_ENV = "production"
+
+# Secrets:
+#   DATABASE_URL, REDIS_URL, GEMINI_API_KEY,
+#   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM
+
+# No HTTP service needed — this is a pure background worker
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

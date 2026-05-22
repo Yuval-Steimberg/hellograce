@@ -12,6 +12,9 @@ import { Cache } from './cache/cache.js';
 import { GeminiProvider } from './llm/gemini.js';
 import { GeminiEmbedder } from './rag/gemini-embedder.js';
 import { RagService } from './rag/rag.service.js';
+import { SparseSearchService } from './rag/sparse-search.service.js';
+import { ReRankerService } from './rag/reranker.service.js';
+import { HybridRagService } from './rag/hybrid-rag.service.js';
 import { MemoryService } from './memory/memory.service.js';
 import { UserMemoryService } from './memory/user-memory.service.js';
 import { AIService } from './services/ai.service.js';
@@ -48,7 +51,13 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const llm = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL }, logger, cache);
   const memory = new MemoryService(pool);
   const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'gemini-embedding-001', cache);
-  const rag = new RagService(pool, embedder, logger);
+  // HybridRagService is a drop-in extension of RagService. When RERANKER_URL is
+  // unset, the reranker leg is a no-op and behavior matches dense-only RagService.
+  // The sparse FTS leg requires migration 20260522000003_hybrid_rag_fts.sql; if
+  // unapplied the leg returns [] and dense results are used. Strictly additive.
+  const sparseSearch = new SparseSearchService(pool, logger);
+  const reranker = new ReRankerService(env.RERANKER_URL, logger);
+  const rag: RagService = new HybridRagService(pool, embedder, logger, sparseSearch, reranker);
   const turnQueue = getTurnQueue(redis);
   const factExtractQueue = getFactExtractQueue(redis);
 

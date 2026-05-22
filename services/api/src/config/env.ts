@@ -45,6 +45,11 @@ const EnvSchema = z.object({
    *  to the legacy LLM-only macro estimate. Free signup at
    *  https://fdc.nal.usda.gov/api-key-signup.html (1000 requests/hour). */
   USDA_API_KEY: z.string().optional(),
+
+  /** Phase 12: Cross-encoder reranker sidecar URL (e.g. http://reranker:8081).
+   *  When unset, HybridRagService silently degrades to dense-only retrieval —
+   *  identical behavior to the legacy RagService. */
+  RERANKER_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

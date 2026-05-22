@@ -24,6 +24,18 @@ services:
       interval: 5s
       retries: 10
 
+  reranker:
+    build:
+      context: ./services/reranker
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8081/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
   api:
     build:
       context: .
@@ -32,6 +44,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      reranker:
         condition: service_healthy
     environment:
       NODE_ENV: production
@@ -50,6 +64,8 @@ services:
       TOOLS_ENABLED: "true"
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       REDIS_URL: redis://redis:6379
+      # Hybrid RAG: leave unset to silently fall back to dense-only retrieval.
+      RERANKER_URL: http://reranker:8081
     ports:
       - "3001:3001"
 

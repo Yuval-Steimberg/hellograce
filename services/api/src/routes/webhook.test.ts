@@ -30,6 +30,26 @@ describe('detectUpgradeIntent', () => {
     expect(detectUpgradeIntent('thanks!')).toBe(false);
     expect(detectUpgradeIntent('feeling tired today')).toBe(false);
   });
+
+  it('does NOT misfire on nutritional or medical "how much" questions', () => {
+    // The original bug: "how much protein on tirzepatide?" was incorrectly
+    // routed to the upgrade-management handler instead of the AI.
+    expect(detectUpgradeIntent('how much protein on tirzepatide?')).toBe(false);
+    expect(detectUpgradeIntent('how much protein per day?')).toBe(false);
+    expect(detectUpgradeIntent('how much water should I drink')).toBe(false);
+    expect(detectUpgradeIntent('how much weight have I lost')).toBe(false);
+    expect(detectUpgradeIntent('how much sleep do I need')).toBe(false);
+    expect(detectUpgradeIntent('how much fiber is in oats')).toBe(false);
+  });
+
+  it('still catches genuine pricing questions', () => {
+    expect(detectUpgradeIntent('how much is grace')).toBe(true);
+    expect(detectUpgradeIntent('how much does grace cost')).toBe(true);
+    expect(detectUpgradeIntent('how much per month')).toBe(true);
+    expect(detectUpgradeIntent('how much to upgrade')).toBe(true);
+    expect(detectUpgradeIntent("what's the price")).toBe(true);
+    expect(detectUpgradeIntent('price of grace')).toBe(true);
+  });
 });
 
 describe('buildUpgradeUrl', () => {

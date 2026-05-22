@@ -20,7 +20,9 @@ export class ReRankerService {
   constructor(
     private readonly url: string | undefined,
     private readonly logger: Logger,
-    private readonly timeoutMs: number = 1500,
+    // 4 s gives the Fly sidecar room to cold-start (~2-3 s) without tripping.
+    // Warm requests still finish in ~30 ms — this is only an upper bound.
+    private readonly timeoutMs: number = 4000,
   ) {
     this.enabled = !!url;
   }

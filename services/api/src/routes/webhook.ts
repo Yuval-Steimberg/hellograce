@@ -407,9 +407,20 @@ function parseFeedbackSignal(text: string): { rating: number; comment?: string }
 // upgrade my workout routine" don't match. Long sentences that include the
 // word "upgrade" are out of scope — Grace handles those conversationally.
 const UPGRADE_PHRASES: RegExp[] = [
+  // Unambiguous subscription verbs — always intent.
   /\b(upgrade|subscribe|subscription|go\s+pro|grace\s+pro|pro\s+plan|upgrade\s+me|upgrade\s+now)\b/i,
-  /\b(how\s+much|pricing|price|cost|plans|what\s+plans)\b/i,
-  /\b(manage\s+(my\s+)?(plan|subscription|account))\b/i,
+  // "pricing" is a specific business word, rare in GLP-1 chat.
+  /\bpricing\b/i,
+  // Cost/price/plan terms must be anchored to the product, not food/dose/medical questions.
+  /\b(cost|costs|price|plans?|charges?)\s+(of|for)\s+(grace|pro|the\s+(plan|subscription|service|app|trial))\b/i,
+  /\b(grace|pro|the\s+(plan|subscription|service|app|trial))\s+(cost|costs|price|plans?|charges?)\b/i,
+  /\b(what'?s|what\s+is)\s+the\s+(cost|price|pricing|plan)\b/i,
+  // "how much" only counts when followed by a product anchor — never on its own.
+  // Catches "how much does this/it/grace/pro cost" but NOT "how much protein…", "how much weight…", "how much water…".
+  /\bhow\s+much\s+(does|is)\s+(this|it|grace|pro)\b/i,
+  /\bhow\s+much\s+(per\s+month|a\s+month|monthly|to\s+upgrade|to\s+subscribe|for\s+grace|for\s+pro|to\s+go\s+pro)\b/i,
+  // Management
+  /\bmanage\s+(my\s+)?(plan|subscription|account)\b/i,
 ];
 
 export function detectUpgradeIntent(text: string): boolean {

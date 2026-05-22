@@ -321,9 +321,12 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     // Phase 5: bandit-driven response strategy. Soft hint appended to system
     // prompt so it can bias tone/length without overriding hard rules. Skipped
     // for first-message welcomes (no signal to optimize against yet).
+    // Note: must pass the user's UUID (user.id) — not the phone (input.userId) —
+    // because user_bandit_state.user_id is a UUID FK to users.id, and the
+    // webhook's recordReward uses user.id too. Mismatched keys = no learning.
     let banditHint: string | null = null;
-    if (this.deps.bandit && !isNew && user) {
-      const selection = await this.deps.bandit.selectArm(input.userId).catch(() => null);
+    if (this.deps.bandit && !isNew && user?.id) {
+      const selection = await this.deps.bandit.selectArm(user.id).catch(() => null);
       if (selection) banditHint = selection.hint;
     }
     const systemPromptWithStrategy = banditHint

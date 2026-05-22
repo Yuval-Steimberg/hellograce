@@ -18,6 +18,8 @@ export interface WebhookDeps {
   users?: UserService;
   redis?: Redis;
   templates?: MessageTemplatesService;
+  /** Phase 5: contextual bandit reward update on 👍/👎 feedback. */
+  bandit?: import('../services/bandit.service.js').BanditService;
 }
 
 export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): void {
@@ -125,6 +127,12 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             const fbResult = parseFeedbackSignal(normalized.text);
             if (fbResult) {
               await deps.users.recordUserFeedback(user.phone, fbResult.rating, fbResult.comment).catch(() => null);
+              // Phase 5: feed reward to the contextual bandit. The user's `id`
+              // is the bandit key (matches user_bandit_state.user_id). Fire-
+              // and-forget — never blocks the ack.
+              if (deps.bandit && user.id) {
+                void deps.bandit.recordReward(user.id, fbResult.rating > 0).catch(() => {});
+              }
               const ack = fbResult.rating > 0
                 ? 'Thanks for the thumbs up — I\'ll keep that in mind! 💪'
                 : fbResult.comment

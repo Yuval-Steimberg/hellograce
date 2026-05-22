@@ -7,6 +7,7 @@ import type { Cache } from '../cache/cache.js';
 import type { LLMProvider } from '@grace/shared';
 import type { PromptOptimizer } from '../scheduler/prompt-optimizer.js';
 import type { MessageTemplatesService } from '../services/message-templates.service.js';
+import type { BanditService } from '../services/bandit.service.js';
 
 export interface AdminDeps {
   pool: Pool;
@@ -18,6 +19,8 @@ export interface AdminDeps {
   reloadActivePrompt?: () => Promise<void>;
   redis?: unknown;
   templates?: MessageTemplatesService;
+  /** Phase 5: contextual bandit state read-only endpoint. */
+  bandit?: BanditService;
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
@@ -1083,5 +1086,25 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       [Number(id)],
     );
     return { ok: true };
+  });
+
+  // ─── Phase 5: contextual bandit ────────────────────────────────────────
+  // Inspect per-user arm pulls + win rates. Use this to spot under-explored
+  // arms and confirm the bandit is converging.
+  app.get('/admin/users/:phone/bandit', async (req) => {
+    if (!deps.bandit) throw new ValidationError('bandit service not configured');
+    const { phone } = req.params as { phone: string };
+    const { rows } = await deps.pool.query<{ id: string }>(
+      `SELECT id FROM users WHERE phone = $1 LIMIT 1`,
+      [phone],
+    );
+    if (!rows[0]) throw new ValidationError('User not found');
+    const states = await deps.bandit.getStates(rows[0].id);
+    return {
+      arms: states.map((s) => ({
+        ...s,
+        win_rate: s.pulls > 0 ? Number((s.successes / s.pulls).toFixed(3)) : null,
+      })),
+    };
   });
 }

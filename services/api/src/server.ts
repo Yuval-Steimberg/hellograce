@@ -30,6 +30,8 @@ import { ResponseFingerprintService } from './services/response-fingerprint.serv
 import { ConversationSummaryService } from './services/conversation-summary.service.js';
 import { TopicTrackerService } from './services/topic-tracker.service.js';
 import { AnomalyDetectorService } from './scheduler/anomaly-detector.service.js';
+import { UsdaFoodService } from './services/usda-food.service.js';
+import { BanditService } from './services/bandit.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
 import { PromptOptimizer, type OptimizerRunReport } from './scheduler/prompt-optimizer.js';
@@ -77,6 +79,12 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const topicTracker = new TopicTrackerService(pool, logger);
   const anomalyDetector = new AnomalyDetectorService(pool, logger);
 
+  // Phase 5: USDA + bandit. USDA is no-op when USDA_API_KEY is unset (falls
+  // back to LLM-only estimation). Bandit always works but only meaningfully
+  // for rlhf_enabled users whose 👍/👎 generate the reward signal.
+  const usda = new UsdaFoodService(pool, logger, env.USDA_API_KEY);
+  const bandit = new BanditService(pool, redis, logger);
+
   const ai = new AIService({
     pool,
     llm,
@@ -97,6 +105,8 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     fingerprint,
     conversationSummary,
     topicTracker,
+    usda,
+    bandit,
   });
 
   const sender = new TwilioSender(
@@ -183,10 +193,10 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   });
 
   registerHealthRoutes(app, pool);
-  registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService });
+  registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService, bandit });
   registerUserRoutes(app, { pool, users, sender, generator });
   registerChatRoutes(app, ai, pool);
-  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
+  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, bandit, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
 
   const shutdown = async () => {
     app.log.info('shutdown.start');

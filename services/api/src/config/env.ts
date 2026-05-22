@@ -40,6 +40,11 @@ const EnvSchema = z.object({
   ADMIN_PHONE: z.string().optional(),
 
   REDIS_URL: z.string().url().optional().default('redis://localhost:6379'),
+
+  /** Phase 5: USDA FoodData Central API key. When unset, log_food falls back
+   *  to the legacy LLM-only macro estimate. Free signup at
+   *  https://fdc.nal.usda.gov/api-key-signup.html (1000 requests/hour). */
+  USDA_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

@@ -12,6 +12,8 @@ import type { ContentRulesService } from './content-rules.service.js';
 import type { ResponseFingerprintService } from './response-fingerprint.service.js';
 import type { ConversationSummaryService } from './conversation-summary.service.js';
 import type { TopicTrackerService } from './topic-tracker.service.js';
+import type { UsdaFoodService } from './usda-food.service.js';
+import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
 import { makeLogFoodTool } from '../tools/log-food.js';
@@ -62,6 +64,8 @@ export interface AIServiceDeps {
   fingerprint?: ResponseFingerprintService;
   conversationSummary?: ConversationSummaryService;
   topicTracker?: TopicTrackerService;
+  usda?: UsdaFoodService;
+  bandit?: BanditService;
 }
 
 export class AIService {
@@ -270,7 +274,14 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     const tools = new ToolRegistry();
     if (flags.toolsEnabled) {
       if (toolSettings['log_food'] !== false) {
-        tools.register(makeLogFoodTool({ pool: this.deps.pool, llm: this.deps.llm, logger, userId: input.userId, source: logFoodSource }));
+        tools.register(makeLogFoodTool({
+          pool: this.deps.pool,
+          llm: this.deps.llm,
+          logger,
+          userId: input.userId,
+          source: logFoodSource,
+          ...(this.deps.usda ? { usda: this.deps.usda } : {}),
+        }));
       }
       if (toolSettings['log_weight'] !== false) {
         tools.register(makeLogWeightTool({ pool: this.deps.pool, logger, userId: input.userId }));
@@ -307,13 +318,25 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       ? await this.deps.contentRulesService.getActive('ai')
       : [];
 
+    // Phase 5: bandit-driven response strategy. Soft hint appended to system
+    // prompt so it can bias tone/length without overriding hard rules. Skipped
+    // for first-message welcomes (no signal to optimize against yet).
+    let banditHint: string | null = null;
+    if (this.deps.bandit && !isNew && user) {
+      const selection = await this.deps.bandit.selectArm(input.userId).catch(() => null);
+      if (selection) banditHint = selection.hint;
+    }
+    const systemPromptWithStrategy = banditHint
+      ? `${systemPrompt}\n\n${banditHint}`
+      : systemPrompt;
+
     const result = await orchestrator.run({
       userId: input.userId,
       text: isNew ? `[FIRST MESSAGE â€” greet the user warmly] ${augmentedText}` : augmentedText,
       history,
       retrieved,
       toolsEnabled: flags.toolsEnabled,
-      systemPrompt,
+      systemPrompt: systemPromptWithStrategy,
       ...(dietaryRestriction ? { dietaryRestriction } : {}),
       ...(user?.first_name ? { userFirstName: user.first_name } : {}),
       ...(cleanFoodDislikes.length > 0 ? { foodDislikes: cleanFoodDislikes } : {}),

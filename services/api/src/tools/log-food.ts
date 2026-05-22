@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { LLMProvider } from '@grace/shared';
 import type { Tool } from '@grace/ai-core';
+import type { UsdaFoodService } from '../services/usda-food.service.js';
 
 interface FoodEstimate {
   food: string;
@@ -43,6 +44,96 @@ Return ONLY this JSON, nothing else: {"food":"<label>","protein_g":<int>,"calori
 
 const RETRY_PROMPT = `Return ONLY valid JSON for this food description. Estimate using common sense.
 Format: {"food":"<short label>","protein_g":<integer>,"calories":<integer>,"confidence":"medium"}`;
+
+// Decomposition-only prompt for the USDA path. The LLM splits the description
+// into items + estimated grams; USDA provides the actual per-100g constants.
+const DECOMPOSE_SYSTEM_PROMPT = `You decompose a casual food description into items with estimated weights in grams.
+
+DECOMPOSITION RULE:
+Split compound descriptions ("salad and 2 eggs", "chicken with rice") into separate items. Estimate each item's weight in grams using common portion sizes:
+  1 egg = 50g | 1 slice toast = 30g | 1 cup rice cooked = 160g | 1 cup pasta cooked = 140g
+  4oz chicken = 113g | 5oz salmon = 142g | 4oz beef = 113g | 4oz tofu = 113g
+  1 cup Greek yogurt = 245g | 1/2 cup cottage cheese = 113g | 1 cup oatmeal = 234g
+  1 medium banana = 118g | 1 medium apple = 182g | 1 cup berries = 145g
+  1 typical salad = 150g | 1 cup cooked vegetables = 150g
+  1 slice pizza = 110g | 1 burrito = 350g | 1 sandwich = 220g | 1 wrap = 230g
+  1 protein shake = 240g | 1 smoothie = 350g | 1 tablespoon peanut butter = 16g
+
+NEVER ask the user for quantities. ALWAYS estimate.
+
+Output ONLY a JSON object: {"items":[{"name":"<short USDA-searchable name>","grams":<int>},...]}
+- Use generic searchable names ("chicken breast", "white rice", "olive oil") not branded names
+- Cap at 6 items
+- Round grams to nearest 10`;
+
+interface DecomposedItem {
+  name: string;
+  grams: number;
+}
+
+async function decomposeFood(llm: LLMProvider, food: string): Promise<DecomposedItem[] | null> {
+  try {
+    const resp = await llm.generate({
+      messages: [
+        { role: 'system', content: DECOMPOSE_SYSTEM_PROMPT },
+        { role: 'user', content: food },
+      ],
+      temperature: 0.1,
+      maxOutputTokens: 400,
+      responseFormat: 'json',
+    });
+    const cleaned = resp.text.replace(/```json\n?|\n?```/g, '').trim();
+    const obj = JSON.parse(cleaned) as { items?: DecomposedItem[] };
+    if (!obj.items || !Array.isArray(obj.items) || obj.items.length === 0) return null;
+    return obj.items
+      .filter((i) => typeof i?.name === 'string' && typeof i?.grams === 'number' && i.grams > 0)
+      .slice(0, 6)
+      .map((i) => ({ name: i.name.trim(), grams: Math.round(i.grams) }));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * USDA-first estimation. Decomposes the food string into items + grams via
+ * LLM, looks up each item in USDA, multiplies, sums. Returns null if any
+ * item misses USDA (caller falls back to the legacy LLM-only estimate).
+ */
+async function estimateViaUsda(
+  llm: LLMProvider,
+  usda: UsdaFoodService,
+  food: string,
+): Promise<FoodEstimate | null> {
+  if (!usda.enabled()) return null;
+  const items = await decomposeFood(llm, food);
+  if (!items || items.length === 0) return null;
+
+  let totalProtein = 0;
+  let totalCalories = 0;
+  let allMatched = true;
+  const matchedNames: string[] = [];
+
+  for (const item of items) {
+    const lookup = await usda.lookup(item.name);
+    if (!lookup) {
+      allMatched = false;
+      break;
+    }
+    const factor = item.grams / 100;
+    totalProtein += lookup.proteinPer100g * factor;
+    totalCalories += lookup.caloriesPer100g * factor;
+    matchedNames.push(lookup.display);
+  }
+
+  if (!allMatched) return null;
+
+  return {
+    food: matchedNames.join(' + '),
+    protein_g: Math.max(0, Math.round(totalProtein)),
+    calories: Math.max(0, Math.round(totalCalories)),
+    confidence: 'high',
+  };
+}
 
 async function estimateFoodMacros(llm: LLMProvider, food: string): Promise<FoodEstimate | null> {
   // Primary attempt with the full anchor table.
@@ -115,6 +206,10 @@ export function makeLogFoodTool(deps: {
   userId: string;
   /** Where this log originated. Defaults to 'text'. Set 'image' or 'voice' upstream. */
   source?: 'text' | 'image' | 'voice';
+  /** Optional USDA service. When present and the API key is set, USDA is
+   *  consulted first; LLM-only estimation is used as a fallback for novel
+   *  or compound items USDA can't match. */
+  usda?: UsdaFoodService;
 }): Tool {
   return {
     name: 'log_food',
@@ -123,8 +218,21 @@ export function makeLogFoodTool(deps: {
       const food = typeof args['food'] === 'string' ? (args['food'] as string).trim() : '';
       if (!food) return { ok: false, error: 'no_food_provided' };
 
-      const parsed = await estimateFoodMacros(deps.llm, food);
+      // USDA-first path: decompose with LLM, look up per-100g constants from
+      // USDA, multiply + sum. Falls back to the legacy LLM-only estimate when
+      // the USDA service isn't configured or any item misses a USDA match.
+      let parsed: FoodEstimate | null = null;
+      let estimateSource: 'usda' | 'llm' = 'llm';
+      if (deps.usda && deps.usda.enabled()) {
+        const usdaResult = await estimateViaUsda(deps.llm, deps.usda, food).catch(() => null);
+        if (usdaResult) {
+          parsed = usdaResult;
+          estimateSource = 'usda';
+        }
+      }
+      if (!parsed) parsed = await estimateFoodMacros(deps.llm, food);
       if (!parsed) return { ok: false, error: 'estimate_parse_failed' };
+      deps.logger.info({ userId: deps.userId, source: estimateSource, food: parsed.food }, 'tool.log_food.estimate_source');
 
       // Dedupe key: same user + same normalized raw text + same minute → one row.
       // Tolerates webhook retries (<30s typical) and image re-uploads without

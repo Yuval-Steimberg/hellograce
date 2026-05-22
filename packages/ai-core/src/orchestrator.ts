@@ -139,12 +139,25 @@ function getToolAwareFallback(type: MessageType, toolResults: ToolResult[]): str
  * Build a topic-focus marker that injects right before the new user turn.
  * Gemini Flash gets primed by long previous assistant messages in history
  * and continues the OLD topic. This marker forces attention on the current
- * intent without bloating the main system prompt.
+ * intent AND explicitly quotes the last Grace message so the model knows
+ * not to repeat it.
  *
- * Returns null when no focus injection is needed (low-confidence general
- * messages don't benefit from the steer).
+ * Always returns a non-empty string (never null).
  */
-function buildFocusMarker(type: MessageType, toolResults: ToolResult[]): string | null {
+function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssistantMessage?: string): string {
+  const parts: string[] = [];
+
+  // Hard "do not repeat" guard — the most common failure mode is Gemini
+  // Flash copy-pasting the previous assistant message verbatim before adding
+  // new content. Quoting the first ~80 chars makes the model explicitly aware
+  // of what it must NOT start with.
+  if (lastAssistantMessage && lastAssistantMessage.trim().length > 40) {
+    const snippet = lastAssistantMessage.trim().slice(0, 100).replace(/"/g, "'");
+    parts.push(
+      `CRITICAL: Your previous message ("${snippet}...") has already been sent and received by the user. Do NOT repeat any part of it. Do NOT start with those words. Write a completely fresh reply to the NEW message below.`,
+    );
+  }
+
   // For food-summary queries with a fresh tool result, the answer IS the
   // number — be explicit.
   const foodSummary = toolResults.find((r) => r.name === 'get_food_summary' && r.ok && r.output);
@@ -153,24 +166,28 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[]): string 
     const total = typeof out['protein_g'] === 'number' ? Math.round(out['protein_g'] as number) : null;
     const goal = typeof out['protein_goal_grams'] === 'number' ? Math.round(out['protein_goal_grams'] as number) : null;
     if (total != null) {
-      return `[USER IS ASKING ABOUT TODAY'S PROTEIN TOTAL. Answer with the exact number: ${total}g${goal != null ? ` (goal ${goal}g)` : ''}. One or two short sentences. Do NOT continue any previous topic from history.]`;
+      parts.push(
+        `USER IS ASKING ABOUT TODAY'S PROTEIN TOTAL. Answer with the exact number: ${total}g${goal != null ? ` (goal ${goal}g)` : ''}. One or two short sentences. Do NOT continue any previous topic from history.`,
+      );
+      return parts.join('\n');
     }
   }
 
-  // For other clear intents, just steer toward the current intent.
-  const intentDescription: Partial<Record<MessageType, string>> = {
+  const intentDescription: Record<MessageType, string> = {
     food_log: 'logging a food they ate. Acknowledge + state the protein from the tool result. Do NOT continue any previous topic.',
     food_question: 'asking a question about food or nutrition. Answer their question directly. Do NOT continue any previous topic.',
     weight_log: 'reporting their weight. Acknowledge + respond warmly. Do NOT continue any previous topic.',
     mood_log: 'sharing their mood or energy level. Respond with empathy. Do NOT continue any previous topic.',
     greeting: 'just greeting you. Reply with ONE warm sentence. Topic reset — do NOT reference any prior conversation.',
     emotional: 'sharing a feeling or struggle. Validate first. Do NOT continue any previous topic.',
-    scheduling: 'asking about message frequency. Direct them to settings if appropriate. Do NOT continue any previous topic.',
+    scheduling: 'asking about message frequency. Do NOT continue any previous topic.',
     knowledge: 'asking a GLP-1 / medication / nutrition knowledge question. Answer directly with facts. Do NOT continue any previous topic.',
+    gibberish: 'sending an unclear message. Ask a brief clarifying question.',
+    general: 'sending a new message. Answer ONLY what they just asked. Do NOT continue any previous topic. Do NOT repeat or paraphrase any previous Grace message.',
   };
-  const description = intentDescription[type];
-  if (!description) return null;
-  return `[USER's CURRENT MESSAGE IS: ${description}]`;
+
+  parts.push(`[CURRENT USER MESSAGE TYPE: ${intentDescription[type]}]`);
+  return parts.join('\n');
 }
 
 // Only run the LLM critic for genuinely dangerous intent categories.
@@ -223,16 +240,21 @@ export class AIOrchestrator {
       renderRetrievalContext(input.retrieved) +
       (toolResults.length > 0 ? `\n\nTool results: ${JSON.stringify(toolResults)}` : '');
 
-    // Topic-focus injection. When the classifier identifies a clear, distinct
-    // intent (food question, weight log, knowledge etc.), Gemini Flash gets
-    // primed by the previous long assistant message in history and continues
-    // the OLD topic instead of answering the new question. A short system
-    // message right before the user turn anchors attention.
-    const focusMarker = buildFocusMarker(classification.type, toolResults);
+    // Extract the last Grace message from history — used in the focus marker
+    // and in the format-enforcer deduplication check.
+    const lastAssistantMessage = [...input.history]
+      .reverse()
+      .find((m) => m.role === 'assistant')?.content ?? undefined;
+
+    // Topic-focus injection. Always inject a focus marker right before the
+    // user turn. It (1) tells Gemini what kind of message this is, and (2)
+    // explicitly quotes the last Grace message so the model knows NOT to
+    // repeat it verbatim — the most common Gemini Flash failure pattern.
+    const focusMarker = buildFocusMarker(classification.type, toolResults, lastAssistantMessage);
     const generationMessages = [
       { role: 'system' as const, content: baseSystem },
       ...renderHistory(input.history),
-      ...(focusMarker ? [{ role: 'system' as const, content: focusMarker }] : []),
+      { role: 'system' as const, content: focusMarker },
       { role: 'user' as const, content: input.text },
     ];
 
@@ -257,6 +279,10 @@ export class AIOrchestrator {
     const enforceOpts = {
       ...(stripName ? { stripFirstName: stripName } : {}),
       messageContext: classification.type,
+      // Pass last Grace message so enforceFormat can strip any duplicate prefix.
+      // Gemini Flash sometimes copy-pastes the previous response before appending
+      // new content. The deduplication check catches this silently.
+      ...(lastAssistantMessage ? { lastAssistantMessage } : {}),
     };
     const formatted = enforceFormat(llmResp.text, enforceOpts);
     let validated = validateResponse(formatted.text);
@@ -339,7 +365,7 @@ export class AIOrchestrator {
           messages: [
             { role: 'system', content: baseSystem + addendum },
             ...renderHistory(input.history),
-            ...(focusMarker ? [{ role: 'system' as const, content: focusMarker }] : []),
+            { role: 'system' as const, content: focusMarker },
             { role: 'user', content: input.text },
           ],
           temperature: 0.4,

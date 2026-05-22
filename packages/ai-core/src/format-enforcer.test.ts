@@ -151,6 +151,46 @@ describe('enforceFormat', () => {
     });
   });
 
+  describe('duplicate previous-message prefix strip', () => {
+    const prevMsg =
+      'Ugh, nausea is really rough. For common GLP-1 nausea, small bland meals, ginger tea or chews, and sipping water between meals often help.';
+
+    it('strips the repeated prefix when Gemini copy-pastes the last response before new content', () => {
+      // Production bug: the new reply begins with the entire previous message,
+      // then appends the real answer at the end.
+      const newContent = "I don't have a log of where you injected yesterday, no.";
+      const input = prevMsg + ' ' + newContent;
+      const { text, fixes } = enforceFormat(input, { lastAssistantMessage: prevMsg });
+      expect(fixes).toContain('duplicate_prev_message_stripped');
+      // The result should only contain the genuinely new content.
+      expect(text).toContain('I don\'t have a log');
+      // The repeated prefix must be gone.
+      expect(text).not.toMatch(/^Ugh, nausea/);
+    });
+
+    it('does not strip when there is no overlap with the previous message', () => {
+      const freshReply = 'No, I don\'t have that logged — was there something with the injection site?';
+      const { fixes } = enforceFormat(freshReply, { lastAssistantMessage: prevMsg });
+      expect(fixes).not.toContain('duplicate_prev_message_stripped');
+    });
+
+    it('does not strip when the overlap is too short (< 40 chars)', () => {
+      // Previous message starts with "Ugh" — a new message that also starts
+      // with "Ugh" (10 chars overlap) should NOT be stripped.
+      const prev = 'Ugh, hang in there — that sounds tough.';
+      const newReply = 'Ugh, that\'s a rough one. Try some ginger tea.';
+      const { fixes } = enforceFormat(newReply, { lastAssistantMessage: prev });
+      expect(fixes).not.toContain('duplicate_prev_message_stripped');
+    });
+
+    it('does not strip when the previous message is under 40 chars', () => {
+      const shortPrev = 'Got it.';
+      const newReply = 'Got it. How are you feeling today?';
+      const { fixes } = enforceFormat(newReply, { lastAssistantMessage: shortPrev });
+      expect(fixes).not.toContain('duplicate_prev_message_stripped');
+    });
+  });
+
   describe('hard length cap (WhatsApp readability)', () => {
     it('does not touch responses under the context cap', () => {
       const input = 'Short reply that ends cleanly.';

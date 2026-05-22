@@ -85,9 +85,35 @@ const ALL_CONTEXT_OPENERS: RegExp[] = [
   ...MOOD_CONTEXT_OPENERS,
 ];
 
-export function enforceFormat(input: string, opts?: { stripFirstName?: string; messageContext?: MessageContext }): FormatEnforcementResult {
+export function enforceFormat(
+  input: string,
+  opts?: { stripFirstName?: string; messageContext?: MessageContext; lastAssistantMessage?: string },
+): FormatEnforcementResult {
   let text = input;
   const fixes: string[] = [];
+
+  // ─── Duplicate previous-message prefix strip ────────────────────────────
+  // Gemini Flash sometimes "continues" the previous assistant turn instead of
+  // starting a fresh reply. The result is that the new response begins by
+  // copy-pasting the entire last Grace message and then appends the new answer
+  // as a final sentence. Detect the overlap and strip the repeated prefix.
+  if (opts?.lastAssistantMessage) {
+    const prev = opts.lastAssistantMessage.trim();
+    if (prev.length >= 40) {
+      let overlap = 0;
+      const minLen = Math.min(text.length, prev.length);
+      while (overlap < minLen && text[overlap] === prev[overlap]) {
+        overlap++;
+      }
+      if (overlap >= 40) {
+        const remainder = text.slice(overlap).trim();
+        if (remainder.length >= 20) {
+          text = remainder.charAt(0).toUpperCase() + remainder.slice(1);
+          fixes.push('duplicate_prev_message_stripped');
+        }
+      }
+    }
+  }
 
   // ─── Irrelevant context-dump opener strip ────────────────────────────────
   // Grace sometimes opens with runtime context ("You've had 15g protein

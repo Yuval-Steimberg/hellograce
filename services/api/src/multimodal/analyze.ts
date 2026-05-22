@@ -157,11 +157,48 @@ CONFIDENCE: [high | medium | low]
 CONFIDENCE_REASON: [one clear phrase, e.g. "individual pieces easily countable, plate visible" or "stacked/hidden layers, no clear scale reference" or "blurry image"]
 
 ═══════════════════════════════════
-If BODY — provide a warm, encouraging GLP-1-aware analysis:
+If BODY — provide a richer, GLP-1-aware analysis. This is for a user on weight-loss medication, often sharing something vulnerable. The goal is specific, observant, kind. Never clinical, never numeric.
+
 IMAGE_TYPE: body
-OBSERVATIONS: [2–3 specific kind observations about VISIBLE POSITIVE CHANGES only — midsection, face, arms, posture, silhouette. NEVER mention pain, injuries, posture problems, or medical conditions. Never invent anything not clearly visible.]
-MUSCLE_NOTE: [1 sentence on visible muscle tone/preservation — critical for GLP-1 users. No medical concerns.]
-ENCOURAGEMENT: [1–2 warm personal sentences acknowledging their weight-loss journey and progress.]
+PHOTO_KIND: [full_body_progress | mirror_selfie | face_or_portrait | partial_body (just legs/arms/midsection) | gym_or_workout | other_body]
+
+QUALITY: [clear | dim | blurry | odd_angle | partially_obscured]
+QUALITY_NOTE: [one short phrase only if quality is anything other than "clear", e.g. "lighting low, hard to see definition" or "angle hides midsection". Empty string if clear.]
+
+VISIBLE_DETAILS: [3–5 SPECIFIC concrete things you actually see. Each must be observable in the photo — no invention. Examples of GOOD specifics:
+  - "shoulders sitting square and relaxed"
+  - "visible deltoid line on the right arm"
+  - "jawline more defined than typical baseline"
+  - "posture upright, weight evenly distributed"
+  - "collarbone visible at the neckline"
+  - "calf shape shows muscle preservation"
+  - "face looks rested, eyes bright"
+  - "stance confident, hand on hip"
+  - "midsection silhouette has slimmed"
+Examples of BAD vague observations (DO NOT use):
+  - "you look great" (no specific anchor)
+  - "looking healthy" (clinical-sounding, vague)
+  - "good progress" (assumes progress without seeing baseline)]
+
+MUSCLE_PRESERVATION: [1 sentence on what's visible re: muscle tone — critical for GLP-1 users who risk lean mass loss. Anchor to a specific visible body part if possible: arms, shoulders, calves, forearms, traps. If muscle definition isn't visible (e.g. fully clothed, distant shot), say so plainly: "muscle definition not visible in this photo".]
+
+EMOTIONAL_TONE: [What kind of moment is this for the user? Pick ONE: celebrating_a_change | vulnerable_share | mid_journey_check | gym_or_effort | uncertain_about_self | casual_selfie. This guides Grace's warmth dial.]
+
+ENCOURAGEMENT: [1–2 warm sentences that reference at least one specific item from VISIBLE_DETAILS. Acknowledge the act of sharing if EMOTIONAL_TONE = vulnerable_share. Never use the word "progress" unless there's an obvious before/after element visible.]
+
+HARD GUARDRAILS for BODY analysis — non-negotiable:
+✗ Never estimate body fat %, BMI, weight, or any number
+✗ Never use clinical/medical terms: submental, malar, periocular, sub-zygomatic, subcutaneous, laxity, anthropometric, morphology
+✗ Never diagnose pain, injury, posture problems, scoliosis, lordosis, swelling, edema
+✗ Never compare to an "ideal" body type
+✗ Never comment on "fat", "loose skin", "saggy", "gaunt", "thin", "skinny" — even positively
+✗ Never invent a before/after if no baseline photo was provided
+✗ Never speculate about facial fat loss ("Ozempic face") unless the user raised it
+✗ Never recommend procedures, products, fillers, treatments, surgery
+✗ Never comment on visible undergarments, body parts the user didn't show on purpose, or anything that reads as inappropriate
+✓ DO acknowledge the vulnerability of sharing a body photo (one short line is enough)
+✓ DO call out visible muscle preservation — it's one of the most important GLP-1 wins
+✓ DO note posture/confidence cues if visible — they're real progress signals not tied to a scale
 
 ═══════════════════════════════════
 If OTHER:
@@ -171,7 +208,7 @@ DESCRIPTION: [1 short sentence describing what the image shows]
 ═══════════════════════════════════
 RULES (all image types):
 - FOOD: Never invent items not visible. Count individual pieces. Use visual anchors above for quantities.
-- BODY: Be kind and supportive. Focus ONLY on visible weight-loss progress and muscle preservation. NEVER diagnose pain/injury/medical conditions. NEVER mention body fat %. If the photo shows a person from the back, describe midsection/silhouette positively.
+- BODY: Follow the BODY rubric and HARD GUARDRAILS above. Every VISIBLE_DETAIL must be anchored to something actually in the photo — no invention. If muscle isn't visible, say so plainly. Quality flag honestly so Grace can offer a retake if needed.
 - OTHER: Describe only what you clearly see, no speculation.`;
 
 /**

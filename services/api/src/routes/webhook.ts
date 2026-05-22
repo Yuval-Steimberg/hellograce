@@ -112,7 +112,17 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           if (user) {
             const injDay = detectInjectionDayChange(normalized.text);
             if (injDay) {
+              // Reset injection flow stage so the new injection day starts
+              // clean. Without this, a leftover stage ('done_confirmed',
+              // 'followup_sent') from the previous injection day prevents
+              // handleInjectionFlow() from firing the morning reminder on
+              // the new day — the `if (!stage ...)` guard stays false forever.
               await deps.users.update(user.phone, { injection_day: injDay }).catch(() => null);
+              await deps.users.setInjectionStage(user.phone, null, {
+                injection_flow_started_at: null,
+                injection_done_at: null,
+                injection_evening_followup_due: false,
+              }).catch(() => null);
               await deps.sender.send({
                 to: normalized.userId,
                 channel: normalized.channel,

@@ -1,0 +1,37 @@
+# Fly.io app definition for the Grace reranker sidecar.
+# Deploy from this directory: `fly deploy`
+#
+# Resources picked to keep the image small + cheap:
+#  - shared-cpu-1x + 1 GB RAM (torch CPU + MiniLM fits comfortably)
+#  - auto_stop_machines = true → idles down to $0 between requests
+#  - min_machines_running = 0 → cold-start is ~3 s, acceptable for RAG path
+
+app = "grace-reranker"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8081
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 20
+    hard_limit = 40
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

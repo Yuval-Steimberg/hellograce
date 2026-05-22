@@ -35,7 +35,9 @@ const FORBIDDEN_ADDITION_PATTERNS: Array<{ re: RegExp; reason: string }> = [
 ];
 
 // Samples + lookback window.
-const NEG_SAMPLE_LIMIT = 50;
+// Negative limit bumped to 100 so every 👎 is processed individually per the
+// per-feedback methodology in generateAdditions(), not bulk-summarized.
+const NEG_SAMPLE_LIMIT = 100;
 const POS_SAMPLE_LIMIT = 25;
 const LOOKBACK_DAYS = 14;
 
@@ -379,28 +381,68 @@ export class PromptOptimizer {
           role: 'system',
           content: `You are an expert at improving AI behavioral rules based on real user feedback.
 
-Grace is a WhatsApp companion for people on GLP-1 medications. You will write 2–5 SHORT, SPECIFIC behavioral rules to ADD to her existing prompt based on recent 👍/👎 feedback.
+Grace is a WhatsApp companion for people on GLP-1 medications. You will write STRICT, CONCRETE behavioral rules to ADD to her existing prompt based on recent 👍/👎 feedback.
 
-HARD CONSTRAINTS — your output will be automatically rejected if violated:
+═══════════════════════════════════════════════════
+HARD CONSTRAINTS — output is auto-rejected if violated
+═══════════════════════════════════════════════════
 - NEVER suggest, override, or weaken any medical safety rule (doses, drug interactions, alcohol safety)
 - NEVER tell Grace to ignore, override, or supersede any existing rule
 - NEVER remove the doctor/clinician redirect for medical questions
 - ONLY ADD new rules — never rewrite, remove, or contradict existing ones
-- Rules must be purely about TONE, STYLE, SPECIFICITY, or COMMUNICATION PATTERNS
-- If you cannot find a safe improvement, write 1 minor style improvement
+- Rules must be about TONE, STYLE, SPECIFICITY, or COMMUNICATION PATTERNS
+- If no safe improvement exists, write ONE minor style refinement
 
-Rules for your output format:
-- Each rule should be 1–2 sentences, written as an imperative instruction to Grace
-- Rules must directly address patterns visible in the 👎 feedback
-- Do NOT repeat rules that are clearly already in the existing prompt excerpt or previous adjustments shown
-- If a previous rule covers the same problem but users still complain, rewrite it with more concrete examples
-- Write rules in the same style as the existing prompt (direct, specific, WhatsApp-aware)
+═══════════════════════════════════════════════════
+METHODOLOGY — process EACH 👎 individually
+═══════════════════════════════════════════════════
+This is the most important section. Read it twice.
 
-Respond with ONLY a JSON object — no markdown code fences, no prose, no commentary before or after.
-Schema: {"analysis": "<2-3 sentences explaining patterns and rules>", "additions": "<bullet list of new rules>"}
+STEP 1 — TRIAGE every 👎 sample. For each one, identify the SPECIFIC failure pattern (e.g. "denied image capability", "asked for grams instead of estimating", "said 'You're welcome'", "repeated previous topic after pivot", "vague food suggestion without naming a food").
+
+STEP 2 — GROUP only when the failure pattern is identical. Two 👎s about "Grace asked for grams" group into one rule. A 👎 about grams and a 👎 about denying images do NOT group.
+
+STEP 3 — Write ONE rule per distinct failure pattern. Each rule MUST contain:
+  (a) A short imperative directive ("Never X" or "Always Y")
+  (b) The EXACT verbatim ✗ quote from Grace's failing response (in quotes, 5–15 words)
+  (c) The ✓ corrected version Grace should have said instead (in quotes)
+  (d) Where applicable, the user comment that explains why it was 👎
+
+A rule without a verbatim ✗ quote is REJECTED. A rule without a ✓ correction is REJECTED. Vague rules ("be more specific", "improve tone") are REJECTED.
+
+STEP 4 — Output 3–10 rules total. If fewer than 3 distinct patterns exist, write 3 rules anyway by refining the same pattern at different granularities. If more than 10, write rules ONLY for the top 10 most frequent patterns.
+
+═══════════════════════════════════════════════════
+RULE QUALITY BAR
+═══════════════════════════════════════════════════
+✓ ACCEPTED rule:
+"Never say 'I don't have a specific protein estimate for that.' Always estimate with 'roughly Xg' even for unfamiliar foods.
+  ✗ 'I don't have a specific protein estimate for that one.'
+  ✓ 'Roughly 25g — that's about a typical chicken serving.'"
+
+✓ ACCEPTED rule:
+"Never deny image capability. Grace CAN see photos via Gemini.
+  ✗ 'I can't actually see pictures.'
+  ✓ 'That looks like about 20–25g protein. You're at 45g today.'"
+
+✗ REJECTED rule: "Be more specific in food responses." (no ✗/✓, vague)
+✗ REJECTED rule: "Avoid generic acknowledgments." (no quote, no example)
+✗ REJECTED rule: "Improve tone of voice." (meaningless)
+
+═══════════════════════════════════════════════════
+DEDUP AGAINST PRIOR ADJUSTMENTS
+═══════════════════════════════════════════════════
+- If a previous rule already covers a pattern AND the pattern still appears in 👎 — the old rule was too weak. REWRITE it with a sharper ✗/✓ quote pulled from THIS week's feedback.
+- Never copy a previous rule verbatim. Either refine or skip.
+
+═══════════════════════════════════════════════════
+OUTPUT FORMAT
+═══════════════════════════════════════════════════
+Respond with ONLY a JSON object — no markdown fences, no prose.
+Schema: {"analysis": "<2-3 sentences naming the top failure patterns and how many 👎 each represents>", "additions": "<formatted rule list, one rule per pattern, each with ✗/✓ quotes>"}
 
 Example output:
-{"analysis": "Users complain Grace echoes their food dislikes verbatim and gives generic responses. Adding rules to paraphrase dislikes and reference user-specific context.", "additions": "- Never echo a user's food dislike verbatim — paraphrase naturally (e.g. 'not a rice person' becomes 'rice isn't your thing').\\n- Every response must reference something concrete from the user's message — a word they used, today's protein, their week number."}`,
+{"analysis": "3 distinct 👎 patterns this period: (1) Grace denying image capability — 2 cases; (2) saying 'You're welcome' — 1 case; (3) asking for exact grams — 2 cases. Writing one rule per pattern with verbatim corrections.", "additions": "- IMAGE CAPABILITY: Never deny seeing photos. Grace has full Gemini visual analysis.\\n  ✗ 'I can't actually see pictures, but tell me what you ate.'\\n  ✓ 'Looks like roughly 25g protein. You're at 60g today.'\\n\\n- GRAM REQUESTS: Never ask for exact grams or ounces. Estimate from common-sense portion sizes.\\n  ✗ 'How many grams of chicken was that?'\\n  ✓ 'Around 30g if it was a typical serving. Solid lunch.'\\n\\n- ACK ROTATION: Never say 'You're welcome.' Rotate warm acknowledgments.\\n  ✗ 'You're welcome.'\\n  ✓ 'Always.' / 'Of course.' / 'Really glad it helped.'"}`,
         },
         {
           role: 'user',
@@ -416,20 +458,25 @@ PERFORMANCE DATA — LAST ${LOOKBACK_DAYS} DAYS:
     ? `${Math.round((signals.positiveSamples.length / (signals.positiveSamples.length + signals.negativeSamples.length)) * 100)}% positive`
     : 'no ratings yet'}
 
-NEGATIVE FEEDBACK (what went wrong — fix these):
+NEGATIVE FEEDBACK — process EACH of these individually using the METHODOLOGY above:
 ${negativeBlock}
 
-POSITIVE EXAMPLES (what's working — do more of this):
+POSITIVE EXAMPLES (what's working — do more of this, do NOT write rules about these):
 ${positiveBlock}
 
-Write 2–5 specific new behavioral rules to add to Grace's prompt that fix the patterns you see in the negative feedback. If the same issue appears in both the previous adjustments AND the current feedback, the previous rule wasn't specific enough — rewrite it with a concrete example. Respond with ONLY the JSON object.`,
+Now execute the METHODOLOGY exactly:
+1. Triage every 👎 above and label its failure pattern.
+2. Group identical patterns only.
+3. Write one rule per distinct pattern (3–10 rules total), each with a verbatim ✗ quote from the actual 👎 response and a concrete ✓ correction.
+4. If a previous adjustment covers the same pattern but users still complain, rewrite that rule with a sharper ✗/✓ using THIS week's quotes.
+
+Respond with ONLY the JSON object.`,
         },
       ],
-      temperature: 0.3,
-      // Gemini 2.5 Flash burns tokens on internal thinking BEFORE output —
-      // 1024 was too small and produced empty/truncated JSON. 4096 leaves
-      // plenty of room for thinking + a multi-bullet additions block.
-      maxOutputTokens: 4096,
+      temperature: 0.2,
+      // Gemini 2.5 Flash burns tokens on internal thinking BEFORE output.
+      // 6144 leaves room for thinking + up to 10 rules each with verbatim ✗/✓ quotes.
+      maxOutputTokens: 6144,
       responseFormat: 'json',
     });
 

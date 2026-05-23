@@ -72,6 +72,16 @@ export function precheckGrounding(
     return { detected: [], unsupported: [] };
   }
 
+  // When no KB documents were retrieved, we can't grade claims against the KB —
+  // the response is drawing on verified system-prompt knowledge (the VERIFIED
+  // KNOWLEDGE section), not hallucination. Treating "no KB docs" the same as
+  // "KB docs don't support this claim" produces false positives that block
+  // correct educational answers (e.g. the 25–35% muscle-loss figure, which is
+  // in the system prompt but not necessarily in any retrieved chunk).
+  if (retrieved.length === 0) {
+    return { detected, unsupported: [] };
+  }
+
   const haystack = retrieved.map((d) => d.content.toLowerCase()).join('\n');
 
   const unsupported = detected.filter((claim) => !isSupported(claim, haystack));

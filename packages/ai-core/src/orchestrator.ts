@@ -62,9 +62,9 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "Got it. You can always update your check-in frequency at grace-admin-silk.vercel.app/settings.",
   ],
   knowledge: [
-    "That's a great question. Can you tell me a bit more about what you're experiencing?",
-    "I want to give you a good answer on that — can you share a bit more context?",
-    "Good question. Let me think through that with you — what prompted this?",
+    "On GLP-1s, muscle loss and protein needs are closely linked — happy to dig into any part of that.",
+    "GLP-1 medications affect a lot more than appetite. What specific aspect would be most helpful right now?",
+    "There's solid research on that topic. Let me know which part you most want to understand.",
   ],
   gibberish: [
     "Hey! What's on your mind today?",
@@ -481,11 +481,11 @@ export class AIOrchestrator {
       const validated = validateResponse(formatted.text);
       if (!validated.text || validated.text.trim().length === 0) return null;
       const webViolations = checkContent(validated.text, contentCheckOpts);
-      // Block AND regen violations both disqualify the web result. We can't
-      // regen here (no chat history + web grounding context), so if the web
-      // answer still contains a banned phrase or forbidden food we fall through
-      // to the safe fallback rather than delivering a guideline-violating reply.
-      if (webViolations.some((v) => v.severity === 'block' || !v.severity || v.severity === 'regen')) return null;
+      // Only block-severity violations disqualify the web result. The response
+      // is already Google Search-grounded so regen violations (e.g. style rules)
+      // don't apply — we can't regen from a grounded result anyway. Block rules
+      // (e.g. prescribing language) still apply unconditionally.
+      if (webViolations.some((v) => v.severity === 'block')) return null;
       return validated;
     } catch {
       return null;

@@ -4,7 +4,7 @@ RUN npm install -g pnpm
 
 FROM base AS deps
 COPY package.json ./
-RUN pnpm install --no-frozen-lockfile
+RUN pnpm install --no-frozen-lockfile --ignore-scripts
 
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules

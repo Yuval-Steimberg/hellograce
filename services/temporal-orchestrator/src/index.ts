@@ -161,7 +161,7 @@ async function fetchEligibleUsers(): Promise<EligibleUser[]> {
     SELECT
       u.phone,
       u.first_name,
-      u.medication_type,
+      u.medication AS medication_type,
       u.injection_done_at,
       EXTRACT(EPOCH FROM (NOW() - u.injection_done_at)) / 3600 AS hours_since_injection,
       u.timezone,
@@ -178,7 +178,7 @@ async function fetchEligibleUsers(): Promise<EligibleUser[]> {
         OR (u.trial_start IS NOT NULL AND u.trial_start > NOW() - INTERVAL '3 days')
       )
       -- Only weekly injection users (daily injectors don't have the same Day 2/6 lifecycle)
-      AND (u.medication_type = 'weekly_injection' OR u.medication_type IS NULL)
+      AND (u.medication IS NULL OR u.medication NOT ILIKE '%daily%' AND u.medication NOT ILIKE '%rybelsus%')
       -- Pre-filter: only rows within the relevant time windows (avoids full table scan)
       AND EXTRACT(EPOCH FROM (NOW() - u.injection_done_at)) / 3600
           BETWEEN $1 AND $2

@@ -61,9 +61,9 @@ export class ContextCacheManager {
         ],
       });
 
-      await this.redis.set(redisKey, cache.name, 'EX', REDIS_TTL_SEC);
+      await this.redis.set(redisKey, cache.name!, 'EX', REDIS_TTL_SEC);
       this.logger.info({ model, hash, name: cache.name }, 'context_cache.created');
-      return cache.name;
+      return cache.name ?? null;
     } catch (err) {
       // Non-fatal: log and fall through to uncached generation.
       this.logger.warn({ err, model }, 'context_cache.create_failed — falling back to uncached');

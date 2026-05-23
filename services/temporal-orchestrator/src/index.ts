@@ -114,7 +114,7 @@ async function maybeSendTrigger(
   const lockKey = `temporal:${trigger}:${user.phone}:${injTs}`;
 
   // SET NX EX 7d — if another machine already sent this, skip
-  const acquired = await redis.set(lockKey, '1', 'NX', 'EX', 604800).catch(() => null);
+  const acquired = await redis.set(lockKey, '1', 'EX', 604800, 'NX').catch(() => null);
   if (acquired !== 'OK') {
     logger.debug({ phone: user.phone, trigger }, 'orchestrator.trigger.already_sent');
     return;

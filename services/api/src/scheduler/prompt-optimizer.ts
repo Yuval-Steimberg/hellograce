@@ -375,11 +375,16 @@ export class PromptOptimizer {
       ? `\nBEHAVIORAL ADJUSTMENTS ALREADY IN PLACE (from previous optimizer runs):\n${previousAdditions}\n\nIMPORTANT: Do NOT repeat or restate rules already covered above. If the 👎 feedback shows those rules are not working, REFINE them with more specific guidance. Focus on patterns NOT already addressed.`
       : '';
 
-    const resp = await this.llm.generate({
-      messages: [
-        {
-          role: 'system',
-          content: `You are an expert at improving AI behavioral rules based on real user feedback.
+    const buildMessages = (negBlock: string, shortFormat: boolean): Parameters<typeof this.llm.generate>[0]['messages'] => [
+      {
+        role: 'system',
+        content: shortFormat
+          // ── Retry prompt: minimal, no examples, explicit JSON schema ──────────
+          ? `You improve AI behavioral rules from user feedback. Output ONLY valid JSON:
+{"analysis":"<1-2 sentences: top failure patterns and count>","additions":"<3-5 rules, each: directive + ✗ quote + ✓ fix, separated by blank lines>"}
+Rules must cite a verbatim quote from the 👎 response. No markdown. No prose outside JSON.`
+          // ── Primary prompt ────────────────────────────────────────────────────
+          : `You are an expert at improving AI behavioral rules based on real user feedback.
 
 Grace is a WhatsApp companion for people on GLP-1 medications. You will write STRICT, CONCRETE behavioral rules to ADD to her existing prompt based on recent 👍/👎 feedback.
 
@@ -443,10 +448,12 @@ Schema: {"analysis": "<2-3 sentences naming the top failure patterns and how man
 
 Example output:
 {"analysis": "3 distinct 👎 patterns this period: (1) Grace denying image capability — 2 cases; (2) saying 'You're welcome' — 1 case; (3) asking for exact grams — 2 cases. Writing one rule per pattern with verbatim corrections.", "additions": "- IMAGE CAPABILITY: Never deny seeing photos. Grace has full Gemini visual analysis.\\n  ✗ 'I can't actually see pictures, but tell me what you ate.'\\n  ✓ 'Looks like roughly 25g protein. You're at 60g today.'\\n\\n- GRAM REQUESTS: Never ask for exact grams or ounces. Estimate from common-sense portion sizes.\\n  ✗ 'How many grams of chicken was that?'\\n  ✓ 'Around 30g if it was a typical serving. Solid lunch.'\\n\\n- ACK ROTATION: Never say 'You're welcome.' Rotate warm acknowledgments.\\n  ✗ 'You're welcome.'\\n  ✓ 'Always.' / 'Of course.' / 'Really glad it helped.'"}`,
-        },
-        {
-          role: 'user',
-          content: `EXISTING PROMPT EXCERPT (end of base prompt — context for what's already covered):
+      },
+      {
+        role: 'user',
+        content: shortFormat
+          ? `NEGATIVE FEEDBACK (👎) — cite exact quotes:\n${negBlock}\n\nRespond with ONLY the JSON object.`
+          : `EXISTING PROMPT EXCERPT (end of base prompt — context for what's already covered):
 ${basePromptExcerpt}
 ${previousAdditionsBlock}
 
@@ -459,7 +466,7 @@ PERFORMANCE DATA — LAST ${LOOKBACK_DAYS} DAYS:
     : 'no ratings yet'}
 
 NEGATIVE FEEDBACK — process EACH of these individually using the METHODOLOGY above:
-${negativeBlock}
+${negBlock}
 
 POSITIVE EXAMPLES (what's working — do more of this, do NOT write rules about these):
 ${positiveBlock}
@@ -471,30 +478,61 @@ Now execute the METHODOLOGY exactly:
 4. If a previous adjustment covers the same pattern but users still complain, rewrite that rule with a sharper ✗/✓ using THIS week's quotes.
 
 Respond with ONLY the JSON object.`,
-        },
-      ],
+      },
+    ];
+
+    // Primary attempt — full prompt, generous token budget.
+    // Gemini 2.5 Flash consumes thinking tokens from the same maxOutputTokens
+    // pool before producing the actual JSON. 32 768 gives ~8 k thinking + full
+    // JSON output without truncation (the previous 6 144 was too tight).
+    const resp = await this.llm.generate({
+      messages: buildMessages(negativeBlock, false),
       temperature: 0.2,
-      // Gemini 2.5 Flash burns tokens on internal thinking BEFORE output.
-      // 6144 leaves room for thinking + up to 10 rules each with verbatim ✗/✓ quotes.
-      maxOutputTokens: 6144,
+      maxOutputTokens: 32768,
       responseFormat: 'json',
     });
 
-    const parsed = parseAdditionsResponse(resp.text);
-    if (!parsed) {
+    let parsed = parseAdditionsResponse(resp.text);
+
+    // One-shot retry: if parsing fails (truncated JSON, malformed output, thinking
+    // markers mixed in) use a much shorter prompt so the model can't go off-track.
+    if (!parsed || parsed.additions.trim().length < MIN_ADDITIONS_LENGTH) {
       this.logger.warn(
-        { rawLength: resp.text.length, rawPreview: resp.text.slice(0, 500), finishReason: resp.finishReason },
-        'prompt_optimizer.parse_failed',
+        {
+          rawLength: resp.text.length,
+          rawPreview: resp.text.slice(0, 600),
+          finishReason: resp.finishReason,
+          parsedAdditionsLen: parsed?.additions.trim().length ?? 0,
+          attempt: 1,
+        },
+        'prompt_optimizer.parse_failed — retrying with simplified prompt',
       );
-      return null;
+
+      const retryResp = await this.llm.generate({
+        messages: buildMessages(negativeBlock, true),
+        temperature: 0.1,
+        maxOutputTokens: 8192,
+        responseFormat: 'json',
+      }).catch((err) => {
+        this.logger.error({ err }, 'prompt_optimizer.retry_generate_failed');
+        return null;
+      });
+
+      if (retryResp) {
+        parsed = parseAdditionsResponse(retryResp.text);
+        if (!parsed || parsed.additions.trim().length < MIN_ADDITIONS_LENGTH) {
+          this.logger.warn(
+            { rawLength: retryResp.text.length, rawPreview: retryResp.text.slice(0, 600) },
+            'prompt_optimizer.parse_failed — both attempts failed',
+          );
+          return null;
+        }
+        this.logger.info('prompt_optimizer.retry_succeeded');
+      } else {
+        return null;
+      }
     }
-    if (parsed.additions.trim().length < MIN_ADDITIONS_LENGTH) {
-      this.logger.warn(
-        { additionsLength: parsed.additions.length, rawPreview: resp.text.slice(0, 500) },
-        'prompt_optimizer.additions_too_short',
-      );
-      return null;
-    }
+
     return parsed;
   }
 
@@ -569,42 +607,101 @@ function emptyStats(): OptimizerRunReport['stats'] {
  *  - clean JSON
  *  - ```json ... ``` markdown fences (Gemini sometimes wraps despite JSON mode)
  *  - leading/trailing prose
+ *  - Gemini extended-thinking markers (<thinking>...</thinking>) prepended to output
  *  - alternate field names ('rules' / 'behavioral_additions' for additions)
+ *  - array-valued additions fields
+ *  - regex field-level extraction when full JSON parse fails (e.g. truncated output)
+ *
+ * Returns null only when no usable additions string can be found at all.
  */
 export function parseAdditionsResponse(raw: string): { additions: string; analysis: string } | null {
   if (!raw || raw.trim().length === 0) return null;
 
-  // Strip markdown code fences and surrounding whitespace
-  let cleaned = raw.trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```\s*$/i, '')
+  // Step 1 — strip Gemini extended-thinking markers. These appear before the actual
+  // JSON output when the model "thinks" in the same token stream as its response.
+  // Using a non-greedy match so nested tags don't swallow valid content.
+  let text = raw
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/<thought>[\s\S]*?<\/thought>/gi, '')
     .trim();
 
-  // If the cleaned text isn't a pure JSON object, locate the first '{' and last '}'
-  if (!cleaned.startsWith('{')) {
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace > firstBrace) {
-      cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  // Step 2 — strip markdown code fences (model ignores responseMimeType ~5% of the time)
+  text = text
+    .replace(/^```(?:json)?\s*/im, '')
+    .replace(/\s*```\s*$/im, '')
+    .trim();
+
+  // Step 3 — try four extraction strategies in order, return first that works
+
+  // 3a: direct parse (cleanest case — model obeyed JSON mode perfectly)
+  const direct = tryExtractFields(text);
+  if (direct) return direct;
+
+  // 3b: locate outermost braces (handles leading/trailing prose)
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const sliced = tryExtractFields(text.slice(firstBrace, lastBrace + 1));
+    if (sliced) return sliced;
+  }
+
+  // 3c: regex scan for an object that contains the required keys (handles
+  // multiple JSON objects in the same response — pick the right one)
+  const keyPattern = /"(?:analysis|additions|rules|behavioral_additions)"\s*:/g;
+  let kMatch: RegExpExecArray | null;
+  while ((kMatch = keyPattern.exec(text)) !== null) {
+    const start = text.lastIndexOf('{', kMatch.index);
+    if (start === -1) continue;
+    // walk forward to find the balanced closing brace
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === '{') depth++;
+      else if (text[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    if (end !== -1) {
+      const candidate = tryExtractFields(text.slice(start, end + 1));
+      if (candidate) return candidate;
     }
   }
 
+  // 3d: field-level regex extraction — last resort for truncated JSON where the
+  // closing brace is missing. Works when only the additions value got cut off.
+  const analysisMatch = /"(?:analysis|summary|rationale)"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text);
+  const additionsMatch = /"(?:additions|rules|behavioral_additions|new_rules)"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text);
+  if (analysisMatch && additionsMatch) {
+    try {
+      const analysis = JSON.parse(`"${analysisMatch[1]}"`);
+      const additions = JSON.parse(`"${additionsMatch[1]}"`);
+      if (typeof analysis === 'string' && typeof additions === 'string' && additions.trim().length > 0) {
+        return { analysis: analysis.trim(), additions: additions.trim() };
+      }
+    } catch { /* fall through */ }
+  }
+
+  return null;
+}
+
+/**
+ * Try JSON.parse on a string and extract the additions + analysis fields.
+ * Handles alternate field names and array-valued additions.
+ */
+function tryExtractFields(text: string): { additions: string; analysis: string } | null {
   let obj: Record<string, unknown>;
   try {
-    obj = JSON.parse(cleaned) as Record<string, unknown>;
+    obj = JSON.parse(text) as Record<string, unknown>;
   } catch {
     return null;
   }
 
-  // Field name fallbacks — Gemini sometimes uses 'rules' or 'behavioral_additions'
-  const additionsRaw = obj['additions'] ?? obj['rules'] ?? obj['behavioral_additions'] ?? obj['new_rules'];
+  const additionsRaw =
+    obj['additions'] ?? obj['rules'] ?? obj['behavioral_additions'] ?? obj['new_rules'];
   const analysisRaw = obj['analysis'] ?? obj['summary'] ?? obj['rationale'];
 
   let additions: string;
   if (typeof additionsRaw === 'string') {
     additions = additionsRaw;
   } else if (Array.isArray(additionsRaw)) {
-    // If model returned an array of strings, join into a bullet list
     additions = additionsRaw
       .filter((x): x is string => typeof x === 'string')
       .map((s) => (s.trim().startsWith('-') ? s.trim() : `- ${s.trim()}`))
@@ -614,6 +711,7 @@ export function parseAdditionsResponse(raw: string): { additions: string; analys
   }
 
   if (typeof analysisRaw !== 'string') return null;
+  if (additions.trim().length === 0) return null;
 
   return { additions: additions.trim(), analysis: analysisRaw.trim() };
 }

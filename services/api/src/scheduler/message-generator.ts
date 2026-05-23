@@ -23,6 +23,71 @@ const GOAL_MODE_MAP: Record<string, string> = {
   'Protecting my muscle': 'muscle',
 };
 
+// ─── Daily variation engine ───────────────────────────────────────────────────
+// Deterministic by phone + date so retries within a day get the same message,
+// but the selection rotates every day automatically.
+
+function dailySeed(phone: string): number {
+  const today = new Date().toISOString().slice(0, 10);
+  let h = 0;
+  for (const c of `${phone}:${today}`) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+function pick<T>(arr: readonly T[], seed: number, offset = 0): T {
+  return arr[(seed + offset) % arr.length]!;
+}
+
+// Angles rotate daily — forces Gemini to approach the topic from a different
+// direction each day even when the goal/medication context is identical.
+const MORNING_ANGLES = [
+  'Lead with one tiny specific action they can do in the next 10 minutes.',
+  'Quiet acknowledgment — mornings on GLP-1 can be slow and that\'s okay.',
+  'Warm and sensory — like a text from a close friend who thought of them first thing.',
+  'One micro-insight about how protein timing works on GLP-1 meds.',
+  'Give them permission — they don\'t have to be perfect today.',
+  'Reference the progress already made — they\'re still here, still doing it.',
+  'Keep it playful and light. Something that makes them smile, not nod dutifully.',
+  'Anchor it in a feeling — how do they want to feel by tonight? Work backward.',
+  'Be brief and punchy — under 10 words, like a good morning text from someone who gets it.',
+  'Offer one practical tip that\'s easy to skip if they\'re not in the mood.',
+  'Acknowledge the week they\'re in on their GLP-1 journey.',
+  'Focus purely on the one habit they care about most given their stated goal.',
+] as const;
+
+const MIDDAY_ANGLES = [
+  'Pure warmth — no agenda, just "I\'m thinking of you" energy.',
+  'Acknowledge the afternoon energy dip is real and GLP-1 can amplify it.',
+  'Focus on the next 2 hours, not the whole day.',
+  'One quiet permission: it\'s okay if the morning didn\'t go perfectly.',
+  'The most casual version possible — like a friend\'s 3-word text.',
+  'A soft practical nudge that doesn\'t feel like a checklist.',
+  'Curiosity over advice — one gentle observation about how they might be feeling.',
+  'Celebrate that they\'re halfway through the day. No ask required.',
+] as const;
+
+const EVENING_ANGLES = [
+  'Close the day with warmth — not a review, just presence.',
+  'Acknowledge the quiet courage of continuing on hard days.',
+  'Reference how long they\'ve been on their GLP-1 journey — every week is something.',
+  'Make it about tomorrow, not today — soft anticipation.',
+  'Pure comfort — like a warm blanket message, nothing more.',
+  'Validation that rest counts as progress.',
+  'Brief and loving — the text equivalent of a quiet nod.',
+  'Invite reflection only if they want it — make it feel optional, not required.',
+  'Specific acknowledgment of what\'s genuinely hard about evenings on this med.',
+  'Reference their goal and how simply showing up today connects to it.',
+] as const;
+
+// Rotating banned openers — by banning 2 different words each day we prevent
+// the model from falling back on its 3-4 favourite opening words.
+const OPENER_POOL = [
+  'Gentle', 'Just', 'Quick', 'Hey', 'Hi', 'Morning', 'Evening',
+  'Small', 'Soft', 'Simply', 'Remember', 'Today', 'Tomorrow',
+  'Checking', 'Popping', 'Wanted', 'Hope', 'Thinking', 'Sending',
+  'Taking', 'Making', 'Keeping', 'Staying', 'Feeling', 'Starting',
+] as const;
+
 type MsgType = 'morning' | 'midday' | 'evening' | 'injection_morning' | 'injection_followup' |
   'injection_dayafter' | 'side_effect_nausea' | 'side_effect_fatigue' | 'side_effect_constipation' |
   'welcome' | 'trial_expiry_reminder';
@@ -36,53 +101,146 @@ export interface GenerateOpts {
 const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => string> = {
   morning: (u, opts) => {
     if (opts?.isWednesday) {
-      return `Morning 🌿 Mid-week check — how are you actually feeling today? No wrong answers.`;
+      const pool = [
+        `Mid-week check — how are you actually feeling today? No wrong answers 🌿`,
+        `Halfway through the week. How are you holding up — honestly?`,
+        `Wednesday already. Softer question today: what's actually going on with you?`,
+        `Mid-week. No agenda — just genuinely curious how you're doing 🌿`,
+      ];
+      return pick(pool, dailySeed(u.phone));
     }
     const goal = u.goals[0];
     const mode = goal ? (GOAL_MODE_MAP[goal] ?? 'protein') : 'protein';
+    const target = u.protein_goal_grams ?? 80;
+    const med = u.medication ?? 'GLP-1';
+    const seed = dailySeed(u.phone);
     if (mode === 'protein') {
-      const target = u.protein_goal_grams ?? 80;
-      return `Morning 🌿 Gentle nudge — try to land protein early today. ${target}g feels easier when you front-load it.`;
+      return pick([
+        `Protein first today. Front-load it before appetite fades — ${target}g is easier when you start early 🌿`,
+        `${target}g of protein by noon makes the rest of the day feel lighter. Start early if you can 🌿`,
+        `Early protein on ${med} protects muscle and steadies energy. Even 20g before 10am counts 🌿`,
+        `One thing that consistently helps on ${med}: landing protein in the morning. ${target}g is the target 🌿`,
+        `Your body is doing a lot on ${med}. Protein early keeps muscle and energy stable — front-load it today 🌿`,
+      ], seed);
     }
-    if (mode === 'hydration') return `Morning 🌿 Pouring a glass of water first thing sets the whole day up nicely.`;
-    if (mode === 'side_effects') return `Morning 🌿 Take it easy on yourself today. I'm here if anything feels off.`;
-    if (mode === 'fiber') return `Morning 🌿 A little fiber early (oats, berries, chia) makes the rest of the day kinder to your gut.`;
-    if (mode === 'connection') return `Morning 🌿 Just wanted to check in — you're not doing this alone.`;
-    if (mode === 'habits') return `Morning 🌿 One small thing today. That's all it takes.`;
-    if (mode === 'muscle') return `Morning 🌿 Protecting muscle on ${u.medication ?? 'GLP-1'} — even a bit of protein early helps a lot.`;
-    return `Morning 🌿 Hope today's a soft one. I'm here whenever you want to chat.`;
+    if (mode === 'hydration') return pick([
+      `A glass of water before coffee sets the whole day up differently. Start there 🌿`,
+      `Hydration on ${med} matters more than most people realize. First glass — right now 🌿`,
+      `Before anything else today: water. It's the easiest win on the list 🌿`,
+    ], seed);
+    if (mode === 'side_effects') return pick([
+      `Take it easy on yourself today. I'm here if anything feels off 🤍`,
+      `${med} can make mornings unpredictable. No pressure today — just check in if you need to 🌿`,
+      `Soft morning. You know your body. Rest what needs resting, do what feels okay 🤍`,
+    ], seed);
+    if (mode === 'fiber') return pick([
+      `A little fiber early (oats, berries, chia) makes the rest of the day kinder to your gut 🌿`,
+      `Fiber in the morning is quiet protection. Oats or berries if you can manage it 🌿`,
+      `Gut-friendly morning: something fibrous early helps a lot on ${med} 🌿`,
+    ], seed);
+    if (mode === 'connection') return pick([
+      `You're not doing this alone. I'm here whenever 🤍`,
+      `Checking in — not because I have to, because I'm actually thinking about you 🌿`,
+      `This journey is genuinely hard. You're still showing up. That's worth noting 🤍`,
+    ], seed);
+    if (mode === 'habits') return pick([
+      `One small thing today. That's enough 🌿`,
+      `Habits compound quietly. Whatever small thing you do today — it counts 🌿`,
+      `No pressure to be perfect. One tiny intention is a whole thing 🌿`,
+    ], seed);
+    if (mode === 'muscle') return pick([
+      `Muscle protection on ${med}: protein early, even a small amount, makes a real difference 🌿`,
+      `${target}g today keeps muscle loss at bay on ${med}. Start early if you can 🌿`,
+      `Protecting muscle is one of the most important things on ${med}. Protein first this morning 🌿`,
+    ], seed);
+    return pick([
+      `Hope today's a soft one. I'm here whenever you want to chat 🌿`,
+      `Good morning. No agenda — just rooting for you today 🤍`,
+      `A quiet one or a full one, I'm here either way. Morning 🌿`,
+    ], seed);
   },
-  midday: () => {
-    return `Quick midday hello. No pressure to reply — just rooting for you over here 🤍`;
+  midday: (u) => {
+    return pick([
+      `Midday. No pressure to reply — just rooting for you over here 🤍`,
+      `Quick hello from the middle of the day. Hope it's treating you okay 🌿`,
+      `Halfway through — you're doing it 🤍`,
+      `Afternoon check-in. Nothing required from you. Just thinking of you 🌿`,
+      `The day's half done. Be kind to yourself for the rest of it 🤍`,
+      `Midday nudge: water if you haven't had any. That's it 🌿`,
+    ], dailySeed(u.phone));
   },
   evening: (u, opts) => {
+    const seed = dailySeed(u.phone);
     if (opts?.lowMoodMode) {
-      return `Just thinking of you tonight. You're doing something genuinely hard, and it counts even on the quiet days 🤍`;
+      return pick([
+        `Thinking of you tonight. You're doing something genuinely hard, and it counts even on the quiet days 🤍`,
+        `Hard days still count. You're still here. That's something 🤍`,
+        `Whatever today was — you got through it. Rest well 🌙`,
+        `Some days the win is just making it to evening. Tonight counts 🤍`,
+      ], seed);
     }
     if (u.current_weight && u.goal_weight) {
-      const diff = Math.abs(u.current_weight - u.goal_weight);
-      return `Wrapping up? You're ${diff.toFixed(0)} lbs from your goal — every consistent day moves the needle 🌙`;
+      const diff = Math.abs(u.current_weight - u.goal_weight).toFixed(0);
+      return pick([
+        `Wrapping up? You're ${diff} lbs from your goal — every consistent day moves the needle 🌙`,
+        `${diff} lbs from where you want to be. Today was another step 🌙`,
+        `You're closer than you were. ${diff} lbs to go — rest well tonight 🌙`,
+      ], seed);
     }
-    return `Wrapping the day. Hope it had a good moment in it somewhere. Rest well 🌙`;
+    return pick([
+      `Wrapping the day. Hope it had a good moment in it somewhere. Rest well 🌙`,
+      `Evening. Whatever you managed today — it was enough 🌙`,
+      `The day's done. You showed up. Rest well 🌙`,
+      `Good evening. No recap needed — just rest well tonight 🌙`,
+      `End of day. Be gentle with yourself tonight 🤍`,
+    ], seed);
   },
   injection_morning: (u) => {
     const med = u.medication ?? 'your medication';
-    return `${med} day 💉 Rotate your spot, take your time. Reply "done" when you're set — no rush.`;
+    const seed = dailySeed(u.phone);
+    return pick([
+      `${med} day 💉 Rotate your spot, take your time. Reply "done" when you're set — no rush.`,
+      `Injection day 💉 No hurry. Rotate sites, breathe through it. Just reply "done" when it's done.`,
+      `${med} day 💉 You've got this. Rotate your site, go slow. "Done" when you're ready.`,
+      `Injection day. Take your time with it — rotate the spot, breathe. Reply "done" after 💉`,
+    ], seed);
   },
-  injection_followup: () => {
-    return `Just thinking about you a few hours post-shot. Hope you're feeling okay. I'm here if anything's up.`;
+  injection_followup: (u) => {
+    return pick([
+      `A few hours post-shot — hope you're feeling okay. I'm here if anything's up 🤍`,
+      `Checking in after your injection. How's your body feeling?`,
+      `Post-shot check-in. Nausea, fatigue, or anything off? Or all good so far?`,
+      `Just thinking about you after your injection today. How are you doing?`,
+    ], dailySeed(u.phone));
   },
-  injection_dayafter: () => {
-    return `Morning — day after your shot. Be gentle with yourself today 🤍`;
+  injection_dayafter: (u) => {
+    return pick([
+      `Day after your shot — be gentle with yourself today 🤍`,
+      `Morning after injection day. If you're feeling the effects, that's normal. Rest if you need to 🤍`,
+      `Post-injection morning. Your body's adjusting — take it slow today 🌿`,
+      `The day after can feel different. Be soft with yourself today 🤍`,
+    ], dailySeed(u.phone));
   },
-  side_effect_nausea: () => {
-    return `Checking in softly — hope the nausea's easing. Ginger tea and tiny sips help a lot of people 🤍`;
+  side_effect_nausea: (u) => {
+    return pick([
+      `Hope the nausea's easing. Ginger tea and tiny sips help a lot of people 🤍`,
+      `Checking in softly — nausea on ${u.medication ?? 'GLP-1'} is real and it passes. Tiny sips, cold water, rest 🤍`,
+      `How's the nausea now? Ginger, cold water, and horizontal help most. Here if you need to talk through it 🤍`,
+    ], dailySeed(u.phone));
   },
-  side_effect_fatigue: () => {
-    return `Fatigue is real on this med. Rest if you can — a bit of protein + water often helps. I'm here.`;
+  side_effect_fatigue: (u) => {
+    return pick([
+      `Fatigue is real on this med. Rest if you can — a bit of protein + water often helps. I'm here 🤍`,
+      `The tiredness on ${u.medication ?? 'GLP-1'} is legitimate. Rest isn't giving up. Protein + water when you can 🤍`,
+      `Checking in on the fatigue. Your body's working hard adjusting. Rest as much as you need 🤍`,
+    ], dailySeed(u.phone));
   },
-  side_effect_constipation: () => {
-    return `Soft check-in. Water, fiber, and a short walk are the usual gentle helpers if things are still slow.`;
+  side_effect_constipation: (u) => {
+    return pick([
+      `Soft check-in. Water, fiber, and a short walk are the usual gentle helpers if things are still slow 🌿`,
+      `How are things moving? Water + fiber + gentle movement is the standard trio that helps most people 🌿`,
+      `Checking in on that side effect. Magnesium, water, and walking help a lot — let me know if you want more specifics 🌿`,
+    ], dailySeed(u.phone));
   },
   welcome: (u) => {
     const name = u.first_name ?? 'there';
@@ -148,7 +306,7 @@ export class MessageGenerator {
           { role: 'system', content: systemPrompt + '\n\n' + userCtx },
           { role: 'user', content: prompt },
         ],
-        temperature: 0.75,
+        temperature: 0.85,
         // 120 was too tight for Gemini 2.5 Flash — thinking tokens + final text
         // sometimes truncated mid-sentence ("Midday reminder: your" bug).
         maxOutputTokens: 280,
@@ -249,6 +407,23 @@ export class MessageGenerator {
       ? `NEVER suggest these foods (paraphrase naturally, don't quote raw text): ${cleanDislikes.join(', ')}.`
       : '';
 
+    // Daily variation — deterministic by user + date so retries stay consistent
+    // but each new day gets a fresh angle and different banned openers.
+    const seed = dailySeed(user.phone);
+    const angleMap: Record<string, readonly string[]> = {
+      morning: MORNING_ANGLES, midday: MIDDAY_ANGLES, evening: EVENING_ANGLES,
+    };
+    const anglePool = angleMap[type] ?? MORNING_ANGLES;
+    const todayAngle = pick(anglePool, seed);
+    const bannedOpener1 = pick(OPENER_POOL, seed, 0);
+    const bannedOpener2 = pick(OPENER_POOL, seed, 3);
+    const bannedOpener3 = pick(OPENER_POOL, seed, 7);
+
+    const VARIATION_BLOCK = `TODAY'S VARIATION DIRECTIVE (changes daily — follow exactly):
+- Angle: ${todayAngle}
+- Banned first word today: "${bannedOpener1}", "${bannedOpener2}", "${bannedOpener3}" — your message MUST NOT start with any of these.
+- Every message must feel written for today, not copy-pasted from yesterday. If the same user got a message yesterday, this one must read differently — different structure, different opening word, different rhythm.`;
+
     const RULES = `RULES — non-negotiable for proactive (scheduled) messages:
 - These are REMINDERS, not conversation starters. They deliver value standalone.
 - DEFAULT: end with a STATEMENT, not a question. NO question mark unless absolutely needed.
@@ -264,7 +439,7 @@ export class MessageGenerator {
   ✗ "Morning check-in —" / "Midday nudge —" / "Evening wind-down —"
   Start DIRECTLY with the actual message content. No preambles, no categories.`;
 
-    const base = `Generate a single short SMS for ${name}.\n${RULES}\n\n`;
+    const base = `Generate a single short SMS for ${name}.\n${VARIATION_BLOCK}\n\n${RULES}\n\n`;
 
     // Wednesday morning: mood check overrides all goal-based routing
     if (type === 'morning' && opts?.isWednesday) {

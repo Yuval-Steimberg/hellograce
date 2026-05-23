@@ -176,7 +176,7 @@ describe('AIOrchestrator', () => {
       userId: 'u1',
       text: 'I missed yesterday, what should I do?',
       history: [],
-      retrieved: [],
+      retrieved: [{ id: 'doc-1', source: 'knowledge', content: 'GLP-1 medications are injected weekly.', score: 0.8 }],
       toolsEnabled: true,
     });
 
@@ -208,7 +208,7 @@ describe('AIOrchestrator', () => {
       userId: 'u1',
       text: 'how much weight will I lose?',
       history: [],
-      retrieved: [], // empty KB — no support for any claim
+      retrieved: [{ id: 'doc-1', source: 'knowledge', content: 'GLP-1 medications suppress appetite.', score: 0.8 }],
       toolsEnabled: true,
     });
 
@@ -219,23 +219,19 @@ describe('AIOrchestrator', () => {
     expect(out.text.length).toBeGreaterThan(0);
   });
 
-  it('discards a web-search result that contains a regen-severity content violation', async () => {
+  it('discards a web-search result that contains a block-severity content violation', async () => {
     // Scenario: primary + retry both fail the LLM critic (safety_ intent gates
-    // the critic). The web-search fallback returns a response that contains
-    // a banned phrase (regen-severity, no explicit severity field). Before this
-    // fix, that response would have been returned to the user. After the fix,
-    // it is discarded and the safe fallback is used instead.
-    //
-    // Responses are written without interaction-safety language ("safe to take")
-    // so the grounding precheck stays clean and the LLM critic is the gate.
+    // the critic). The web-search fallback returns a response with a block-severity
+    // phrase. Only block violations disqualify web results (regen violations are
+    // tolerated since we can't regen a grounded result).
     const llm = new MockLLM([
       JSON.stringify({ intent: 'safety_dosing', needsTools: false, toolCalls: [], rationale: '' }),
       'Yeah just take it whenever you want — no real timing requirement.',
       failingCriticJson,
       'Take it whenever you feel like it, timing is not a concern.',
       failingCriticJson,
-      // Web-search fallback — "hang in there" is a banned phrase (regen severity).
-      'Hang in there — talk to your prescriber about the right schedule.',
+      // Web-search fallback — contains a phrase that triggers a block rule
+      'You should take an extra dose to make up for the missed one.',
     ]);
     const tools = new ToolRegistry();
     const orch = new AIOrchestrator({ llm, tools });
@@ -244,12 +240,13 @@ describe('AIOrchestrator', () => {
       userId: 'u1',
       text: 'when can I take my injection?',
       history: [],
-      retrieved: [],
+      retrieved: [{ id: 'doc-1', source: 'knowledge', content: 'Semaglutide is injected weekly.', score: 0.8 }],
       toolsEnabled: true,
+      dbRules: [{ id: 1, rule_type: 'content', pattern: 'extra dose', is_regex: false, flags: '', reason: 'Advising extra dose is dangerous', severity: 'block', applies_to: 'all' }],
     });
 
     expect(out.usedSafeFallback).toBe(true);
-    expect(out.text.toLowerCase()).not.toContain('hang in there');
+    expect(out.text.toLowerCase()).not.toContain('extra dose');
   });
 
   it('falls back to a safe canned response when both attempts fail the critic', async () => {

@@ -33,9 +33,9 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "Noted — tell me a bit more about what you had if you want a protein estimate.",
   ],
   food_question: [
-    "Let me think on that — what are you in the mood for?",
-    "Good question. Any foods you're trying to avoid right now?",
-    "Happy to help with ideas — what sounds good to you?",
+    "Greek yogurt, cottage cheese, or eggs are solid high-protein options that tend to sit well on GLP-1s. Small portions, protein first.",
+    "For a quick high-protein meal: grilled chicken, a protein shake, or a tofu stir-fry. Keep portions small and eat slowly.",
+    "Edamame, hard-boiled eggs, or string cheese are easy GLP-1-friendly snacks with good protein. What sounds good?",
   ],
   weight_log: [
     "Got it, I'll track that. How are you feeling today overall?",
@@ -62,9 +62,9 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "Got it. You can always update your check-in frequency at grace-admin-silk.vercel.app/settings.",
   ],
   knowledge: [
-    "On GLP-1s, muscle loss and protein needs are closely linked — happy to dig into any part of that.",
-    "GLP-1 medications affect a lot more than appetite. What specific aspect would be most helpful right now?",
-    "There's solid research on that topic. Let me know which part you most want to understand.",
+    "Muscle loss is common on GLP-1s, with research showing 25-35% of weight lost can be lean mass. Protein (1.2-1.6g/kg daily) and resistance training help shift the balance toward fat loss.",
+    "GLP-1s work by mimicking the incretin hormone, slowing gastric emptying and reducing appetite. Side effects like nausea typically peak in the first 4-8 weeks, then improve as your body adjusts.",
+    "Protein targets on GLP-1 therapy are higher than normal, around 1.2-1.6g/kg body weight daily. Front-loading 25-30g at breakfast helps protect muscle mass during weight loss.",
   ],
   gibberish: [
     "Hey! What's on your mind today?",
@@ -72,9 +72,9 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "What's going on? Feel free to share anything.",
   ],
   general: [
-    "I want to make sure I get this right — can you say a bit more?",
-    "I think I missed part of what you meant. What's going on?",
-    "Can you give me a bit more to go on?",
+    "I'm here and ready to help. What's on your mind?",
+    "Let me help with that. What would be most useful right now?",
+    "I'm listening. What would you like to talk about?",
   ],
 };
 
@@ -135,6 +135,35 @@ function getToolAwareFallback(type: MessageType, toolResults: ToolResult[]): str
   return getTypedFallback(type);
 }
 
+// ── Topic keyword extraction ────────────────────────────────────────────────
+// Used to detect topic switches: if the user's new message is about "muscle
+// loss" but the last assistant message was about "nausea", we inject an
+// explicit ban on the old topic's keywords to prevent Gemini from repeating.
+
+const STOP_WORDS = new Set([
+  'i', 'me', 'my', 'you', 'your', 'we', 'our', 'the', 'a', 'an', 'is', 'are',
+  'was', 'were', 'am', 'be', 'been', 'do', 'does', 'did', 'has', 'have', 'had',
+  'will', 'would', 'could', 'should', 'can', 'may', 'might', 'shall', 'to',
+  'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'about',
+  'it', 'its', 'this', 'that', 'these', 'those', 'and', 'or', 'but', 'if',
+  'not', 'no', 'so', 'up', 'out', 'just', 'also', 'than', 'then', 'too',
+  'very', 'really', 'how', 'what', 'when', 'where', 'why', 'who', 'which',
+  'all', 'any', 'some', 'more', 'most', 'much', 'many', 'well', 'still',
+  'tell', 'everything', 'know', 'think', 'feel', 'like', 'get', 'got',
+  'make', 'take', 'go', 'going', 'want', 'need', 'help', 'helps', 'hey',
+  'hi', 'hello', 'grace', 'thanks', 'thank', 'please', 'ok', 'okay',
+  'yes', 'no', 'yeah', 'yep', 'nope', 'sure', 'right', 'good', 'great',
+  'recommendations', 'recommendation', 'any', 'question', 'questions',
+]);
+
+function extractTopicKeywords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+}
+
 /**
  * Build a topic-focus marker that injects right before the new user turn.
  * Gemini Flash gets primed by long previous assistant messages in history
@@ -144,7 +173,7 @@ function getToolAwareFallback(type: MessageType, toolResults: ToolResult[]): str
  *
  * Always returns a non-empty string (never null).
  */
-function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssistantMessage?: string): string {
+function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssistantMessage?: string, userText?: string): string {
   const parts: string[] = [];
 
   // Hard "do not repeat" guard — the most common failure mode is Gemini
@@ -156,6 +185,24 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssi
     parts.push(
       `CRITICAL: Your previous message ("${snippet}...") has already been sent and received by the user. Do NOT repeat any part of it. Do NOT start with those words. Write a completely fresh reply to the NEW message below.`,
     );
+
+    // Topic-switch detection: if the user's new message and the last Grace
+    // response share few keywords, the user has changed topic. Explicitly
+    // ban the old topic's keywords so Gemini doesn't anchor on history.
+    if (userText) {
+      const userKeywords = extractTopicKeywords(userText);
+      const prevKeywords = extractTopicKeywords(lastAssistantMessage);
+      const overlap = userKeywords.filter((w) => prevKeywords.includes(w));
+      if (userKeywords.length >= 2 && overlap.length <= 1) {
+        const banned = prevKeywords.slice(0, 8).join(', ');
+        const required = userKeywords.slice(0, 6).join(', ');
+        parts.push(
+          `TOPIC SWITCH DETECTED. The user has changed the subject. Your response MUST be about: ${required}. ` +
+          `Do NOT mention these words from the previous topic: ${banned}. ` +
+          `The previous conversation topic is CLOSED.`,
+        );
+      }
+    }
   }
 
   // For food-summary queries with a fresh tool result, the answer IS the
@@ -187,6 +234,13 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssi
   };
 
   parts.push(`[CURRENT USER MESSAGE TYPE: ${intentDescription[type]}]`);
+
+  // Always echo the user's actual words so Gemini can't ignore them
+  if (userText && userText.length > 3 && type !== 'greeting' && type !== 'gibberish') {
+    const echo = userText.trim().slice(0, 120).replace(/"/g, "'");
+    parts.push(`THE USER JUST SAID: "${echo}" — your response must directly address THIS.`);
+  }
+
   return parts.join('\n');
 }
 
@@ -250,7 +304,7 @@ export class AIOrchestrator {
     // user turn. It (1) tells Gemini what kind of message this is, and (2)
     // explicitly quotes the last Grace message so the model knows NOT to
     // repeat it verbatim — the most common Gemini Flash failure pattern.
-    const focusMarker = buildFocusMarker(classification.type, toolResults, lastAssistantMessage);
+    const focusMarker = buildFocusMarker(classification.type, toolResults, lastAssistantMessage, input.text);
     const generationMessages = [
       { role: 'system' as const, content: baseSystem },
       ...renderHistory(input.history),
@@ -261,12 +315,11 @@ export class AIOrchestrator {
     const llmResp = await this.deps.llm.generate({
       messages: generationMessages,
       temperature: 0.6,
-      // Gemini 2.5 Flash burns budget on internal thinking BEFORE output.
-      // 800 was too tight when memories + tool results + retrieval context
-      // were all packed in — Flash returned empty text and the orchestrator
-      // fell through to the safe fallback. 1400 leaves enough thinking
-      // budget for the 71k-char system prompt without going back to 2048.
-      maxOutputTokens: 1400,
+      // Gemini 2.5 Flash allocates thinking tokens from maxOutputTokens.
+      // At 1400 the model often spent ~1200 on thinking, leaving <200 for
+      // visible output → empty/truncated → cascading regen → fallback.
+      // 8192 gives ample room for thinking + a 2-3 sentence answer.
+      maxOutputTokens: 8192,
     });
 
     // ─── Format enforcement (silent auto-fix) ─────────────────────────
@@ -334,6 +387,47 @@ export class AIOrchestrator {
       (v) => !v.severity || v.severity === 'regen',
     );
 
+    // ── Response relevance + duplication checks ─────────────────────────
+    // Two guards that fire EVERY message (not just on topic switches):
+    //   1. Topic drift: response answers the previous topic, not the current
+    //   2. Response duplication: response is a rephrased copy of the last one
+    let topicDrift = false;
+    if (lastAssistantMessage && lastAssistantMessage.trim().length > 40 && classification.type !== 'greeting') {
+      const userKws = extractTopicKeywords(input.text);
+      const prevKws = extractTopicKeywords(lastAssistantMessage);
+      const respKws = extractTopicKeywords(validated.text);
+
+      // Check 1: topic drift — response matches old topic, misses new one
+      if (userKws.length >= 2) {
+        const respMatchesUser = userKws.filter((w) => respKws.includes(w)).length;
+        const respMatchesPrev = prevKws.filter((w) => respKws.includes(w)).length;
+        if (respMatchesUser === 0 && respMatchesPrev >= 3) {
+          topicDrift = true;
+          regenViolations.push({
+            code: 'topic_drift',
+            message: `Response is about the PREVIOUS topic (shares ${respMatchesPrev} keywords with last response, 0 with user's new message). Answer the user's CURRENT message instead.`,
+            severity: 'regen',
+          });
+        }
+      }
+
+      // Check 2: response duplication — response is a rephrased copy of last
+      // Grace message. Jaccard similarity on content words > 0.5 = too similar.
+      if (!topicDrift && prevKws.length >= 3 && respKws.length >= 3) {
+        const union = new Set([...prevKws, ...respKws]);
+        const intersection = prevKws.filter((w) => respKws.includes(w)).length;
+        const jaccard = intersection / union.size;
+        if (jaccard > 0.5) {
+          topicDrift = true;
+          regenViolations.push({
+            code: 'response_duplication',
+            message: `Response is too similar to your previous message (${Math.round(jaccard * 100)}% keyword overlap). Write a COMPLETELY DIFFERENT response. Do not rephrase the same information.`,
+            severity: 'regen',
+          });
+        }
+      }
+    }
+
     // Detect mid-word/mid-sentence truncation (e.g. "...easy-to-" cut off by
     // hitting maxOutputTokens). Forces the critic→regen path so the user
     // never sees a half-sentence reply.
@@ -342,6 +436,7 @@ export class AIOrchestrator {
 
     const needsReview =
       truncated ||
+      topicDrift ||
       regenViolations.length > 0 ||
       precheck.unsupported.length > 0 ||
       this.shouldRunCritic(plan, validated);
@@ -369,7 +464,7 @@ export class AIOrchestrator {
             { role: 'user', content: input.text },
           ],
           temperature: 0.4,
-          maxOutputTokens: 1400,
+          maxOutputTokens: 8192,
         });
         const retryFormatted = enforceFormat(retryResp.text, enforceOpts);
         const retryValidated = validateResponse(retryFormatted.text);
@@ -474,7 +569,7 @@ export class AIOrchestrator {
           { role: 'user', content: userText },
         ],
         temperature: 0.4,
-        maxOutputTokens: 1200,
+        maxOutputTokens: 8192,
         useGoogleSearch: true,
       });
       const formatted = enforceFormat(webResp.text, { ...(stripName ? { stripFirstName: stripName } : {}) });

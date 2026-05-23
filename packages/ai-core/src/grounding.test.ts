@@ -13,8 +13,14 @@ describe('precheckGrounding', () => {
     expect(r.unsupported).toHaveLength(0);
   });
 
-  it('flags a dose claim when no knowledge context is available', () => {
+  it('skips unsupported check when no KB docs are retrieved (trusts system prompt)', () => {
     const r = precheckGrounding('Take 2mg twice a week.', []);
+    expect(r.detected.some((c) => c.kind === 'dose')).toBe(true);
+    expect(r.unsupported).toHaveLength(0);
+  });
+
+  it('flags a dose claim when KB exists but does not support it', () => {
+    const r = precheckGrounding('Take 2mg twice a week.', [doc('GLP-1s reduce appetite.')]);
     expect(r.detected.some((c) => c.kind === 'dose')).toBe(true);
     expect(r.unsupported.length).toBeGreaterThan(0);
   });
@@ -39,14 +45,14 @@ describe('precheckGrounding', () => {
     expect(r.detected).toHaveLength(0);
   });
 
-  it('flags a percentage weight-loss claim without KB support', () => {
-    const r = precheckGrounding('Most patients lose 15% of their body weight.', []);
+  it('flags a percentage weight-loss claim when KB exists but does not support it', () => {
+    const r = precheckGrounding('Most patients lose 15% of their body weight.', [doc('GLP-1s suppress appetite.')]);
     expect(r.detected.some((c) => c.kind === 'percentage')).toBe(true);
     expect(r.unsupported.length).toBeGreaterThan(0);
   });
 
-  it('flags an interaction-safety assertion', () => {
-    const r = precheckGrounding("It's safe to combine ibuprofen with semaglutide.", []);
+  it('flags an interaction-safety assertion when KB does not cover interactions', () => {
+    const r = precheckGrounding("It's safe to combine ibuprofen with semaglutide.", [doc('Semaglutide reduces appetite.')]);
     expect(r.detected.some((c) => c.kind === 'interaction')).toBe(true);
     expect(r.unsupported.length).toBeGreaterThan(0);
   });

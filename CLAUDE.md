@@ -36,11 +36,22 @@ set the 5 Vercel env vars (`VITE_API_URL`, `VITE_WHATSAPP_NUMBER`, `VITE_WHATSAP
 ```
 .
 ├── apps/
-│   └── web/                # @grace/web — Vite + React + shadcn/ui
-│                           # Onboarding flow + admin dashboard at /admin
+│   └── web/                    # @grace/web — Vite + React + shadcn/ui
+│                               # Onboarding flow + admin dashboard at /admin
 ├── services/
-│   └── api/                # @grace/api — Fastify orchestration service (v2)
-│                           # All AI, scheduling, webhooks, admin API
+│   ├── api/                    # @grace/api — Fastify orchestration service (v2)
+│   │                           # All AI, scheduling, webhooks, admin API
+│   ├── llm-gateway/            # Feature 2 — Gemini proxy: context caching, model
+│   │                           # routing (Flash/Pro), circuit breaker, rate limit
+│   │                           # Deployed: grace-llm-gateway.fly.dev (port 3010)
+│   ├── twilio-proxy/           # Feature 3 — Async Twilio webhook proxy
+│   │                           # Returns 200 immediately, forwards to API async
+│   │                           # Deployed: grace-twilio-proxy.fly.dev (port 3020)
+│   ├── temporal-orchestrator/  # Feature 4 — Medication lifecycle cron
+│   │                           # Day-2 + Day-6 post-injection triggers
+│   │                           # Deployed: grace-temporal.fly.dev
+│   └── reranker/               # Python FastAPI reranker service (cross-encoder)
+│                               # Used by HybridRagService for result reranking
 ├── packages/
 │   ├── shared/             # @grace/shared — canonical TS types
 │   └── ai-core/            # @grace/ai-core — pure orchestrator, planner, validator
@@ -50,6 +61,7 @@ set the 5 Vercel env vars (`VITE_API_URL`, `VITE_WHATSAPP_NUMBER`, `VITE_WHATSAP
 ├── docs/
 │   ├── STATUS.md           # Phase tracker + open todos
 │   ├── OPERATIONS.md       # Production setup guide + subscriptions + admin
+│   ├── CHEATSHEET.md       # All maintenance / ops commands in one place
 │   ├── USER_GUIDE.md       # End-user guide (share with users)
 │   └── WELCOME_EMAIL.md    # Welcome email template with personalization notes
 ├── docker-compose.yml      # One-command local: Postgres+pgvector + Redis + api
@@ -183,9 +195,23 @@ psql "$DATABASE_URL" -f supabase/migrations/20260513000001_prompt_optimizer_colu
 psql "$DATABASE_URL" -f supabase/migrations/20260513000002_protein_personalization.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260513000003_glp1_start_date.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260516000005_content_rules.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260520000001_message_templates.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260521000001_verification_codes.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260521000002_user_memories.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260522000001_phase4_features.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260522000002_bandit_usda.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260522000003_hybrid_rag_fts.sql
 ```
 
 **`20260516000005_content_rules.sql`** — IMPORTANT: run in Supabase SQL Editor with "No limit" toggle OFF (not in Neon). Creates `content_rules` table + 48 seed rules. Verify with: `SELECT severity, COUNT(*) FROM content_rules GROUP BY severity;` → should show `block: 4, regen: 44`.
+
+**`20260521000002_user_memories.sql`** — long-term semantic memory table (`user_memories`). Top-k by similarity injected into system prompt each turn.
+
+**`20260522000001_phase4_features.sql`** — new nullable columns on `users` for phase 4 feature gaps.
+
+**`20260522000002_bandit_usda.sql`** — contextual bandit table (per-user response strategy) + USDA food cache table.
+
+**`20260522000003_hybrid_rag_fts.sql`** — adds Postgres FTS index on `embeddings.content` for hybrid retrieval (dense + sparse keyword search).
 
 Core tables: `users`, `conversations`, `messages`, `embeddings`, `tool_logs`,
 `feedback`, `food_logs`, `weight_logs`, `check_ins`, `injections`, `prompts`, `tool_settings`.
@@ -308,16 +334,18 @@ Roadmap (in progress, in this order):
 | 9 | Production quality pass: proactive message label/truncation fix, humanized timing jitter, trial Day 2 reminder, RLHF on proactive messages, admin WhatsApp optimizer report, food recommendation rules, every-response-unique rule, critic tuned for food facts, safe fallback improved, name stripping in code | ✅ 2026-05-15 |
 | 10 | DB-driven content guardbands: `content_rules` table (48 rules: 4 block + 44 regen), `ContentRulesService` with 60s cache, applied to both reactive AI and proactive scheduler paths. Admin CRUD + test endpoint. Redis distributed lock on scheduler to prevent duplicate messages across Fly machines. | ✅ 2026-05-16 |
 | 11 | AI quality pass: GREETING RULE (pure greeting → one sentence, topic reset), FOOD VARIETY rule + 40-food pool, `search_food_ideas` tool (Google Search grounding for food questions), two-pass scientific food image analysis (Pass 1: visual ID with USDA anchors; Pass 2: text-only macro calculation with 50-food USDA table). | ✅ 2026-05-19 |
+| 12 | New services (LLM Gateway, Twilio Proxy, Temporal Orchestrator) deployed to Fly.io. Daily variation engine for proactive messages. AI response quality fixes: educational question rule, grounding precheck fix, topic-drift + duplication detection, maxOutputTokens 1400→8192. Maintenance cheatsheet at `docs/CHEATSHEET.md`. | ✅ 2026-05-23 |
 
 ---
 
 ## Where to start in a new session
 
-1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
+1. Read this file + `docs/STATUS.md` + `docs/CHEATSHEET.md`.
 2. `git log --oneline -10` to see recent commits.
-3. Active branch: `claude/icloud-access-clarification-5hsRr` (not yet merged to main). Latest commit: `2e5372c` — Two-pass food image analysis with USDA table.
+3. Active branch: `claude/icloud-access-clarification-5hsRr` (not yet merged to main). Latest commit: `e0657f0` — Add maintenance cheatsheet.
 4. Production is live at `https://grace-api.fly.dev` (API) and `https://grace-admin-silk.vercel.app` (web). Tail logs with `fly logs --app grace-api`.
-5. Top open items: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn, rotate DB password.
+5. **CRITICAL pending deploy**: run `cd ~/Desktop/Grace/Grace && git pull origin claude/icloud-access-clarification-5hsRr && fly deploy --app grace-api` to push this session's fixes (maxOutputTokens, topic drift, educational questions).
+6. Top open items: Fly payment method, WhatsApp Business sender, Vercel env vars for Stripe, disable v1 edge fn, rotate DB password, wire LLM Gateway into main API.
 
 ### Phase 7 — AI quality pass (commits `bb420da`, `b09fe0f`, `174112e`, `c23584b`)
 
@@ -542,6 +570,34 @@ All changes on branch `claude/icloud-access-clarification-5hsRr`.
 - **Grace Pro Stripe price ($24/mo)** — not yet created in `acct_1TWfwc`; `PRO_PRICE_ID` in `supabase/functions/upgrade-to-pro/index.ts` still points to old account
 - **Welcome email** — template ready (`docs/WELCOME_EMAIL.md`), not wired into `/users/onboard`
 - **DB password** — `Giburking18!` was exposed in terminal output twice; MUST be rotated at https://supabase.com/dashboard/project/uifadtlktpddtfohwxfi/settings/database then update `fly secrets set --app grace-api DATABASE_URL="postgresql://postgres.uifadtlktpddtfohwxfi:NEW_PASSWORD@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres"`
+
+### Phase 12 — New services, AI response quality, variation engine (2026-05-23)
+
+All changes on branch `claude/icloud-access-clarification-5hsRr`. **Pending deploy**: `fly deploy --app grace-api`.
+
+**New services deployed to Fly.io** (each has its own `fly.toml` and `Dockerfile`):
+- `grace-llm-gateway` (`services/llm-gateway/`) — Gemini context caching, Flash/Pro model routing, circuit breaker, per-user rate limiting. Port 3010. Not yet wired into main API — set `LLM_GATEWAY_URL=http://llm-gateway:3010` in API env to activate.
+- `grace-twilio-proxy` (`services/twilio-proxy/`) — Async Twilio webhook proxy. Returns 200 TwiML immediately, forwards to API async. Edge safety filter for emergencies. Port 3020. Update Twilio webhook URL to `https://grace-twilio-proxy.fly.dev/webhook/twilio` to activate.
+- `grace-temporal` (`services/temporal-orchestrator/`) — Day-2 (47–50h) and Day-6 (143–146h) post-injection lifecycle messages. Weekly injection users only. Redis dedup lock prevents duplicate sends.
+
+**Daily variation engine** (`services/api/src/scheduler/message-generator.ts`, commit `64e9f1f`):
+- `dailySeed(phone)` — deterministic hash of phone+date → rotates every midnight
+- `MORNING_ANGLES` (12), `MIDDAY_ANGLES` (8), `EVENING_ANGLES` (10) — named structural angles injected as `TODAY'S VARIATION DIRECTIVE` into every proactive prompt
+- `OPENER_POOL` (25 words) — 3 banned each day to prevent Gemini defaulting to same openers
+- All fallback pools now have 3–5 distinct strings; temperature raised 0.75 → 0.85
+- Result: every scheduled message feels structurally different day-to-day
+
+**Gemini response quality fixes** (commits `ca2a5c5`, `8c3b042`):
+- `maxOutputTokens` raised **1400 → 8192** across primary, retry, and web search paths. Root cause of all knowledge question fallbacks: Gemini 2.5 Flash uses thinking tokens from the same budget; at 1400 the model spent ~1200 on thinking, leaving <200 for output → empty text → cascading failures → typed fallback.
+- **Grounding precheck fix** (`packages/ai-core/src/grounding.ts`): when `retrieved.length === 0`, no longer flags all claims as unsupported. Previous behavior caused correct answers citing "25–35%" from the system prompt's VERIFIED KNOWLEDGE to be rejected.
+- **Topic-drift detection**: post-generation keyword comparison. If response shares ≥3 keywords with previous Grace message and 0 with user's current message → force regen. Catches "answered old topic" bug.
+- **Response duplication guard**: Jaccard similarity on content words between new and previous response. If >50% overlap → force regen. Catches rephrased copies.
+- **Focus marker enhanced**: now echoes `THE USER JUST SAID: "..."` right before generation, and on topic switches bans old-topic keywords explicitly.
+- **Web search fallback**: relaxed from rejecting regen+block violations to rejecting block-only. Regen-severity style rules don't disqualify a Google Search-grounded result.
+- **Educational questions prompt rule** added: `EDUCATIONAL / INFORMATIONAL QUESTIONS — ANSWER DIRECTLY` with exact production failure as ✗/✓ example.
+- **All typed fallbacks rewritten**: knowledge fallbacks now contain real GLP-1 science; general/food fallbacks are actionable, not "can you say a bit more?"
+
+**Maintenance cheatsheet**: `docs/CHEATSHEET.md` — all ops/maintenance commands in one place.
 
 ---
 

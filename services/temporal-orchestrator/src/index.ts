@@ -19,7 +19,7 @@
  */
 import cron from 'node-cron';
 import pg from 'pg';
-import Redis from 'ioredis';
+import Redis, { type Redis as RedisClient } from 'ioredis';
 import Twilio from 'twilio';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import pino from 'pino';
@@ -53,7 +53,7 @@ const pool = new pg.Pool({
   max: 5,
 });
 
-const redis = new (Redis as any)(cfg.redisUrl, { lazyConnect: true, enableReadyCheck: false }) as Redis;
+const redis = new (Redis as any)(cfg.redisUrl, { lazyConnect: true, enableReadyCheck: false }) as RedisClient;
 await redis.connect().catch((err: unknown) => logger.warn({ err }, 'redis.connect_failed'));
 
 const twilioClient = Twilio(cfg.twilioSid, cfg.twilioToken);

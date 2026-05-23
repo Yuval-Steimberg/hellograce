@@ -15,7 +15,7 @@ import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import { GoogleGenerativeAI, type Content } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
-import Redis from 'ioredis';
+import Redis, { type Redis as RedisClient } from 'ioredis';
 import pino from 'pino';
 import { z } from 'zod';
 import { CircuitBreaker } from './circuit-breaker.js';
@@ -55,7 +55,7 @@ const LLMRequestSchema = z.object({
 
 // ── Infrastructure ─────────────────────────────────────────────────────────
 
-const redis = new (Redis as any)(cfg.redisUrl, { lazyConnect: true, enableReadyCheck: false }) as Redis;
+const redis = new (Redis as any)(cfg.redisUrl, { lazyConnect: true, enableReadyCheck: false }) as RedisClient;
 redis.connect().catch((err: unknown) => logger.warn({ err }, 'redis.connect_failed — running without Redis'));
 
 const genAI = new GoogleGenerativeAI(cfg.geminiApiKey);

@@ -55,8 +55,8 @@ const LLMRequestSchema = z.object({
 
 // ── Infrastructure ─────────────────────────────────────────────────────────
 
-const redis = new Redis(cfg.redisUrl, { lazyConnect: true, enableReadyCheck: false });
-redis.connect().catch((err) => logger.warn({ err }, 'redis.connect_failed — running without Redis'));
+const redis = new (Redis as any)(cfg.redisUrl, { lazyConnect: true, enableReadyCheck: false }) as Redis;
+redis.connect().catch((err: unknown) => logger.warn({ err }, 'redis.connect_failed — running without Redis'));
 
 const genAI = new GoogleGenerativeAI(cfg.geminiApiKey);
 const cacheManager = cfg.contextCacheEnabled

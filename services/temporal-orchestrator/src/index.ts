@@ -53,8 +53,8 @@ const pool = new pg.Pool({
   max: 5,
 });
 
-const redis = new Redis(cfg.redisUrl, { lazyConnect: true, enableReadyCheck: false });
-await redis.connect().catch((err) => logger.warn({ err }, 'redis.connect_failed'));
+const redis = new (Redis as any)(cfg.redisUrl, { lazyConnect: true, enableReadyCheck: false }) as Redis;
+await redis.connect().catch((err: unknown) => logger.warn({ err }, 'redis.connect_failed'));
 
 const twilioClient = Twilio(cfg.twilioSid, cfg.twilioToken);
 const genAI = new GoogleGenerativeAI(cfg.geminiApiKey);

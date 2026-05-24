@@ -228,11 +228,11 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
 
   app.put('/admin/prompts/:id/activate', async (req) => {
     const { id } = req.params as { id: string };
-    const query = req.query as { skip_eval?: string };
-    const skipEval = query.skip_eval === '1' || query.skip_eval === 'true';
+    const query = req.query as { run_eval?: string };
+    const runEval = query.run_eval === '1' || query.run_eval === 'true';
 
-    // Eval gate: run a quick auto-eval before activating (unless skipped)
-    if (!skipEval && process.env.GEMINI_API_KEY && deps.llm) {
+    // Eval gate: only runs when explicitly requested via ?run_eval=1
+    if (runEval && process.env.GEMINI_API_KEY && deps.llm) {
       try {
         const gatePath = new URL('../../auto-eval/feedback-loop.js', import.meta.url).href;
         const mod = await import(gatePath).catch(() => null) as {

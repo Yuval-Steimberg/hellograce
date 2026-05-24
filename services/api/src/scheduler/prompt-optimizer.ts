@@ -250,8 +250,9 @@ export class PromptOptimizer {
 
     let safe = this.isSafe(newPrompt);
 
-    // Eval gate: run a quick auto-eval before auto-activating
-    if (safe) {
+    // Eval gate disabled — auto-eval only runs when manually triggered by admin.
+    // To re-enable: uncomment and set EVAL_GATE_AUTO=1
+    if (safe && process.env.EVAL_GATE_AUTO === '1') {
       safe = await this.runEvalGate();
     }
 

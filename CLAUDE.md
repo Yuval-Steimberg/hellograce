@@ -335,11 +335,19 @@ relevance (HIGHEST PRIORITY), context_memory, tone_match, conciseness, naturalne
 - `preference-pairs/` — RLHF training data (context + chosen + rejected + reasoning)
 - `reports/` — aggregate run reports with category/dimension breakdowns, patterns, regressions
 
+**Feedback loop** (`auto-eval/feedback-loop.ts`) — closes the auto-eval → live chatbot loop via three mechanisms:
+
+1. **Preference pairs → prompt optimizer**: Auto-eval preference pairs are loaded at server startup and injected into the nightly `PromptOptimizer` as synthetic negative feedback. The optimizer sees both real RLHF 👎 ratings AND simulated low-quality responses, giving it thousands of additional learning signals. Flow: `auto-eval/results/preference-pairs/*.json` → `loadPreferencePairs()` → `pairsToSyntheticFeedback()` → `promptOptimizer.injectSyntheticFeedback()` → merged into `gatherSignals()` negative samples.
+
+2. **Eval-gated prompt activation**: Before any prompt is activated (both admin `PUT /admin/prompts/:id/activate` and nightly auto-activation), a quick auto-eval run (8 scenarios) checks the overall score against `EVAL_GATE_BASELINE` (default 2.5). If the score drops below baseline, activation is blocked and the prompt is saved as a draft for manual review. Skip with `?skip_eval=1` on the admin endpoint. Set baseline via `EVAL_GATE_BASELINE` env var.
+
+3. **Auto-generated content rules**: `POST /admin/content-rules/auto-generate` analyzes all stored auto-eval evaluations, detects recurring failure patterns (frequency ≥ 3, score impact ≥ 1.5), and uses Gemini to generate runtime content-checking rules. Rules are inserted as **inactive drafts** (`is_active = false`) — an admin must review and activate them. Only `regen`/`log` severity allowed (never `block`).
+
 Roadmap (in progress, in this order):
 1. ✅ Eval harness + 50-case dataset (`services/api/eval/`).
 2. ✅ LLM-critic on risky intents (`safety_*`, validator-flagged `possible_medical_advice`, or low-confidence). `knowledge_lookup` removed from risky list (2026-05-15) — it was incorrectly failing food/nutrition responses. Regenerate once on critic fail, safe fallback if second attempt also fails. Implementation: `packages/ai-core/src/critic.ts` + orchestrator wiring.
 3. ✅ Fact-grounding: deterministic precheck (`packages/ai-core/src/grounding.ts`) detects quantitative medical claims (doses, durations, frequencies, percentages) and interaction-safety assertions in the response and verifies them against retrieved KB chunks. Unsupported claims fail-close to regen — saves a Gemini call vs. invoking the LLM-critic. Surfaced via `CriticReport.unsupportedClaims` + `source: 'precheck' | 'llm'`.
-4. ⏳ Wire eval scores into `prompts` table; gate `activate` on ≥ baseline.
+4. ✅ Eval-gated prompt activation + auto-eval preference pairs → prompt optimizer + auto-generated content rules. Implementation: `auto-eval/feedback-loop.ts`, wired into `prompt-optimizer.ts` + `routes/admin.ts` + `server.ts`.
 5. ⏳ Gemini prompt caching for static system prompt + tool defs; skip planner for pure-chat intents.
 
 ---

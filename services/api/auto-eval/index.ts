@@ -7,6 +7,13 @@ export { analyzeResults } from './analyzer.js';
 export { generatePreferencePairs } from './preference-pairs.js';
 export { buildReport } from './reporter.js';
 export { AutoEvalStore } from './store.js';
+export {
+  loadPreferencePairs,
+  pairsToSyntheticFeedback,
+  evalGateCheck,
+  generateContentRulesFromPatterns,
+  insertDraftContentRules,
+} from './feedback-loop.js';
 export type {
   AutoEvalReport,
   AutoEvalRunOptions,

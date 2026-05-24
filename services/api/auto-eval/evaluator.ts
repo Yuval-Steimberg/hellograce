@@ -64,7 +64,7 @@ function buildTurnEvalPrompt(
 
   const historyLines: string[] = [];
   for (let i = 0; i < userTurnIdx; i++) {
-    const t = turns[i];
+    const t = turns[i]!;
     historyLines.push(`${t.role === 'user' ? 'User' : 'Grace'}: ${t.text}`);
   }
 

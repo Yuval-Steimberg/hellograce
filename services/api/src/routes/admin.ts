@@ -219,6 +219,36 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
 
   app.put('/admin/prompts/:id/activate', async (req) => {
     const { id } = req.params as { id: string };
+    const query = req.query as { skip_eval?: string };
+    const skipEval = query.skip_eval === '1' || query.skip_eval === 'true';
+
+    // Eval gate: run a quick auto-eval before activating (unless skipped)
+    if (!skipEval && process.env.GEMINI_API_KEY && deps.llm) {
+      try {
+        const gatePath = ['..', '..', 'auto-eval', 'feedback-loop.js'].join('/');
+        const mod = await import(gatePath).catch(() => null) as {
+          evalGateCheck: (llm: unknown, prompt: string, baseline: number, logger: unknown) => Promise<{ passed: boolean; score: number; details: string }>;
+        } | null;
+        if (mod) {
+          const pino = await import('pino');
+          const gateLogger = pino.default({ level: 'warn' });
+          const baseline = Number(process.env.EVAL_GATE_BASELINE ?? '2.5');
+          const result = await mod.evalGateCheck(deps.llm, '', baseline, gateLogger);
+          if (!result.passed) {
+            return {
+              ok: false,
+              error: 'EVAL_GATE_FAILED',
+              message: `Prompt activation blocked by eval gate. ${result.details}`,
+              score: result.score,
+              baseline,
+            };
+          }
+        }
+      } catch {
+        // Eval gate failure shouldn't block activation — log and continue
+      }
+    }
+
     await deps.pool.query('BEGIN');
     try {
       await deps.pool.query(`UPDATE prompts SET active = FALSE WHERE active = TRUE`);
@@ -747,6 +777,65 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       } catch { /* skip invalid */ }
     }
     return { text, target: ch, violations, clean: violations.length === 0 };
+  });
+
+  // Generate content rules from auto-eval pattern analysis
+  app.post('/admin/content-rules/auto-generate', async (_req, reply) => {
+    if (!deps.llm) {
+      reply.status(503).send({ error: 'LLM_UNAVAILABLE', message: 'LLM not configured' });
+      return;
+    }
+
+    try {
+      // Paths are constructed at runtime so tsc doesn't resolve auto-eval/ (outside rootDir)
+      const storePath = ['..', '..', 'auto-eval', 'store.js'].join('/');
+      const analyzerPath = ['..', '..', 'auto-eval', 'analyzer.js'].join('/');
+      const feedbackPath = ['..', '..', 'auto-eval', 'feedback-loop.js'].join('/');
+      const storeMod = await import(storePath).catch(() => null) as {
+        AutoEvalStore: new (dir: string) => { loadAllEvaluations: () => unknown[] };
+      } | null;
+      const analyzerMod = await import(analyzerPath).catch(() => null) as {
+        analyzeResults: (evals: unknown[]) => { patterns: Array<{ pattern: string; frequency: number; avgScoreImpact: number; exampleConversationIds: string[]; suggestedFix: string; category: string }> };
+      } | null;
+      const feedbackMod = await import(feedbackPath).catch(() => null) as {
+        generateContentRulesFromPatterns: (llm: unknown, patterns: unknown[], pool: unknown, logger: unknown) => Promise<Array<{ rule_type: string; pattern: string; is_regex: boolean; reason: string; severity: string }>>;
+        insertDraftContentRules: (pool: unknown, rules: unknown[], logger: unknown) => Promise<number>;
+      } | null;
+
+      if (!storeMod || !analyzerMod || !feedbackMod) {
+        return { ok: false, message: 'Auto-eval modules not available. Ensure the auto-eval directory is present.' };
+      }
+
+      const pino = await import('pino');
+      const logger = pino.default({ level: 'warn' });
+
+      const resultsDir = new URL('../../auto-eval/results', import.meta.url).pathname;
+      const store = new storeMod.AutoEvalStore(resultsDir);
+
+      const evaluations = store.loadAllEvaluations();
+      if (evaluations.length === 0) {
+        return { ok: false, message: 'No auto-eval results found. Run `pnpm --filter @grace/api auto-eval` first.' };
+      }
+
+      const { patterns } = analyzerMod.analyzeResults(evaluations);
+      const rules = await feedbackMod.generateContentRulesFromPatterns(deps.llm, patterns, deps.pool, logger);
+
+      if (rules.length === 0) {
+        return { ok: true, message: 'No actionable patterns found for content rule generation.', rulesGenerated: 0 };
+      }
+
+      const inserted = await feedbackMod.insertDraftContentRules(deps.pool, rules, logger);
+      return {
+        ok: true,
+        rulesGenerated: rules.length,
+        rulesInserted: inserted,
+        message: `Generated ${rules.length} draft content rules from ${evaluations.length} auto-eval conversations. Rules are inactive — review and activate in the admin dashboard.`,
+        rules: rules.map((r: { pattern: string; severity: string; reason: string }) => ({ pattern: r.pattern, severity: r.severity, reason: r.reason })),
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply.status(500).send({ error: 'AUTO_GENERATE_FAILED', message: msg });
+    }
   });
 
   // ─── Business metrics ────────────────────────────────────────────────────────

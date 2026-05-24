@@ -32,5 +32,15 @@ Thumbs.db
 services/api/eval/results/
 services/api/auto-eval/results/
 
+# build artifacts in non-dist dirs
+services/api/auto-eval/*.js
+services/api/auto-eval/*.js.map
+services/api/auto-eval/*.d.ts
+services/api/auto-eval/*.d.ts.map
+services/api/eval/*.js
+services/api/eval/*.js.map
+services/api/eval/*.d.ts
+services/api/eval/*.d.ts.map
+
 # misc
 *.tsbuildinfo

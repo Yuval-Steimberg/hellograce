@@ -28,7 +28,7 @@ import { ContentRulesService } from './services/content-rules.service.js';
 import { MessageTemplatesService } from './services/message-templates.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
-import { PromptOptimizer, type OptimizerRunReport } from './scheduler/prompt-optimizer.js';
+import { PromptOptimizer, type OptimizerRunReport, type SyntheticFeedback } from './scheduler/prompt-optimizer.js';
 import { AppError } from './errors.js';
 
 async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Promise<void> }> {
@@ -104,6 +104,30 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   // Hot-reload BOTH the reactive AIService and the proactive MessageGenerator
   // whenever the optimizer auto-activates a new prompt. No SIGHUP, no restart.
+  // Load auto-eval preference pairs as synthetic RLHF signals.
+  // Path is constructed at runtime so tsc doesn't try to resolve auto-eval/ (outside rootDir).
+  const loadSyntheticFeedback = async (): Promise<SyntheticFeedback[]> => {
+    try {
+      const feedbackPath = ['..', 'auto-eval', 'feedback-loop.js'].join('/');
+      const mod = await import(feedbackPath).catch(() => null) as {
+        loadPreferencePairs: (dir: string) => Array<{ userMessage: string; rejected: string; dimension: string; reasoning: string; chosen: string }>;
+        pairsToSyntheticFeedback: (pairs: unknown[]) => SyntheticFeedback[];
+      } | null;
+      if (!mod) return [];
+      const { existsSync } = await import('fs');
+      const resultsDir = new URL('../auto-eval/results', import.meta.url).pathname;
+      if (!existsSync(resultsDir)) return [];
+      const pairs = mod.loadPreferencePairs(resultsDir);
+      if (pairs.length > 0) {
+        logger.info({ pairs: pairs.length }, 'synthetic_feedback.loaded_from_auto_eval');
+        return mod.pairsToSyntheticFeedback(pairs);
+      }
+    } catch {
+      // auto-eval results may not exist yet — that's fine
+    }
+    return [];
+  };
+
   const promptOptimizer = new PromptOptimizer(pool, llm, logger, {
     onPromptActivated: async (content: string) => {
       ai.updateSystemPrompt(content);
@@ -118,6 +142,12 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       logger.info({ adminPhone, version: report.version }, 'prompt_optimizer.report_sent');
     },
   });
+
+  // Seed optimizer with any available auto-eval preference pairs
+  const synthetic = await loadSyntheticFeedback();
+  if (synthetic.length > 0) {
+    promptOptimizer.injectSyntheticFeedback(synthetic);
+  }
   const scheduler = new Scheduler({ users, sender, generator, logger, redis, promptOptimizer });
 
   // Shared hot-reload routine — used by SIGHUP and the admin sync endpoint.

@@ -21,11 +21,12 @@ export async function generatePreferencePairs(
     for (const turnEval of evaluation.turnEvaluations) {
       if (turnEval.passed || turnEval.overallScore >= 4) continue;
 
+      if (turnEval.dimensions.length === 0) continue;
       const worstDim = turnEval.dimensions.reduce(
         (worst, d) => (d.score < worst.score ? d : worst),
-        turnEval.dimensions[0],
+        turnEval.dimensions[0]!,
       );
-      if (!worstDim || worstDim.score >= 3) continue;
+      if (worstDim.score >= 3) continue;
 
       const turnIdx = turnEval.turnIndex;
       const historyTurns = conv.turns.slice(0, turnIdx * 2);

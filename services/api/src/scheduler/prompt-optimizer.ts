@@ -89,13 +89,31 @@ interface FeedbackRow {
   rating?: number;
 }
 
+export interface SyntheticFeedback {
+  user_message: string;
+  assistant_message: string;
+  comment: string;
+  rating: number;
+}
+
 export class PromptOptimizer {
+  private syntheticFeedback: SyntheticFeedback[] = [];
+
   constructor(
     private pool: Pool,
     private llm: LLMProvider,
     private logger: Logger,
     private hooks?: PromptOptimizerHooks,
   ) {}
+
+  /**
+   * Inject synthetic feedback from auto-eval preference pairs.
+   * These are merged with real RLHF signals during the nightly run.
+   */
+  injectSyntheticFeedback(feedback: SyntheticFeedback[]): void {
+    this.syntheticFeedback = feedback;
+    this.logger.info({ count: feedback.length }, 'prompt_optimizer.synthetic_feedback_loaded');
+  }
 
   async run(): Promise<void> {
     this.logger.info('prompt_optimizer.started');
@@ -228,7 +246,13 @@ export class PromptOptimizer {
     const basePrompt = currentPrompt.replace(new RegExp(`${ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*$`), '').trimEnd();
     const newPrompt = `${basePrompt}${ADDITIONS_MARKER}${result.additions.trim()}`;
 
-    const safe = this.isSafe(newPrompt);
+    let safe = this.isSafe(newPrompt);
+
+    // Eval gate: run a quick auto-eval before auto-activating
+    if (safe) {
+      safe = await this.runEvalGate();
+    }
+
     const version = await this.saveVersion(newPrompt, result.analysis, safe);
 
     if (safe) {
@@ -250,7 +274,7 @@ export class PromptOptimizer {
       version,
       analysis: result.analysis,
       stats,
-      draftReason: safe ? undefined : 'Safety gate: a required safety or behavior phrase was dropped from the combined prompt. Saved as draft for manual review.',
+      draftReason: safe ? undefined : 'Safety or eval gate failed. The prompt may have dropped required phrases or scored below the auto-eval baseline. Saved as draft for manual review.',
     });
   }
 
@@ -321,8 +345,27 @@ export class PromptOptimizer {
       [since],
     );
 
+    // Merge synthetic feedback from auto-eval preference pairs
+    const syntheticNeg = this.syntheticFeedback
+      .filter((s) => s.rating < 0)
+      .map((s) => ({
+        assistant_message: s.assistant_message,
+        user_message: s.user_message,
+        comment: s.comment,
+        rating: s.rating,
+      }));
+
+    const allNegative = [...negativeRows, ...syntheticNeg].slice(0, NEG_SAMPLE_LIMIT);
+
+    if (syntheticNeg.length > 0) {
+      this.logger.info(
+        { realNeg: negativeRows.length, syntheticNeg: syntheticNeg.length },
+        'prompt_optimizer.merged_synthetic_feedback',
+      );
+    }
+
     return {
-      negativeSamples: negativeRows,
+      negativeSamples: allNegative,
       positiveSamples: positiveRows,
       fallbackCount: parseInt(fallbackRows[0]?.count ?? '0', 10),
       totalMessages: parseInt(totalRows[0]?.count ?? '0', 10),
@@ -449,6 +492,29 @@ Write 2–5 specific new behavioral rules to add to Grace's prompt that fix the 
       return null;
     }
     return parsed;
+  }
+
+  private async runEvalGate(): Promise<boolean> {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return true;
+
+    try {
+      const gatePath = ['..', '..', 'auto-eval', 'feedback-loop.js'].join('/');
+      const mod = await import(gatePath).catch(() => null) as {
+        evalGateCheck: (llm: unknown, prompt: string, baseline: number, logger: unknown) => Promise<{ passed: boolean; score: number; details: string }>;
+      } | null;
+      if (!mod) return true;
+
+      const baseline = Number(process.env.EVAL_GATE_BASELINE ?? '2.5');
+      const result = await mod.evalGateCheck(this.llm, '', baseline, this.logger);
+      if (!result.passed) {
+        this.logger.warn({ score: result.score, baseline, details: result.details }, 'prompt_optimizer.eval_gate_blocked');
+      }
+      return result.passed;
+    } catch (err) {
+      this.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'prompt_optimizer.eval_gate_skipped');
+      return true;
+    }
   }
 
   // Safety gate: check the COMBINED prompt (base + new additions) still has all anchors.

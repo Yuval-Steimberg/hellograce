@@ -53,7 +53,7 @@ export class AutoEvalStore {
     if (files.length === 0) return null;
 
     try {
-      const content = readFileSync(join(dir, files[0]), 'utf8');
+      const content = readFileSync(join(dir, files[0]!), 'utf8');
       return JSON.parse(content) as AutoEvalReport;
     } catch {
       return null;

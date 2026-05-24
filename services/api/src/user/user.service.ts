@@ -24,6 +24,7 @@ export interface GraceUser {
    *  'vegan' | 'vegetarian' | 'pescatarian' | null. Written synchronously
    *  by ai.service.ts when detectDietaryRestriction matches; read on every
    *  request so the guard layer doesn't rely on history timing. */
+  activity_level: string | null;
   dietary_pattern: string | null;
   // behavioural flags
   protein_focus_boost: boolean;

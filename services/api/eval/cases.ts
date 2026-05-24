@@ -1030,4 +1030,111 @@ export const EVAL_CASES: EvalCase[] = [
     },
     note: 'Regression: this exact message triggered safe fallback when API was crashing. Must log food and reply briefly.',
   },
+
+  // ─── Nutrition calculation + response quality (7) ───────────────────────
+  {
+    id: 'nutrition-calorie-question',
+    category: 'medical_question',
+    input: 'how many calories should I be eating per day?',
+    expected: {
+      maxLengthChars: 700,
+      mustNotInclude: [
+        'I can\'t help with that',
+        'consult your doctor about calories',
+        'only a dietitian can say',
+      ],
+    },
+    note: 'User asks about calorie target. Grace should provide a range estimate (not an exact number) based on available profile data, or ask a brief clarifying question if data is missing.',
+  },
+  {
+    id: 'nutrition-calorie-missing-data',
+    category: 'chat',
+    input: 'what should my daily calorie intake be?',
+    expected: {
+      maxLengthChars: 500,
+      mustNotInclude: [
+        'I can\'t answer that',
+        'I don\'t have enough information to help',
+        'see a nutritionist',
+      ],
+    },
+    note: 'Calorie question with incomplete profile. Grace should either give a general range or ask ONE conversational question to fill the gap — never refuse outright.',
+  },
+  {
+    id: 'nutrition-protein-target',
+    category: 'medical_question',
+    input: 'how much protein should I eat per day for weight loss?',
+    expected: {
+      maxLengthChars: 600,
+      mustInclude: ['protein'],
+      mustNotInclude: [
+        'I can\'t recommend',
+        'only your doctor can say',
+        'consult a professional',
+      ],
+    },
+    note: 'Protein target question. Grace should give a range based on body weight (e.g. 1.2-1.6g/kg), not refuse.',
+  },
+  {
+    id: 'nutrition-latest-message-priority',
+    category: 'food',
+    input: 'what should I eat for dinner?',
+    expected: {
+      maxLengthChars: 600,
+      mustNotInclude: [
+        'tired',
+        'fatigue',
+        'exhaustion',
+        'energy level',
+        'how are you feeling',
+        'sleep',
+      ],
+    },
+    note: 'Topic pivot test: if the user previously discussed tiredness and now asks about dinner, response must be about dinner, NOT tiredness.',
+  },
+  {
+    id: 'nutrition-no-generic-filler',
+    category: 'medical_question',
+    input: 'is it normal to lose appetite on Wegovy?',
+    expected: {
+      maxLengthChars: 600,
+      mustNotInclude: [
+        'Let me know if you need anything',
+        'I\'m here to help with whatever you need',
+        'Feel free to reach out anytime',
+        'Don\'t hesitate to ask',
+      ],
+    },
+    note: 'Specific question must get a specific answer. No generic filler phrases as the primary content.',
+  },
+  {
+    id: 'nutrition-nausea-day-eating',
+    category: 'side_effect',
+    input: 'feeling really nauseous today but I know I need to eat something. what should I have?',
+    expected: {
+      maxLengthChars: 700,
+      mustNotInclude: [
+        'consult your doctor about what to eat',
+        'I can\'t recommend food when you\'re nauseous',
+        'see your prescriber',
+      ],
+    },
+    note: 'User is nauseous and asks about eating. Grace should adapt recommendations for nausea (smaller meals, bland foods, crackers, broth, ginger) — not deflect.',
+  },
+  {
+    id: 'nutrition-range-not-precision',
+    category: 'medical_question',
+    input: 'about how many calories does someone my size need?',
+    expected: {
+      maxLengthChars: 600,
+      mustNotInclude: [
+        'exactly 1,',
+        'exactly 2,',
+        'precisely ',
+        'you need 1,',
+        'you need 2,',
+      ],
+    },
+    note: 'Calorie/nutrition questions must use ranges (e.g. "around 1,600-1,800") not exact numbers. Grace is not a calculator.',
+  },
 ];

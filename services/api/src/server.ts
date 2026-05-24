@@ -12,9 +12,6 @@ import { Cache } from './cache/cache.js';
 import { GeminiProvider } from './llm/gemini.js';
 import { GeminiEmbedder } from './rag/gemini-embedder.js';
 import { RagService } from './rag/rag.service.js';
-import { SparseSearchService } from './rag/sparse-search.service.js';
-import { ReRankerService } from './rag/reranker.service.js';
-import { HybridRagService } from './rag/hybrid-rag.service.js';
 import { MemoryService } from './memory/memory.service.js';
 import { UserMemoryService } from './memory/user-memory.service.js';
 import { AIService } from './services/ai.service.js';
@@ -29,15 +26,9 @@ import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
 import { ContentRulesService } from './services/content-rules.service.js';
 import { MessageTemplatesService } from './services/message-templates.service.js';
-import { ResponseFingerprintService } from './services/response-fingerprint.service.js';
-import { ConversationSummaryService } from './services/conversation-summary.service.js';
-import { TopicTrackerService } from './services/topic-tracker.service.js';
-import { AnomalyDetectorService } from './scheduler/anomaly-detector.service.js';
-import { UsdaFoodService } from './services/usda-food.service.js';
-import { BanditService } from './services/bandit.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
-import { PromptOptimizer, type OptimizerRunReport } from './scheduler/prompt-optimizer.js';
+import { PromptOptimizer, type OptimizerRunReport, type SyntheticFeedback } from './scheduler/prompt-optimizer.js';
 import { AppError } from './errors.js';
 
 async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Promise<void> }> {
@@ -51,13 +42,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const llm = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL }, logger, cache);
   const memory = new MemoryService(pool);
   const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'gemini-embedding-001', cache);
-  // HybridRagService is a drop-in extension of RagService. When RERANKER_URL is
-  // unset, the reranker leg is a no-op and behavior matches dense-only RagService.
-  // The sparse FTS leg requires migration 20260522000003_hybrid_rag_fts.sql; if
-  // unapplied the leg returns [] and dense results are used. Strictly additive.
-  const sparseSearch = new SparseSearchService(pool, logger);
-  const reranker = new ReRankerService(env.RERANKER_URL, logger);
-  const rag: RagService = new HybridRagService(pool, embedder, logger, sparseSearch, reranker);
+  const rag = new RagService(pool, embedder, logger);
   const turnQueue = getTurnQueue(redis);
   const factExtractQueue = getFactExtractQueue(redis);
 
@@ -81,19 +66,6 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   const userMemory = new UserMemoryService(pool, embedder, llm, logger);
 
-  // Phase 4 additive services. None of these change existing behavior — they
-  // record/observe alongside the current flow and surface in admin metrics.
-  const fingerprint = new ResponseFingerprintService(redis, logger);
-  const conversationSummary = new ConversationSummaryService(pool, llm, logger);
-  const topicTracker = new TopicTrackerService(pool, logger);
-  const anomalyDetector = new AnomalyDetectorService(pool, logger);
-
-  // Phase 5: USDA + bandit. USDA is no-op when USDA_API_KEY is unset (falls
-  // back to LLM-only estimation). Bandit always works but only meaningfully
-  // for rlhf_enabled users whose 👍/👎 generate the reward signal.
-  const usda = new UsdaFoodService(pool, logger, env.USDA_API_KEY);
-  const bandit = new BanditService(pool, redis, logger);
-
   const ai = new AIService({
     pool,
     llm,
@@ -111,11 +83,6 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     systemPrompt: await loadActivePrompt(),
     contentRulesService,
     userMemory,
-    fingerprint,
-    conversationSummary,
-    topicTracker,
-    usda,
-    bandit,
   });
 
   const sender = new TwilioSender(
@@ -137,6 +104,30 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   // Hot-reload BOTH the reactive AIService and the proactive MessageGenerator
   // whenever the optimizer auto-activates a new prompt. No SIGHUP, no restart.
+  // Load auto-eval preference pairs as synthetic RLHF signals.
+  // Path is constructed at runtime so tsc doesn't try to resolve auto-eval/ (outside rootDir).
+  const loadSyntheticFeedback = async (): Promise<SyntheticFeedback[]> => {
+    try {
+      const feedbackPath = ['..', 'auto-eval', 'feedback-loop.js'].join('/');
+      const mod = await import(feedbackPath).catch(() => null) as {
+        loadPreferencePairs: (dir: string) => Array<{ userMessage: string; rejected: string; dimension: string; reasoning: string; chosen: string }>;
+        pairsToSyntheticFeedback: (pairs: unknown[]) => SyntheticFeedback[];
+      } | null;
+      if (!mod) return [];
+      const { existsSync } = await import('fs');
+      const resultsDir = new URL('../auto-eval/results', import.meta.url).pathname;
+      if (!existsSync(resultsDir)) return [];
+      const pairs = mod.loadPreferencePairs(resultsDir);
+      if (pairs.length > 0) {
+        logger.info({ pairs: pairs.length }, 'synthetic_feedback.loaded_from_auto_eval');
+        return mod.pairsToSyntheticFeedback(pairs);
+      }
+    } catch {
+      // auto-eval results may not exist yet — that's fine
+    }
+    return [];
+  };
+
   const promptOptimizer = new PromptOptimizer(pool, llm, logger, {
     onPromptActivated: async (content: string) => {
       ai.updateSystemPrompt(content);
@@ -151,7 +142,13 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       logger.info({ adminPhone, version: report.version }, 'prompt_optimizer.report_sent');
     },
   });
-  const scheduler = new Scheduler({ users, sender, generator, logger, redis, promptOptimizer, anomalyDetector });
+
+  // Seed optimizer with any available auto-eval preference pairs
+  const synthetic = await loadSyntheticFeedback();
+  if (synthetic.length > 0) {
+    promptOptimizer.injectSyntheticFeedback(synthetic);
+  }
+  const scheduler = new Scheduler({ users, sender, generator, logger, redis, promptOptimizer });
 
   // Shared hot-reload routine — used by SIGHUP and the admin sync endpoint.
   const reloadActivePrompt = async (): Promise<void> => {
@@ -202,10 +199,10 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   });
 
   registerHealthRoutes(app, pool);
-  registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService, bandit });
+  registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService });
   registerUserRoutes(app, { pool, users, sender, generator });
   registerChatRoutes(app, ai, pool);
-  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, bandit, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
+  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
 
   const shutdown = async () => {
     app.log.info('shutdown.start');

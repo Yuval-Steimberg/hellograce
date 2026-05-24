@@ -5,6 +5,8 @@ interface AboutYouData {
   currentWeight?: string;
   goalWeight?: string;
   heightCm?: string;
+  age?: string;
+  activityLevel?: string;
 }
 
 interface AboutYouProps {
@@ -12,6 +14,8 @@ interface AboutYouProps {
   currentWeight: string;
   goalWeight: string;
   heightCm: string;
+  age: string;
+  activityLevel: string;
   onChange: (data: AboutYouData) => void;
   onNext: () => void;
 }
@@ -26,11 +30,20 @@ const SEX_OPTIONS: { value: string; label: string }[] = [
   { value: 'prefer_not_to_say', label: 'Prefer not to say' },
 ];
 
+const ACTIVITY_OPTIONS: { value: string; label: string; description: string }[] = [
+  { value: 'sedentary', label: 'Sedentary', description: 'Little or no exercise' },
+  { value: 'lightly_active', label: 'Lightly Active', description: 'Light exercise 1-3 days/week' },
+  { value: 'moderate', label: 'Moderate', description: 'Moderate exercise 3-5 days/week' },
+  { value: 'very_active', label: 'Very Active', description: 'Hard exercise 6-7 days/week' },
+];
+
 const WeightStep = ({
   sex,
   currentWeight,
   goalWeight,
   heightCm,
+  age,
+  activityLevel,
   onChange,
   onNext,
 }: AboutYouProps) => {
@@ -71,17 +84,30 @@ const WeightStep = ({
             </div>
           </div>
 
-          <label className="flex flex-col gap-2">
-            <span className="text-foreground font-medium text-sm px-1">Height (cm)</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              placeholder="e.g. 168"
-              value={heightCm}
-              onChange={(e) => onChange({ heightCm: e.target.value })}
-              className={inputClass}
-            />
-          </label>
+          <div className="grid grid-cols-2 gap-5">
+            <label className="flex flex-col gap-2">
+              <span className="text-foreground font-medium text-sm px-1">Height (cm)</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                placeholder="e.g. 168"
+                value={heightCm}
+                onChange={(e) => onChange({ heightCm: e.target.value })}
+                className={inputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-2">
+              <span className="text-foreground font-medium text-sm px-1">Age</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                placeholder="e.g. 34"
+                value={age}
+                onChange={(e) => onChange({ age: e.target.value })}
+                className={inputClass}
+              />
+            </label>
+          </div>
 
           <div className="grid grid-cols-2 gap-5">
             <label className="flex flex-col gap-2">
@@ -106,6 +132,30 @@ const WeightStep = ({
                 className={inputClass}
               />
             </label>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <span className="text-foreground font-medium text-sm px-1">Activity level</span>
+            <div className="grid grid-cols-2 gap-2.5">
+              {ACTIVITY_OPTIONS.map((opt) => {
+                const active = activityLevel === opt.value;
+                return (
+                  <button
+                    type="button"
+                    key={opt.value}
+                    onClick={() => onChange({ activityLevel: active ? '' : opt.value })}
+                    className={`text-left rounded-2xl border-2 px-4 py-3 transition-all ${
+                      active
+                        ? 'border-primary bg-primary/5 shadow-sm'
+                        : 'border-sand hover:border-primary/50 hover:bg-card/50'
+                    }`}
+                  >
+                    <div className="text-foreground font-medium text-[15px]">{opt.label}</div>
+                    <div className="text-muted-foreground text-xs mt-0.5">{opt.description}</div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 

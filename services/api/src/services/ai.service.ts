@@ -559,6 +559,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       if (user.height_cm) lines.push(`Height: ${user.height_cm} cm`);
       if (user.age) lines.push(`Age: ${user.age}`);
       if (user.sex) lines.push(`Sex: ${user.sex.replace('_', ' ')}`);
+      if (user.activity_level) lines.push(`Activity level: ${user.activity_level.replace(/_/g, ' ')}`);
       if (user.primary_goal) lines.push(`Primary goal: ${user.primary_goal.replace('_', ' ')}`);
       if (user.protein_goal_grams) {
         lines.push(`Personal daily protein target: ${user.protein_goal_grams}g â€” use THIS number, not a generic 80g.`);

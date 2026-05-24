@@ -7,21 +7,31 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import QuizLayout from "@/components/onboarding/QuizLayout";
 import WelcomeStep from "@/components/onboarding/WelcomeStep";
-import PhoneStep from "@/components/onboarding/PhoneStep";
+import NameStep from "@/components/onboarding/NameStep";
 import MedicationStep from "@/components/onboarding/MedicationStep";
 import InjectionDayStep from "@/components/onboarding/InjectionDayStep";
 import MedicationTimeStep from "@/components/onboarding/MedicationTimeStep";
+import GoalsStep from "@/components/onboarding/GoalsStep";
+import ScheduleStep from "@/components/onboarding/ScheduleStep";
 import FoodStep from "@/components/onboarding/FoodStep";
 import WeightStep from "@/components/onboarding/WeightStep";
+import PhoneStep from "@/components/onboarding/PhoneStep";
 import PaymentStep from "@/components/onboarding/PaymentStep";
 import ConfirmationStep from "@/components/onboarding/ConfirmationStep";
 
-// Minimal onboarding spec — only the fields Grace truly needs to start safely.
-// Everything else (name, goals, schedule, age, primary goal, GLP-1 start date)
-// gets learned naturally through conversation. Defaults are used for the
-// scheduler-required fields (wake_time, sleep_time) and the user can change
-// them via chat ("text me at 8am", "text me less").
-const TOTAL_STEPS = 8;
+// Full 11-step onboarding flow matching production screenshots:
+// 1. Welcome
+// 2. Name
+// 3. Medication
+// 4. Injection Day / Med Time
+// 5. Goals
+// 6. Schedule (wake/sleep)
+// 7. Food dislikes
+// 8. About you (sex, height, age, weight, goal weight, activity level)
+// 9. Phone + consent
+// 10. Payment/trial
+// 11. Confirmation
+const TOTAL_STEPS = 11;
 
 const Onboarding = () => {
   const seoJsonLd = breadcrumbSchema([
@@ -34,6 +44,7 @@ const Onboarding = () => {
   const [searchParams] = useSearchParams();
 
   // Core profile fields — collected in the form.
+  const [firstName, setFirstName] = useState("");
   const [phone, setPhone] = useState("");
   const [smsConsent, setSmsConsent] = useState(false);
   const [rlhfConsent, setRlhfConsent] = useState(false);
@@ -41,16 +52,17 @@ const Onboarding = () => {
   const [medicationFrequency, setMedicationFrequency] = useState("weekly");
   const [injectionDay, setInjectionDay] = useState("");
   const [medicationTime, setMedicationTime] = useState("");
+  const [goals, setGoals] = useState<string[]>([]);
+  const [wakeTime, setWakeTime] = useState("07:00");
+  const [sleepTime, setSleepTime] = useState("22:00");
   const [sex, setSex] = useState("");
   const [foodDislikes, setFoodDislikes] = useState("");
   const [currentWeight, setCurrentWeight] = useState("");
   const [goalWeight, setGoalWeight] = useState("");
   const [heightCm, setHeightCm] = useState("");
+  const [age, setAge] = useState("");
+  const [activityLevel, setActivityLevel] = useState("");
 
-  // Defaults — used by the scheduler if the user doesn't change them.
-  // User can adjust via chat ("text me at 7am", "text me less").
-  const wakeTime = "08:00";
-  const sleepTime = "22:00";
   const checkinCountPerDay = 2;
   const checkinDaysInterval = 1;
 
@@ -77,7 +89,7 @@ const Onboarding = () => {
       const storedId = localStorage.getItem("grace_user_id");
       if (storedId) {
         setUserId(storedId);
-        setStep(7); // payment step
+        setStep(10); // payment step
       }
     }
   }, [searchParams]);
@@ -88,19 +100,21 @@ const Onboarding = () => {
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York";
       const onboardBody = {
-        // firstName intentionally omitted — Grace asks naturally in chat.
+        firstName: firstName.trim() || undefined,
         phone: phone.trim(),
         medication,
         medicationFrequency,
         injectionDay: medicationFrequency === "daily" ? null : injectionDay,
         sex: sex || null,
+        goals: goals.length > 0 ? goals : undefined,
         wakeTime,
         sleepTime,
         foodDislikes: foodDislikes.trim() || null,
         currentWeight: currentWeight ? Number(currentWeight) : null,
         goalWeight: goalWeight ? Number(goalWeight) : null,
         heightCm: heightCm ? Number(heightCm) : null,
-        // age, primaryGoal, glp1StartDate, goals — all deferred to chat.
+        age: age ? Number(age) : null,
+        activityLevel: activityLevel || null,
         timezone,
         checkinCountPerDay,
         checkinDaysInterval,
@@ -144,8 +158,6 @@ const Onboarding = () => {
     }
   };
 
-  // Minimal flow (8 steps):
-  // Welcome → About You → Medication → Injection Day / Med Time → Food → Phone → Payment → Confirmation
   return (
     <>
       <SEOHead
@@ -161,22 +173,19 @@ const Onboarding = () => {
         onBack={back}
         showBack={step > 1 && step < TOTAL_STEPS}
       >
+        {/* Step 1: Welcome */}
         {step === 1 && <WelcomeStep onNext={next} />}
+
+        {/* Step 2: Name */}
         {step === 2 && (
-          <WeightStep
-            sex={sex}
-            currentWeight={currentWeight}
-            goalWeight={goalWeight}
-            heightCm={heightCm}
-            onChange={(d) => {
-              if (d.sex !== undefined) setSex(d.sex);
-              if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
-              if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
-              if (d.heightCm !== undefined) setHeightCm(d.heightCm);
-            }}
+          <NameStep
+            value={firstName}
+            onChange={setFirstName}
             onNext={next}
           />
         )}
+
+        {/* Step 3: Medication */}
         {step === 3 && (
           <MedicationStep
             selected={medication}
@@ -187,6 +196,8 @@ const Onboarding = () => {
             onNext={next}
           />
         )}
+
+        {/* Step 4: Injection Day or Med Time */}
         {step === 4 && (
           medicationFrequency === "daily" ? (
             <MedicationTimeStep selected={medicationTime} onSelect={setMedicationTime} onNext={next} />
@@ -194,8 +205,55 @@ const Onboarding = () => {
             <InjectionDayStep selected={injectionDay} onSelect={setInjectionDay} onNext={next} />
           )
         )}
-        {step === 5 && <FoodStep value={foodDislikes} onChange={setFoodDislikes} onNext={next} />}
+
+        {/* Step 5: Goals */}
+        {step === 5 && (
+          <GoalsStep
+            selected={goals}
+            onChange={setGoals}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 6: Schedule (wake/sleep) */}
         {step === 6 && (
+          <ScheduleStep
+            wakeTime={wakeTime}
+            sleepTime={sleepTime}
+            onChange={(d) => {
+              if (d.wakeTime !== undefined) setWakeTime(d.wakeTime);
+              if (d.sleepTime !== undefined) setSleepTime(d.sleepTime);
+            }}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 7: Food dislikes */}
+        {step === 7 && <FoodStep value={foodDislikes} onChange={setFoodDislikes} onNext={next} />}
+
+        {/* Step 8: About you (sex, height, age, weight, goal, activity) */}
+        {step === 8 && (
+          <WeightStep
+            sex={sex}
+            currentWeight={currentWeight}
+            goalWeight={goalWeight}
+            heightCm={heightCm}
+            age={age}
+            activityLevel={activityLevel}
+            onChange={(d) => {
+              if (d.sex !== undefined) setSex(d.sex);
+              if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
+              if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
+              if (d.heightCm !== undefined) setHeightCm(d.heightCm);
+              if (d.age !== undefined) setAge(d.age);
+              if (d.activityLevel !== undefined) setActivityLevel(d.activityLevel);
+            }}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 9: Phone + consent */}
+        {step === 9 && (
           <PhoneStep
             phone={phone}
             smsConsent={smsConsent}
@@ -207,14 +265,18 @@ const Onboarding = () => {
             saving={saving}
           />
         )}
-        {step === 7 && (
+
+        {/* Step 10: Payment/trial */}
+        {step === 10 && (
           <PaymentStep
             userId={userId}
-            firstName=""
+            firstName={firstName}
             onNext={next}
           />
         )}
-        {step === 8 && <ConfirmationStep firstName="" phone={phone} />}
+
+        {/* Step 11: Confirmation */}
+        {step === 11 && <ConfirmationStep firstName={firstName} phone={phone} />}
       </QuizLayout>
       <LegalFooter />
     </>

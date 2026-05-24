@@ -217,6 +217,100 @@ export interface ContentRule {
   updated_at?: string;
 }
 
+// ─── Auto-Eval Types ─────────────────────────────────────────────────────────
+
+export interface AutoEvalReport {
+  runId: string;
+  timestamp: string;
+  model: string;
+  totalConversations: number;
+  totalTurns: number;
+  overallScore: number;
+  passRate: number;
+  scoreByCategory: Record<string, { avg: number; count: number; passRate: number; worstScore: number }>;
+  scoreByDimension: Record<string, { avg: number; failRate: number }>;
+  topPatterns: Array<{ pattern: string; frequency: number; avgScoreImpact: number; category: string }>;
+  regressions: Array<{ dimension: string; previousAvg: number; currentAvg: number; delta: number; significance: string }>;
+  improvementSuggestions: string[];
+  preferencePairsGenerated: number;
+}
+
+export interface AutoEvalConversationSummary {
+  id: string;
+  scenarioId: string;
+  personaId: string;
+  personaName: string;
+  category: string;
+  scenarioDescription: string;
+  overallScore: number;
+  turnCount: number;
+}
+
+export interface AutoEvalTurnDetail {
+  turnIndex: number;
+  userMessage: string;
+  graceResponse: string;
+  overallScore: number;
+  dimensions: Array<{ name: string; score: number; reasoning: string }>;
+  strengths: string[];
+  weaknesses: string[];
+  criticalIssues: string[];
+  adminReviewed?: boolean;
+  adminOverrides?: Array<{ dimension: string; originalScore: number; newScore: number; adminNote: string }>;
+}
+
+export interface AutoEvalConversationDetail {
+  conversation: {
+    id: string;
+    scenarioId: string;
+    personaId: string;
+    persona: { name: string; communicationStyle: string; backstory: string };
+    scenario: { description: string; category: string; challenges: string[] };
+    turns: Array<{ role: string; text: string }>;
+  };
+  evaluation: {
+    overallScore: number;
+    summary: string;
+    conversationLevelIssues: string[];
+    memoryUsageScore: number;
+    consistencyScore: number;
+    turnEvaluations: AutoEvalTurnDetail[];
+  };
+}
+
+export interface AutoEvalPreferencePair {
+  id: string;
+  conversationId: string;
+  turnIndex: number;
+  userMessage: string;
+  chosen: string;
+  rejected: string;
+  chosenScore: number;
+  rejectedScore: number;
+  dimension: string;
+  reasoning: string;
+}
+
+export interface AutoEvalRunStatus {
+  running: boolean;
+  phase: 'simulating' | 'evaluating' | 'analyzing' | 'preference_pairs' | 'reporting' | 'done' | 'error';
+  progress: number;
+  total: number;
+  completed: number;
+  startedAt: string;
+  error?: string;
+}
+
+export interface AutoEvalProgressEvent {
+  phase: string;
+  progress: number;
+  total: number;
+  completed: number;
+  message: string;
+  score?: number;
+  error?: string;
+}
+
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export const api = {
@@ -341,5 +435,31 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ variables }),
       }),
+  },
+
+  autoEval: {
+    reports: () => apiFetch<{ reports: AutoEvalReport[] }>('/admin/auto-eval/reports'),
+    conversations: () => apiFetch<{ conversations: AutoEvalConversationSummary[] }>('/admin/auto-eval/conversations'),
+    conversation: (id: string) => apiFetch<AutoEvalConversationDetail>(`/admin/auto-eval/conversations/${id}`),
+    preferencePairs: () => apiFetch<{ pairs: AutoEvalPreferencePair[] }>('/admin/auto-eval/preference-pairs'),
+    updateTurnEval: (conversationId: string, turnIndex: number, body: {
+      overrides: Array<{ dimension: string; newScore: number; adminNote: string }>;
+      adminApproved?: boolean;
+    }) => apiFetch<{ ok: boolean }>(`/admin/auto-eval/evaluations/${conversationId}/turns/${turnIndex}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+    learn: () => apiFetch<{ ok: boolean; evaluationsProcessed: number; preferencePairsGenerated: number; contentRulesGenerated: number }>(
+      '/admin/auto-eval/learn', { method: 'POST' }
+    ),
+    autoGenRules: () => apiFetch<{ ok: boolean; rulesGenerated: number; rulesInserted: number; message: string }>(
+      '/admin/content-rules/auto-generate', { method: 'POST' }
+    ),
+    startRun: (opts?: { scenarioCount?: number; concurrency?: number; categories?: string[] }) =>
+      apiFetch<{ ok: boolean; message: string }>('/admin/auto-eval/run', {
+        method: 'POST',
+        body: JSON.stringify(opts ?? {}),
+      }),
+    status: () => apiFetch<{ running: boolean; state: AutoEvalRunStatus | null }>('/admin/auto-eval/status'),
   },
 };

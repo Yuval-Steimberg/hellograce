@@ -1169,6 +1169,36 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     }
   });
 
+  // Debug: check auto-eval file resolution
+  app.get('/admin/auto-eval/debug', async () => {
+    const url = new URL('../../auto-eval/streaming-runner.js', import.meta.url);
+    const { existsSync: fsExists } = await import('fs');
+    const { fileURLToPath } = await import('url');
+    let filePath = '';
+    let exists = false;
+    try {
+      filePath = fileURLToPath(url);
+      exists = fsExists(filePath);
+    } catch (e) {
+      filePath = `error: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    let importError = '';
+    try {
+      await import(url.href);
+    } catch (e) {
+      importError = e instanceof Error ? e.stack ?? e.message : String(e);
+    }
+    return {
+      importMetaUrl: import.meta.url,
+      resolvedUrl: url.href,
+      resolvedPath: filePath,
+      fileExists: exists,
+      autoEvalResultsDir,
+      resultsExists: fsExists(autoEvalResultsDir),
+      importError: importError || 'none',
+    };
+  });
+
   // 7. POST /admin/auto-eval/run — start a new auto-eval run in the background
   app.post('/admin/auto-eval/run', async (req, reply) => {
     const apiKey = process.env.GEMINI_API_KEY;

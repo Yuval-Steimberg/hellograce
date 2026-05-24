@@ -1,6 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
+import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { GRACE_SYSTEM_PROMPT } from '@grace/ai-core';
 import { UnauthorizedError, ValidationError } from '../errors.js';
 import type { Cache } from '../cache/cache.js';
@@ -835,6 +838,331 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       reply.status(500).send({ error: 'AUTO_GENERATE_FAILED', message: msg });
+    }
+  });
+
+  // ─── Auto-eval data endpoints ─────────────────────────────────────────────
+
+  // Resolve the auto-eval results directory relative to this file.
+  // Uses fileURLToPath + path.join so it works regardless of cwd.
+  const __adminDirname = fileURLToPath(new URL('.', import.meta.url));
+  const autoEvalResultsDir = join(__adminDirname, '..', '..', 'auto-eval', 'results');
+
+  /** Helper: safely read + parse a JSON file, returning null on any error. */
+  function readJsonFile<T>(filePath: string): T | null {
+    try {
+      if (!existsSync(filePath)) return null;
+      return JSON.parse(readFileSync(filePath, 'utf8')) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Helper: list JSON files in a subdirectory, returning [] if missing. */
+  function listJsonFiles(subdir: string): string[] {
+    const dir = join(autoEvalResultsDir, subdir);
+    if (!existsSync(dir)) return [];
+    try {
+      return readdirSync(dir).filter((f) => f.endsWith('.json'));
+    } catch {
+      return [];
+    }
+  }
+
+  // 1. GET /admin/auto-eval/reports — list all run reports, newest first
+  app.get('/admin/auto-eval/reports', async () => {
+    const files = listJsonFiles('reports');
+    const reports: unknown[] = [];
+    // Sort descending by filename (timestamps)
+    for (const file of files.sort().reverse()) {
+      const data = readJsonFile<Record<string, unknown>>(join(autoEvalResultsDir, 'reports', file));
+      if (data) {
+        reports.push({
+          runId: data.runId ?? null,
+          timestamp: data.timestamp ?? null,
+          model: data.model ?? null,
+          totalConversations: data.totalConversations ?? 0,
+          totalTurns: data.totalTurns ?? 0,
+          overallScore: data.overallScore ?? 0,
+          passRate: data.passRate ?? 0,
+          scoreByCategory: data.scoreByCategory ?? {},
+          scoreByDimension: data.scoreByDimension ?? {},
+          topPatterns: data.topPatterns ?? [],
+          regressions: data.regressions ?? [],
+          improvementSuggestions: data.improvementSuggestions ?? [],
+          preferencePairsGenerated: data.preferencePairsGenerated ?? 0,
+        });
+      }
+    }
+    return { reports };
+  });
+
+  // 2. GET /admin/auto-eval/conversations — list all simulated conversations with eval scores
+  app.get('/admin/auto-eval/conversations', async () => {
+    const convFiles = listJsonFiles('conversations');
+    const items: unknown[] = [];
+    for (const file of convFiles) {
+      const conv = readJsonFile<Record<string, unknown>>(join(autoEvalResultsDir, 'conversations', file));
+      if (!conv) continue;
+      const convId = (conv.id as string) ?? file.replace('.json', '');
+      // Try to load the matching evaluation
+      const evalData = readJsonFile<Record<string, unknown>>(join(autoEvalResultsDir, 'evaluations', `${convId}.json`));
+      const scenario = conv.scenario as Record<string, unknown> | undefined;
+      const persona = conv.persona as Record<string, unknown> | undefined;
+      const turns = conv.turns as unknown[] | undefined;
+      items.push({
+        id: convId,
+        scenarioId: conv.scenarioId ?? scenario?.id ?? null,
+        personaId: conv.personaId ?? persona?.id ?? null,
+        category: scenario?.category ?? evalData?.category ?? null,
+        overallScore: evalData?.overallScore ?? null,
+        turnCount: turns?.length ?? 0,
+        personaName: persona?.name ?? null,
+        scenarioDescription: scenario?.description ?? null,
+      });
+    }
+    return { conversations: items };
+  });
+
+  // 3. GET /admin/auto-eval/conversations/:id — single conversation with full evaluation
+  app.get('/admin/auto-eval/conversations/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const conv = readJsonFile<Record<string, unknown>>(join(autoEvalResultsDir, 'conversations', `${id}.json`));
+    if (!conv) throw new ValidationError('Conversation not found');
+    const evalData = readJsonFile<Record<string, unknown>>(join(autoEvalResultsDir, 'evaluations', `${id}.json`));
+    return {
+      conversation: conv,
+      evaluation: evalData ?? null,
+    };
+  });
+
+  // 4. GET /admin/auto-eval/preference-pairs — list all preference pairs
+  app.get('/admin/auto-eval/preference-pairs', async () => {
+    const files = listJsonFiles('preference-pairs');
+    const pairs: unknown[] = [];
+    for (const file of files) {
+      const batch = readJsonFile<Array<Record<string, unknown>>>(join(autoEvalResultsDir, 'preference-pairs', file));
+      if (!Array.isArray(batch)) continue;
+      for (const pair of batch) {
+        pairs.push({
+          id: pair.id ?? null,
+          conversationId: pair.conversationId ?? null,
+          turnIndex: pair.turnIndex ?? null,
+          userMessage: pair.userMessage ?? null,
+          chosen: pair.chosen ?? null,
+          rejected: pair.rejected ?? null,
+          chosenScore: pair.chosenScore ?? null,
+          rejectedScore: pair.rejectedScore ?? null,
+          dimension: pair.dimension ?? null,
+          reasoning: pair.reasoning ?? null,
+        });
+      }
+    }
+    return { pairs };
+  });
+
+  // 5. PUT /admin/auto-eval/evaluations/:conversationId/turns/:turnIndex
+  //    Admin edits a turn evaluation with dimension overrides
+
+  const TurnOverrideSchema = z.object({
+    overrides: z.array(z.object({
+      dimension: z.string().min(1),
+      newScore: z.number().min(1).max(5),
+      adminNote: z.string().max(1000),
+    })).min(1),
+    adminApproved: z.boolean().optional(),
+  });
+
+  app.put('/admin/auto-eval/evaluations/:conversationId/turns/:turnIndex', async (req) => {
+    const { conversationId, turnIndex: turnIndexStr } = req.params as { conversationId: string; turnIndex: string };
+    const turnIndex = parseInt(turnIndexStr, 10);
+    if (isNaN(turnIndex) || turnIndex < 0) throw new ValidationError('turnIndex must be a non-negative integer');
+
+    const parsed = TurnOverrideSchema.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError(parsed.error.message);
+    const { overrides, adminApproved } = parsed.data;
+
+    const evalPath = join(autoEvalResultsDir, 'evaluations', `${conversationId}.json`);
+    const evalData = readJsonFile<Record<string, unknown>>(evalPath);
+    if (!evalData) throw new ValidationError('Evaluation not found');
+
+    const turnEvaluations = evalData.turnEvaluations as Array<Record<string, unknown>> | undefined;
+    if (!turnEvaluations || !turnEvaluations[turnIndex]) {
+      throw new ValidationError(`Turn index ${turnIndex} not found in evaluation`);
+    }
+
+    const turn = turnEvaluations[turnIndex]!;
+    const dimensions = turn.dimensions as Array<{ name: string; score: number; reasoning: string }> | undefined;
+    if (!dimensions) throw new ValidationError('Turn has no dimensions data');
+
+    // Track which dimensions were overridden DOWN for preference pair generation
+    const downgradedOverrides: Array<{ dimension: string; oldScore: number; newScore: number; adminNote: string }> = [];
+
+    // Apply each override
+    for (const override of overrides) {
+      const dim = dimensions.find((d) => d.name === override.dimension);
+      if (dim) {
+        const oldScore = dim.score;
+        if (override.newScore < oldScore) {
+          downgradedOverrides.push({ dimension: override.dimension, oldScore, newScore: override.newScore, adminNote: override.adminNote });
+        }
+        dim.score = override.newScore;
+      }
+    }
+
+    // Recalculate the turn's overall score as mean of all dimension scores
+    const totalScore = dimensions.reduce((sum, d) => sum + d.score, 0);
+    turn.overallScore = parseFloat((totalScore / dimensions.length).toFixed(2));
+
+    // Mark the turn as admin-reviewed
+    turn.adminReviewed = true;
+    turn.adminOverrides = overrides;
+    if (adminApproved !== undefined) {
+      turn.adminApproved = adminApproved;
+    }
+
+    // Save the updated evaluation
+    try {
+      writeFileSync(evalPath, JSON.stringify(evalData, null, 2), 'utf8');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new ValidationError(`Failed to save evaluation: ${msg}`);
+    }
+
+    // Generate preference pairs for downgraded dimensions
+    let preferencePairsGenerated = 0;
+    if (downgradedOverrides.length > 0) {
+      const convPath = join(autoEvalResultsDir, 'conversations', `${conversationId}.json`);
+      const conv = readJsonFile<Record<string, unknown>>(convPath);
+      const turns = conv?.turns as Array<{ role: string; text: string }> | undefined;
+      const userMessage = (turn.userMessage as string) ?? turns?.[turnIndex * 2]?.text ?? '';
+      const graceResponse = (turn.graceResponse as string) ?? turns?.[turnIndex * 2 + 1]?.text ?? '';
+
+      const newPairs: Array<Record<string, unknown>> = downgradedOverrides.map((dg) => ({
+        id: `admin-${conversationId}-${turnIndex}-${dg.dimension}-${Date.now()}`,
+        conversationId,
+        turnIndex,
+        context: '',
+        userMessage,
+        chosen: '', // Empty — admin flagged this as bad, the "better" response is not yet generated
+        rejected: graceResponse,
+        chosenScore: 0,
+        rejectedScore: dg.newScore,
+        dimension: dg.dimension,
+        reasoning: `[admin-override] ${dg.adminNote} (score ${dg.oldScore} → ${dg.newScore})`,
+      }));
+
+      // Append to a preference pairs file
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const pairsPath = join(autoEvalResultsDir, 'preference-pairs', `admin-${ts}.json`);
+      try {
+        writeFileSync(pairsPath, JSON.stringify(newPairs, null, 2), 'utf8');
+        preferencePairsGenerated = newPairs.length;
+      } catch {
+        // Non-fatal — the override was still saved
+      }
+    }
+
+    return {
+      ok: true,
+      conversationId,
+      turnIndex,
+      newOverallScore: turn.overallScore,
+      overridesApplied: overrides.length,
+      preferencePairsGenerated,
+    };
+  });
+
+  // 6. POST /admin/auto-eval/learn — trigger learning from admin-reviewed evaluations
+  app.post('/admin/auto-eval/learn', async (_req, reply) => {
+    if (!deps.llm) {
+      reply.status(503).send({ error: 'LLM_UNAVAILABLE', message: 'LLM not configured' });
+      return;
+    }
+
+    try {
+      // Dynamic imports to avoid tsc rootDir issues
+      const storePath = ['..', '..', 'auto-eval', 'store.js'].join('/');
+      const analyzerPath = ['..', '..', 'auto-eval', 'analyzer.js'].join('/');
+      const feedbackPath = ['..', '..', 'auto-eval', 'feedback-loop.js'].join('/');
+
+      const storeMod = await import(storePath).catch(() => null) as {
+        AutoEvalStore: new (dir: string) => {
+          loadAllEvaluations: () => Array<Record<string, unknown>>;
+          loadAllPreferencePairs: () => unknown[];
+        };
+      } | null;
+      const analyzerMod = await import(analyzerPath).catch(() => null) as {
+        analyzeResults: (evals: unknown[]) => {
+          patterns: Array<{ pattern: string; frequency: number; avgScoreImpact: number; exampleConversationIds: string[]; suggestedFix: string; category: string }>;
+        };
+      } | null;
+      const feedbackMod = await import(feedbackPath).catch(() => null) as {
+        loadPreferencePairs: (dir: string) => unknown[];
+        pairsToSyntheticFeedback: (pairs: unknown[]) => unknown[];
+        generateContentRulesFromPatterns: (llm: unknown, patterns: unknown[], pool: unknown, logger: unknown) => Promise<Array<{ rule_type: string; pattern: string; is_regex: boolean; reason: string; severity: string }>>;
+        insertDraftContentRules: (pool: unknown, rules: unknown[], logger: unknown) => Promise<number>;
+      } | null;
+
+      if (!storeMod || !analyzerMod || !feedbackMod) {
+        return { ok: false, message: 'Auto-eval modules not available. Ensure the auto-eval directory is present.' };
+      }
+
+      const pino = await import('pino');
+      const logger = pino.default({ level: 'warn' });
+
+      const store = new storeMod.AutoEvalStore(autoEvalResultsDir);
+
+      // Load all evaluations and filter to admin-reviewed ones
+      const allEvaluations = store.loadAllEvaluations();
+      const reviewedEvaluations = allEvaluations.filter((ev) => {
+        const turnEvals = (ev as Record<string, unknown>).turnEvaluations as Array<Record<string, unknown>> | undefined;
+        return turnEvals?.some((t) => t.adminReviewed === true);
+      });
+
+      if (reviewedEvaluations.length === 0) {
+        return {
+          ok: true,
+          message: 'No admin-reviewed evaluations found. Review turn evaluations first.',
+          evaluationsProcessed: 0,
+          preferencePairsGenerated: 0,
+          contentRulesGenerated: 0,
+        };
+      }
+
+      // Load preference pairs and inject into optimizer
+      const pairs = store.loadAllPreferencePairs();
+      let preferencePairsCount = pairs.length;
+
+      if (deps.promptOptimizer && pairs.length > 0) {
+        const syntheticFeedback = feedbackMod.pairsToSyntheticFeedback(pairs);
+        // The prompt optimizer will pick these up on its next run
+        if (typeof (deps.promptOptimizer as unknown as Record<string, unknown>).injectSyntheticFeedback === 'function') {
+          (deps.promptOptimizer as unknown as { injectSyntheticFeedback: (fb: unknown[]) => void }).injectSyntheticFeedback(syntheticFeedback);
+        }
+      }
+
+      // Analyze patterns from reviewed evaluations and generate content rules
+      const { patterns } = analyzerMod.analyzeResults(reviewedEvaluations);
+      let contentRulesGenerated = 0;
+
+      if (patterns.length > 0) {
+        const rules = await feedbackMod.generateContentRulesFromPatterns(deps.llm, patterns, deps.pool, logger);
+        if (rules.length > 0) {
+          contentRulesGenerated = await feedbackMod.insertDraftContentRules(deps.pool, rules, logger);
+        }
+      }
+
+      return {
+        ok: true,
+        evaluationsProcessed: reviewedEvaluations.length,
+        preferencePairsGenerated: preferencePairsCount,
+        contentRulesGenerated,
+        message: `Processed ${reviewedEvaluations.length} admin-reviewed evaluations. ${preferencePairsCount} preference pairs injected. ${contentRulesGenerated} draft content rules generated.`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply.status(500).send({ error: 'LEARN_FAILED', message: msg });
     }
   });
 

@@ -6,7 +6,7 @@ import { ConversationSimulator } from './simulator.js';
 import { ConversationEvaluator } from './evaluator.js';
 import { analyzeResults } from './analyzer.js';
 import { generatePreferencePairs } from './preference-pairs.js';
-import { buildReport, formatReport } from './reporter.js';
+import { buildReport } from './reporter.js';
 import { AutoEvalStore } from './store.js';
 import type {
   AutoEvalReport,

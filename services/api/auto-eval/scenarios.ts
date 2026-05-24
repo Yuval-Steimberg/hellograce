@@ -352,7 +352,7 @@ export function generateScenarios(opts?: {
         : [];
       const pool = preferred.length > 0 ? preferred : availablePersonas;
 
-      const persona = pool[idCounter % pool.length];
+      const persona = pool[idCounter % pool.length]!;
       scenarios.push({
         id: `${group.category}_${idCounter++}`,
         personaId: persona.id,
@@ -380,7 +380,7 @@ export function generateScenarios(opts?: {
     while (selected.length < opts.count && selected.length < scenarios.length) {
       const remaining = scenarios.filter((s) => !selected.includes(s));
       if (remaining.length === 0) break;
-      selected.push(remaining[0]);
+      selected.push(remaining[0]!);
     }
     return selected.slice(0, opts.count);
   }
@@ -418,7 +418,7 @@ Categories: food_logging, emotional_support, medical_question, topic_switching, 
     const arr = Array.isArray(parsed) ? parsed : parsed.scenarios ?? [];
     return arr.map((s: Record<string, unknown>, i: number) => ({
       id: `dynamic_${Date.now()}_${i}`,
-      personaId: PERSONAS[i % PERSONAS.length].id,
+      personaId: PERSONAS[i % PERSONAS.length]!.id,
       category: (s.category as ScenarioCategory) ?? 'edge_case',
       description: String(s.description ?? ''),
       turnCount: Number(s.turnCount ?? 3),

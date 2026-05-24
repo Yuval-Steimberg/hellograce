@@ -18,7 +18,8 @@ COPY packages/ai-core packages/ai-core
 COPY services/api services/api
 RUN pnpm --filter @grace/shared build \
  && pnpm --filter @grace/ai-core build \
- && pnpm --filter @grace/api build
+ && pnpm --filter @grace/api build \
+ && cd services/api && npx tsc -p tsconfig.auto-eval.json
 
 # ─── runtime ───────────────────────────────────────────────────────
 FROM node:20-alpine AS runtime
@@ -29,6 +30,11 @@ COPY --from=build /repo/package.json /repo/pnpm-workspace.yaml ./
 COPY --from=build /repo/packages packages
 COPY --from=build /repo/services/api/package.json services/api/package.json
 COPY --from=build /repo/services/api/dist services/api/dist
+COPY --from=build /repo/services/api/dist-auto-eval/auto-eval services/api/auto-eval
 RUN pnpm install --prod --frozen-lockfile=false
+# auto-eval modules import from ../src/llm — symlink src→dist so paths resolve
+RUN ln -s dist services/api/src
+# Create results directory for auto-eval output
+RUN mkdir -p services/api/auto-eval/results
 EXPOSE 3001
 CMD ["node", "services/api/dist/server.js"]

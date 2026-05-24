@@ -12,7 +12,7 @@ function makeMockRedis() {
       return lists[key].length;
     },
     async expire() { return 1; },
-    async set(key: string, _val: string, nx: string, _ex: string, _ttl: number) {
+    async set(key: string, _val: string, _ex: string, _ttl: number, nx: string) {
       if (nx === 'NX' && locks[key] != null) return null;
       locks[key] = '1';
       return 'OK';

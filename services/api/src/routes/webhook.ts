@@ -394,7 +394,7 @@ export async function coalesceMessages(redis: Redis, phone: string, text: string
   await redis.expire(bufKey, 30);
 
   // Only the first arrival in the window does the waiting + processing.
-  const acquired = await redis.set(lockKey, '1', 'NX', 'EX', 5);
+  const acquired = await redis.set(lockKey, '1', 'EX', 5, 'NX');
   if (!acquired) return null; // absorbed — the lock-holder will pick this up
 
   await new Promise<void>((resolve) => setTimeout(resolve, 2000));

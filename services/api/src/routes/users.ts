@@ -24,6 +24,7 @@ const OnboardSchema = z.object({
   goalWeight: z.number().finite().positive().optional().nullable(),
   heightCm: z.number().finite().positive().max(260).optional().nullable(),
   age: z.number().int().min(13).max(120).optional().nullable(),
+  activityLevel: z.enum(['sedentary', 'lightly_active', 'moderate', 'very_active']).optional().nullable(),
   primaryGoal: z.enum(['fat_loss', 'muscle_gain', 'maintenance', 'recomposition']).optional().nullable(),
   goals: z.array(z.string().trim().min(1).max(120)).max(10).default([]),
   timezone: z.string().trim().max(100).optional().default('America/New_York'),
@@ -123,6 +124,15 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
           { err, phone },
           'onboard.protein_personalization.skipped (likely missing migration 20260513000002)',
         );
+      }
+    }
+
+    // Activity level — depends on migration 20260524000001. Degrades silently if absent.
+    if (b.activityLevel) {
+      try {
+        await users.update(phone, { activity_level: b.activityLevel } as Partial<Parameters<typeof users.update>[1]>);
+      } catch {
+        req.log.warn({ phone }, 'onboard.activity_level.skipped (likely missing migration 20260524000001)');
       }
     }
 

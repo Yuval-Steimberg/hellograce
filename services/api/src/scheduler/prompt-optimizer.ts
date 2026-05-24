@@ -584,7 +584,7 @@ Respond with ONLY the JSON object.`,
     if (!apiKey) return true;
 
     try {
-      const gatePath = ['..', '..', 'auto-eval', 'feedback-loop.js'].join('/');
+      const gatePath = new URL('../../auto-eval/feedback-loop.js', import.meta.url).href;
       const mod = await import(gatePath).catch(() => null) as {
         evalGateCheck: (llm: unknown, prompt: string, baseline: number, logger: unknown) => Promise<{ passed: boolean; score: number; details: string }>;
       } | null;

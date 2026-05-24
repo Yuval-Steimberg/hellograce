@@ -234,7 +234,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     // Eval gate: run a quick auto-eval before activating (unless skipped)
     if (!skipEval && process.env.GEMINI_API_KEY && deps.llm) {
       try {
-        const gatePath = ['..', '..', 'auto-eval', 'feedback-loop.js'].join('/');
+        const gatePath = new URL('../../auto-eval/feedback-loop.js', import.meta.url).href;
         const mod = await import(gatePath).catch(() => null) as {
           evalGateCheck: (llm: unknown, prompt: string, baseline: number, logger: unknown) => Promise<{ passed: boolean; score: number; details: string }>;
         } | null;
@@ -797,9 +797,9 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
 
     try {
       // Paths are constructed at runtime so tsc doesn't resolve auto-eval/ (outside rootDir)
-      const storePath = ['..', '..', 'auto-eval', 'store.js'].join('/');
-      const analyzerPath = ['..', '..', 'auto-eval', 'analyzer.js'].join('/');
-      const feedbackPath = ['..', '..', 'auto-eval', 'feedback-loop.js'].join('/');
+      const storePath = new URL('../../auto-eval/store.js', import.meta.url).href;
+      const analyzerPath = new URL('../../auto-eval/analyzer.js', import.meta.url).href;
+      const feedbackPath = new URL('../../auto-eval/feedback-loop.js', import.meta.url).href;
       const storeMod = await import(storePath).catch(() => null) as {
         AutoEvalStore: new (dir: string) => { loadAllEvaluations: () => unknown[] };
       } | null;
@@ -1088,9 +1088,9 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
 
     try {
       // Dynamic imports to avoid tsc rootDir issues
-      const storePath = ['..', '..', 'auto-eval', 'store.js'].join('/');
-      const analyzerPath = ['..', '..', 'auto-eval', 'analyzer.js'].join('/');
-      const feedbackPath = ['..', '..', 'auto-eval', 'feedback-loop.js'].join('/');
+      const storePath = new URL('../../auto-eval/store.js', import.meta.url).href;
+      const analyzerPath = new URL('../../auto-eval/analyzer.js', import.meta.url).href;
+      const feedbackPath = new URL('../../auto-eval/feedback-loop.js', import.meta.url).href;
 
       const storeMod = await import(storePath).catch(() => null) as {
         AutoEvalStore: new (dir: string) => {
@@ -1172,6 +1172,36 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     }
   });
 
+  // Debug: check auto-eval file resolution
+  app.get('/admin/auto-eval/debug', async () => {
+    const url = new URL('../../auto-eval/streaming-runner.js', import.meta.url);
+    const { existsSync: fsExists } = await import('fs');
+    const { fileURLToPath } = await import('url');
+    let filePath = '';
+    let exists = false;
+    try {
+      filePath = fileURLToPath(url);
+      exists = fsExists(filePath);
+    } catch (e) {
+      filePath = `error: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    let importError = '';
+    try {
+      await import(url.href);
+    } catch (e) {
+      importError = e instanceof Error ? e.stack ?? e.message : String(e);
+    }
+    return {
+      importMetaUrl: import.meta.url,
+      resolvedUrl: url.href,
+      resolvedPath: filePath,
+      fileExists: exists,
+      autoEvalResultsDir,
+      resultsExists: fsExists(autoEvalResultsDir),
+      importError: importError || 'none',
+    };
+  });
+
   // 7. POST /admin/auto-eval/run — start a new auto-eval run in the background
   app.post('/admin/auto-eval/run', async (req, reply) => {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -1188,8 +1218,11 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     };
 
     try {
-      const runnerPath = ['..', '..', 'auto-eval', 'streaming-runner.js'].join('/');
-      const mod = await import(runnerPath).catch(() => null) as {
+      const runnerUrl = new URL('../../auto-eval/streaming-runner.js', import.meta.url).href;
+      const mod = await import(runnerUrl).catch((err: unknown) => {
+        app.log.error({ err: err instanceof Error ? err.message : String(err), runnerUrl }, 'auto_eval.streaming_runner_import_failed');
+        return null;
+      }) as {
         runAutoEvalStreaming: (opts: Record<string, unknown>) => Promise<unknown>;
         getRunState: () => { running: boolean } | null;
       } | null;
@@ -1231,8 +1264,8 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   // 8. GET /admin/auto-eval/status — get current run status (non-streaming)
   app.get('/admin/auto-eval/status', async () => {
     try {
-      const runnerPath = ['..', '..', 'auto-eval', 'streaming-runner.js'].join('/');
-      const mod = await import(runnerPath).catch(() => null) as {
+      const runnerUrl = new URL('../../auto-eval/streaming-runner.js', import.meta.url).href;
+      const mod = await import(runnerUrl).catch(() => null) as {
         getRunState: () => { running: boolean; phase: string; progress: number; total: number; completed: number; startedAt: string; error?: string } | null;
       } | null;
 
@@ -1262,8 +1295,8 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     };
 
     try {
-      const runnerPath = ['..', '..', 'auto-eval', 'streaming-runner.js'].join('/');
-      const mod = await import(runnerPath).catch(() => null) as {
+      const runnerUrl = new URL('../../auto-eval/streaming-runner.js', import.meta.url).href;
+      const mod = await import(runnerUrl).catch(() => null) as {
         getRunState: () => { running: boolean; phase: string; progress: number; total: number; completed: number } | null;
         addProgressListener: (cb: (event: unknown) => void) => () => void;
       } | null;

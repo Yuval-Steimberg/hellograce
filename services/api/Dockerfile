@@ -31,6 +31,7 @@ COPY --from=build /repo/packages packages
 COPY --from=build /repo/services/api/package.json services/api/package.json
 COPY --from=build /repo/services/api/dist services/api/dist
 COPY --from=build /repo/services/api/dist-auto-eval/auto-eval services/api/auto-eval
+COPY --from=build /repo/services/api/dist-auto-eval/eval services/api/eval
 RUN pnpm install --prod --frozen-lockfile=false
 # auto-eval modules import from ../src/llm — symlink src→dist so paths resolve
 RUN ln -s dist services/api/src

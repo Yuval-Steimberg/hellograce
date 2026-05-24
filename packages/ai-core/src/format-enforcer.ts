@@ -302,9 +302,9 @@ export function enforceFormat(
     food_log:      480,  // protein number + daily total + optional brief tip
     food_question: 420,  // 3-4 food options with brief reasoning
     scheduling:    220,  // confirm the change and done
-    knowledge:     400,  // factual sentence + user tie-in + optional soft redirect
+    knowledge:     600,  // educational answers need room for facts + user tie-in
     gibberish:     160,  // short clarifying question
-    general:       400,  // default cap
+    general:       500,  // default cap — enough for a real answer
   };
   const MAX_CHARS = opts?.messageContext ? (CONTEXT_MAX[opts.messageContext] ?? 420) : 420;
   if (text.length > MAX_CHARS) {

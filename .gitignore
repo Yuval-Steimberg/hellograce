@@ -28,5 +28,9 @@ yarn-debug.log*
 .DS_Store
 Thumbs.db
 
+# eval results
+services/api/eval/results/
+services/api/auto-eval/results/
+
 # misc
 *.tsbuildinfo

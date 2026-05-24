@@ -246,6 +246,21 @@ pnpm --filter @grace/api eval
 # Filter / tune concurrency:
 EVAL_FILTER=food EVAL_CONCURRENCY=5 pnpm --filter @grace/api eval
 
+# Auto-eval — multi-turn simulated conversations with LLM judge
+# Generates realistic user interactions via 20 personas × 43 scenarios,
+# runs them through the real orchestrator, evaluates with a detailed
+# 15-dimension LLM rubric, detects patterns, and generates RLHF preference pairs.
+# Requires GEMINI_API_KEY. No DB needed (tools are mocked).
+pnpm --filter @grace/api auto-eval
+# Filter by category / persona / limit scenario count:
+AUTO_EVAL_CATEGORIES=food_logging,emotional_support pnpm --filter @grace/api auto-eval
+AUTO_EVAL_PERSONAS=sarah_new,mike_terse pnpm --filter @grace/api auto-eval
+AUTO_EVAL_SCENARIOS=10 AUTO_EVAL_CONCURRENCY=3 pnpm --filter @grace/api auto-eval
+# Skip preference pair generation:
+AUTO_EVAL_SKIP_PAIRS=1 pnpm --filter @grace/api auto-eval
+# Use a different model for evaluation:
+GEMINI_EVALUATOR_MODEL=gemini-2.5-pro pnpm --filter @grace/api auto-eval
+
 # Hot-reload system prompt without restart
 docker kill --signal HUP grace-api-1  # or: kill -HUP <api-pid>
 
@@ -279,6 +294,47 @@ Lives in `services/api/eval/`. Runs every case through real Gemini + mocked tool
 - `eval/runner.ts` — concurrent runner + report formatter.
 - Crisis/emergency wording is NOT in the eval set — `SafetyGuard` short-circuits the pipeline before the orchestrator runs, and is unit-tested in `services/api/src/safety/guard.test.ts`.
 
+### Auto-evaluation system (advanced)
+
+Lives in `services/api/auto-eval/`. A multi-turn simulated conversation engine with LLM-powered evaluation.
+
+**Architecture:**
+```
+auto-eval/
+├── types.ts                    # All type definitions
+├── personas.ts                 # 20 user personas (varied styles, medications, goals)
+├── scenarios.ts                # 43 scenario templates across 15 categories + dynamic generation
+├── conversation-generator.ts   # LLM-powered realistic user message generation
+├── simulator.ts                # Runs multi-turn conversations through the real orchestrator
+├── evaluator.ts                # 15-dimension LLM judge (Gemini) with per-turn + conversation-level scoring
+├── analyzer.ts                 # Pattern detection, regression tracking, improvement suggestions
+├── preference-pairs.ts         # RLHF preference pair generation (chosen/rejected)
+├── reporter.ts                 # Human-readable terminal reports + JSON
+├── store.ts                    # JSON file storage for all artifacts
+├── runner.ts                   # Main 5-phase pipeline orchestrator
+└── index.ts                    # Public exports
+```
+
+**15 evaluation dimensions** (each scored 1-5):
+relevance (HIGHEST PRIORITY), context_memory, tone_match, conciseness, naturalness, no_repetition, no_generic_fallback, conversational_continuity, no_unnecessary_questions, no_hallucination, guardrail_compliance, topic_tracking, empathy, actionability, persona_awareness.
+
+**20 personas** spanning: terse/verbose/emoji/formal/anxious/casual communication styles, all medication types (weekly injection, daily pill), dietary restrictions (vegan, vegetarian, pescatarian), emotional states (frustrated, anxious, celebratory, lonely), edge-case behaviors (typos, mixed language, topic switching, boundary testing).
+
+**15 scenario categories**: food_logging, emotional_support, topic_switching, medical_question, correction, frustration, multi_question, slang_typos, injection_day, side_effects, weight_tracking, edge_case, onboarding, long_term_memory, proactive_response.
+
+**Pipeline phases:**
+1. Simulate — generate realistic user messages per persona, run through real orchestrator with mocked tools
+2. Evaluate — LLM judge scores each Grace response on 15 dimensions + conversation-level assessment
+3. Analyze — detect recurring failure patterns, compare against previous runs for regressions
+4. Preference pairs — generate RLHF-style chosen/rejected pairs for low-scoring turns (LLM generates improved alternatives)
+5. Report — terminal output + JSON artifacts stored in `auto-eval/results/`
+
+**Output artifacts** (all in `auto-eval/results/`):
+- `conversations/` — full simulated conversation transcripts with orchestrator metadata
+- `evaluations/` — per-conversation evaluation breakdowns
+- `preference-pairs/` — RLHF training data (context + chosen + rejected + reasoning)
+- `reports/` — aggregate run reports with category/dimension breakdowns, patterns, regressions
+
 Roadmap (in progress, in this order):
 1. ✅ Eval harness + 50-case dataset (`services/api/eval/`).
 2. ✅ LLM-critic on risky intents (`safety_*`, validator-flagged `possible_medical_advice`, or low-confidence). `knowledge_lookup` removed from risky list (2026-05-15) — it was incorrectly failing food/nutrition responses. Regenerate once on critic fail, safe fallback if second attempt also fails. Implementation: `packages/ai-core/src/critic.ts` + orchestrator wiring.
@@ -308,6 +364,7 @@ Roadmap (in progress, in this order):
 | 9 | Production quality pass: proactive message label/truncation fix, humanized timing jitter, trial Day 2 reminder, RLHF on proactive messages, admin WhatsApp optimizer report, food recommendation rules, every-response-unique rule, critic tuned for food facts, safe fallback improved, name stripping in code | ✅ 2026-05-15 |
 | 10 | DB-driven content guardbands: `content_rules` table (48 rules: 4 block + 44 regen), `ContentRulesService` with 60s cache, applied to both reactive AI and proactive scheduler paths. Admin CRUD + test endpoint. Redis distributed lock on scheduler to prevent duplicate messages across Fly machines. | ✅ 2026-05-16 |
 | 11 | AI quality pass: GREETING RULE (pure greeting → one sentence, topic reset), FOOD VARIETY rule + 40-food pool, `search_food_ideas` tool (Google Search grounding for food questions), two-pass scientific food image analysis (Pass 1: visual ID with USDA anchors; Pass 2: text-only macro calculation with 50-food USDA table). | ✅ 2026-05-19 |
+| 12 | Auto-evaluation system: 20 personas × 43 scenarios × 15 categories, multi-turn conversation simulation through real orchestrator, 15-dimension LLM judge, pattern detection, regression tracking, RLHF preference pair generation. `pnpm --filter @grace/api auto-eval`. | ✅ 2026-05-24 |
 
 ---
 

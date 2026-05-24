@@ -5,6 +5,7 @@ interface AboutYouData {
   currentWeight?: string;
   goalWeight?: string;
   heightCm?: string;
+  age?: string;
   activityLevel?: string;
 }
 
@@ -13,6 +14,7 @@ interface AboutYouProps {
   currentWeight: string;
   goalWeight: string;
   heightCm: string;
+  age: string;
   activityLevel: string;
   onChange: (data: AboutYouData) => void;
   onNext: () => void;
@@ -40,6 +42,7 @@ const WeightStep = ({
   currentWeight,
   goalWeight,
   heightCm,
+  age,
   activityLevel,
   onChange,
   onNext,
@@ -81,17 +84,30 @@ const WeightStep = ({
             </div>
           </div>
 
-          <label className="flex flex-col gap-2">
-            <span className="text-foreground font-medium text-sm px-1">Height (cm)</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              placeholder="e.g. 168"
-              value={heightCm}
-              onChange={(e) => onChange({ heightCm: e.target.value })}
-              className={inputClass}
-            />
-          </label>
+          <div className="grid grid-cols-2 gap-5">
+            <label className="flex flex-col gap-2">
+              <span className="text-foreground font-medium text-sm px-1">Height (cm)</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                placeholder="e.g. 168"
+                value={heightCm}
+                onChange={(e) => onChange({ heightCm: e.target.value })}
+                className={inputClass}
+              />
+            </label>
+            <label className="flex flex-col gap-2">
+              <span className="text-foreground font-medium text-sm px-1">Age</span>
+              <input
+                type="number"
+                inputMode="numeric"
+                placeholder="e.g. 34"
+                value={age}
+                onChange={(e) => onChange({ age: e.target.value })}
+                className={inputClass}
+              />
+            </label>
+          </div>
 
           <div className="grid grid-cols-2 gap-5">
             <label className="flex flex-col gap-2">

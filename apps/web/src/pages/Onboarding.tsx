@@ -46,6 +46,7 @@ const Onboarding = () => {
   const [currentWeight, setCurrentWeight] = useState("");
   const [goalWeight, setGoalWeight] = useState("");
   const [heightCm, setHeightCm] = useState("");
+  const [age, setAge] = useState("");
   const [activityLevel, setActivityLevel] = useState("");
 
   // Defaults — used by the scheduler if the user doesn't change them.
@@ -101,8 +102,8 @@ const Onboarding = () => {
         currentWeight: currentWeight ? Number(currentWeight) : null,
         goalWeight: goalWeight ? Number(goalWeight) : null,
         heightCm: heightCm ? Number(heightCm) : null,
+        age: age ? Number(age) : null,
         activityLevel: activityLevel || null,
-        // age, primaryGoal, glp1StartDate, goals — all deferred to chat.
         timezone,
         checkinCountPerDay,
         checkinDaysInterval,
@@ -170,12 +171,14 @@ const Onboarding = () => {
             currentWeight={currentWeight}
             goalWeight={goalWeight}
             heightCm={heightCm}
+            age={age}
             activityLevel={activityLevel}
             onChange={(d) => {
               if (d.sex !== undefined) setSex(d.sex);
               if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
               if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
               if (d.heightCm !== undefined) setHeightCm(d.heightCm);
+              if (d.age !== undefined) setAge(d.age);
               if (d.activityLevel !== undefined) setActivityLevel(d.activityLevel);
             }}
             onNext={next}

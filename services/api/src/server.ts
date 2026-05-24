@@ -108,7 +108,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   // Path is constructed at runtime so tsc doesn't try to resolve auto-eval/ (outside rootDir).
   const loadSyntheticFeedback = async (): Promise<SyntheticFeedback[]> => {
     try {
-      const feedbackPath = ['..', 'auto-eval', 'feedback-loop.js'].join('/');
+      const feedbackPath = new URL('../auto-eval/feedback-loop.js', import.meta.url).href;
       const mod = await import(feedbackPath).catch(() => null) as {
         loadPreferencePairs: (dir: string) => Array<{ userMessage: string; rejected: string; dimension: string; reasoning: string; chosen: string }>;
         pairsToSyntheticFeedback: (pairs: unknown[]) => SyntheticFeedback[];

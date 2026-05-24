@@ -14,24 +14,24 @@ interface PersonalContextProps {
   onNext: () => void;
 }
 
-const CHALLENGE_OPTIONS: { value: string; label: string; emoji: string }[] = [
-  { value: "cravings", label: "Cravings & appetite", emoji: "🍕" },
-  { value: "side_effects", label: "Side effects", emoji: "😣" },
-  { value: "cooking", label: "Meal prep / cooking", emoji: "🍳" },
-  { value: "motivation", label: "Staying motivated", emoji: "💪" },
-  { value: "social_eating", label: "Social situations", emoji: "🍷" },
-  { value: "emotional_eating", label: "Emotional eating", emoji: "💭" },
-  { value: "protein", label: "Hitting protein goals", emoji: "🥩" },
-  { value: "energy", label: "Low energy / fatigue", emoji: "😴" },
+const CHALLENGE_OPTIONS: { value: string; label: string }[] = [
+  { value: "cravings", label: "Cravings & appetite" },
+  { value: "side_effects", label: "Side effects" },
+  { value: "cooking", label: "Meal prep / cooking" },
+  { value: "motivation", label: "Staying motivated" },
+  { value: "social_eating", label: "Social situations" },
+  { value: "emotional_eating", label: "Emotional eating" },
+  { value: "protein", label: "Hitting protein goals" },
+  { value: "energy", label: "Low energy / fatigue" },
 ];
 
-const WHY_OPTIONS: { value: string; label: string; emoji: string }[] = [
-  { value: "doctor_recommended", label: "Doctor recommended", emoji: "👩‍⚕️" },
-  { value: "health_condition", label: "Health condition (diabetes, PCOS, etc.)", emoji: "❤️‍🩹" },
-  { value: "weight_management", label: "Weight management", emoji: "⚖️" },
-  { value: "quality_of_life", label: "Better quality of life", emoji: "✨" },
-  { value: "self_image", label: "Feel better about myself", emoji: "🪞" },
-  { value: "energy_mobility", label: "More energy & mobility", emoji: "🏃‍♀️" },
+const WHY_OPTIONS: { value: string; label: string }[] = [
+  { value: "doctor_recommended", label: "Doctor recommended" },
+  { value: "health_condition", label: "Health condition (diabetes, PCOS, etc.)" },
+  { value: "weight_management", label: "Weight management" },
+  { value: "quality_of_life", label: "Better quality of life" },
+  { value: "self_image", label: "Feel better about myself" },
+  { value: "energy_mobility", label: "More energy & mobility" },
 ];
 
 const SUPPORT_OPTIONS: { value: string; label: string; description: string }[] = [
@@ -78,7 +78,6 @@ const PersonalContextStep = ({
                         : "border-sand hover:border-primary/50 hover:bg-card/50"
                     }`}
                   >
-                    <span className="mr-1.5">{opt.emoji}</span>
                     <span className="text-foreground text-[13px] font-medium">{opt.label}</span>
                   </button>
                 );
@@ -102,7 +101,6 @@ const PersonalContextStep = ({
                         : "border-sand hover:border-primary/50 hover:bg-card/50"
                     }`}
                   >
-                    <span className="mr-1.5">{opt.emoji}</span>
                     <span className="text-foreground text-[13px] font-medium">{opt.label}</span>
                   </button>
                 );

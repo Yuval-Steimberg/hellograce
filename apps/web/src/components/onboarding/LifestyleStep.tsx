@@ -14,15 +14,15 @@ interface LifestyleProps {
   onNext: () => void;
 }
 
-const EXERCISE_OPTIONS: { value: string; label: string; emoji: string }[] = [
-  { value: "none", label: "Not exercising yet", emoji: "🛋️" },
-  { value: "walking", label: "Walking", emoji: "🚶‍♀️" },
-  { value: "gym", label: "Gym / weights", emoji: "🏋️" },
-  { value: "yoga_pilates", label: "Yoga / Pilates", emoji: "🧘" },
-  { value: "running", label: "Running / cardio", emoji: "🏃‍♀️" },
-  { value: "swimming", label: "Swimming", emoji: "🏊" },
-  { value: "home_workouts", label: "Home workouts", emoji: "🏠" },
-  { value: "mixed", label: "A bit of everything", emoji: "🔄" },
+const EXERCISE_OPTIONS: { value: string; label: string }[] = [
+  { value: "none", label: "Not exercising yet" },
+  { value: "walking", label: "Walking" },
+  { value: "gym", label: "Gym / weights" },
+  { value: "yoga_pilates", label: "Yoga / Pilates" },
+  { value: "running", label: "Running / cardio" },
+  { value: "swimming", label: "Swimming" },
+  { value: "home_workouts", label: "Home workouts" },
+  { value: "mixed", label: "A bit of everything" },
 ];
 
 const COOKING_OPTIONS: { value: string; label: string; description: string }[] = [
@@ -32,11 +32,11 @@ const COOKING_OPTIONS: { value: string; label: string; description: string }[] =
   { value: "love_cooking", label: "Love cooking", description: "Enjoy experimenting, complex recipes welcome" },
 ];
 
-const WATER_OPTIONS: { value: string; label: string; emoji: string }[] = [
-  { value: "less_than_4", label: "Less than 4 cups", emoji: "🥤" },
-  { value: "4_to_6", label: "4–6 cups", emoji: "💧" },
-  { value: "6_to_8", label: "6–8 cups", emoji: "💧💧" },
-  { value: "more_than_8", label: "8+ cups", emoji: "🌊" },
+const WATER_OPTIONS: { value: string; label: string }[] = [
+  { value: "less_than_4", label: "Less than 4 cups" },
+  { value: "4_to_6", label: "4–6 cups" },
+  { value: "6_to_8", label: "6–8 cups" },
+  { value: "more_than_8", label: "8+ cups" },
 ];
 
 const LifestyleStep = ({
@@ -76,7 +76,6 @@ const LifestyleStep = ({
                         : "border-sand hover:border-primary/50 hover:bg-card/50"
                     }`}
                   >
-                    <span className="mr-1.5">{opt.emoji}</span>
                     <span className="text-foreground text-[13px] font-medium">{opt.label}</span>
                   </button>
                 );
@@ -124,7 +123,6 @@ const LifestyleStep = ({
                         : "border-sand hover:border-primary/50 hover:bg-card/50"
                     }`}
                   >
-                    <span className="mr-1.5">{opt.emoji}</span>
                     <span className="text-foreground text-[13px] font-medium">{opt.label}</span>
                   </button>
                 );

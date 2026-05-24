@@ -30,6 +30,7 @@ const BusinessPage = lazy(() => import("./pages/admin/BusinessPage.tsx"));
 const SchedulerPage = lazy(() => import("./pages/admin/SchedulerPage.tsx"));
 const AIQualityPage = lazy(() => import("./pages/admin/AIQualityPage.tsx"));
 const ContentRulesPage = lazy(() => import("./pages/admin/ContentRulesPage.tsx"));
+const AutoEvalPage = lazy(() => import("./pages/admin/AutoEvalPage.tsx"));
 const SubscriptionMessagesPage = lazy(() => import("./pages/admin/SubscriptionMessagesPage.tsx"));
 const SystemHealthPage = lazy(() => import("./pages/admin/SystemHealthPage.tsx"));
 
@@ -67,6 +68,7 @@ const App = () => (
                 <Route path="scheduler" element={<SchedulerPage />} />
                 <Route path="ai-quality" element={<AIQualityPage />} />
                 <Route path="content-rules" element={<ContentRulesPage />} />
+                <Route path="auto-eval" element={<AutoEvalPage />} />
                 <Route path="subscription-messages" element={<SubscriptionMessagesPage />} />
                 <Route path="system-health" element={<SystemHealthPage />} />
               </Route>

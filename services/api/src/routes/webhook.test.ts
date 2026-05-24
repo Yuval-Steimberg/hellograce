@@ -1,5 +1,59 @@
-import { describe, it, expect } from 'vitest';
-import { detectUpgradeIntent, buildUpgradeUrl } from './webhook.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { detectUpgradeIntent, buildUpgradeUrl, coalesceMessages } from './webhook.js';
+
+// Minimal in-memory Redis mock for coalesceMessages tests.
+function makeMockRedis() {
+  const lists: Record<string, string[]> = {};
+  const locks: Record<string, string | null> = {};
+
+  return {
+    async rpush(key: string, val: string) {
+      lists[key] = [...(lists[key] ?? []), val];
+      return lists[key].length;
+    },
+    async expire() { return 1; },
+    async set(key: string, _val: string, nx: string, _ex: string, _ttl: number) {
+      if (nx === 'NX' && locks[key] != null) return null;
+      locks[key] = '1';
+      return 'OK';
+    },
+    async lrange(key: string, _start: number, _end: number) { return lists[key] ?? []; },
+    async del(key: string) { delete lists[key]; delete locks[key]; return 1; },
+  };
+}
+
+describe('coalesceMessages', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('first caller acquires lock and returns merged text after 2s', async () => {
+    const redis = makeMockRedis() as never;
+    const promise = coalesceMessages(redis, '+15550000001', 'Will i go bold?');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await promise).toBe('Will i go bold?');
+  });
+
+  it('second caller within the window returns null (absorbed)', async () => {
+    const redis = makeMockRedis() as never;
+    const first = coalesceMessages(redis, '+15550000002', 'Will i go bold?');
+    // Second message arrives immediately — lock already held
+    const second = coalesceMessages(redis, '+15550000002', 'Bald');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await second).toBeNull();
+    expect(await first).toBe('Will i go bold? Bald');
+  });
+
+  it('produces single space-joined string from multiple rapid messages', async () => {
+    const redis = makeMockRedis() as never;
+    const first = coalesceMessages(redis, '+15550000003', 'actually');
+    const second = coalesceMessages(redis, '+15550000003', 'never mind');
+    const third = coalesceMessages(redis, '+15550000003', 'tell me about nausea');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await second).toBeNull();
+    expect(await third).toBeNull();
+    expect(await first).toBe('actually never mind tell me about nausea');
+  });
+});
 
 describe('detectUpgradeIntent', () => {
   it('detects single-word intents', () => {

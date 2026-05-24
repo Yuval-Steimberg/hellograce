@@ -70,6 +70,15 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
     // Fire-and-forget AI processing.
     void (async () => {
       try {
+        // Coalesce rapid consecutive text messages (corrections, continuations).
+        // If this message is absorbed into a pending window, exit early — the
+        // lock-holder will process the merged text. Media messages fire immediately.
+        if (deps.redis && normalized.type === 'text') {
+          const coalesced = await coalesceMessages(deps.redis, normalized.userId, normalized.text);
+          if (coalesced === null) return;
+          normalized.text = coalesced;
+        }
+
         let user: GraceUser | null = null;
         // Upsert the user record and update last_reply_at on every inbound message.
         if (deps.users) {
@@ -366,6 +375,33 @@ function detectInjectionDayChange(text: string): string | null {
   if (!dayMatch) return null;
   const key = dayMatch[1]?.toLowerCase() ?? '';
   return INJECTION_DAY_MAP[key] ?? null;
+}
+
+// ─── Message coalescing ───────────────────────────────────────────────────────
+// WhatsApp users often send a correction or continuation within 1–3 seconds of
+// their first message (e.g. "Will i go bold?" → "Bald"). Without coalescing,
+// Grace processes both separately and sends two replies. This buffers each
+// text message for 2 seconds; the first arrival holds the lock and waits, any
+// follow-ups are appended to a Redis list, then the waiter processes them all
+// as one merged turn. Only applies to text messages — images and audio fire
+// immediately (media is self-contained and not a "correction").
+export async function coalesceMessages(redis: Redis, phone: string, text: string): Promise<string | null> {
+  const bufKey = `coalesce:buf:${phone}`;
+  const lockKey = `coalesce:lock:${phone}`;
+
+  // Append this message; set a safety TTL so stale keys don't accumulate.
+  await redis.rpush(bufKey, text);
+  await redis.expire(bufKey, 30);
+
+  // Only the first arrival in the window does the waiting + processing.
+  const acquired = await redis.set(lockKey, '1', 'NX', 'EX', 5);
+  if (!acquired) return null; // absorbed — the lock-holder will pick this up
+
+  await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+
+  const parts = await redis.lrange(bufKey, 0, -1);
+  await redis.del(bufKey);
+  return parts.join(' ').trim() || text;
 }
 
 // ─── Retry helper ────────────────────────────────────────────────────────────

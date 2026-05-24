@@ -63,6 +63,15 @@ export interface GraceUser {
   rlhf_enabled: boolean;
   created_at: Date;
   updated_at: Date;
+  // lifestyle & personalization (migration 20260524000002)
+  dose_mg: number | null;
+  dietary_restriction: string | null;
+  biggest_challenge: string | null;
+  why_started: string | null;
+  support_style: string | null;
+  exercise_habits: string | null;
+  cooking_comfort: string | null;
+  daily_water_intake: string | null;
 }
 
 export class UserService {

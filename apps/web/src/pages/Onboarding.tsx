@@ -15,23 +15,29 @@ import GoalsStep from "@/components/onboarding/GoalsStep";
 import ScheduleStep from "@/components/onboarding/ScheduleStep";
 import FoodStep from "@/components/onboarding/FoodStep";
 import WeightStep from "@/components/onboarding/WeightStep";
+import GLP1DetailStep from "@/components/onboarding/GLP1DetailStep";
+import PersonalContextStep from "@/components/onboarding/PersonalContextStep";
+import LifestyleStep from "@/components/onboarding/LifestyleStep";
 import PhoneStep from "@/components/onboarding/PhoneStep";
 import PaymentStep from "@/components/onboarding/PaymentStep";
 import ConfirmationStep from "@/components/onboarding/ConfirmationStep";
 
-// Full 11-step onboarding flow matching production screenshots:
+// 14-step onboarding flow:
 // 1. Welcome
 // 2. Name
 // 3. Medication
 // 4. Injection Day / Med Time
-// 5. Goals
-// 6. Schedule (wake/sleep)
-// 7. Food dislikes
-// 8. About you (sex, height, age, weight, goal weight, activity level)
-// 9. Phone + consent
-// 10. Payment/trial
-// 11. Confirmation
-const TOTAL_STEPS = 11;
+// 5. GLP-1 details (start date, dose, dietary style)
+// 6. Goals
+// 7. Your story (biggest challenge, why started, support style)
+// 8. Schedule (wake/sleep)
+// 9. Food dislikes
+// 10. About you (sex, height, age, weight, goal weight, activity level)
+// 11. Daily life (exercise, cooking, water)
+// 12. Phone + consent
+// 13. Payment/trial
+// 14. Confirmation
+const TOTAL_STEPS = 14;
 
 const Onboarding = () => {
   const seoJsonLd = breadcrumbSchema([
@@ -62,6 +68,15 @@ const Onboarding = () => {
   const [heightCm, setHeightCm] = useState("");
   const [age, setAge] = useState("");
   const [activityLevel, setActivityLevel] = useState("");
+  const [glp1StartDate, setGlp1StartDate] = useState("");
+  const [doseMg, setDoseMg] = useState("");
+  const [dietaryRestriction, setDietaryRestriction] = useState("");
+  const [biggestChallenge, setBiggestChallenge] = useState("");
+  const [whyStarted, setWhyStarted] = useState("");
+  const [supportStyle, setSupportStyle] = useState("");
+  const [exerciseHabits, setExerciseHabits] = useState("");
+  const [cookingComfort, setCookingComfort] = useState("");
+  const [dailyWaterIntake, setDailyWaterIntake] = useState("");
 
   const checkinCountPerDay = 2;
   const checkinDaysInterval = 1;
@@ -115,6 +130,15 @@ const Onboarding = () => {
         heightCm: heightCm ? Number(heightCm) : null,
         age: age ? Number(age) : null,
         activityLevel: activityLevel || null,
+        glp1StartDate: glp1StartDate || null,
+        doseMg: doseMg ? Number(doseMg) : null,
+        dietaryRestriction: dietaryRestriction && dietaryRestriction !== "none" ? dietaryRestriction : null,
+        biggestChallenge: biggestChallenge || null,
+        whyStarted: whyStarted || null,
+        supportStyle: supportStyle || null,
+        exerciseHabits: exerciseHabits || null,
+        cookingComfort: cookingComfort || null,
+        dailyWaterIntake: dailyWaterIntake || null,
         timezone,
         checkinCountPerDay,
         checkinDaysInterval,
@@ -206,8 +230,23 @@ const Onboarding = () => {
           )
         )}
 
-        {/* Step 5: Goals */}
+        {/* Step 5: GLP-1 details (start date, dose, dietary style) */}
         {step === 5 && (
+          <GLP1DetailStep
+            glp1StartDate={glp1StartDate}
+            doseMg={doseMg}
+            dietaryRestriction={dietaryRestriction}
+            onChange={(d) => {
+              if (d.glp1StartDate !== undefined) setGlp1StartDate(d.glp1StartDate);
+              if (d.doseMg !== undefined) setDoseMg(d.doseMg);
+              if (d.dietaryRestriction !== undefined) setDietaryRestriction(d.dietaryRestriction);
+            }}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 6: Goals */}
+        {step === 6 && (
           <GoalsStep
             selected={goals}
             onChange={setGoals}
@@ -215,8 +254,23 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 6: Schedule (wake/sleep) */}
-        {step === 6 && (
+        {/* Step 7: Your story (challenge, why, support style) */}
+        {step === 7 && (
+          <PersonalContextStep
+            biggestChallenge={biggestChallenge}
+            whyStarted={whyStarted}
+            supportStyle={supportStyle}
+            onChange={(d) => {
+              if (d.biggestChallenge !== undefined) setBiggestChallenge(d.biggestChallenge);
+              if (d.whyStarted !== undefined) setWhyStarted(d.whyStarted);
+              if (d.supportStyle !== undefined) setSupportStyle(d.supportStyle);
+            }}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 8: Schedule (wake/sleep) */}
+        {step === 8 && (
           <ScheduleStep
             wakeTime={wakeTime}
             sleepTime={sleepTime}
@@ -228,11 +282,11 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 7: Food dislikes */}
-        {step === 7 && <FoodStep value={foodDislikes} onChange={setFoodDislikes} onNext={next} />}
+        {/* Step 9: Food dislikes */}
+        {step === 9 && <FoodStep value={foodDislikes} onChange={setFoodDislikes} onNext={next} />}
 
-        {/* Step 8: About you (sex, height, age, weight, goal, activity) */}
-        {step === 8 && (
+        {/* Step 10: About you (sex, height, age, weight, goal, activity) */}
+        {step === 10 && (
           <WeightStep
             sex={sex}
             currentWeight={currentWeight}
@@ -252,8 +306,23 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 9: Phone + consent */}
-        {step === 9 && (
+        {/* Step 11: Daily life (exercise, cooking, water) */}
+        {step === 11 && (
+          <LifestyleStep
+            exerciseHabits={exerciseHabits}
+            cookingComfort={cookingComfort}
+            dailyWaterIntake={dailyWaterIntake}
+            onChange={(d) => {
+              if (d.exerciseHabits !== undefined) setExerciseHabits(d.exerciseHabits);
+              if (d.cookingComfort !== undefined) setCookingComfort(d.cookingComfort);
+              if (d.dailyWaterIntake !== undefined) setDailyWaterIntake(d.dailyWaterIntake);
+            }}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 12: Phone + consent */}
+        {step === 12 && (
           <PhoneStep
             phone={phone}
             smsConsent={smsConsent}
@@ -266,8 +335,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 10: Payment/trial */}
-        {step === 10 && (
+        {/* Step 13: Payment/trial */}
+        {step === 13 && (
           <PaymentStep
             userId={userId}
             firstName={firstName}
@@ -275,8 +344,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 11: Confirmation */}
-        {step === 11 && <ConfirmationStep firstName={firstName} phone={phone} />}
+        {/* Step 14: Confirmation */}
+        {step === 14 && <ConfirmationStep firstName={firstName} phone={phone} />}
       </QuizLayout>
       <LegalFooter />
     </>

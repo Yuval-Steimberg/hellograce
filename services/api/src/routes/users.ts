@@ -32,6 +32,14 @@ const OnboardSchema = z.object({
   checkinDaysInterval: z.number().int().min(1).max(14).optional().default(1),
   rlhfEnabled: z.boolean().optional().default(false),
   glp1StartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  doseMg: z.number().finite().positive().max(100).optional().nullable(),
+  dietaryRestriction: z.string().max(50).optional().nullable(),
+  biggestChallenge: z.string().max(50).optional().nullable(),
+  whyStarted: z.string().max(50).optional().nullable(),
+  supportStyle: z.enum(['gentle', 'straight_facts', 'tough_love', 'mix']).optional().nullable(),
+  exerciseHabits: z.string().max(50).optional().nullable(),
+  cookingComfort: z.enum(['dont_cook', 'basic', 'comfortable', 'love_cooking']).optional().nullable(),
+  dailyWaterIntake: z.enum(['less_than_4', '4_to_6', '6_to_8', 'more_than_8']).optional().nullable(),
 });
 
 export interface UserRouteDeps {
@@ -144,6 +152,24 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
         } as Partial<Parameters<typeof users.update>[1]>);
       } catch {
         req.log.warn({ phone }, 'onboard.glp1_start_date.skipped (likely missing migration 20260513000003)');
+      }
+    }
+
+    // Lifestyle & personalization fields — depend on 20260524000002 migration. Silently degrade.
+    const lifestyleFields: Record<string, unknown> = {};
+    if (b.doseMg != null) lifestyleFields.dose_mg = b.doseMg;
+    if (b.dietaryRestriction) lifestyleFields.dietary_restriction = b.dietaryRestriction;
+    if (b.biggestChallenge) lifestyleFields.biggest_challenge = b.biggestChallenge;
+    if (b.whyStarted) lifestyleFields.why_started = b.whyStarted;
+    if (b.supportStyle) lifestyleFields.support_style = b.supportStyle;
+    if (b.exerciseHabits) lifestyleFields.exercise_habits = b.exerciseHabits;
+    if (b.cookingComfort) lifestyleFields.cooking_comfort = b.cookingComfort;
+    if (b.dailyWaterIntake) lifestyleFields.daily_water_intake = b.dailyWaterIntake;
+    if (Object.keys(lifestyleFields).length > 0) {
+      try {
+        await users.update(phone, lifestyleFields as Partial<Parameters<typeof users.update>[1]>);
+      } catch {
+        req.log.warn({ phone }, 'onboard.lifestyle_fields.skipped (likely missing migration 20260524000002)');
       }
     }
 

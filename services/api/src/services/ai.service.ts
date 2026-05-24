@@ -573,6 +573,52 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       if (user.protein_focus_boost) lines.push('User struggles with protein intake — nudge toward protein-rich options when relevant.');
       if (user.hydration_struggle) lines.push('User struggles with hydration — gently mention water when relevant.');
 
+      // Lifestyle & personalization context — drives goal-aware responses.
+      if (user.dose_mg) lines.push(`Current dose: ${user.dose_mg}mg`);
+      if (user.dietary_restriction) {
+        const dr = user.dietary_restriction.replace(/_/g, ' ');
+        lines.push(`Dietary restriction: ${dr} — ALL food suggestions MUST respect this.`);
+      }
+      if (user.biggest_challenge) {
+        const ch = user.biggest_challenge.replace(/_/g, ' ');
+        lines.push(`Biggest challenge: ${ch} — focus advice and encouragement on THIS when relevant.`);
+      }
+      if (user.why_started) {
+        const ws = user.why_started.replace(/_/g, ' ');
+        lines.push(`Why they started GLP-1: ${ws} — use this to understand their deeper motivation.`);
+      }
+      if (user.support_style) {
+        const styleMap: Record<string, string> = {
+          gentle: 'GENTLE — lead with warmth and encouragement, soft suggestions',
+          straight_facts: 'STRAIGHT FACTS — be direct, data-driven, skip emotional padding',
+          tough_love: 'TOUGH LOVE — hold them accountable, be direct and push them',
+          mix: 'ADAPTIVE — read their message tone and match it',
+        };
+        lines.push(`Support style preference: ${styleMap[user.support_style] ?? user.support_style}`);
+      }
+      if (user.exercise_habits) {
+        const eh = user.exercise_habits.replace(/_/g, ' ');
+        lines.push(`Exercise: ${eh} — tailor muscle/fitness advice to what they actually do.`);
+      }
+      if (user.cooking_comfort) {
+        const cookMap: Record<string, string> = {
+          dont_cook: "doesn't cook — suggest grab-and-go, premade, or zero-prep options only",
+          basic: 'basic cooking — suggest simple 15-min recipes, minimal ingredients',
+          comfortable: 'comfortable in kitchen — can suggest real recipes with multiple steps',
+          love_cooking: 'loves cooking — can suggest complex recipes, experimenting welcome',
+        };
+        lines.push(`Cooking level: ${cookMap[user.cooking_comfort] ?? user.cooking_comfort}`);
+      }
+      if (user.daily_water_intake) {
+        const waterMap: Record<string, string> = {
+          less_than_4: 'less than 4 cups — LOW, nudge hydration more often',
+          '4_to_6': '4-6 cups — moderate, occasional gentle reminder',
+          '6_to_8': '6-8 cups — good, no need to push hydration unless relevant',
+          more_than_8: '8+ cups — great hydration, no reminders needed',
+        };
+        lines.push(`Daily water intake: ${waterMap[user.daily_water_intake] ?? user.daily_water_intake}`);
+      }
+
       // Schedule context — lets Grace answer "what time is my next reminder?" accurately.
       if (user.wake_time) {
         const [wh, wm] = user.wake_time.split(':').map(Number);

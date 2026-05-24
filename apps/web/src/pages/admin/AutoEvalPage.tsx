@@ -1,12 +1,14 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   api,
+  getToken,
   type AutoEvalReport,
   type AutoEvalConversationSummary,
   type AutoEvalConversationDetail,
   type AutoEvalTurnDetail,
   type AutoEvalPreferencePair,
+  type AutoEvalProgressEvent,
 } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -21,6 +23,8 @@ import {
   Loader2,
   Save,
   ArrowRight,
+  Play,
+  Zap,
 } from 'lucide-react';
 
 // ─── Style constants ─────────────────────────────────────────────────────────
@@ -1008,6 +1012,224 @@ function PairRow({
   );
 }
 
+// ─── Run progress panel ─────────────────────────────────────────────────────
+
+const PHASE_LABELS: Record<string, string> = {
+  simulating: 'Simulating conversations',
+  evaluating: 'Evaluating responses',
+  analyzing: 'Analyzing patterns',
+  preference_pairs: 'Generating preference pairs',
+  reporting: 'Building report',
+  done: 'Complete',
+  error: 'Failed',
+};
+
+function RunProgressPanel() {
+  const qc = useQueryClient();
+  const [events, setEvents] = useState<AutoEvalProgressEvent[]>([]);
+  const [isRunning, setIsRunning] = useState(false);
+  const [scenarioCount, setScenarioCount] = useState(10);
+  const [showConfig, setShowConfig] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  // Check initial status
+  const { data: statusData } = useQuery({
+    queryKey: ['auto-eval-status'],
+    queryFn: () => api.autoEval.status(),
+    refetchInterval: isRunning ? undefined : 10_000,
+  });
+
+  useEffect(() => {
+    if (statusData?.running && !isRunning) {
+      setIsRunning(true);
+      connectSSE();
+    }
+  }, [statusData]);
+
+  const connectSSE = () => {
+    const base = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3001';
+    const token = getToken();
+    // EventSource doesn't support headers, so we pass token as query param
+    const url = `${base}/admin/auto-eval/progress${token ? `?token=${token}` : ''}`;
+
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    const es = new EventSource(url);
+    eventSourceRef.current = es;
+
+    es.addEventListener('progress', (e) => {
+      const event = JSON.parse(e.data) as AutoEvalProgressEvent;
+      setEvents((prev) => [...prev.slice(-50), event]);
+      if (event.phase === 'done') {
+        setIsRunning(false);
+        es.close();
+        void qc.invalidateQueries({ queryKey: ['auto-eval-reports'] });
+        void qc.invalidateQueries({ queryKey: ['auto-eval-conversations'] });
+        toast.success(`Auto-eval complete! Score: ${event.score?.toFixed(2) ?? 'N/A'}`);
+      }
+      if (event.phase === 'error') {
+        setIsRunning(false);
+        es.close();
+        toast.error(`Auto-eval failed: ${event.error ?? event.message}`);
+      }
+    });
+
+    es.addEventListener('status', (e) => {
+      const state = JSON.parse(e.data) as { running: boolean; phase?: string; progress?: number };
+      if (state.running) {
+        setIsRunning(true);
+      }
+    });
+
+    es.addEventListener('error', () => {
+      // SSE disconnected — if we were running, try to reconnect
+      if (isRunning) {
+        setTimeout(connectSSE, 2000);
+      }
+    });
+  };
+
+  useEffect(() => {
+    return () => { eventSourceRef.current?.close(); };
+  }, []);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [events]);
+
+  const startMut = useMutation({
+    mutationFn: () => api.autoEval.startRun({ scenarioCount }),
+    onSuccess: () => {
+      setIsRunning(true);
+      setEvents([]);
+      connectSSE();
+      toast.success('Auto-eval run started');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+  const progress = lastEvent?.progress ?? statusData?.state?.progress ?? 0;
+  const phase = lastEvent?.phase ?? statusData?.state?.phase ?? '';
+
+  return (
+    <motion.div variants={fadeUp} initial="hidden" animate="show"
+      className="rounded-xl p-5 border" style={CARD_STYLE}>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <Zap className="h-4 w-4 text-primary" />
+          <p className="text-[13px] font-semibold text-foreground" style={{ letterSpacing: '-0.01em' }}>
+            Run Auto-Eval
+          </p>
+          {isRunning && (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium"
+              style={{ background: 'rgba(99,102,241,0.12)', color: 'rgb(165,180,252)' }}>
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+              {PHASE_LABELS[phase] ?? phase}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {!isRunning && (
+            <button
+              onClick={() => setShowConfig((v) => !v)}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Config
+            </button>
+          )}
+          <button
+            onClick={() => startMut.mutate()}
+            disabled={isRunning || startMut.isPending}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-primary/15 text-primary hover:bg-primary/25 transition-colors disabled:opacity-50"
+          >
+            {isRunning ? (
+              <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Running...</>
+            ) : startMut.isPending ? (
+              <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Starting...</>
+            ) : (
+              <><Play className="h-3.5 w-3.5" /> Start Run</>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Config panel */}
+      <AnimatePresence>
+        {showConfig && !isRunning && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="flex items-center gap-4 mb-4 pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Scenarios</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={scenarioCount}
+                  onChange={(e) => setScenarioCount(Number(e.target.value))}
+                  className="w-20 bg-white/5 border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  style={{ borderColor: 'rgba(255,255,255,0.1)' }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground mt-4">
+                More scenarios = better coverage but longer run time. Each scenario generates a multi-turn conversation.
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Progress bar */}
+      {(isRunning || progress > 0) && (
+        <div className="space-y-2">
+          <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.05)' }}>
+            <motion.div
+              className="h-full rounded-full"
+              style={{ background: phase === 'error' ? 'rgb(239,68,68)' : phase === 'done' ? 'rgb(16,185,129)' : 'rgb(99,102,241)' }}
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.3 }}
+            />
+          </div>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-muted-foreground">{progress}%</span>
+            {lastEvent && <span className="text-muted-foreground">{lastEvent.completed}/{lastEvent.total}</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Live log */}
+      {events.length > 0 && (
+        <div
+          className="mt-3 max-h-40 overflow-y-auto rounded-lg p-3 font-mono text-[11px] space-y-0.5"
+          style={{ background: 'rgba(0,0,0,0.3)' }}
+        >
+          {events.map((ev, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <span className="text-muted-foreground/50 shrink-0 tabular-nums">{String(i + 1).padStart(2, '0')}</span>
+              <span className={ev.phase === 'error' ? 'text-rose-400' : ev.phase === 'done' ? 'text-emerald-400' : 'text-foreground/80'}>
+                {ev.message}
+              </span>
+              {ev.score !== undefined && (
+                <span className="ml-auto shrink-0" style={{ color: scoreColor(ev.score) }}>{ev.score.toFixed(2)}</span>
+              )}
+            </div>
+          ))}
+          <div ref={logEndRef} />
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 // ─── Main page ───────────────────────────────────────────────────────────────
 
 export default function AutoEvalPage() {
@@ -1033,6 +1255,9 @@ export default function AutoEvalPage() {
           Automated multi-turn conversation evaluation with LLM-powered scoring
         </p>
       </div>
+
+      {/* Run progress panel */}
+      <RunProgressPanel />
 
       {/* Tab bar */}
       <div className="flex items-center gap-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>

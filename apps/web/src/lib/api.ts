@@ -291,6 +291,26 @@ export interface AutoEvalPreferencePair {
   reasoning: string;
 }
 
+export interface AutoEvalRunStatus {
+  running: boolean;
+  phase: 'simulating' | 'evaluating' | 'analyzing' | 'preference_pairs' | 'reporting' | 'done' | 'error';
+  progress: number;
+  total: number;
+  completed: number;
+  startedAt: string;
+  error?: string;
+}
+
+export interface AutoEvalProgressEvent {
+  phase: string;
+  progress: number;
+  total: number;
+  completed: number;
+  message: string;
+  score?: number;
+  error?: string;
+}
+
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export const api = {
@@ -435,5 +455,11 @@ export const api = {
     autoGenRules: () => apiFetch<{ ok: boolean; rulesGenerated: number; rulesInserted: number; message: string }>(
       '/admin/content-rules/auto-generate', { method: 'POST' }
     ),
+    startRun: (opts?: { scenarioCount?: number; concurrency?: number; categories?: string[] }) =>
+      apiFetch<{ ok: boolean; message: string }>('/admin/auto-eval/run', {
+        method: 'POST',
+        body: JSON.stringify(opts ?? {}),
+      }),
+    status: () => apiFetch<{ running: boolean; state: AutoEvalRunStatus | null }>('/admin/auto-eval/status'),
   },
 };

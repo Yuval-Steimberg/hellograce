@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { GRACE_SYSTEM_PROMPT } from '@grace/ai-core';
@@ -27,9 +27,12 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
   app.addHook('preHandler', async (req) => {
     if (!req.url.startsWith('/admin/')) return;
     const auth = req.headers.authorization;
+    const queryToken = (req.query as Record<string, string>)?.token;
     const expected = deps.adminToken;
     if (!expected) return;
-    if (!auth || auth !== `Bearer ${expected}`) throw new UnauthorizedError('Admin token required');
+    if (auth === `Bearer ${expected}`) return;
+    if (queryToken === expected) return;
+    throw new UnauthorizedError('Admin token required');
   });
 
   // ─── Metrics ────────────────────────────────────────────────────────────────
@@ -1164,6 +1167,135 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       const msg = err instanceof Error ? err.message : String(err);
       reply.status(500).send({ error: 'LEARN_FAILED', message: msg });
     }
+  });
+
+  // 7. POST /admin/auto-eval/run — start a new auto-eval run in the background
+  app.post('/admin/auto-eval/run', async (req, reply) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      reply.status(503).send({ error: 'NO_API_KEY', message: 'GEMINI_API_KEY not configured' });
+      return;
+    }
+
+    const body = (req.body ?? {}) as {
+      scenarioCount?: number;
+      concurrency?: number;
+      categories?: string[];
+      generatePreferencePairs?: boolean;
+    };
+
+    try {
+      const runnerPath = ['..', '..', 'auto-eval', 'streaming-runner.js'].join('/');
+      const mod = await import(runnerPath).catch(() => null) as {
+        runAutoEvalStreaming: (opts: Record<string, unknown>) => Promise<unknown>;
+        getRunState: () => { running: boolean } | null;
+      } | null;
+
+      if (!mod) {
+        reply.status(503).send({ error: 'MODULE_UNAVAILABLE', message: 'Auto-eval streaming runner not available' });
+        return;
+      }
+
+      const state = mod.getRunState();
+      if (state?.running) {
+        reply.status(409).send({ error: 'ALREADY_RUNNING', message: 'An auto-eval run is already in progress' });
+        return;
+      }
+
+      if (!existsSync(autoEvalResultsDir)) {
+        mkdirSync(autoEvalResultsDir, { recursive: true });
+      }
+
+      // Fire and forget — client monitors progress via SSE
+      void mod.runAutoEvalStreaming({
+        apiKey,
+        model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+        scenarioCount: body.scenarioCount ?? 10,
+        concurrency: body.concurrency ?? 2,
+        categories: body.categories,
+        generatePreferencePairs: body.generatePreferencePairs ?? true,
+        outDir: autoEvalResultsDir,
+        verbose: false,
+      }).catch(() => { /* error state is tracked in the runner */ });
+
+      return { ok: true, message: 'Auto-eval run started. Connect to /admin/auto-eval/progress for live updates.' };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reply.status(500).send({ error: 'RUN_FAILED', message: msg });
+    }
+  });
+
+  // 8. GET /admin/auto-eval/status — get current run status (non-streaming)
+  app.get('/admin/auto-eval/status', async () => {
+    try {
+      const runnerPath = ['..', '..', 'auto-eval', 'streaming-runner.js'].join('/');
+      const mod = await import(runnerPath).catch(() => null) as {
+        getRunState: () => { running: boolean; phase: string; progress: number; total: number; completed: number; startedAt: string; error?: string } | null;
+      } | null;
+
+      if (!mod) return { running: false, state: null };
+      const state = mod.getRunState();
+      return { running: state?.running ?? false, state };
+    } catch {
+      return { running: false, state: null };
+    }
+  });
+
+  // 9. GET /admin/auto-eval/progress — SSE stream of live progress events
+  app.get('/admin/auto-eval/progress', async (req, reply) => {
+    const raw = reply.raw;
+    raw.setHeader('Content-Type', 'text/event-stream');
+    raw.setHeader('Cache-Control', 'no-cache');
+    raw.setHeader('Connection', 'keep-alive');
+    raw.setHeader('X-Accel-Buffering', 'no');
+    raw.flushHeaders();
+
+    let closed = false;
+    req.raw.on('close', () => { closed = true; });
+
+    const send = (event: string, data: unknown) => {
+      if (closed) return;
+      raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+      const runnerPath = ['..', '..', 'auto-eval', 'streaming-runner.js'].join('/');
+      const mod = await import(runnerPath).catch(() => null) as {
+        getRunState: () => { running: boolean; phase: string; progress: number; total: number; completed: number } | null;
+        addProgressListener: (cb: (event: unknown) => void) => () => void;
+      } | null;
+
+      if (!mod) {
+        send('error', { message: 'Auto-eval module not available' });
+        raw.end();
+        return;
+      }
+
+      // Send current state immediately
+      const state = mod.getRunState();
+      send('status', state ?? { running: false });
+
+      // Subscribe to progress events
+      const unsubscribe = mod.addProgressListener((event) => {
+        if (closed) { unsubscribe(); return; }
+        send('progress', event);
+        const evt = event as { phase?: string };
+        if (evt.phase === 'done' || evt.phase === 'error') {
+          setTimeout(() => { if (!closed) raw.end(); }, 100);
+        }
+      });
+
+      // Cleanup on disconnect
+      req.raw.on('close', () => { unsubscribe(); });
+    } catch {
+      send('error', { message: 'Failed to connect to progress stream' });
+      raw.end();
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      req.raw.on('close', resolve);
+    });
   });
 
   // ─── Business metrics ────────────────────────────────────────────────────────

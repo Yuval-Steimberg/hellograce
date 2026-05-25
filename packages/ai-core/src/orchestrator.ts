@@ -417,7 +417,7 @@ export class AIOrchestrator {
         const union = new Set([...prevKws, ...respKws]);
         const intersection = prevKws.filter((w) => respKws.includes(w)).length;
         const jaccard = intersection / union.size;
-        if (jaccard > 0.5) {
+        if (jaccard > 0.4) {
           topicDrift = true;
           regenViolations.push({
             code: 'response_duplication',

@@ -30,11 +30,14 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
   app.addHook('preHandler', async (req) => {
     if (!req.url.startsWith('/admin/')) return;
     const auth = req.headers.authorization;
-    const queryToken = (req.query as Record<string, string>)?.token;
     const expected = deps.adminToken;
     if (!expected) return;
     if (auth === `Bearer ${expected}`) return;
-    if (queryToken === expected) return;
+    // Query param token only for SSE endpoints (EventSource can't set headers)
+    if (req.url.startsWith('/admin/auto-eval/progress')) {
+      const queryToken = (req.query as Record<string, string>)?.token;
+      if (queryToken === expected) return;
+    }
     throw new UnauthorizedError('Admin token required');
   });
 
@@ -457,7 +460,19 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   /** Full user detail with check-in and weight history. */
   app.get('/admin/users/:phone', async (req) => {
     const { phone } = req.params as { phone: string };
-    const { rows: userRows } = await deps.pool.query(`SELECT * FROM users WHERE phone = $1 LIMIT 1`, [phone]);
+    const { rows: userRows } = await deps.pool.query(
+      `SELECT phone, first_name, medication, medication_frequency, injection_day,
+              goals, food_dislikes, timezone, wake_time, sleep_time,
+              current_weight, goal_weight, height_cm, age, sex, activity_level,
+              primary_goal, protein_goal_grams, glp1_start_date, dose_mg,
+              dietary_restriction, biggest_challenge, why_started, support_style,
+              exercise_habits, cooking_comfort, daily_water_intake,
+              active, paused, blocked, is_paid, is_pro, rlhf_enabled,
+              trial_start, created_at, updated_at, last_reply_at,
+              checkin_count_per_day, grace_notes
+       FROM users WHERE phone = $1 LIMIT 1`,
+      [phone],
+    );
     if (!userRows[0]) throw new ValidationError('User not found');
     const [{ rows: checkIns }, { rows: weightLogs }, { rows: msgCountRows }] = await Promise.all([
       deps.pool.query(
@@ -527,6 +542,10 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   /** Permanently delete a user and all their data. */
   app.delete('/admin/users/:phone', async (req) => {
     const { phone } = req.params as { phone: string };
+    await deps.pool.query('DELETE FROM user_memories WHERE user_id = $1', [phone]).catch(() => null);
+    await deps.pool.query('DELETE FROM user_profile_facts WHERE user_id = $1', [phone]).catch(() => null);
+    await deps.pool.query('DELETE FROM tool_logs WHERE user_id = $1', [phone]).catch(() => null);
+    await deps.pool.query('DELETE FROM injections WHERE user_id = $1', [phone]).catch(() => null);
     await deps.pool.query('DELETE FROM check_ins WHERE phone = $1', [phone]);
     await deps.pool.query('DELETE FROM messages WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]);
@@ -535,6 +554,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     await deps.pool.query('DELETE FROM weight_logs WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM feedback WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM users WHERE phone = $1', [phone]);
+    app.log.info('admin.user_deleted');
     return { ok: true };
   });
 
@@ -577,6 +597,8 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   /** Reset conversation memory without deleting the profile. */
   app.post('/admin/users/:phone/reset-memory', async (req) => {
     const { phone } = req.params as { phone: string };
+    await deps.pool.query('DELETE FROM user_memories WHERE user_id = $1', [phone]).catch(() => null);
+    await deps.pool.query('DELETE FROM user_profile_facts WHERE user_id = $1', [phone]).catch(() => null);
     await deps.pool.query('DELETE FROM messages WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM embeddings WHERE user_id = $1', [phone]);

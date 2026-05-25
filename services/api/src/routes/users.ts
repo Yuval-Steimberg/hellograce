@@ -12,7 +12,7 @@ import { calculateProteinTarget } from '../nutrition/protein-target.js';
 // optional and gets learned progressively through conversation.
 const OnboardSchema = z.object({
   firstName: z.string().trim().max(120).optional().default(''),
-  phone: z.string().trim().min(8).max(30),
+  phone: z.string().trim().min(8).max(20).regex(/^\+?[1-9]\d{6,14}$/, 'Invalid phone number'),
   medication: z.string().trim().min(1).max(120),
   medicationFrequency: z.string().trim().optional().default('weekly'),
   injectionDay: z.string().trim().max(20).optional().nullable(),
@@ -63,7 +63,7 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
 
   // ─── Onboarding ─────────────────────────────────────────────────────────────
 
-  app.post('/users/onboard', async (req) => {
+  app.post('/users/onboard', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req) => {
     const parsed = OnboardSchema.safeParse(req.body);
     if (!parsed.success) throw new ValidationError(parsed.error.message);
     const b = parsed.data;
@@ -192,8 +192,18 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
 
   // ─── Self-serve GDPR data deletion ──────────────────────────────────────────
 
-  app.delete('/users/:phone/data', async (req) => {
+  app.delete('/users/:phone/data', { config: { rateLimit: { max: 3, timeWindow: '1 hour' } } }, async (req) => {
+    const auth = req.headers.authorization;
+    const expected = process.env.ADMIN_TOKEN;
+    if (expected && auth !== `Bearer ${expected}`) {
+      throw new ValidationError('Authentication required for data deletion');
+    }
+
     const { phone } = req.params as { phone: string };
+    await pool.query('DELETE FROM user_memories WHERE user_id = $1', [phone]).catch(() => null);
+    await pool.query('DELETE FROM user_profile_facts WHERE user_id = $1', [phone]).catch(() => null);
+    await pool.query('DELETE FROM tool_logs WHERE user_id = $1', [phone]).catch(() => null);
+    await pool.query('DELETE FROM injections WHERE user_id = $1', [phone]).catch(() => null);
     await pool.query('DELETE FROM check_ins WHERE phone = $1', [phone]).catch(() => null);
     await pool.query('DELETE FROM messages WHERE user_id = $1', [phone]).catch(() => null);
     await pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]).catch(() => null);
@@ -202,7 +212,7 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     await pool.query('DELETE FROM weight_logs WHERE user_id = $1', [phone]).catch(() => null);
     await pool.query('DELETE FROM feedback WHERE user_id = $1', [phone]).catch(() => null);
     await pool.query('DELETE FROM users WHERE phone = $1', [phone]).catch(() => null);
-    req.log.info({ phone }, 'user.data_deleted');
+    req.log.info('user.data_deleted');
     return { ok: true };
   });
 }

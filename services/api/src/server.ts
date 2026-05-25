@@ -172,8 +172,11 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     loggerInstance: logger as never,
     trustProxy: true,
   }) as unknown as FastifyInstance;
-  await app.register(cors, { origin: true, credentials: true });
-  await app.register(helmet, { contentSecurityPolicy: false });
+  const allowedOrigins = env.NODE_ENV === 'production'
+    ? [process.env.PUBLIC_WEB_URL ?? 'https://grace-admin-silk.vercel.app']
+    : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'];
+  await app.register(cors, { origin: allowedOrigins, credentials: true });
+  await app.register(helmet);
   await app.register(formbody);
   await app.register(rateLimit, {
     max: 120,

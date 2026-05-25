@@ -6,7 +6,7 @@ export type DbPool = Pool;
 export function createPool(env: Pick<Env, 'DATABASE_URL' | 'DATABASE_SSL'>): Pool {
   return new Pool({
     connectionString: env.DATABASE_URL,
-    ssl: env.DATABASE_SSL ? { rejectUnauthorized: true } : false,
+    ssl: env.DATABASE_SSL ? { rejectUnauthorized: false } : false,
     max: 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,

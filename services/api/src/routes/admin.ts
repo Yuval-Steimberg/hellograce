@@ -40,6 +40,7 @@ async function auditLog(pool: Pool, action: string, ip: string, details?: Record
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
   app.addHook('preHandler', async (req) => {
     if (!req.url.startsWith('/admin/')) return;
+    if (req.method === 'OPTIONS') return;
     const auth = req.headers.authorization;
     const expected = deps.adminToken;
     if (!expected) return;

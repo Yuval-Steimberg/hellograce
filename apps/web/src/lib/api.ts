@@ -12,10 +12,11 @@ export function clearToken(): void {
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
+  const hasBody = init?.body != null;
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init?.headers ?? {}),
     },

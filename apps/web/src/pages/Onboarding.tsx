@@ -25,15 +25,15 @@ import ConfirmationStep from "@/components/onboarding/ConfirmationStep";
 // 14-step onboarding flow:
 // 1. Welcome
 // 2. Name
-// 3. Medication
-// 4. Injection Day / Med Time
-// 5. GLP-1 details (start date, dose, dietary style)
-// 6. Goals
-// 7. Your story (biggest challenge, why started, support style)
-// 8. Schedule (wake/sleep)
-// 9. Food dislikes
-// 10. About you (sex, height, age, weight, goal weight, activity level)
-// 11. Daily life (exercise, cooking, water)
+// 3. About you (sex, height, age, weight, goal weight, activity level) — all required
+// 4. Medication
+// 5. Injection Day / Med Time
+// 6. GLP-1 details (start date, dose, dietary style)
+// 7. Goals
+// 8. Your story (biggest challenge, why started, support style)
+// 9. Schedule (wake/sleep)
+// 10. Food dislikes
+// 11. Daily life (exercise)
 // 12. Phone + consent
 // 13. Payment/trial
 // 14. Confirmation
@@ -102,7 +102,7 @@ const Onboarding = () => {
       const storedId = localStorage.getItem("grace_user_id");
       if (storedId) {
         setUserId(storedId);
-        setStep(10); // payment step
+        setStep(13); // payment step
       }
     }
   }, [searchParams]);
@@ -205,84 +205,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 3: Medication */}
+        {/* Step 3: About you (sex, height, age, weight, goal, activity) — all required */}
         {step === 3 && (
-          <MedicationStep
-            selected={medication}
-            onSelect={(med, freq) => {
-              setMedication(med);
-              setMedicationFrequency(freq);
-            }}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 4: Injection Day or Med Time */}
-        {step === 4 && (
-          medicationFrequency === "daily" ? (
-            <MedicationTimeStep selected={medicationTime} onSelect={setMedicationTime} onNext={next} />
-          ) : (
-            <InjectionDayStep selected={injectionDay} onSelect={setInjectionDay} onNext={next} />
-          )
-        )}
-
-        {/* Step 5: GLP-1 details (start date, dose, dietary style) */}
-        {step === 5 && (
-          <GLP1DetailStep
-            glp1StartDate={glp1StartDate}
-            doseMg={doseMg}
-            dietaryRestriction={dietaryRestriction}
-            onChange={(d) => {
-              if (d.glp1StartDate !== undefined) setGlp1StartDate(d.glp1StartDate);
-              if (d.doseMg !== undefined) setDoseMg(d.doseMg);
-              if (d.dietaryRestriction !== undefined) setDietaryRestriction(d.dietaryRestriction);
-            }}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 6: Goals */}
-        {step === 6 && (
-          <GoalsStep
-            selected={goals}
-            onChange={setGoals}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 7: Your story (challenge, why, support style) */}
-        {step === 7 && (
-          <PersonalContextStep
-            biggestChallenge={biggestChallenge}
-            whyStarted={whyStarted}
-            supportStyle={supportStyle}
-            onChange={(d) => {
-              if (d.biggestChallenge !== undefined) setBiggestChallenge(d.biggestChallenge);
-              if (d.whyStarted !== undefined) setWhyStarted(d.whyStarted);
-              if (d.supportStyle !== undefined) setSupportStyle(d.supportStyle);
-            }}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 8: Schedule (wake/sleep) */}
-        {step === 8 && (
-          <ScheduleStep
-            wakeTime={wakeTime}
-            sleepTime={sleepTime}
-            onChange={(d) => {
-              if (d.wakeTime !== undefined) setWakeTime(d.wakeTime);
-              if (d.sleepTime !== undefined) setSleepTime(d.sleepTime);
-            }}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 9: Food dislikes */}
-        {step === 9 && <FoodStep value={foodDislikes} onChange={setFoodDislikes} onNext={next} />}
-
-        {/* Step 10: About you (sex, height, age, weight, goal, activity) */}
-        {step === 10 && (
           <WeightStep
             sex={sex}
             currentWeight={currentWeight}
@@ -302,7 +226,83 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 11: Daily life (exercise, cooking, water) */}
+        {/* Step 4: Medication */}
+        {step === 4 && (
+          <MedicationStep
+            selected={medication}
+            onSelect={(med, freq) => {
+              setMedication(med);
+              setMedicationFrequency(freq);
+            }}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 5: Injection Day or Med Time */}
+        {step === 5 && (
+          medicationFrequency === "daily" ? (
+            <MedicationTimeStep selected={medicationTime} onSelect={setMedicationTime} onNext={next} />
+          ) : (
+            <InjectionDayStep selected={injectionDay} onSelect={setInjectionDay} onNext={next} />
+          )
+        )}
+
+        {/* Step 6: GLP-1 details (start date, dose, dietary style) */}
+        {step === 6 && (
+          <GLP1DetailStep
+            glp1StartDate={glp1StartDate}
+            doseMg={doseMg}
+            dietaryRestriction={dietaryRestriction}
+            onChange={(d) => {
+              if (d.glp1StartDate !== undefined) setGlp1StartDate(d.glp1StartDate);
+              if (d.doseMg !== undefined) setDoseMg(d.doseMg);
+              if (d.dietaryRestriction !== undefined) setDietaryRestriction(d.dietaryRestriction);
+            }}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 7: Goals */}
+        {step === 7 && (
+          <GoalsStep
+            selected={goals}
+            onChange={setGoals}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 8: Your story (challenge, why, support style) */}
+        {step === 8 && (
+          <PersonalContextStep
+            biggestChallenge={biggestChallenge}
+            whyStarted={whyStarted}
+            supportStyle={supportStyle}
+            onChange={(d) => {
+              if (d.biggestChallenge !== undefined) setBiggestChallenge(d.biggestChallenge);
+              if (d.whyStarted !== undefined) setWhyStarted(d.whyStarted);
+              if (d.supportStyle !== undefined) setSupportStyle(d.supportStyle);
+            }}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 9: Schedule (wake/sleep) */}
+        {step === 9 && (
+          <ScheduleStep
+            wakeTime={wakeTime}
+            sleepTime={sleepTime}
+            onChange={(d) => {
+              if (d.wakeTime !== undefined) setWakeTime(d.wakeTime);
+              if (d.sleepTime !== undefined) setSleepTime(d.sleepTime);
+            }}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 10: Food dislikes */}
+        {step === 10 && <FoodStep value={foodDislikes} onChange={setFoodDislikes} onNext={next} />}
+
+        {/* Step 11: Daily life (exercise) */}
         {step === 11 && (
           <LifestyleStep
             exerciseHabits={exerciseHabits}

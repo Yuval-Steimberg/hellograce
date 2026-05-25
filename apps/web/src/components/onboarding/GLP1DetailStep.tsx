@@ -3,13 +3,11 @@ import QuizButton from "./QuizButton";
 interface GLP1DetailData {
   glp1StartDate?: string;
   doseMg?: string;
-  dietaryRestriction?: string;
 }
 
 interface GLP1DetailProps {
   glp1StartDate: string;
   doseMg: string;
-  dietaryRestriction: string;
   onChange: (data: GLP1DetailData) => void;
   onNext: () => void;
 }
@@ -17,22 +15,9 @@ interface GLP1DetailProps {
 const inputClass =
   "h-16 w-full border-b-2 border-sand focus:border-primary outline-none bg-transparent text-lg text-foreground placeholder:text-muted-foreground/40 transition-colors rounded-none px-1";
 
-const DIETARY_OPTIONS: { value: string; label: string }[] = [
-  { value: "none", label: "No restrictions" },
-  { value: "vegetarian", label: "Vegetarian" },
-  { value: "vegan", label: "Vegan" },
-  { value: "pescatarian", label: "Pescatarian" },
-  { value: "keto", label: "Keto / Low-carb" },
-  { value: "halal", label: "Halal" },
-  { value: "kosher", label: "Kosher" },
-  { value: "gluten_free", label: "Gluten-free" },
-  { value: "dairy_free", label: "Dairy-free" },
-];
-
 const GLP1DetailStep = ({
   glp1StartDate,
   doseMg,
-  dietaryRestriction,
   onChange,
   onNext,
 }: GLP1DetailProps) => {
@@ -78,28 +63,6 @@ const GLP1DetailStep = ({
             <span className="text-xs text-muted-foreground px-1">Optional — helps with dose-specific side effect guidance</span>
           </label>
 
-          <div className="flex flex-col gap-3">
-            <span className="text-foreground font-medium text-sm px-1">Dietary style</span>
-            <div className="grid grid-cols-3 gap-2">
-              {DIETARY_OPTIONS.map((opt) => {
-                const active = dietaryRestriction === opt.value;
-                return (
-                  <button
-                    type="button"
-                    key={opt.value}
-                    onClick={() => onChange({ dietaryRestriction: active ? "" : opt.value })}
-                    className={`text-center rounded-2xl border-2 px-3 py-2.5 transition-all text-[13px] ${
-                      active
-                        ? "border-primary bg-primary/5 shadow-sm font-semibold"
-                        : "border-sand hover:border-primary/50 hover:bg-card/50"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
 
         <p className="text-xs text-muted-foreground mt-5 px-1">

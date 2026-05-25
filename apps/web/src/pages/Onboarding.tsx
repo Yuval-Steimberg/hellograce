@@ -28,11 +28,11 @@ import ConfirmationStep from "@/components/onboarding/ConfirmationStep";
 // 3. About you (sex, height, age, weight, goal weight, activity level) — all required
 // 4. Medication
 // 5. Injection Day / Med Time
-// 6. GLP-1 details (start date, dose, dietary style)
+// 6. GLP-1 details (start date, dose)
 // 7. Goals
 // 8. Your story (biggest challenge, why started, support style)
-// 9. Schedule (wake/sleep)
-// 10. Food dislikes
+// 9. Food preferences (dietary style + dislikes — one screen)
+// 10. Schedule (wake/sleep)
 // 11. Daily life (exercise)
 // 12. Phone + consent
 // 13. Payment/trial
@@ -247,16 +247,14 @@ const Onboarding = () => {
           )
         )}
 
-        {/* Step 6: GLP-1 details (start date, dose, dietary style) */}
+        {/* Step 6: GLP-1 details (start date, dose) */}
         {step === 6 && (
           <GLP1DetailStep
             glp1StartDate={glp1StartDate}
             doseMg={doseMg}
-            dietaryRestriction={dietaryRestriction}
             onChange={(d) => {
               if (d.glp1StartDate !== undefined) setGlp1StartDate(d.glp1StartDate);
               if (d.doseMg !== undefined) setDoseMg(d.doseMg);
-              if (d.dietaryRestriction !== undefined) setDietaryRestriction(d.dietaryRestriction);
             }}
             onNext={next}
           />
@@ -286,8 +284,19 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 9: Schedule (wake/sleep) */}
+        {/* Step 9: Food preferences (dietary style + dislikes) */}
         {step === 9 && (
+          <FoodStep
+            foodDislikes={foodDislikes}
+            dietaryRestriction={dietaryRestriction}
+            onChangeDislikes={setFoodDislikes}
+            onChangeDietary={setDietaryRestriction}
+            onNext={next}
+          />
+        )}
+
+        {/* Step 10: Schedule (wake/sleep) */}
+        {step === 10 && (
           <ScheduleStep
             wakeTime={wakeTime}
             sleepTime={sleepTime}
@@ -298,9 +307,6 @@ const Onboarding = () => {
             onNext={next}
           />
         )}
-
-        {/* Step 10: Food dislikes */}
-        {step === 10 && <FoodStep value={foodDislikes} onChange={setFoodDislikes} onNext={next} />}
 
         {/* Step 11: Daily life (exercise) */}
         {step === 11 && (

@@ -480,7 +480,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
               current_weight, goal_weight, height_cm, age, sex, activity_level,
               primary_goal, protein_goal_grams, glp1_start_date, dose_mg,
               dietary_restriction, biggest_challenge, why_started, support_style,
-              exercise_habits, cooking_comfort, daily_water_intake,
+              exercise_habits, medication_time, sms_consent,
               active, paused, blocked, is_paid, is_pro, rlhf_enabled,
               trial_start, created_at, updated_at, last_reply_at,
               checkin_count_per_day, grace_notes

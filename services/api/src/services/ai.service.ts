@@ -566,6 +566,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         lines.push(`Age range: ${decade}s`);
       }
       if (user.sex) lines.push(`Sex: ${user.sex.replace('_', ' ')}`);
+      if (user.height_cm) lines.push(`Height: ${user.height_cm}cm (${Math.floor(user.height_cm / 2.54 / 12)}'${Math.round(user.height_cm / 2.54 % 12)}")`);
       if (user.activity_level) lines.push(`Activity level: ${user.activity_level.replace(/_/g, ' ')}`);
       if (user.primary_goal) lines.push(`Primary goal: ${user.primary_goal.replace('_', ' ')}`);
       if (user.protein_goal_grams) {
@@ -606,24 +607,6 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       if (user.exercise_habits) {
         const exercises = user.exercise_habits.split(',').map((e) => e.trim().replace(/_/g, ' ')).join(', ');
         lines.push(`Exercise: ${exercises} — tailor muscle/fitness advice to what they actually do.`);
-      }
-      if (user.cooking_comfort) {
-        const cookMap: Record<string, string> = {
-          dont_cook: "doesn't cook — suggest grab-and-go, premade, or zero-prep options only",
-          basic: 'basic cooking — suggest simple 15-min recipes, minimal ingredients',
-          comfortable: 'comfortable in kitchen — can suggest real recipes with multiple steps',
-          love_cooking: 'loves cooking — can suggest complex recipes, experimenting welcome',
-        };
-        lines.push(`Cooking level: ${cookMap[user.cooking_comfort] ?? user.cooking_comfort}`);
-      }
-      if (user.daily_water_intake) {
-        const waterMap: Record<string, string> = {
-          less_than_4: 'less than 4 cups — LOW, nudge hydration more often',
-          '4_to_6': '4-6 cups — moderate, occasional gentle reminder',
-          '6_to_8': '6-8 cups — good, no need to push hydration unless relevant',
-          more_than_8: '8+ cups — great hydration, no reminders needed',
-        };
-        lines.push(`Daily water intake: ${waterMap[user.daily_water_intake] ?? user.daily_water_intake}`);
       }
 
       // Schedule context — lets Grace answer "what time is my next reminder?" accurately.

@@ -118,6 +118,8 @@ const Onboarding = () => {
         medication,
         medicationFrequency,
         injectionDay: medicationFrequency === "daily" ? null : injectionDay,
+        medicationTime: medicationFrequency === "daily" ? (medicationTime || null) : null,
+        smsConsent,
         sex: sex || null,
         goals: goals.length > 0 ? goals : undefined,
         wakeTime,

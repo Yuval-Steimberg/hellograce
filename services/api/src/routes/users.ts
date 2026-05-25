@@ -16,6 +16,8 @@ const OnboardSchema = z.object({
   medication: z.string().trim().min(1).max(120),
   medicationFrequency: z.string().trim().optional().default('weekly'),
   injectionDay: z.string().trim().max(20).optional().nullable(),
+  medicationTime: z.string().trim().max(10).optional().nullable(),
+  smsConsent: z.boolean().optional().default(false),
   sex: z.enum(['female', 'male', 'nonbinary', 'prefer_not_to_say']).optional().nullable(),
   wakeTime: z.string().regex(/^\d{2}:\d{2}$/).default('08:00'),
   sleepTime: z.string().regex(/^\d{2}:\d{2}$/).default('22:00'),
@@ -37,9 +39,7 @@ const OnboardSchema = z.object({
   biggestChallenge: z.string().max(50).optional().nullable(),
   whyStarted: z.string().max(50).optional().nullable(),
   supportStyle: z.enum(['gentle', 'straight_facts', 'tough_love', 'mix']).optional().nullable(),
-  exerciseHabits: z.string().max(50).optional().nullable(),
-  cookingComfort: z.enum(['dont_cook', 'basic', 'comfortable', 'love_cooking']).optional().nullable(),
-  dailyWaterIntake: z.enum(['less_than_4', '4_to_6', '6_to_8', 'more_than_8']).optional().nullable(),
+  exerciseHabits: z.string().max(200).optional().nullable(),
 });
 
 export interface UserRouteDeps {
@@ -102,6 +102,8 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       medication: b.medication,
       medication_frequency: b.medicationFrequency,
       injection_day: b.injectionDay ?? undefined,
+      medication_time: b.medicationTime ?? undefined,
+      sms_consent: b.smsConsent,
       wake_time: b.wakeTime,
       sleep_time: b.sleepTime,
       food_dislikes: foodDislikesArr,
@@ -172,8 +174,6 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     if (b.whyStarted) lifestyleFields.why_started = b.whyStarted;
     if (b.supportStyle) lifestyleFields.support_style = b.supportStyle;
     if (b.exerciseHabits) lifestyleFields.exercise_habits = b.exerciseHabits;
-    if (b.cookingComfort) lifestyleFields.cooking_comfort = b.cookingComfort;
-    if (b.dailyWaterIntake) lifestyleFields.daily_water_intake = b.dailyWaterIntake;
     if (Object.keys(lifestyleFields).length > 0) {
       try {
         await users.update(phone, lifestyleFields as Partial<Parameters<typeof users.update>[1]>);

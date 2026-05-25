@@ -8,6 +8,8 @@ export interface GraceUser {
   medication: string | null;
   medication_frequency: string;
   injection_day: string | null;
+  medication_time: string | null;
+  sms_consent: boolean;
   injection_count: number;
   goals: string[];
   food_dislikes: string[];
@@ -71,8 +73,6 @@ export interface GraceUser {
   why_started: string | null;
   support_style: string | null;
   exercise_habits: string | null;
-  cooking_comfort: string | null;
-  daily_water_intake: string | null;
 }
 
 export class UserService {

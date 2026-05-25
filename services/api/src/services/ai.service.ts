@@ -556,8 +556,10 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       } else if (user.current_weight) {
         lines.push(`Current weight: ${user.current_weight} lbs`);
       }
-      if (user.height_cm) lines.push(`Height: ${user.height_cm} cm`);
-      if (user.age) lines.push(`Age: ${user.age}`);
+      if (user.age) {
+        const decade = Math.floor(user.age / 10) * 10;
+        lines.push(`Age range: ${decade}s`);
+      }
       if (user.sex) lines.push(`Sex: ${user.sex.replace('_', ' ')}`);
       if (user.activity_level) lines.push(`Activity level: ${user.activity_level.replace(/_/g, ' ')}`);
       if (user.primary_goal) lines.push(`Primary goal: ${user.primary_goal.replace('_', ' ')}`);

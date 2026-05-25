@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { encryptField, decryptField, hashField, isEncryptionEnabled } from '../crypto/field-encrypt.js';
 
 export interface GraceUser {
   id: string;
@@ -77,13 +78,29 @@ export interface GraceUser {
 export class UserService {
   constructor(private pool: Pool) {}
 
-  /** Fetch user by phone. Returns null if not found. */
+  private decryptUser(row: GraceUser): GraceUser {
+    if (!isEncryptionEnabled()) return row;
+    const r = { ...row };
+    if (r.first_name) r.first_name = decryptField(r.first_name);
+    if (r.medication) r.medication = decryptField(r.medication);
+    return r;
+  }
+
+  /** Fetch user by phone. Tries phone_hash first, falls back to plaintext. */
   async getByPhone(phone: string): Promise<GraceUser | null> {
+    if (isEncryptionEnabled()) {
+      const hash = hashField(phone);
+      const { rows } = await this.pool.query<GraceUser>(
+        `SELECT * FROM users WHERE phone_hash = $1 LIMIT 1`,
+        [hash],
+      );
+      if (rows[0]) return this.decryptUser(rows[0]);
+    }
     const { rows } = await this.pool.query<GraceUser>(
       `SELECT * FROM users WHERE phone = $1 LIMIT 1`,
       [phone],
     );
-    return rows[0] ?? null;
+    return rows[0] ? this.decryptUser(rows[0]) : null;
   }
 
   /** Fetch user by userId (text). */
@@ -92,20 +109,22 @@ export class UserService {
       `SELECT * FROM users WHERE id::text = $1 OR phone = $1 LIMIT 1`,
       [userId],
     );
-    return rows[0] ?? null;
+    return rows[0] ? this.decryptUser(rows[0]) : null;
   }
 
   /** Upsert user — creates if new, updates last_reply_at + updated_at. */
   async ensureUser(phone: string): Promise<GraceUser> {
+    const hash = isEncryptionEnabled() ? hashField(phone) : null;
     const { rows } = await this.pool.query<GraceUser>(
-      `INSERT INTO users (phone, last_reply_at)
-       VALUES ($1, now())
+      `INSERT INTO users (phone, phone_hash, last_reply_at)
+       VALUES ($1, $2, now())
        ON CONFLICT (phone) DO UPDATE
          SET last_reply_at = now(), updated_at = now()
+         ${hash ? ', phone_hash = COALESCE(users.phone_hash, EXCLUDED.phone_hash)' : ''}
        RETURNING *`,
-      [phone],
+      [phone, hash],
     );
-    return rows[0]!;
+    return this.decryptUser(rows[0]!);
   }
 
   /**
@@ -133,10 +152,15 @@ export class UserService {
     return msgCount === 0 && (accountAgeHours === null || accountAgeHours < 24);
   }
 
-  /** Update arbitrary user fields. */
+  /** Update arbitrary user fields. Encrypts sensitive fields when encryption is enabled. */
   async update(phone: string, fields: Partial<Omit<GraceUser, 'id' | 'phone' | 'created_at' | 'updated_at'>>): Promise<void> {
     const keys = Object.keys(fields) as (keyof typeof fields)[];
     if (keys.length === 0) return;
+    if (isEncryptionEnabled()) {
+      const f = fields as Record<string, unknown>;
+      if (f.first_name && typeof f.first_name === 'string') f.first_name = encryptField(f.first_name);
+      if (f.medication && typeof f.medication === 'string') f.medication = encryptField(f.medication);
+    }
     const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
     const values = keys.map((k) => fields[k]);
     await this.pool.query(
@@ -314,6 +338,6 @@ export class UserService {
     const { rows } = await this.pool.query<GraceUser>(
       `SELECT * FROM users WHERE active = TRUE AND paused = FALSE AND blocked = FALSE`,
     );
-    return rows;
+    return rows.map((r) => this.decryptUser(r));
   }
 }

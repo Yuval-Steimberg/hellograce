@@ -41,6 +41,10 @@ const EnvSchema = z.object({
 
   REDIS_URL: z.string().url().optional().default('redis://localhost:6379'),
 
+  /** 32-byte hex key for AES-256-GCM field-level encryption of PII (phone, name, medication).
+   *  Generate with: openssl rand -hex 32. When unset, encryption is disabled. */
+  FIELD_ENCRYPTION_KEY: z.string().length(64).optional(),
+
   /** Phase 5: USDA FoodData Central API key. When unset, log_food falls back
    *  to the legacy LLM-only macro estimate. Free signup at
    *  https://fdc.nal.usda.gov/api-key-signup.html (1000 requests/hour). */

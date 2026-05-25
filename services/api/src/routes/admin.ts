@@ -26,6 +26,17 @@ export interface AdminDeps {
   bandit?: BanditService;
 }
 
+async function auditLog(pool: Pool, action: string, ip: string, details?: Record<string, unknown>): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (action, admin_ip, details) VALUES ($1, $2, $3)`,
+      [action, ip, details ? JSON.stringify(details) : '{}'],
+    );
+  } catch {
+    // audit_logs table may not exist yet — silently skip
+  }
+}
+
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
   app.addHook('preHandler', async (req) => {
     if (!req.url.startsWith('/admin/')) return;
@@ -231,6 +242,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
 
   app.put('/admin/prompts/:id/activate', async (req) => {
     const { id } = req.params as { id: string };
+    void auditLog(deps.pool, 'admin.prompt_activate', req.ip, { promptId: id });
     const query = req.query as { run_eval?: string };
     const runEval = query.run_eval === '1' || query.run_eval === 'true';
 
@@ -460,6 +472,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   /** Full user detail with check-in and weight history. */
   app.get('/admin/users/:phone', async (req) => {
     const { phone } = req.params as { phone: string };
+    void auditLog(deps.pool, 'admin.view_user', req.ip);
     const { rows: userRows } = await deps.pool.query(
       `SELECT phone, first_name, medication, medication_frequency, injection_day,
               goals, food_dislikes, timezone, wake_time, sleep_time,
@@ -554,7 +567,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     await deps.pool.query('DELETE FROM weight_logs WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM feedback WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM users WHERE phone = $1', [phone]);
-    app.log.info('admin.user_deleted');
+    void auditLog(deps.pool, 'admin.user_deleted', req.ip);
     return { ok: true };
   });
 

@@ -64,12 +64,15 @@ const GLP1DetailStep = ({
           <label className="flex flex-col gap-2">
             <span className="text-foreground font-medium text-sm px-1">Current dose (mg)</span>
             <input
-              type="number"
+              type="text"
               inputMode="decimal"
-              step="0.25"
+              pattern="[0-9]*\.?[0-9]*"
               placeholder="e.g. 0.5 or 2.5"
               value={doseMg}
-              onChange={(e) => onChange({ doseMg: e.target.value })}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === '' || /^\d*\.?\d*$/.test(v)) onChange({ doseMg: v });
+              }}
               className={inputClass}
             />
             <span className="text-xs text-muted-foreground px-1">Optional — helps with dose-specific side effect guidance</span>

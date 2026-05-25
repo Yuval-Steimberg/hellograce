@@ -489,6 +489,8 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
 
     const lines: string[] = [];
     if (user) {
+      lines.push('━━━ THIS USER\'S DATA (read before every response) ━━━');
+      lines.push('RULE: 1) Answer the user\'s latest message FIRST. 2) If any data below is relevant to their message, weave it into your answer naturally. 3) If data is missing (no Weight line, no Goals line), do NOT invent it — ask in one short sentence.');
       // Time-of-day and weekday awareness — always in user-local timezone, never UTC.
       const WEEK_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       let localWeekday = '';
@@ -711,6 +713,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
           `Active conversation topic: ${runtime.activeTopic.topic} (last touched ${runtime.activeTopic.ageMinutes} min ago — treat as still live if the user's new message relates to it).`,
         );
       }
+      lines.push('━━━ END OF USER DATA ━━━');
     }
 
     // Phase 4: compressed summary of earlier conversation. Lets Grace recall

@@ -74,9 +74,7 @@ const Onboarding = () => {
   const [biggestChallenge, setBiggestChallenge] = useState("");
   const [whyStarted, setWhyStarted] = useState("");
   const [supportStyle, setSupportStyle] = useState("");
-  const [exerciseHabits, setExerciseHabits] = useState("");
-  const [cookingComfort, setCookingComfort] = useState("");
-  const [dailyWaterIntake, setDailyWaterIntake] = useState("");
+  const [exerciseHabits, setExerciseHabits] = useState<string[]>([]);
 
   const checkinCountPerDay = 2;
   const checkinDaysInterval = 1;
@@ -136,9 +134,7 @@ const Onboarding = () => {
         biggestChallenge: biggestChallenge || null,
         whyStarted: whyStarted || null,
         supportStyle: supportStyle || null,
-        exerciseHabits: exerciseHabits || null,
-        cookingComfort: cookingComfort || null,
-        dailyWaterIntake: dailyWaterIntake || null,
+        exerciseHabits: exerciseHabits.length > 0 ? exerciseHabits.join(',') : null,
         timezone,
         checkinCountPerDay,
         checkinDaysInterval,
@@ -310,12 +306,8 @@ const Onboarding = () => {
         {step === 11 && (
           <LifestyleStep
             exerciseHabits={exerciseHabits}
-            cookingComfort={cookingComfort}
-            dailyWaterIntake={dailyWaterIntake}
             onChange={(d) => {
-              if (d.exerciseHabits !== undefined) setExerciseHabits(d.exerciseHabits);
-              if (d.cookingComfort !== undefined) setCookingComfort(d.cookingComfort);
-              if (d.dailyWaterIntake !== undefined) setDailyWaterIntake(d.dailyWaterIntake);
+              if (d.exerciseHabits) setExerciseHabits(d.exerciseHabits);
             }}
             onNext={next}
           />

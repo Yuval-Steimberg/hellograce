@@ -604,8 +604,8 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         lines.push(`Support style preference: ${styleMap[user.support_style] ?? user.support_style}`);
       }
       if (user.exercise_habits) {
-        const eh = user.exercise_habits.replace(/_/g, ' ');
-        lines.push(`Exercise: ${eh} — tailor muscle/fitness advice to what they actually do.`);
+        const exercises = user.exercise_habits.split(',').map((e) => e.trim().replace(/_/g, ' ')).join(', ');
+        lines.push(`Exercise: ${exercises} — tailor muscle/fitness advice to what they actually do.`);
       }
       if (user.cooking_comfort) {
         const cookMap: Record<string, string> = {

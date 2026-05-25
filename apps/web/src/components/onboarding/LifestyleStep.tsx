@@ -1,15 +1,11 @@
 import QuizButton from "./QuizButton";
 
 interface LifestyleData {
-  exerciseHabits?: string;
-  cookingComfort?: string;
-  dailyWaterIntake?: string;
+  exerciseHabits?: string[];
 }
 
 interface LifestyleProps {
-  exerciseHabits: string;
-  cookingComfort: string;
-  dailyWaterIntake: string;
+  exerciseHabits: string[];
   onChange: (data: LifestyleData) => void;
   onNext: () => void;
 }
@@ -25,27 +21,24 @@ const EXERCISE_OPTIONS: { value: string; label: string }[] = [
   { value: "mixed", label: "A bit of everything" },
 ];
 
-const COOKING_OPTIONS: { value: string; label: string; description: string }[] = [
-  { value: "dont_cook", label: "I don't really cook", description: "Takeout, prepared meals, simple assembly" },
-  { value: "basic", label: "Basic cooking", description: "Simple recipes, 15-20 min meals" },
-  { value: "comfortable", label: "Pretty comfortable", description: "Can follow most recipes, enjoy cooking" },
-  { value: "love_cooking", label: "Love cooking", description: "Enjoy experimenting, complex recipes welcome" },
-];
-
-const WATER_OPTIONS: { value: string; label: string }[] = [
-  { value: "less_than_4", label: "Less than 4 cups" },
-  { value: "4_to_6", label: "4–6 cups" },
-  { value: "6_to_8", label: "6–8 cups" },
-  { value: "more_than_8", label: "8+ cups" },
-];
-
 const LifestyleStep = ({
   exerciseHabits,
-  cookingComfort,
-  dailyWaterIntake,
   onChange,
   onNext,
 }: LifestyleProps) => {
+  const toggleExercise = (value: string) => {
+    if (value === "none") {
+      onChange({ exerciseHabits: exerciseHabits.includes("none") ? [] : ["none"] });
+      return;
+    }
+    const without = exerciseHabits.filter((v) => v !== "none" && v !== "mixed" && v !== value);
+    if (exerciseHabits.includes(value)) {
+      onChange({ exerciseHabits: without });
+    } else {
+      onChange({ exerciseHabits: [...without, value] });
+    }
+  };
+
   return (
     <>
       <div className="flex-1 pt-4">
@@ -53,81 +46,31 @@ const LifestyleStep = ({
           Daily life
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          Your everyday habits
+          How do you move?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-8">
-          So my suggestions actually fit your life — not someone else's.
+          Select all that apply — helps me tailor advice to your routine.
         </p>
 
-        <div className="space-y-8">
-          <div className="flex flex-col gap-3">
-            <span className="text-foreground font-medium text-sm px-1">What exercise do you do?</span>
-            <div className="grid grid-cols-2 gap-2">
-              {EXERCISE_OPTIONS.map((opt) => {
-                const active = exerciseHabits === opt.value;
-                return (
-                  <button
-                    type="button"
-                    key={opt.value}
-                    onClick={() => onChange({ exerciseHabits: active ? "" : opt.value })}
-                    className={`text-left rounded-2xl border-2 px-3 py-2.5 transition-all ${
-                      active
-                        ? "border-primary bg-primary/5 shadow-sm"
-                        : "border-sand hover:border-primary/50 hover:bg-card/50"
-                    }`}
-                  >
-                    <span className="text-foreground text-[13px] font-medium">{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <span className="text-foreground font-medium text-sm px-1">Cooking comfort level</span>
-            <div className="grid grid-cols-2 gap-2.5">
-              {COOKING_OPTIONS.map((opt) => {
-                const active = cookingComfort === opt.value;
-                return (
-                  <button
-                    type="button"
-                    key={opt.value}
-                    onClick={() => onChange({ cookingComfort: active ? "" : opt.value })}
-                    className={`text-left rounded-2xl border-2 px-4 py-3 transition-all ${
-                      active
-                        ? "border-primary bg-primary/5 shadow-sm"
-                        : "border-sand hover:border-primary/50 hover:bg-card/50"
-                    }`}
-                  >
-                    <div className="text-foreground font-medium text-[15px]">{opt.label}</div>
-                    <div className="text-muted-foreground text-xs mt-0.5">{opt.description}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <span className="text-foreground font-medium text-sm px-1">How much water do you drink daily?</span>
-            <div className="grid grid-cols-2 gap-2">
-              {WATER_OPTIONS.map((opt) => {
-                const active = dailyWaterIntake === opt.value;
-                return (
-                  <button
-                    type="button"
-                    key={opt.value}
-                    onClick={() => onChange({ dailyWaterIntake: active ? "" : opt.value })}
-                    className={`text-left rounded-2xl border-2 px-3 py-2.5 transition-all ${
-                      active
-                        ? "border-primary bg-primary/5 shadow-sm"
-                        : "border-sand hover:border-primary/50 hover:bg-card/50"
-                    }`}
-                  >
-                    <span className="text-foreground text-[13px] font-medium">{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2.5">
+            {EXERCISE_OPTIONS.map((opt) => {
+              const active = exerciseHabits.includes(opt.value);
+              return (
+                <button
+                  type="button"
+                  key={opt.value}
+                  onClick={() => toggleExercise(opt.value)}
+                  className={`text-left rounded-2xl border-2 px-4 py-3.5 transition-all ${
+                    active
+                      ? "border-primary bg-primary/5 shadow-sm"
+                      : "border-sand hover:border-primary/50 hover:bg-card/50"
+                  }`}
+                >
+                  <span className="text-foreground text-[15px] font-medium">{opt.label}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>

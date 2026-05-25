@@ -61,6 +61,15 @@ function normalizePhone(phone: string): string {
 export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): void {
   const { pool, users, sender, generator } = deps;
 
+  // ─── Phone existence check (pre-onboarding) ──────────────────────────────────
+  app.get('/users/exists', { config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } }, async (req) => {
+    const { phone } = req.query as { phone?: string };
+    if (!phone) return { exists: false };
+    const normalized = normalizePhone(phone.trim());
+    const result = await pool.query('SELECT id FROM users WHERE phone = $1 LIMIT 1', [normalized]);
+    return { exists: result.rowCount != null && result.rowCount > 0 };
+  });
+
   // ─── Onboarding ─────────────────────────────────────────────────────────────
 
   app.post('/users/onboard', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req) => {

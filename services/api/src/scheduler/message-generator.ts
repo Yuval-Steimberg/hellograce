@@ -307,9 +307,9 @@ export class MessageGenerator {
           { role: 'user', content: prompt },
         ],
         temperature: 0.85,
-        // 120 was too tight for Gemini 2.5 Flash — thinking tokens + final text
-        // sometimes truncated mid-sentence ("Midday reminder: your" bug).
         maxOutputTokens: 280,
+        model: 'gemini-2.0-flash',
+        disableThinking: true,
       });
 
       const sanitized = sanitizeProactiveOutput(resp.text, type === 'welcome' ? null : user.first_name);

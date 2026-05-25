@@ -156,6 +156,10 @@ export interface LLMRequest {
    *  Grace doesn't have indexed). Mutually exclusive with responseFormat
    *  = 'json'. */
   useGoogleSearch?: boolean;
+  /** Override the default model for this request (e.g. 'gemini-2.0-flash' for cheaper calls). */
+  model?: string;
+  /** Disable thinking/reasoning tokens to reduce cost on simple messages. */
+  disableThinking?: boolean;
 }
 
 export interface LLMResponse {

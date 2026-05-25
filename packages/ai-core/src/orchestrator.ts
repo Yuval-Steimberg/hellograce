@@ -263,10 +263,11 @@ export class AIOrchestrator {
   async run(input: OrchestratorInput): Promise<OrchestratorOutput> {
     const started = Date.now();
 
-    // Fast deterministic classifier — drives typed fallbacks and planner skip.
-    // Greetings and gibberish never need a Gemini planning call.
+    // Fast deterministic classifier — drives typed fallbacks, planner skip, and thinking control.
     const classification = classifyMessage(input.text);
-    const skipPlanner = classification.type === 'greeting' || classification.type === 'gibberish';
+    const simpleTypes = ['greeting', 'gibberish', 'food_log', 'weight_log', 'mood_log'];
+    const skipPlanner = simpleTypes.includes(classification.type);
+    const isSimpleMessage = simpleTypes.includes(classification.type) || classification.type === 'emotional';
 
     const chatFallbackPlan: PlannerDecision = { intent: 'chat', needsTools: false, toolCalls: [], rationale: 'tools_disabled' };
     // If the caller ran the planner in parallel with RAG (ai.service.ts does
@@ -316,10 +317,9 @@ export class AIOrchestrator {
       messages: generationMessages,
       temperature: 0.6,
       // Gemini 2.5 Flash allocates thinking tokens from maxOutputTokens.
-      // At 1400 the model often spent ~1200 on thinking, leaving <200 for
-      // visible output → empty/truncated → cascading regen → fallback.
       // 8192 gives ample room for thinking + a 2-3 sentence answer.
-      maxOutputTokens: 8192,
+      maxOutputTokens: isSimpleMessage ? 2048 : 8192,
+      disableThinking: isSimpleMessage,
     });
 
     // ─── Format enforcement (silent auto-fix) ─────────────────────────

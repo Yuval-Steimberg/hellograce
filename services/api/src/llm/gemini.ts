@@ -10,6 +10,9 @@ const LLM_TTL_SEC = 30 * 60; // 30 min
 export class GeminiProvider implements LLMProvider {
   readonly id = 'gemini';
   private client: GoogleGenerativeAI;
+  private cachedContentName: string | null = null;
+  private cachedContentModel: string | null = null;
+  private cachedContentHash: string | null = null;
 
   constructor(
     private cfg: { apiKey: string; model: string; fallbackModel?: string },
@@ -46,25 +49,59 @@ export class GeminiProvider implements LLMProvider {
     return this.callGemini(systemInstruction, contents, req);
   }
 
+  private async getOrCreateCachedContent(systemInstruction: string, modelName: string): Promise<string | null> {
+    const hash = createHash('sha256').update(systemInstruction).digest('hex').slice(0, 16);
+    if (this.cachedContentName && this.cachedContentHash === hash && this.cachedContentModel === modelName) {
+      return this.cachedContentName;
+    }
+    try {
+      const fullModel = modelName.startsWith('models/') ? modelName : `models/${modelName}`;
+      const resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/cachedContents?key=${this.cfg.apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: fullModel,
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            ttl: '3600s',
+            displayName: `grace-system-${hash.slice(0, 8)}`,
+          }),
+        },
+      );
+      if (!resp.ok) {
+        this.logger.warn({ status: resp.status }, 'gemini.context_cache.http_failed');
+        return null;
+      }
+      const data = await resp.json() as { name: string };
+      this.cachedContentName = data.name;
+      this.cachedContentHash = hash;
+      this.cachedContentModel = modelName;
+      this.logger.info({ model: modelName, hash: hash.slice(0, 8) }, 'gemini.context_cache.created');
+      return data.name;
+    } catch (err) {
+      this.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'gemini.context_cache.failed');
+      return null;
+    }
+  }
+
   private async callGemini(
     systemInstruction: string | undefined,
     contents: Content[],
     req: LLMRequest,
   ): Promise<LLMResponse> {
-    // Try primary model with retry-backoff first. If it keeps failing with
-    // transient errors (503 overload), switch to the fallback model
-    // (e.g. gemini-2.0-flash) which has independent capacity. Better to serve
-    // a slightly older-model response than to silently drop the user's message.
+    const modelName = req.model ?? this.cfg.model;
     try {
-      return await this.tryModel(this.cfg.model, systemInstruction, contents, req, 3);
+      return await this.tryModel(modelName, systemInstruction, contents, req, 3);
     } catch (err) {
-      if (!isTransientGeminiError(err) || !this.cfg.fallbackModel || this.cfg.fallbackModel === this.cfg.model) {
+      const fallback = this.cfg.fallbackModel;
+      if (!isTransientGeminiError(err) || !fallback || fallback === modelName) {
         this.logger.error({ err }, 'gemini.generate.failed');
         throw err instanceof UpstreamError ? err : new UpstreamError('Gemini generation failed', err);
       }
-      this.logger.warn({ from: this.cfg.model, to: this.cfg.fallbackModel }, 'gemini.fallback_model.switch');
+      this.logger.warn({ from: modelName, to: fallback }, 'gemini.fallback_model.switch');
       try {
-        return await this.tryModel(this.cfg.fallbackModel, systemInstruction, contents, req, 2);
+        return await this.tryModel(fallback, systemInstruction, contents, req, 2);
       } catch (fallbackErr) {
         this.logger.error({ err: fallbackErr }, 'gemini.fallback_model.failed');
         throw fallbackErr instanceof UpstreamError ? fallbackErr : new UpstreamError('Gemini generation failed', fallbackErr);
@@ -79,22 +116,35 @@ export class GeminiProvider implements LLMProvider {
     req: LLMRequest,
     maxAttempts: number,
   ): Promise<LLMResponse> {
-    // Google Search grounding: enabled for last-resort web lookups when the
-    // KB has nothing. Cannot be combined with JSON mode.
     const tools = req.useGoogleSearch && req.responseFormat !== 'json'
       ? ([{ googleSearch: {} }] as unknown as Parameters<typeof this.client.getGenerativeModel>[0]['tools'])
       : undefined;
 
-    const model = this.client.getGenerativeModel({
+    // Context caching: cache large system prompts (>4000 chars) to save ~75% on input tokens.
+    let cachedContentName: string | null = null;
+    if (systemInstruction && systemInstruction.length > 4000 && !req.useGoogleSearch) {
+      cachedContentName = await this.getOrCreateCachedContent(systemInstruction, modelName);
+    }
+
+    const genConfig: Record<string, unknown> = {
+      temperature: req.temperature ?? 0.6,
+      maxOutputTokens: req.maxOutputTokens ?? 400,
+      ...(req.responseFormat === 'json' ? { responseMimeType: 'application/json' } : {}),
+    };
+    if (req.disableThinking) {
+      genConfig.thinkingConfig = { thinkingBudget: 0 };
+    }
+
+    const modelOpts: Parameters<typeof this.client.getGenerativeModel>[0] = {
       model: modelName,
-      ...(systemInstruction ? { systemInstruction } : {}),
+      ...(!cachedContentName && systemInstruction ? { systemInstruction } : {}),
       ...(tools ? { tools } : {}),
-      generationConfig: {
-        temperature: req.temperature ?? 0.6,
-        maxOutputTokens: req.maxOutputTokens ?? 400,
-        ...(req.responseFormat === 'json' ? { responseMimeType: 'application/json' } : {}),
-      },
-    });
+      generationConfig: genConfig as Parameters<typeof this.client.getGenerativeModel>[0]['generationConfig'],
+    };
+    if (cachedContentName) {
+      (modelOpts as unknown as Record<string, unknown>).cachedContent = cachedContentName;
+    }
+    const model = this.client.getGenerativeModel(modelOpts);
 
     // Retry transient overload errors (503/429/network blips) with exponential
     // backoff: 800ms, 1600ms, 3200ms.

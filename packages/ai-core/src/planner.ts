@@ -48,6 +48,8 @@ export class PlannerAgent {
       temperature: 0.1,
       maxOutputTokens: 300,
       responseFormat: 'json',
+      model: 'gemini-2.0-flash',
+      disableThinking: true,
     });
 
     return parsePlannerResponse(resp.text);

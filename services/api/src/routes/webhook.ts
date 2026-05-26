@@ -196,9 +196,9 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         }
 
         const result = await withRetry(() => deps.ai.handleMessage(normalized), {
-          attempts: 4,
-          delayMs: 2500,
-          retryIf: (err) => err instanceof UpstreamError,
+          attempts: 2,
+          delayMs: 2000,
+          retryIf: (err) => err instanceof UpstreamError || isTransientError(err),
         });
 
         const responseText = result?.text ?? '';
@@ -401,6 +401,11 @@ export async function coalesceMessages(redis: Redis, phone: string, text: string
   const parts = await redis.lrange(bufKey, 0, -1);
   await redis.del(bufKey);
   return parts.join(' ').trim() || text;
+}
+
+function isTransientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /ECONN|ETIMEDOUT|timeout|connection|socket hang up|EPIPE|EAI_AGAIN/i.test(msg);
 }
 
 // ─── Retry helper ────────────────────────────────────────────────────────────

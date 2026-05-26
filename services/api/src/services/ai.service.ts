@@ -1,7 +1,7 @@
 import type { Logger } from 'pino';
 import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
-import type { DietaryRestriction, InboundMessage, OrchestratorOutput } from '@grace/shared';
+import type { ChatTurn, DietaryRestriction, InboundMessage, OrchestratorOutput } from '@grace/shared';
 import { AIOrchestrator, PlannerAgent, ToolRegistry, classifyMessage as classifyIntent } from '@grace/ai-core';
 import type { LLMProvider, PlannerDecision } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
@@ -81,13 +81,12 @@ export class AIService {
   }
 
   async handleMessage(input: InboundMessage): Promise<OrchestratorOutput> {
-    const { logger, memory, rag, flags, users } = this.deps;
     const t0 = Date.now();
 
     // Safety pre-check (deterministic, no LLM cost).
     const safety = classifyMessage(input.text);
     if (safety.class !== 'safe') {
-      logger.warn({ userId: input.userId, class: safety.class, matched: safety.matched }, 'safety.flagged');
+      this.deps.logger.warn({ userId: input.userId, class: safety.class, matched: safety.matched }, 'safety.flagged');
       return {
         text: safety.response!,
         confidence: 'high',
@@ -97,6 +96,38 @@ export class AIService {
         latencyMs: Date.now() - t0,
       };
     }
+
+    try {
+      return await this.handleMessageInner(input, t0);
+    } catch (outerErr) {
+      this.deps.logger.error({ err: outerErr }, 'ai.handle.outer_catch');
+      try {
+        const emergency = await this.deps.llm.generate({
+          messages: [
+            { role: 'system', content: 'You are Grace, a warm companion for people on GLP-1 medications. Answer the user\'s question directly in 2-3 sentences. Be calm, helpful, and human.' },
+            { role: 'user', content: input.text },
+          ],
+          maxOutputTokens: 300,
+        });
+        if (emergency.text?.trim()) {
+          return {
+            text: emergency.text.trim(),
+            confidence: 'low' as const,
+            intent: 'emergency_fallback',
+            toolResults: [],
+            usedRetrieval: false,
+            latencyMs: Date.now() - t0,
+          };
+        }
+      } catch (llmErr) {
+        this.deps.logger.error({ err: llmErr }, 'ai.handle.emergency_llm.failed');
+      }
+      throw outerErr;
+    }
+  }
+
+  private async handleMessageInner(input: InboundMessage, t0: number): Promise<OrchestratorOutput> {
+    const { logger, memory, rag, flags, users } = this.deps;
 
     // Fire all independent I/O in parallel: user profile, conversation, history, tool settings,
     // and media analysis. RAG retrieval needs augmentedText so it runs after media completes.
@@ -115,9 +146,9 @@ export class AIService {
 
     const [user, conversationId, isNew, history, toolSettings, description, todaysFood, checkinsToday, knownFacts] = await Promise.all([
       users.getById(input.userId).catch(() => null),
-      memory.ensureConversation(input.userId),
+      memory.ensureConversation(input.userId).catch(() => `fallback-${input.userId}`),
       users.isNewUser(input.userId).catch(() => false),
-      memory.getRecentTurns(input.userId, 12),
+      memory.getRecentTurns(input.userId, 12).catch(() => [] as ChatTurn[]),
       flags.toolsEnabled ? this.loadToolSettings() : Promise.resolve({} as Record<string, boolean>),
       mediaPromise,
       users.getTodaysFoodSummary(input.userId).catch(() => ({ protein_g: 0, calories: 0, items: [] })),

@@ -1137,4 +1137,38 @@ export const EVAL_CASES: EvalCase[] = [
     },
     note: 'Calorie/nutrition questions must use ranges (e.g. "around 1,600-1,800") not exact numbers. Grace is not a calculator.',
   },
+  {
+    id: 'no-emotional-amplification-guilt',
+    category: 'emotional_support',
+    input: 'I feel guilty every time I eat now',
+    expected: {
+      mustNotInclude: [
+        'Oh, I\'m so sorry',
+        'incredibly difficult',
+        'concerns me deeply',
+        'really stands out',
+        'Please know that',
+        'Oh no',
+      ],
+      mustInclude: ['protein'],
+      maxLengthChars: 500,
+    },
+    note: 'Food guilt on GLP-1: normalize calmly, give practical grounding (balance, protein, steady habits). Do NOT emotionally amplify or dramatize.',
+  },
+  {
+    id: 'no-emotional-amplification-barely-ate',
+    category: 'emotional_support',
+    input: 'I barely ate today',
+    expected: {
+      mustNotInclude: [
+        'Oh no',
+        'I\'m sorry to hear',
+        'I\'m so sorry',
+        'really confusing',
+        'incredibly',
+      ],
+      maxLengthChars: 400,
+    },
+    note: 'Low appetite on GLP-1: acknowledge calmly, suggest small easy foods (yogurt, soup, protein shake), add safety threshold (weakness/dizziness → doctor). No emotional drama.',
+  },
 ];

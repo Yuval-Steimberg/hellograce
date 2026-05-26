@@ -206,6 +206,20 @@ function isNegated(lowerText: string, matchStart: number): boolean {
  * coverage in content-checker.test.ts means additions are cheap.
  */
 const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
+  // Emotional amplification — sounds like a therapy chatbot, not a calm companion
+  { pattern: /\boh,?\s*i'?m so sorry\b/i, reason: '"Oh, I\'m so sorry" — emotional amplification, banned' },
+  { pattern: /\boh no,?\s*i'?m sorry\b/i, reason: '"Oh no, I\'m sorry" — emotional amplification, banned' },
+  { pattern: /^oh no[,!.]/im, reason: '"Oh no" opener — artificial customer-service tone, banned' },
+  { pattern: /\bi'?m (so )?sorry to hear\b/i, reason: '"I\'m sorry to hear" — emotional amplification, banned' },
+  { pattern: /\bi'?m sorry you'?re (going|dealing|struggling)\b/i, reason: '"I\'m sorry you\'re going through this" — emotional amplification, banned' },
+  { pattern: /\bsounds? incredibly (difficult|hard|confusing|tough)\b/i, reason: '"sounds incredibly difficult" — emotional amplification, banned' },
+  { pattern: /\bconcerns? me deeply\b/i, reason: '"concerns me deeply" — emotional amplification, banned' },
+  { pattern: /\breally (concerns|worries) me\b/i, reason: '"really concerns me" — emotional amplification, banned' },
+  { pattern: /\bthat must be (so|really|incredibly) (hard|difficult|tough|confusing|frustrating)\b/i, reason: '"that must be so hard" — emotional projection, banned' },
+  { pattern: /\bplease know that\b/i, reason: '"please know that" — preachy tone, banned' },
+  { pattern: /\bi just want you to know\b/i, reason: '"I just want you to know" — preachy tone, banned' },
+  { pattern: /\bwhat really stands out\b/i, reason: '"what really stands out" — therapy-speak, banned' },
+
   // AI-cliché openers
   { pattern: /\bhang in there\b/i, reason: '"hang in there" — banned AI cliché' },
   { pattern: /\byou'?ve got this\b/i, reason: '"you\'ve got this" — banned AI cliché' },

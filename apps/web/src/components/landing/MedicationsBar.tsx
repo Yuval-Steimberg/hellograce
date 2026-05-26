@@ -28,7 +28,7 @@ const MedicationsBar = () => {
           transition={{ duration: 0.5 }}
           className="text-center text-[11px] md:text-xs uppercase tracking-[0.25em] text-muted-foreground/80 font-semibold mb-5 md:mb-6"
         >
-          Built fluent in every GLP-1 protocol
+          Works with every GLP-1 medication
         </motion.p>
 
         {/* Marquee viewport with side fade masks */}

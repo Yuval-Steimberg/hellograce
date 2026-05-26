@@ -28,8 +28,8 @@ const word = {
   },
 };
 
-const HEADLINE_LEAD = ["The", "friend", "who", "knows"];
-const HEADLINE_ITALIC = ["your", "medication."];
+const HEADLINE_LEAD = ["The", "best", "friend", "for", "your"];
+const HEADLINE_ITALIC = ["GLP-1", "journey."];
 
 const HeroSection = () => {
   const navigate = useNavigate();
@@ -60,7 +60,7 @@ const HeroSection = () => {
           >
             <Sparkles className="h-4 w-4 text-accent animate-pulse" />
             <span className="inline-block text-sm sm:text-base md:text-lg uppercase tracking-[0.2em] font-semibold grace-shimmer">
-              For Wegovy · Ozempic · Mounjaro · Zepbound
+              On WhatsApp · No app · No login
             </span>
           </motion.div>
 
@@ -93,7 +93,7 @@ const HeroSection = () => {
             variants={fadeUp}
             className="text-lg sm:text-xl md:text-xl text-muted-foreground leading-relaxed max-w-[48ch] lg:mx-0 mb-10 md:mb-12"
           >
-            grace is a daily companion on WhatsApp — handling nausea, plateau weeks, protein targets, injection-day check-ins and the dozen small questions GLP-1 throws at you. No app. No login. Just text.
+            Grace is a companion for your journey — listening to your concerns, whatever they may be: medical, physical, social, or emotional. Here for you with knowledge, support, and compassion.
           </motion.p>
 
           <motion.div

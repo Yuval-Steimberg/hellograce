@@ -11,7 +11,6 @@ const MEDICATIONS = [
   { label: "Saxenda", subtitle: "Liraglutide, daily injection", frequency: "daily" },
   { label: "Compounded semaglutide", subtitle: "Compounding pharmacy, weekly", frequency: "weekly" },
   { label: "Compounded tirzepatide", subtitle: "Compounding pharmacy, weekly", frequency: "weekly" },
-  { label: "Other", subtitle: "Something else not listed here", frequency: "weekly" },
 ];
 
 interface MedicationStepProps {

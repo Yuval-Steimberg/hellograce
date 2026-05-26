@@ -186,9 +186,6 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssi
       `CRITICAL: Your previous message ("${snippet}...") has already been sent and received by the user. Do NOT repeat any part of it. Do NOT start with those words. Write a completely fresh reply to the NEW message below.`,
     );
 
-    // Topic-switch detection: if the user's new message and the last Grace
-    // response share few keywords, the user has changed topic. Explicitly
-    // ban the old topic's keywords so Gemini doesn't anchor on history.
     if (userText) {
       const userKeywords = extractTopicKeywords(userText);
       const prevKeywords = extractTopicKeywords(lastAssistantMessage);
@@ -197,9 +194,10 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssi
         const banned = prevKeywords.slice(0, 8).join(', ');
         const required = userKeywords.slice(0, 6).join(', ');
         parts.push(
-          `TOPIC SWITCH DETECTED. The user has changed the subject. Your response MUST be about: ${required}. ` +
-          `Do NOT mention these words from the previous topic: ${banned}. ` +
-          `The previous conversation topic is CLOSED.`,
+          `⚠️ TOPIC SWITCH — THIS IS THE #1 PRIORITY INSTRUCTION. The user's NEW message is about a COMPLETELY DIFFERENT topic than your previous response. ` +
+          `You MUST answer ONLY about: ${required}. ` +
+          `You MUST NOT mention or continue these words/topics from before: ${banned}. ` +
+          `The previous conversation topic is CLOSED. If your response contains any of the banned words, it will be rejected and regenerated.`,
         );
       }
     }
@@ -235,10 +233,9 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssi
 
   parts.push(`[CURRENT USER MESSAGE TYPE: ${intentDescription[type]}]`);
 
-  // Always echo the user's actual words so Gemini can't ignore them
   if (userText && userText.length > 3 && type !== 'greeting' && type !== 'gibberish') {
-    const echo = userText.trim().slice(0, 120).replace(/"/g, "'");
-    parts.push(`THE USER JUST SAID: "${echo}" — your response must directly address THIS.`);
+    const echo = userText.trim().slice(0, 150).replace(/"/g, "'");
+    parts.push(`>>> THE USER'S CURRENT MESSAGE: "${echo}" <<<\nYour ENTIRE response must answer THIS message. Not the previous one. Not something from history. THIS one above.`);
   }
 
   return parts.join('\n');
@@ -401,7 +398,7 @@ export class AIOrchestrator {
       if (userKws.length >= 2) {
         const respMatchesUser = userKws.filter((w) => respKws.includes(w)).length;
         const respMatchesPrev = prevKws.filter((w) => respKws.includes(w)).length;
-        if (respMatchesUser === 0 && respMatchesPrev >= 3) {
+        if (respMatchesUser === 0 && respMatchesPrev >= 2) {
           topicDrift = true;
           regenViolations.push({
             code: 'topic_drift',

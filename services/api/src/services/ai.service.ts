@@ -333,14 +333,20 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       ? `${systemPrompt}\n\n${banditHint}`
       : systemPrompt;
 
-    // Greeting after a gap: keep history for dedup checking, but prefix
-    // the user text with a hard instruction so the LLM treats it as a fresh
-    // start. Wiping history entirely would break anti-repetition (Jaccard check)
-    // and cause duplicate responses when the Twilio sandbox reconnects.
+    // After a conversation gap (>4h — common after Twilio sandbox reconnect),
+    // inject a hard inline instruction so the LLM treats this as a fresh start.
+    // History is kept intact so anti-repetition (Jaccard dedup) still works —
+    // but the model is explicitly told not to continue old topics.
     const isGreeting = intentClass.type === 'greeting';
+    const hasGap = !isNew && hoursSinceLastReply > 4;
     let finalText = isNew ? `[FIRST MESSAGE — greet the user warmly] ${augmentedText}` : augmentedText;
-    if (isGreeting && !isNew && hoursSinceLastReply > 4) {
-      finalText = `[GREETING AFTER ${Math.floor(hoursSinceLastReply)}h GAP — HARD RULES: 1) Respond with ONE warm sentence ONLY. 2) Do NOT continue or reference ANY topic from the conversation history above — treat this as a brand new conversation. 3) Do NOT repeat any phrase from your previous messages. 4) Do NOT ask a question.] ${augmentedText}`;
+    if (hasGap) {
+      const gapH = Math.floor(hoursSinceLastReply);
+      if (isGreeting) {
+        finalText = `[FRESH START — ${gapH}h since last message. HARD RULES: 1) Respond with ONE warm sentence ONLY. 2) Do NOT continue or reference ANY topic from conversation history. 3) Do NOT repeat any phrase from your previous messages. 4) Do NOT ask a question.] ${augmentedText}`;
+      } else {
+        finalText = `[FRESH START — ${gapH}h since last message. HARD RULES: 1) Respond ONLY to what the user just said below. 2) Do NOT continue or reference ANY topic from the conversation history above — the user may have just reconnected. 3) Do NOT repeat or paraphrase any phrase from your previous messages — check the history and say something DIFFERENT. 4) If the user is asking something new, answer it directly.] ${augmentedText}`;
+      }
     }
 
     const result = await orchestrator.run({

@@ -229,6 +229,17 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bi'?m (worried|concerned) about\b/i, reason: '"I\'m worried/concerned about" — alarm language, Grace observes calmly without dramatizing' },
   { pattern: /\bthis is (bad|dangerous|serious|alarming)\b/i, reason: '"this is bad/dangerous" — alarm language, use nuanced framing' },
 
+  // Fabricated technical excuses — Grace never has connection issues
+  { pattern: /\b(my |the )?connection (blipped|dropped|cut out|failed|went down)\b/i, reason: '"connection blipped" — fabricated technical excuse, banned' },
+  { pattern: /\b(had|having|experienced) a (glitch|hiccup|technical issue|error)\b/i, reason: 'fabricated technical excuse, banned' },
+  { pattern: /\blost your message\b/i, reason: '"lost your message" — fabricated technical excuse, banned' },
+  { pattern: /\bsomething went wrong on my end\b/i, reason: '"something went wrong on my end" — fabricated technical excuse, banned' },
+
+  // Developer-feedback acknowledgment — Grace is a companion, not a product
+  { pattern: /\bthanks for the feedback\b/i, reason: '"thanks for the feedback" — Grace is not a developer receiving feedback' },
+  { pattern: /\bi'?ll work on that\b/i, reason: '"I\'ll work on that" — Grace is not a product receiving instructions' },
+  { pattern: /\bi'?ll (adjust|improve|update) my responses?\b/i, reason: '"I\'ll adjust my responses" — Grace is not a chatbot acknowledging bugs' },
+
   // AI-cliché openers
   { pattern: /\bhang in there\b/i, reason: '"hang in there" — banned AI cliché' },
   { pattern: /\byou'?ve got this\b/i, reason: '"you\'ve got this" — banned AI cliché' },

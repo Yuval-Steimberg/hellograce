@@ -220,6 +220,15 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bi just want you to know\b/i, reason: '"I just want you to know" — preachy tone, banned' },
   { pattern: /\bwhat really stands out\b/i, reason: '"what really stands out" — therapy-speak, banned' },
 
+  // Alarm / panic language — health concerns need calm intelligence, not warning labels
+  { pattern: /\bthat is (generally )?(considered )?(too fast|unhealthy|dangerous)\b/i, reason: '"that is too fast/unhealthy/dangerous" — alarm language, rephrase with context and nuance' },
+  { pattern: /\bthat'?s? (too fast|unhealthy|dangerous|alarming)\b/i, reason: '"that\'s too fast/unhealthy" — alarm language, use hedged phrasing' },
+  { pattern: /\ba very significant amount\b/i, reason: '"a very significant amount" — alarm language, acknowledge calmly instead' },
+  { pattern: /\bpotentially (unhealthy|dangerous|harmful)\b/i, reason: '"potentially unhealthy/dangerous" — alarm language, reframe with context' },
+  { pattern: /\bthat'?s? (concerning|alarming)\b/i, reason: '"that\'s concerning/alarming" — alarm language, use calm exploration instead' },
+  { pattern: /\bi'?m (worried|concerned) about\b/i, reason: '"I\'m worried/concerned about" — alarm language, Grace observes calmly without dramatizing' },
+  { pattern: /\bthis is (bad|dangerous|serious|alarming)\b/i, reason: '"this is bad/dangerous" — alarm language, use nuanced framing' },
+
   // AI-cliché openers
   { pattern: /\bhang in there\b/i, reason: '"hang in there" — banned AI cliché' },
   { pattern: /\byou'?ve got this\b/i, reason: '"you\'ve got this" — banned AI cliché' },

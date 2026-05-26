@@ -333,10 +333,16 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       ? `${systemPrompt}\n\n${banditHint}`
       : systemPrompt;
 
+    // Greeting after a gap: wipe conversation history so the LLM cannot
+    // reference or continue old topics. The system prompt's GREETING RULE
+    // instructs this, but the model still does it when history is present.
+    const isGreeting = intentClass.type === 'greeting';
+    const effectiveHistory = (isGreeting && hoursSinceLastReply > 4) ? [] : history;
+
     const result = await orchestrator.run({
       userId: input.userId,
       text: isNew ? `[FIRST MESSAGE â€” greet the user warmly] ${augmentedText}` : augmentedText,
-      history,
+      history: effectiveHistory,
       retrieved,
       toolsEnabled: flags.toolsEnabled,
       systemPrompt: systemPromptWithStrategy,

@@ -117,6 +117,30 @@ export class PromptOptimizer {
     this.logger.info({ count: feedback.length }, 'prompt_optimizer.synthetic_feedback_loaded');
   }
 
+  /**
+   * Run the optimizer if it hasn't run today. Called on startup 30s after boot
+   * to catch up when the 4am cron was missed (Fly machine was asleep).
+   */
+  async runIfMissedToday(): Promise<void> {
+    try {
+      const { rows } = await this.pool.query<{ last: Date | null }>(
+        `SELECT MAX(created_at) AS last FROM prompts WHERE auto_generated = true`,
+      );
+      const last = rows[0]?.last;
+      if (last) {
+        const hoursSince = (Date.now() - new Date(last).getTime()) / 3_600_000;
+        if (hoursSince < 20) {
+          this.logger.info({ hoursSince: Math.round(hoursSince) }, 'prompt_optimizer.already_ran_today');
+          return;
+        }
+      }
+      this.logger.info('prompt_optimizer.catching_up_missed_run');
+      await this.run();
+    } catch (err) {
+      this.logger.error({ err }, 'prompt_optimizer.catch_up_check_failed');
+    }
+  }
+
   async run(): Promise<void> {
     this.logger.info('prompt_optimizer.started');
 

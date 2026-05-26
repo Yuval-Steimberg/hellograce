@@ -39,10 +39,13 @@ export class Scheduler {
     // Prompt optimizer runs DAILY at 4am UTC so every signal that lands in
     // the feedback table gets analyzed within 24h. Strict isSafe() gates
     // auto-activation; failures save as inactive drafts for admin review.
+    // Prompt optimizer — catch up on startup if the 4am UTC window was missed
+    // (common when Fly machines auto-stop overnight due to no payment method).
     if (this.deps.promptOptimizer) {
       this.tasks.push(
         cron.schedule('0 4 * * *', () => void this.deps.promptOptimizer!.run()),
       );
+      setTimeout(() => void this.deps.promptOptimizer!.runIfMissedToday(), 30_000);
     }
     // Phase 4: behavioral anomaly detection — runs 30 min after the prompt
     // optimizer to keep nightly load spread out. Read-only scan over recent

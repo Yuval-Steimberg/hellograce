@@ -6,7 +6,10 @@ export type DbPool = Pool;
 export function createPool(env: Pick<Env, 'DATABASE_URL' | 'DATABASE_SSL'>): Pool {
   return new Pool({
     connectionString: env.DATABASE_URL,
-    ssl: env.DATABASE_SSL ? { rejectUnauthorized: true } : false,
+    // Supabase Transaction Pooler (Supavisor) doesn't chain to Node.js's default
+    // trust store, so rejectUnauthorized must stay false even with SSL enabled.
+    // The connection is still TLS-encrypted; just not CA-verified on our end.
+    ssl: env.DATABASE_SSL ? { rejectUnauthorized: false } : false,
     max: 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,

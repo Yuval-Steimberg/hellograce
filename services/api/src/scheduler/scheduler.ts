@@ -205,7 +205,30 @@ export class Scheduler {
       if (!user.last_evening_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_evening_sent_at))) !== todayStr) {
         await this.sendAndRecord(user, 'evening', { lowMoodMode: user.low_mood_mode ?? false });
         await this.deps.users.update(user.phone, { last_evening_sent_at: new Date() });
+        return;
       }
+    }
+
+    // ── Bonus spontaneous nudge (1/day, random time, varies daily per user)
+    // Slots into the gap between existing scheduled messages. Only for users
+    // who are somewhat engaged (replied within the last 2 days). Uses Redis
+    // lock for dedup — no DB column needed.
+    if (silentDays > 2) return;
+
+    // Pick a random time between 10:00 and 19:00 local. The seed includes
+    // the phone + date so each user gets a different time each day, and the
+    // same user gets a consistent time within the same day (survives restarts).
+    const bonusTargetMin = 10 * 60 + jitterMinutes(`${user.phone}-${todayStr}-bonus`, 9 * 60);
+
+    // Minimum 60-minute gap from other scheduled messages to feel spontaneous
+    const tooCloseToMorning = Math.abs(bonusTargetMin - morningTargetMin) < 60;
+    const tooCloseToMidday = MIDDAY_DAYS.has(dayOfWeek) ? Math.abs(bonusTargetMin - middayTargetMin) < 60 : false;
+    const tooCloseToEvening = EVENING_DAYS.has(dayOfWeek) ? Math.abs(bonusTargetMin - eveningTargetMin) < 60 : false;
+    if (tooCloseToMorning || tooCloseToMidday || tooCloseToEvening) return;
+
+    // 15-minute delivery window
+    if (nowMin >= bonusTargetMin && nowMin < bonusTargetMin + 15) {
+      await this.sendAndRecord(user, 'bonus');
     }
   }
 

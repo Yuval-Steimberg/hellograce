@@ -677,6 +677,9 @@ describe('Scheduler — full day simulation', () => {
     );
 
     const types = h.generateCalls.map((c) => c.type);
-    expect(types).toEqual(['morning']);
+    expect(types[0]).toBe('morning');
+    expect(types.every((t) => t === 'morning' || t === 'bonus')).toBe(true);
+    expect(types.filter((t) => t === 'midday')).toHaveLength(0);
+    expect(types.filter((t) => t === 'evening')).toHaveLength(0);
   });
 });

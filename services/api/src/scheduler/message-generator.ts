@@ -27,6 +27,11 @@ const GOAL_MODE_MAP: Record<string, string> = {
 // Deterministic by phone + date so retries within a day get the same message,
 // but the selection rotates every day automatically.
 
+function dayOfYear(d: Date): number {
+  const start = new Date(d.getFullYear(), 0, 0);
+  return Math.floor((d.getTime() - start.getTime()) / 86_400_000);
+}
+
 function dailySeed(phone: string): number {
   const today = new Date().toISOString().slice(0, 10);
   let h = 0;
@@ -79,6 +84,25 @@ const EVENING_ANGLES = [
   'Reference their goal and how simply showing up today connects to it.',
 ] as const;
 
+const BONUS_ANGLES = [
+  'A hydration nudge — GLP-1s suppress thirst alongside hunger.',
+  'One quick protein idea they haven\'t heard yet. Surprise them.',
+  'Permission to rest — movement counts even if it\'s a short walk.',
+  'A small GLP-1 fact they probably didn\'t know. Make it interesting, not clinical.',
+  'A "you\'re doing this" moment — no tips, just quiet acknowledgment.',
+  'One easy meal or snack idea based on their dislikes and medication.',
+  'A gentle body-care nudge — hydration, sleep, or stretching.',
+  'Something about their specific medication that\'s useful and non-obvious.',
+  'A micro-goal for the next hour. Concrete, tiny, achievable.',
+  'Acknowledge something specific about their week number on GLP-1.',
+] as const;
+
+const BONUS_CATEGORIES = [
+  'hydration', 'protein_tip', 'movement', 'self_care',
+  'glp1_knowledge', 'meal_idea', 'body_care', 'micro_goal',
+  'acknowledgment', 'mindfulness',
+] as const;
+
 // Rotating banned openers — by banning 2 different words each day we prevent
 // the model from falling back on its 3-4 favourite opening words.
 const OPENER_POOL = [
@@ -88,7 +112,7 @@ const OPENER_POOL = [
   'Taking', 'Making', 'Keeping', 'Staying', 'Feeling', 'Starting',
 ] as const;
 
-type MsgType = 'morning' | 'midday' | 'evening' | 'injection_morning' | 'injection_followup' |
+type MsgType = 'morning' | 'midday' | 'evening' | 'bonus' | 'injection_morning' | 'injection_followup' |
   'injection_dayafter' | 'side_effect_nausea' | 'side_effect_fatigue' | 'side_effect_constipation' |
   'welcome' | 'trial_expiry_reminder';
 
@@ -251,6 +275,22 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
     const upgradeUrl = buildUpgradeUrl(u.phone);
     return `Your Grace trial ends tomorrow 🧡 Head to ${upgradeUrl} anytime to keep your check-ins going — no pressure, whenever you're ready.`;
   },
+  bonus: (u) => {
+    const seed = dailySeed(u.phone);
+    const pool = [
+      'Water check — GLP-1s quiet your thirst alongside hunger. One glass right now helps more than you think.',
+      `Quick protein thought: ${u.protein_goal_grams ?? 80}g is your daily target. A Greek yogurt or handful of nuts gets you closer without effort.`,
+      'Movement doesn\'t have to be a workout. A 10-minute walk after a meal helps digestion and steadies blood sugar.',
+      'Rest is part of the process. If your body says slow down today, listen.',
+      'GLP-1 tip: eating protein first in a meal helps absorption and keeps you full longer.',
+      'Hydration affects everything — energy, skin, digestion, mood. One extra glass today.',
+      `Reminder that week by week on ${u.medication ?? 'your medication'}, your body is adjusting. Patience is progress.`,
+      'Small win for the next hour: one protein-rich snack or a full glass of water.',
+      'Your body is doing a lot right now. Give it something nourishing, even if appetite is low.',
+      'Muscle protection matters on GLP-1. Every bit of protein and movement counts toward keeping what you\'ve built.',
+    ];
+    return pick(pool, seed, 5);
+  },
 };
 
 export class MessageGenerator {
@@ -411,7 +451,7 @@ export class MessageGenerator {
     // but each new day gets a fresh angle and different banned openers.
     const seed = dailySeed(user.phone);
     const angleMap: Record<string, readonly string[]> = {
-      morning: MORNING_ANGLES, midday: MIDDAY_ANGLES, evening: EVENING_ANGLES,
+      morning: MORNING_ANGLES, midday: MIDDAY_ANGLES, evening: EVENING_ANGLES, bonus: BONUS_ANGLES,
     };
     const anglePool = angleMap[type] ?? MORNING_ANGLES;
     const todayAngle = pick(anglePool, seed);
@@ -460,6 +500,23 @@ export class MessageGenerator {
         }[mode] ?? 'say good morning warmly.';
         return `${base}Context: gentle morning hello. Today's focus: ${modeHint} No questions.`;
       })(),
+      bonus: (() => {
+        const catIdx = (seed + dayOfYear(new Date())) % BONUS_CATEGORIES.length;
+        const category = BONUS_CATEGORIES[catIdx]!;
+        const catHints: Record<string, string> = {
+          hydration: 'a hydration nudge — GLP-1s suppress thirst. One practical water tip.',
+          protein_tip: `a protein idea they haven't heard. Target: ${user.protein_goal_grams ?? 80}g daily. Something surprising or easy.`,
+          movement: 'a gentle movement reminder — not a workout plan, just encouragement to move a little.',
+          self_care: 'a body-care or self-care thought — sleep, skin, stretching, rest. Something nurturing.',
+          glp1_knowledge: `one interesting fact about ${user.medication ?? 'GLP-1 medication'} that's useful and non-obvious. Not clinical.`,
+          meal_idea: `one specific easy meal or snack idea. ${dislikes} Filter by their dislikes. Protein-focused.`,
+          body_care: 'acknowledge what their body is going through — the adjustment, the changes. Be warm, not medical.',
+          micro_goal: 'suggest one tiny concrete thing for the next hour. Achievable, no pressure.',
+          acknowledgment: 'pure acknowledgment — they\'re showing up and that matters. No tips, no advice.',
+          mindfulness: 'a gentle mindfulness moment — one breath, one pause, noticing how the body feels. Brief.',
+        };
+        return `${base}Context: spontaneous check-in at an unexpected time. Today's theme: ${catHints[category] ?? 'warm presence.'} This is a BONUS touch point — extra brief, extra casual. Must feel like a random thoughtful text from a friend, not a scheduled message. ONE sentence only.`;
+      })(),
       midday: `${base}Context: midday nudge (Mon/Wed/Fri). Keep it brief — a soft "thinking of you." ${dislikes} If you mention food, it must be something practical and filtered by their dislikes. NO questions.`,
       evening: (() => {
         const weightCtx = user.current_weight && user.goal_weight
@@ -495,7 +552,7 @@ export class MessageGenerator {
 //   2. Truncation mid-sentence (output budget exhausted). We detect by
 //      requiring the message ends with punctuation, an emoji, or a closing
 //      quote — anything else means it was cut off and we fall back.
-const FORBIDDEN_LABEL_PREFIX = /^(morning|midday|afternoon|evening|night|daily|weekly|injection|protein|hydration|side[\s-]?effect)\s+(reminder|check[\s-]?in|nudge|note|update|message|hello|hi)[\s:.\-—–,]+/i;
+const FORBIDDEN_LABEL_PREFIX = /^(morning|midday|afternoon|evening|night|daily|weekly|injection|protein|hydration|side[\s-]?effect|bonus|spontaneous)\s+(reminder|check[\s-]?in|nudge|note|update|message|hello|hi|thought)[\s:.\-—–,]+/i;
 const GENERIC_LABEL_PREFIX = /^(reminder|check[\s-]?in|note|update|hey there)[\s:,.\-—–]+/i;
 // Allow standard sentence punctuation, common Grace emojis, and quote marks.
 const COMPLETE_ENDING = /[.!?…"')\]🤍🌿🌙💪💉🧡✨🍃🤍🌱☀️🌞🌤️]$/u;

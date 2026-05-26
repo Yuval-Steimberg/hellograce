@@ -43,7 +43,6 @@ const GLP1DetailStep = ({
               onChange={(e) => onChange({ glp1StartDate: e.target.value })}
               className={inputClass}
             />
-            <span className="text-xs text-muted-foreground px-1">Approximate is fine — helps me say things like "you're in week 8"</span>
           </label>
 
           <label className="flex flex-col gap-2">
@@ -55,7 +54,7 @@ const GLP1DetailStep = ({
               placeholder="e.g. 0.5 or 2.5"
               value={doseMg}
               onChange={(e) => {
-                const v = e.target.value;
+                const v = e.target.value.replace(',', '.');
                 if (v === '' || /^\d*\.?\d*$/.test(v)) onChange({ doseMg: v });
               }}
               className={inputClass}

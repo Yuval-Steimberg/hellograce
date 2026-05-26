@@ -17,12 +17,11 @@ import FoodStep from "@/components/onboarding/FoodStep";
 import WeightStep from "@/components/onboarding/WeightStep";
 import GLP1DetailStep from "@/components/onboarding/GLP1DetailStep";
 import PersonalContextStep from "@/components/onboarding/PersonalContextStep";
-import LifestyleStep from "@/components/onboarding/LifestyleStep";
 import PhoneStep from "@/components/onboarding/PhoneStep";
 import PaymentStep from "@/components/onboarding/PaymentStep";
 import ConfirmationStep from "@/components/onboarding/ConfirmationStep";
 
-// 14-step onboarding flow:
+// 13-step onboarding flow:
 // 1. Welcome
 // 2. Name
 // 3. About you (sex, height, age, weight, goal weight, activity level) — all required
@@ -30,14 +29,13 @@ import ConfirmationStep from "@/components/onboarding/ConfirmationStep";
 // 5. Injection Day / Med Time
 // 6. GLP-1 details (start date, dose)
 // 7. Goals
-// 8. Your story (biggest challenge, why started, support style)
-// 9. Food preferences (dietary style + dislikes — one screen)
+// 8. Optional: your story + exercise (accordion — challenge, why, exercise, support style)
+// 9. Food preferences (dietary style + dislikes)
 // 10. Schedule (wake/sleep)
-// 11. Daily life (exercise)
-// 12. Phone + consent
-// 13. Payment/trial
-// 14. Confirmation
-const TOTAL_STEPS = 14;
+// 11. Phone + consent
+// 12. Payment/trial
+// 13. Confirmation
+const TOTAL_STEPS = 13;
 
 const Onboarding = () => {
   const seoJsonLd = breadcrumbSchema([
@@ -102,7 +100,7 @@ const Onboarding = () => {
       const storedId = localStorage.getItem("grace_user_id");
       if (storedId) {
         setUserId(storedId);
-        setStep(13); // payment step
+        setStep(12); // payment step
       }
     }
   }, [searchParams]);
@@ -271,16 +269,18 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 8: Your story (challenge, why, support style) */}
+        {/* Step 8: Optional — your story + exercise (accordion) */}
         {step === 8 && (
           <PersonalContextStep
             biggestChallenge={biggestChallenge}
             whyStarted={whyStarted}
             supportStyle={supportStyle}
+            exerciseHabits={exerciseHabits}
             onChange={(d) => {
               if (d.biggestChallenge !== undefined) setBiggestChallenge(d.biggestChallenge);
               if (d.whyStarted !== undefined) setWhyStarted(d.whyStarted);
               if (d.supportStyle !== undefined) setSupportStyle(d.supportStyle);
+              if (d.exerciseHabits) setExerciseHabits(d.exerciseHabits);
             }}
             onNext={next}
           />
@@ -310,19 +310,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 11: Daily life (exercise) */}
+        {/* Step 11: Phone + consent */}
         {step === 11 && (
-          <LifestyleStep
-            exerciseHabits={exerciseHabits}
-            onChange={(d) => {
-              if (d.exerciseHabits) setExerciseHabits(d.exerciseHabits);
-            }}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 12: Phone + consent */}
-        {step === 12 && (
           <PhoneStep
             phone={phone}
             smsConsent={smsConsent}
@@ -335,8 +324,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 13: Payment/trial */}
-        {step === 13 && (
+        {/* Step 12: Payment/trial */}
+        {step === 12 && (
           <PaymentStep
             userId={userId}
             firstName={firstName}
@@ -344,8 +333,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 14: Confirmation */}
-        {step === 14 && <ConfirmationStep firstName={firstName} phone={phone} />}
+        {/* Step 13: Confirmation */}
+        {step === 13 && <ConfirmationStep firstName={firstName} phone={phone} />}
       </QuizLayout>
       <LegalFooter />
     </>

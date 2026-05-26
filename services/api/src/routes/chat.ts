@@ -11,7 +11,7 @@ const ChatSchema = z.object({
 
 /** Investor-friendly demo endpoint — bypasses Twilio entirely. */
 export function registerChatRoutes(app: FastifyInstance, ai: AIService, pool?: Pool): void {
-  app.post('/chat/send', async (req) => {
+  app.post('/chat/send', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
     const parsed = ChatSchema.safeParse(req.body);
     if (!parsed.success) throw new ValidationError(parsed.error.message);
     const { userId, text } = parsed.data;

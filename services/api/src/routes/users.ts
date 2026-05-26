@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { ValidationError } from '../errors.js';
+import { ValidationError, UnauthorizedError } from '../errors.js';
 import type { UserService } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
 import type { MessageGenerator } from '../scheduler/message-generator.js';
@@ -206,8 +206,8 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
   app.delete('/users/:phone/data', { config: { rateLimit: { max: 3, timeWindow: '1 hour' } } }, async (req) => {
     const auth = req.headers.authorization;
     const expected = process.env.ADMIN_TOKEN;
-    if (expected && auth !== `Bearer ${expected}`) {
-      throw new ValidationError('Authentication required for data deletion');
+    if (!expected || auth !== `Bearer ${expected}`) {
+      throw new UnauthorizedError('Admin token required');
     }
 
     const { phone } = req.params as { phone: string };

@@ -214,11 +214,10 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         }
       } catch (err) {
         req.log.error({ err }, 'webhook.ai.failed');
-        // Send a warm fallback so the user isn't left with silence.
         const fallbacks = [
-          'My connection blipped — what were you saying?',
-          'Sorry, I missed that one. Can you resend?',
-          'Something went sideways on my end. What did you say?',
+          "I'm here — what's on your mind?",
+          "Hey, what would you like to talk about?",
+          "I'm listening — go ahead.",
         ];
         const fallback = fallbacks[Math.floor(Math.random() * fallbacks.length)]!;
         await deps.sender

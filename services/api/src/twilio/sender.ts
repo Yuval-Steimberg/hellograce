@@ -119,7 +119,7 @@ export class TwilioSender {
           // Sanitizer produced an empty body — log and substitute a neutral
           // fallback so the user is not left with silence.
           this.logger.warn({ original: msg.body }, 'twilio.send.empty_after_sanitize');
-          body = "I'm here — could you say that again?";
+          body = "I'm here — what's on your mind?";
         } else {
           throw err;
         }

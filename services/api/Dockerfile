@@ -26,7 +26,7 @@ FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
-COPY --from=build /repo/package.json /repo/pnpm-workspace.yaml ./
+COPY --from=build /repo/package.json /repo/pnpm-workspace.yaml /repo/pnpm-lock.yaml ./
 COPY --from=build /repo/packages packages
 COPY --from=build /repo/services/api/package.json services/api/package.json
 COPY --from=build /repo/services/api/dist services/api/dist

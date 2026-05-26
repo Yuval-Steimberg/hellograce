@@ -333,16 +333,20 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       ? `${systemPrompt}\n\n${banditHint}`
       : systemPrompt;
 
-    // Greeting after a gap: wipe conversation history so the LLM cannot
-    // reference or continue old topics. The system prompt's GREETING RULE
-    // instructs this, but the model still does it when history is present.
+    // Greeting after a gap: keep history for dedup checking, but prefix
+    // the user text with a hard instruction so the LLM treats it as a fresh
+    // start. Wiping history entirely would break anti-repetition (Jaccard check)
+    // and cause duplicate responses when the Twilio sandbox reconnects.
     const isGreeting = intentClass.type === 'greeting';
-    const effectiveHistory = (isGreeting && hoursSinceLastReply > 4) ? [] : history;
+    let finalText = isNew ? `[FIRST MESSAGE — greet the user warmly] ${augmentedText}` : augmentedText;
+    if (isGreeting && !isNew && hoursSinceLastReply > 4) {
+      finalText = `[GREETING AFTER ${Math.floor(hoursSinceLastReply)}h GAP — HARD RULES: 1) Respond with ONE warm sentence ONLY. 2) Do NOT continue or reference ANY topic from the conversation history above — treat this as a brand new conversation. 3) Do NOT repeat any phrase from your previous messages. 4) Do NOT ask a question.] ${augmentedText}`;
+    }
 
     const result = await orchestrator.run({
       userId: input.userId,
-      text: isNew ? `[FIRST MESSAGE — greet the user warmly] ${augmentedText}` : augmentedText,
-      history: effectiveHistory,
+      text: finalText,
+      history,
       retrieved,
       toolsEnabled: flags.toolsEnabled,
       systemPrompt: systemPromptWithStrategy,

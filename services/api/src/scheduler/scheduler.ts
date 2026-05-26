@@ -83,7 +83,7 @@ export class Scheduler {
   }
 
   private async processUser(user: GraceUser): Promise<void> {
-    const now = localNow(user.timezone);
+    const now = localNow(user.timezone || 'America/New_York');
     const dayOfWeek = now.getDay();
     const hour = now.getHours();
     const minute = now.getMinutes();
@@ -213,8 +213,8 @@ export class Scheduler {
     const stage = user.injection_flow_stage;
     const [wHour = 8, wMin = 0] = (user.wake_time || '08:00').split(':').map(Number);
     const wakeBaseMin = wHour * 60 + wMin;
-    const todayStr = toDateStr(localNow(user.timezone));
-    const minute = localNow(user.timezone).getMinutes();
+    const todayStr = toDateStr(localNow(user.timezone || 'America/New_York'));
+    const minute = localNow(user.timezone || 'America/New_York').getMinutes();
     const injectionOffset = jitterMinutes(`${user.phone}-${todayStr}-injection`, 45);
     const injectionTargetMin = wakeBaseMin + injectionOffset;
     const nowMin = hour * 60 + minute;
@@ -261,7 +261,7 @@ export class Scheduler {
     // Failure-open: if Redis is unavailable (rate-limited, network error),
     // we proceed without the lock rather than blocking reminders entirely.
     // Worst case: a user gets a duplicate message — vastly better than none.
-    const todayStr = toDateStr(localNow(user.timezone));
+    const todayStr = toDateStr(localNow(user.timezone || 'America/New_York'));
     const lockKey = `sched:${user.phone}:${type}:${todayStr}`;
     let lockAcquired = false;
     try {
@@ -320,16 +320,28 @@ export class Scheduler {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function localNow(tz: string, date = new Date()): Date {
+  const safeTz = tz || 'America/New_York';
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
+      timeZone: safeTz,
       year: 'numeric', month: '2-digit', day: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
     }).formatToParts(date);
     const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '0';
     return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`);
   } catch {
-    return date;
+    // Invalid IANA timezone — fall back to America/New_York instead of UTC
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      }).formatToParts(date);
+      const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '0';
+      return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}`);
+    } catch {
+      return date;
+    }
   }
 }
 

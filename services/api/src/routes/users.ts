@@ -29,7 +29,9 @@ const OnboardSchema = z.object({
   activityLevel: z.enum(['sedentary', 'lightly_active', 'moderate', 'very_active']).optional().nullable(),
   primaryGoal: z.enum(['fat_loss', 'muscle_gain', 'maintenance', 'recomposition']).optional().nullable(),
   goals: z.array(z.string().trim().min(1).max(120)).max(10).default([]),
-  timezone: z.string().trim().max(100).optional().default('America/New_York'),
+  timezone: z.string().trim().max(100).refine((tz) => {
+    try { Intl.DateTimeFormat(undefined, { timeZone: tz }); return true; } catch { return false; }
+  }, 'Invalid timezone').optional().default('America/New_York'),
   checkinCountPerDay: z.number().int().min(1).max(5).optional().default(1),
   checkinDaysInterval: z.number().int().min(1).max(14).optional().default(1),
   rlhfEnabled: z.boolean().optional().default(false),

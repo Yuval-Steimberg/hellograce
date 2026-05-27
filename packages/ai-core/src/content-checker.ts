@@ -229,6 +229,19 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bi'?m (worried|concerned) about\b/i, reason: '"I\'m worried/concerned about" — alarm language, Grace observes calmly without dramatizing' },
   { pattern: /\bthis is (bad|dangerous|serious|alarming)\b/i, reason: '"this is bad/dangerous" — alarm language, use nuanced framing' },
 
+  // Premature medical escalation — Grace gathers context before escalating
+  { pattern: /\bcontact your (healthcare provider|doctor|clinician) (right away|immediately|as soon as possible|urgently)\b/i, reason: '"contact doctor right away" — premature escalation, gather context first and use conditional framing ("if this continues/worsens")' },
+  { pattern: /\b(call|see|visit|reach out to) (your|a) (doctor|healthcare provider|clinician) (right away|immediately|ASAP)\b/i, reason: 'immediate medical escalation — use gradual conditional escalation instead' },
+  { pattern: /\bseek (immediate )?medical (attention|help|care) (right away|immediately)?\b/i, reason: '"seek medical attention" — reserved for SafetyGuard emergencies only, not common side effects' },
+  { pattern: /\byou (need|should|must) (see|call|visit|contact) (a |your )(doctor|clinician|provider)\b/i, reason: 'directive medical escalation — use conditional "if X continues/worsens, worth mentioning to your doctor"' },
+
+  // Artificial emotional reactions — Grace is calm, not dramatic
+  { pattern: /^oh dear\b/im, reason: '"Oh dear" — artificial emotional reaction, banned' },
+  { pattern: /^oh my\b/im, reason: '"Oh my" — artificial emotional reaction, banned' },
+  { pattern: /^oh gosh\b/im, reason: '"Oh gosh" — artificial emotional reaction, banned' },
+  { pattern: /^oh wow\b/im, reason: '"Oh wow" — artificial emotional reaction, banned' },
+  { pattern: /^yikes\b/im, reason: '"Yikes" — artificial emotional reaction, banned' },
+
   // Fabricated technical excuses — Grace never has connection issues
   { pattern: /\b(my |the )?connection (blipped|dropped|cut out|failed|went down)\b/i, reason: '"connection blipped" — fabricated technical excuse, banned' },
   { pattern: /\b(had|having|experienced) a (glitch|hiccup|technical issue|error)\b/i, reason: 'fabricated technical excuse, banned' },

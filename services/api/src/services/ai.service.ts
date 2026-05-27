@@ -364,6 +364,21 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       ? `${systemPrompt}\n\n${banditHint}`
       : systemPrompt;
 
+    // Topic-closer detection: if the last user message in history was a brief
+    // acknowledgment ("thanks", "ok", "got it", etc.), the previous topic is
+    // CLOSED. Strip all history before it so the LLM can't anchor on old topics.
+    // This prevents "What should I eat for dinner?" from being answered through
+    // the lens of a previous nausea conversation.
+    const TOPIC_CLOSERS = /^(thanks|thank you|thx|ty|ok|okay|got it|cool|great|perfect|awesome|nice|good|alright|sounds good|will do|noted|k|kk)\.?!?$/i;
+    let effectiveHistory = history;
+    if (history.length >= 2) {
+      const lastUserTurn = [...history].reverse().find((t) => t.role === 'user');
+      if (lastUserTurn && TOPIC_CLOSERS.test(lastUserTurn.content.trim())) {
+        const lastUserIdx = history.lastIndexOf(lastUserTurn);
+        effectiveHistory = history.slice(Math.max(0, lastUserIdx));
+      }
+    }
+
     // After a conversation gap (>4h â€” common after Twilio sandbox reconnect),
     // inject a hard inline instruction so the LLM treats this as a fresh start.
     // History is kept intact so anti-repetition (Jaccard dedup) still works â€”
@@ -383,7 +398,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     const result = await orchestrator.run({
       userId: input.userId,
       text: finalText,
-      history,
+      history: effectiveHistory,
       retrieved,
       toolsEnabled: flags.toolsEnabled,
       systemPrompt: systemPromptWithStrategy,

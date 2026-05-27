@@ -10,6 +10,7 @@ import type {
 import { checkContent, buildContentRegenInstruction, type ContentViolation } from './content-checker.js';
 import { classifyMessage, type MessageType } from './classify.js';
 import { LLMCritic } from './critic.js';
+import { RelevanceChecker } from './relevance-check.js';
 import { enforceFormat } from './format-enforcer.js';
 import { precheckGrounding, summarizeUnsupported, type GroundingResult } from './grounding.js';
 import { PlannerAgent } from './planner.js';
@@ -251,10 +252,12 @@ const RISKY_INTENT_PREFIXES = ['safety_'];
 export class AIOrchestrator {
   private planner: PlannerAgent;
   private critic: LLMCritic;
+  private relevance: RelevanceChecker;
 
   constructor(private deps: OrchestratorDeps) {
     this.planner = deps.planner ?? new PlannerAgent(deps.llm);
     this.critic = deps.critic ?? new LLMCritic(deps.llm);
+    this.relevance = new RelevanceChecker(deps.llm);
   }
 
   async run(input: OrchestratorInput): Promise<OrchestratorOutput> {
@@ -432,6 +435,33 @@ export class AIOrchestrator {
       }
     }
 
+    // ─── LLM relevance check (semantic) ─────────────────────────────
+    // Keyword checks catch obvious drift but miss semantic mismatches.
+    // A fast LLM call verifies the response actually answers the user's
+    // latest message. Skipped for greetings, gibberish, and when there's
+    // no prior assistant message (nothing to drift toward).
+    if (
+      !topicDrift &&
+      lastAssistantMessage &&
+      classification.type !== 'greeting' &&
+      classification.type !== 'gibberish' &&
+      input.text.length > 3
+    ) {
+      const verdict = await this.relevance.check(
+        input.text,
+        validated.text,
+        lastAssistantMessage,
+      );
+      if (!verdict.relevant) {
+        topicDrift = true;
+        regenViolations.push({
+          code: 'relevance_check_failed',
+          message: `LLM relevance check: response does NOT answer the user's latest message. Reason: ${verdict.reason}. You MUST answer THIS message: "${input.text.slice(0, 120)}". Ignore all previous topics.`,
+          severity: 'regen',
+        });
+      }
+    }
+
     // Detect mid-word/mid-sentence truncation (e.g. "...easy-to-" cut off by
     // hitting maxOutputTokens). Forces the critic→regen path so the user
     // never sees a half-sentence reply.
@@ -487,7 +517,14 @@ export class AIOrchestrator {
           input.retrieved,
         );
 
-        if (retryCritic.pass && retryRegenViolations.length === 0 && retryBlockViolations.length === 0) {
+        // If the original failure was a relevance issue, verify the retry is on-topic too.
+        let retryRelevanceFail = false;
+        if (retryCritic.pass && retryRegenViolations.length === 0 && retryBlockViolations.length === 0 && topicDrift && lastAssistantMessage) {
+          const retryVerdict = await this.relevance.check(input.text, retryValidated.text, lastAssistantMessage);
+          retryRelevanceFail = !retryVerdict.relevant;
+        }
+
+        if (retryCritic.pass && retryRegenViolations.length === 0 && retryBlockViolations.length === 0 && !retryRelevanceFail) {
           validated = retryValidated;
           critic = retryCritic;
         } else {

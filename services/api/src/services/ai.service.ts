@@ -148,7 +148,7 @@ export class AIService {
       users.getById(input.userId).catch(() => null),
       memory.ensureConversation(input.userId).catch(() => `fallback-${input.userId}`),
       users.isNewUser(input.userId).catch(() => false),
-      memory.getRecentTurns(input.userId, 12).catch(() => [] as ChatTurn[]),
+      memory.getRecentTurns(input.userId, 6).catch(() => [] as ChatTurn[]),
       flags.toolsEnabled ? this.loadToolSettings() : Promise.resolve({} as Record<string, boolean>),
       mediaPromise,
       users.getTodaysFoodSummary(input.userId).catch(() => ({ protein_g: 0, calories: 0, items: [] })),

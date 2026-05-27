@@ -96,16 +96,13 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     // Upsert user then apply full profile.
     await users.ensureUser(phone);
 
-    // Core profile fields — guaranteed schema. Must succeed for onboarding.
-    // firstName is optional now; we omit the column from the update when empty
-    // so the DB stores NULL and Grace can ask in chat ("what should I call you?").
+    // Core profile fields — only columns from the original v2 schema (20260507000003).
+    // This block must succeed for onboarding. Newer columns go in try/catch blocks below.
     await users.update(phone, {
       ...(b.firstName ? { first_name: b.firstName } : {}),
       medication: b.medication,
       medication_frequency: b.medicationFrequency,
       injection_day: b.injectionDay ?? undefined,
-      medication_time: b.medicationTime ?? undefined,
-      sms_consent: b.smsConsent,
       wake_time: b.wakeTime,
       sleep_time: b.sleepTime,
       food_dislikes: foodDislikesArr,
@@ -120,6 +117,16 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       active: true,
       trial_start: new Date(),
     });
+
+    // medication_time + sms_consent — migration 20260525000002. Degrades silently.
+    try {
+      await users.update(phone, {
+        medication_time: b.medicationTime ?? undefined,
+        sms_consent: b.smsConsent,
+      } as Partial<Parameters<typeof users.update>[1]>);
+    } catch {
+      req.log.warn({ phone }, 'onboard.medication_time_consent.skipped (likely missing migration 20260525000002)');
+    }
 
     // Sex — depends on migration 20260516000002. Degrades silently if absent.
     if (b.sex) {

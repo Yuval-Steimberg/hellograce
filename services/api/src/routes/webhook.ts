@@ -153,10 +153,10 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
                 void deps.bandit.recordReward(user.id, fbResult.rating > 0).catch(() => {});
               }
               const ack = fbResult.rating > 0
-                ? 'Thanks for the thumbs up — I\'ll keep that in mind! 💪'
+                ? 'Glad that landed well.'
                 : fbResult.comment
-                  ? 'Thanks for the feedback — I\'ll work on that!'
-                  : 'Thanks for letting me know. Feel free to tell me more about what could be better.';
+                  ? 'Got it. I hear you.'
+                  : 'Noted.';
               await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: ack });
               return;
             }

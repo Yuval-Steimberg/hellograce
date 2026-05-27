@@ -115,14 +115,27 @@ export class UserService {
   /** Upsert user — creates if new, updates last_reply_at + updated_at. */
   async ensureUser(phone: string): Promise<GraceUser> {
     const hash = isEncryptionEnabled() ? hashField(phone) : null;
+
+    if (hash) {
+      const { rows } = await this.pool.query<GraceUser>(
+        `INSERT INTO users (phone, phone_hash, last_reply_at)
+         VALUES ($1, $2, now())
+         ON CONFLICT (phone) DO UPDATE
+           SET last_reply_at = now(), updated_at = now(),
+               phone_hash = COALESCE(users.phone_hash, EXCLUDED.phone_hash)
+         RETURNING *`,
+        [phone, hash],
+      );
+      return this.decryptUser(rows[0]!);
+    }
+
     const { rows } = await this.pool.query<GraceUser>(
-      `INSERT INTO users (phone, phone_hash, last_reply_at)
-       VALUES ($1, $2, now())
+      `INSERT INTO users (phone, last_reply_at)
+       VALUES ($1, now())
        ON CONFLICT (phone) DO UPDATE
          SET last_reply_at = now(), updated_at = now()
-         ${hash ? ', phone_hash = COALESCE(users.phone_hash, EXCLUDED.phone_hash)' : ''}
        RETURNING *`,
-      [phone, hash],
+      [phone],
     );
     return this.decryptUser(rows[0]!);
   }

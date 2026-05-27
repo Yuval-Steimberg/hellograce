@@ -149,11 +149,11 @@ const STOP_WORDS = new Set([
   'not', 'no', 'so', 'up', 'out', 'just', 'also', 'than', 'then', 'too',
   'very', 'really', 'how', 'what', 'when', 'where', 'why', 'who', 'which',
   'all', 'any', 'some', 'more', 'most', 'much', 'many', 'well', 'still',
-  'tell', 'everything', 'know', 'think', 'feel', 'like', 'get', 'got',
-  'make', 'take', 'go', 'going', 'want', 'need', 'help', 'helps', 'hey',
+  'tell', 'everything', 'know', 'think', 'like', 'get', 'got',
+  'make', 'take', 'going', 'want', 'need', 'hey',
   'hi', 'hello', 'grace', 'thanks', 'thank', 'please', 'ok', 'okay',
-  'yes', 'no', 'yeah', 'yep', 'nope', 'sure', 'right', 'good', 'great',
-  'recommendations', 'recommendation', 'any', 'question', 'questions',
+  'yes', 'yeah', 'yep', 'nope', 'sure', 'right', 'good', 'great',
+  'any', 'question', 'questions',
 ]);
 
 function extractTopicKeywords(text: string): string[] {
@@ -394,15 +394,22 @@ export class AIOrchestrator {
       const prevKws = extractTopicKeywords(lastAssistantMessage);
       const respKws = extractTopicKeywords(validated.text);
 
-      // Check 1: topic drift — response matches old topic, misses new one
+      // Check 1: topic drift — response matches old topic, misses new one.
+      // Triggers when the response is more aligned with the previous assistant
+      // message than with the user's current message. A ratio-based check catches
+      // cases where one incidental word overlaps with the user but 3+ words
+      // match the old topic.
       if (userKws.length >= 2) {
         const respMatchesUser = userKws.filter((w) => respKws.includes(w)).length;
         const respMatchesPrev = prevKws.filter((w) => respKws.includes(w)).length;
-        if (respMatchesUser === 0 && respMatchesPrev >= 2) {
+        const drifted =
+          (respMatchesUser === 0 && respMatchesPrev >= 2) ||
+          (respMatchesPrev >= 3 && respMatchesPrev > respMatchesUser * 2);
+        if (drifted) {
           topicDrift = true;
           regenViolations.push({
             code: 'topic_drift',
-            message: `Response is about the PREVIOUS topic (shares ${respMatchesPrev} keywords with last response, 0 with user's new message). Answer the user's CURRENT message instead.`,
+            message: `Response is about the PREVIOUS topic (shares ${respMatchesPrev} keywords with last response, only ${respMatchesUser} with user's new message). Answer the user's CURRENT message instead: "${input.text.slice(0, 100)}"`,
             severity: 'regen',
           });
         }

@@ -549,15 +549,16 @@ Respond with ONLY the JSON object.`,
       },
     ];
 
-    // Primary attempt — full prompt, generous token budget.
-    // Gemini 2.5 Flash consumes thinking tokens from the same maxOutputTokens
-    // pool before producing the actual JSON. 32 768 gives ~8 k thinking + full
-    // JSON output without truncation (the previous 6 144 was too tight).
+    // Primary attempt — use gemini-2.0-flash for reliability. The 2.5 Flash
+    // thinking tokens consume the output budget and truncate the JSON response,
+    // causing parse failures on ~50% of runs.
     const resp = await this.llm.generate({
       messages: buildMessages(negativeBlock, false),
       temperature: 0.2,
-      maxOutputTokens: 32768,
+      maxOutputTokens: 8192,
       responseFormat: 'json',
+      model: 'gemini-2.0-flash',
+      disableThinking: true,
     });
 
     let parsed = parseAdditionsResponse(resp.text);

@@ -197,14 +197,11 @@ function isNegated(lowerText: string, matchStart: number): boolean {
   return NEGATION_WORDS.test(sentencePrefix);
 }
 
-/**
- * Phrases that the master prompt's "BANNED FOREVER" section forbids,
- * narrowed to ones with effectively zero false-positive rate. Every one
- * of these is a literal AI-clich tell.
- *
- * Add to this list as new violations are spotted in production. Test
- * coverage in content-checker.test.ts means additions are cheap.
- */
+// Banned phrases grouped by category: (1) emotional amplification ("Oh, I'm so
+// sorry"), (2) alarm/panic language, (3) premature medical escalation,
+// (4) artificial reactions, (5) fabricated technical excuses, (6) developer-
+// feedback acks, (7) AI-cliche openers, (8) empathy cliches, (9) sycophantic
+// acks, (10) capability denials, (11) profile-recall language, (12) corporate tone.
 const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   // Emotional amplification — sounds like a therapy chatbot, not a calm companion
   { pattern: /\boh,?\s*i'?m so sorry\b/i, reason: '"Oh, I\'m so sorry" — emotional amplification, banned' },
@@ -241,6 +238,16 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /^oh gosh\b/im, reason: '"Oh gosh" — artificial emotional reaction, banned' },
   { pattern: /^oh wow\b/im, reason: '"Oh wow" — artificial emotional reaction, banned' },
   { pattern: /^yikes\b/im, reason: '"Yikes" — artificial emotional reaction, banned' },
+
+  // Meta-AI self-awareness — Grace never talks about herself as a system/AI/model
+  { pattern: /\binternal processing error\b/i, reason: '"internal processing error" — meta-AI self-reference, banned' },
+  { pattern: /\bgenerated similar (advice|response|answer)\b/i, reason: 'meta-AI self-reference about generating responses, banned' },
+  { pattern: /\bi might over-?emphasize\b/i, reason: 'meta-AI self-awareness about behavior patterns, banned' },
+  { pattern: /\bi'?ll strive to be more\b/i, reason: '"I\'ll strive to be more" — meta-AI improvement promise, banned' },
+  { pattern: /\bavoid such redundancies\b/i, reason: 'meta-AI self-correction language, banned' },
+  { pattern: /\bmy (apologies|response|algorithm|system|processing)\b/i, reason: 'meta-AI self-reference, banned' },
+  { pattern: /\bthere was (a|an) (internal|processing|system) (error|issue|glitch)\b/i, reason: 'meta-AI error acknowledgment, banned' },
+  { pattern: /\b(as an AI|as a language model|as a chatbot|as an assistant)\b/i, reason: 'AI self-identification, banned' },
 
   // Fabricated technical excuses — Grace never has connection issues
   { pattern: /\b(my |the )?connection (blipped|dropped|cut out|failed|went down)\b/i, reason: '"connection blipped" — fabricated technical excuse, banned' },

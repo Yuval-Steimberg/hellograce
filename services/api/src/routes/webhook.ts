@@ -22,6 +22,12 @@ export interface WebhookDeps {
   bandit?: import('../services/bandit.service.js').BanditService;
 }
 
+// Twilio inbound webhook. Processing order: (1) verify Twilio signature,
+// (2) deduplicate by MessageSid, (3) return empty TwiML immediately,
+// (4) async: coalesce rapid messages, (5) upsert user, (6) intercept
+// special intents (injection done, opt-out, frequency change, injection day
+// change, RLHF feedback, upgrade intent), (7) subscription gate,
+// (8) AI pipeline → send response via TwilioSender.
 export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): void {
   app.post('/webhook/twilio', async (req, reply) => {
     const fullUrl = `${deps.env.PUBLIC_BASE_URL.replace(/\/$/, '')}/webhook/twilio`;
@@ -377,13 +383,10 @@ function detectInjectionDayChange(text: string): string | null {
 }
 
 // ─── Message coalescing ───────────────────────────────────────────────────────
-// WhatsApp users often send a correction or continuation within 1–3 seconds of
-// their first message (e.g. "Will i go bold?" → "Bald"). Without coalescing,
-// Grace processes both separately and sends two replies. This buffers each
-// text message for 2 seconds; the first arrival holds the lock and waits, any
-// follow-ups are appended to a Redis list, then the waiter processes them all
-// as one merged turn. Only applies to text messages — images and audio fire
-// immediately (media is self-contained and not a "correction").
+// WhatsApp users send corrections/continuations within seconds ("Will i go
+// bold?" → "Bald"). This buffers text messages for 3.5s in Redis; the first
+// arrival holds a lock and waits, follow-ups append to a list, then all parts
+// are merged into one turn. Prevents duplicate replies. Media fires immediately.
 export async function coalesceMessages(redis: Redis, phone: string, text: string): Promise<string | null> {
   const bufKey = `coalesce:buf:${phone}`;
   const lockKey = `coalesce:lock:${phone}`;

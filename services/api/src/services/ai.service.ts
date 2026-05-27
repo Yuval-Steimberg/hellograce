@@ -100,6 +100,8 @@ export class AIService {
     try {
       return await this.handleMessageInner(input, t0);
     } catch (outerErr) {
+      // Emergency fallback: fires when the full pipeline throws (DB down, LLM
+      // timeout, etc.). Makes one last bare LLM call with no tools/RAG/history.
       this.deps.logger.error({ err: outerErr }, 'ai.handle.outer_catch');
       try {
         const emergency = await this.deps.llm.generate({
@@ -126,6 +128,11 @@ export class AIService {
     }
   }
 
+  // Full message processing flow: (1) parallel I/O (user profile, history, media
+  // analysis, tool settings), (2) RAG retrieval + planner + user memory in parallel,
+  // (3) detect dietary restrictions + side effects, (4) build personalised system
+  // prompt with runtime context, (5) register per-request tools, (6) call
+  // orchestrator.run(), (7) fire-and-forget persistence + memory extraction.
   private async handleMessageInner(input: InboundMessage, t0: number): Promise<OrchestratorOutput> {
     const { logger, memory, rag, flags, users } = this.deps;
 
@@ -364,11 +371,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       ? `${systemPrompt}\n\n${banditHint}`
       : systemPrompt;
 
-    // Topic-closer detection: if the last user message in history was a brief
-    // acknowledgment ("thanks", "ok", "got it", etc.), the previous topic is
-    // CLOSED. Strip all history before it so the LLM can't anchor on old topics.
-    // This prevents "What should I eat for dinner?" from being answered through
-    // the lens of a previous nausea conversation.
+    // Topic-closer detection: brief acknowledgments ("thanks", "ok", "got it")
+    // signal the user is done with that topic. Strip history before the closer so
+    // the LLM starts fresh and doesn't anchor on the old conversation thread.
     const TOPIC_CLOSERS = /^(thanks|thank you|thx|ty|ok|okay|got it|cool|great|perfect|awesome|nice|good|alright|sounds good|will do|noted|k|kk)\.?!?$/i;
     let effectiveHistory = history;
     if (history.length >= 2) {

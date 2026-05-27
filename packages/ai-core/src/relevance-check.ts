@@ -1,3 +1,8 @@
+// LLM-powered semantic relevance check — the third layer of topic drift detection.
+// Fires after keyword overlap and Jaccard duplication checks in the orchestrator.
+// A fast Gemini 2.0 Flash call verifies the response actually answers the user's
+// latest message, catching semantic mismatches that keyword heuristics miss.
+
 import type { LLMProvider } from '@grace/shared';
 
 export interface RelevanceVerdict {

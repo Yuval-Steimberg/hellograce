@@ -549,17 +549,28 @@ Respond with ONLY the JSON object.`,
       },
     ];
 
-    // Primary attempt — use gemini-2.0-flash for reliability. The 2.5 Flash
-    // thinking tokens consume the output budget and truncate the JSON response,
-    // causing parse failures on ~50% of runs.
-    const resp = await this.llm.generate({
-      messages: buildMessages(negativeBlock, false),
-      temperature: 0.2,
-      maxOutputTokens: 8192,
-      responseFormat: 'json',
-      model: 'gemini-2.0-flash',
-      disableThinking: true,
-    });
+    // Primary attempt — try gemini-2.0-flash first (no thinking overhead).
+    // Falls back to the default model if 2.0-flash errors (API key restrictions, etc).
+    let resp;
+    try {
+      resp = await this.llm.generate({
+        messages: buildMessages(negativeBlock, false),
+        temperature: 0.2,
+        maxOutputTokens: 8192,
+        responseFormat: 'json',
+        model: 'gemini-2.0-flash',
+        disableThinking: true,
+      });
+    } catch (primaryErr) {
+      this.logger.warn({ err: primaryErr }, 'prompt_optimizer.primary_model_failed — trying default model');
+      resp = await this.llm.generate({
+        messages: buildMessages(negativeBlock, false),
+        temperature: 0.2,
+        maxOutputTokens: 32768,
+        responseFormat: 'json',
+        disableThinking: true,
+      });
+    }
 
     let parsed = parseAdditionsResponse(resp.text);
 

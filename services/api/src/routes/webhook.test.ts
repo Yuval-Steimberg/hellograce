@@ -26,10 +26,10 @@ describe('coalesceMessages', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it('first caller acquires lock and returns merged text after 2s', async () => {
+  it('first caller acquires lock and returns merged text after coalesce window', async () => {
     const redis = makeMockRedis() as never;
     const promise = coalesceMessages(redis, '+15550000001', 'Will i go bold?');
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(3500);
     expect(await promise).toBe('Will i go bold?');
   });
 
@@ -38,7 +38,7 @@ describe('coalesceMessages', () => {
     const first = coalesceMessages(redis, '+15550000002', 'Will i go bold?');
     // Second message arrives immediately — lock already held
     const second = coalesceMessages(redis, '+15550000002', 'Bald');
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(3500);
     expect(await second).toBeNull();
     expect(await first).toBe('Will i go bold? Bald');
   });
@@ -48,7 +48,7 @@ describe('coalesceMessages', () => {
     const first = coalesceMessages(redis, '+15550000003', 'actually');
     const second = coalesceMessages(redis, '+15550000003', 'never mind');
     const third = coalesceMessages(redis, '+15550000003', 'tell me about nausea');
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(3500);
     expect(await second).toBeNull();
     expect(await third).toBeNull();
     expect(await first).toBe('actually never mind tell me about nausea');

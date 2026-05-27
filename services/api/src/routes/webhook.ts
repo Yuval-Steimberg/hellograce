@@ -396,7 +396,7 @@ export async function coalesceMessages(redis: Redis, phone: string, text: string
   const acquired = await redis.set(lockKey, '1', 'EX', 5, 'NX');
   if (!acquired) return null; // absorbed — the lock-holder will pick this up
 
-  await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+  await new Promise<void>((resolve) => setTimeout(resolve, 3500));
 
   const parts = await redis.lrange(bufKey, 0, -1);
   await redis.del(bufKey);

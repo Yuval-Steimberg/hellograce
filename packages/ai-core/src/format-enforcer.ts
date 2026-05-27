@@ -1,18 +1,11 @@
-/**
- * Deterministic post-generation format auto-fix.
- *
- * Gemini Flash routinely violates "no markdown / no em dash / no numbered list"
- * rules even when they are stated explicitly at the top of a 71k-char system
- * prompt. This module strips the violations after generation so the user never
- * sees them, regardless of LLM compliance.
- *
- * Auto-fixes are SILENT — they never trigger a regen. They are safe textual
- * transforms (replace em dash with comma, strip "**" around bold text, flatten
- * numbered lists into prose).
- *
- * The list of fixes applied is returned alongside the cleaned text so the
- * caller can log telemetry on what's still slipping through the prompt.
- */
+// Deterministic post-generation format auto-fix. Runs on every LLM response
+// BEFORE content checks. Silent (never triggers regen) — just string transforms.
+//
+// Auto-fixes: em/en dashes → commas, markdown bold/italic/headers → plain text,
+// numbered/bulleted lists → comma-joined prose, duplicate previous-message prefix
+// removal, irrelevant context-dump opener stripping, AI-filler opener removal,
+// user first-name stripping (NAME ZERO TOLERANCE), multi-paragraph collapse,
+// per-context hard length caps, link placeholder → real URL, greeting "!" → ".".
 
 export interface FormatEnforcementResult {
   text: string;

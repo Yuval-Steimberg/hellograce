@@ -284,16 +284,21 @@ export class AIOrchestrator {
     }
 
     // Long-term semantic memories about this user — top-k retrieved by
-    // ai.service.ts from the user_memories table.
+    // ai.service.ts from the user_memories table. Framed as background-only
+    // so the LLM doesn't randomly surface unrelated facts.
     const memoryBlock = input.userMemories && input.userMemories.length > 0
-      ? `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nWHAT YOU REMEMBER ABOUT THIS USER (from past conversations):\n${input.userMemories.map((m) => `- ${m}`).join('\n')}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+      ? `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nBACKGROUND MEMORY (DO NOT mention unless directly relevant to the user's CURRENT message):\n${input.userMemories.map((m) => `- ${m}`).join('\n')}\nIMPORTANT: These are background facts. Only reference a fact if the user's current message is about that specific topic. Never volunteer unrelated memories.\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+      : '';
+
+    const toolResultBlock = toolResults.length > 0
+      ? `\n\nTool results (use ONLY to answer the user's current question — do not mention tool data that isn't relevant to what they just asked):\n${JSON.stringify(toolResults)}`
       : '';
 
     const baseSystem =
       (input.systemPrompt ?? GRACE_SYSTEM_PROMPT) +
       memoryBlock +
       renderRetrievalContext(input.retrieved) +
-      (toolResults.length > 0 ? `\n\nTool results: ${JSON.stringify(toolResults)}` : '');
+      toolResultBlock;
 
     // Extract the last Grace message from history — used in the focus marker
     // and in the format-enforcer deduplication check.

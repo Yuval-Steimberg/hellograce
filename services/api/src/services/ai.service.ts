@@ -536,8 +536,8 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
 
     const lines: string[] = [];
     if (user) {
-      lines.push('━━━ THIS USER\'S DATA (read before every response) ━━━');
-      lines.push('RULE: 1) Answer the user\'s latest message FIRST. 2) If any data below is relevant to their message, weave it into your answer naturally. 3) If data is missing (no Weight line, no Goals line), do NOT invent it — ask in one short sentence.');
+      lines.push('━━━ THIS USER\'S DATA (background only — do NOT dump into responses) ━━━');
+      lines.push('RULE: 1) Answer the user\'s CURRENT message FIRST and ONLY. 2) Only reference data below if the user\'s message is specifically about that topic. 3) NEVER volunteer unrelated facts (injection site when they ask about fatigue, protein when they share emotions, weight when they ask about food). 4) If data is missing, do NOT invent it.');
       // Time-of-day and weekday awareness — always in user-local timezone, never UTC.
       const WEEK_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
       let localWeekday = '';

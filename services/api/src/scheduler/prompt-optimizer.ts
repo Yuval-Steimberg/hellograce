@@ -581,6 +581,8 @@ Respond with ONLY the JSON object.`,
         temperature: 0.1,
         maxOutputTokens: 8192,
         responseFormat: 'json',
+        model: 'gemini-2.0-flash',
+        disableThinking: true,
       }).catch((err) => {
         this.logger.error({ err }, 'prompt_optimizer.retry_generate_failed');
         return null;

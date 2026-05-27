@@ -166,6 +166,18 @@ export function enforceFormat(
     fixes.push('double_dash_replaced');
   }
 
+  // ─── Stray colons in mid-sentence ("foods that: are bland" → "foods that are bland")
+  // Gemini sometimes inserts colons before clauses where none is needed.
+  // Only strip colons NOT preceded by a known label pattern (e.g. "Rate this:").
+  if (/[a-z]\s*:\s+[a-z]/i.test(text)) {
+    text = text.replace(/([a-z])\s*:\s+([a-z])/gi, (match, before, after) => {
+      const prefix = text.slice(Math.max(0, text.indexOf(match) - 15), text.indexOf(match));
+      if (/\b(example|note|tip|here|ideas|try|options|include|such as|like|e\.g)\s*$/i.test(prefix)) return match;
+      return `${before} ${after}`;
+    });
+    fixes.push('stray_colon_cleaned');
+  }
+
   // ─── " - " used as dash (single hyphen with spaces) → comma ────────────
   // Be conservative: only when surrounded by spaces on a single line. Using
   // [ \t]+ (not \s+) is critical — \s+ would span newlines and eat bullet

@@ -92,7 +92,7 @@ AIOrchestrator (packages/ai-core)
    ▼           ▼
 Planner    ToolRegistry (8 tools, DB-gated)
    │
-GeminiProvider (gemini-2.5-flash) → Validator
+GeminiProvider (gemini-2.5-flash) → Validator → RelevanceCheck (gemini-2.0-flash)
    │
 BullMQ turn-persist worker → Postgres
    │
@@ -106,7 +106,9 @@ TwilioSender → WhatsApp/SMS
   - Evening Tue/Thu/Sun 90min before sleep_time (only fires if user replied today)
   - Injection day flow (4 stages: morning_sent → done_confirmed → followup_sent → day-after)
   - Side-effect follow-up 4h after keyword detected
+  - Bonus spontaneous nudge: 1 extra daily message at a varied random time (adds variety to the schedule)
 - **Engagement dampener** (`userEngagedToday`, `userSilentDays` helpers): caps a silent user at 2 messages/day (morning + 1 nudge), drops to 1/day (morning only) after >1 day of no reply. Engaged users still get the full 3-message schedule.
+- **Message coalescing**: 3.5s window to merge rapid multi-message sends into a single AI turn.
 - Daily 3am UTC → personalization engine (low_mood_mode, midday_skip)
 
 ---
@@ -351,7 +353,8 @@ Roadmap (in progress, in this order):
 2. ✅ LLM-critic on risky intents (`safety_*`, validator-flagged `possible_medical_advice`, or low-confidence). `knowledge_lookup` removed from risky list (2026-05-15) — it was incorrectly failing food/nutrition responses. Regenerate once on critic fail, safe fallback if second attempt also fails. Implementation: `packages/ai-core/src/critic.ts` + orchestrator wiring.
 3. ✅ Fact-grounding: deterministic precheck (`packages/ai-core/src/grounding.ts`) detects quantitative medical claims (doses, durations, frequencies, percentages) and interaction-safety assertions in the response and verifies them against retrieved KB chunks. Unsupported claims fail-close to regen — saves a Gemini call vs. invoking the LLM-critic. Surfaced via `CriticReport.unsupportedClaims` + `source: 'precheck' | 'llm'`.
 4. ✅ Eval-gated prompt activation + auto-eval preference pairs → prompt optimizer + auto-generated content rules. Implementation: `auto-eval/feedback-loop.ts`, wired into `prompt-optimizer.ts` + `routes/admin.ts` + `server.ts`.
-5. ⏳ Gemini prompt caching for static system prompt + tool defs; skip planner for pure-chat intents.
+5. ✅ LLM relevance checker (`packages/ai-core/src/relevance-check.ts`): post-generation semantic verification using `gemini-2.0-flash`. Topic-closer history stripping + ratio-based drift detection. Emergency LLM fallback for pipeline crashes.
+6. ⏳ Gemini prompt caching for static system prompt + tool defs; skip planner for pure-chat intents.
 
 ---
 
@@ -602,6 +605,69 @@ All changes on branch `claude/icloud-access-clarification-5hsRr`.
 **Known production bugs fixed (2026-05-19):**
 - `tryWebSearchFallback()` now rejects regen-severity violations (was only checking block) — prevents banned phrases from reaching users via the web search path
 - Morning reminders weren't firing for Israel users: root cause was DB default timezone `'America/New_York'`. At 08:00 Israel = 01:00 EDT → quiet hours blocked. Fixed per-user via admin PUT to `Asia/Jerusalem`. **New users still default to `'America/New_York'` in the migration — update timezone immediately after manual user creation.**
+
+### Phase 13 — Security hardening + Conversation intelligence + Production quality (2026-05-27)
+
+All work on branch `claude/grace-auto-evaluation-HiMb8`, merged to main.
+
+**`supabase/migrations/20260527000001_enable_rls_all_tables.sql`** (NEW)
+- Enables Row Level Security on all 16 public tables (`users`, `conversations`, `messages`, `embeddings`, `tool_logs`, `feedback`, `food_logs`, `weight_logs`, `check_ins`, `injections`, `prompts`, `tool_settings`, `content_rules`, plus 3 others)
+- Default-deny policy blocks Supabase `anon` key from all operations
+- Service-role and direct Postgres connections (used by the API) are unaffected
+
+**`packages/ai-core/src/relevance-check.ts`** (NEW)
+- LLM relevance checker module: post-generation semantic check using `gemini-2.0-flash` (~150ms)
+- Verifies response actually answers the user's latest message, not an older topic
+- Returns `{ relevant: boolean, reason: string }` — triggers regen on `relevant: false`
+
+**`packages/ai-core/src/orchestrator.ts`** (MODIFIED)
+- Wired LLM relevance check after generation: if response fails semantic relevance → regen with explicit instruction to address the latest message
+- Topic drift detection: ratio-based check (old-topic keywords > 2x current keywords → regen)
+- Topic-closer history stripping: after "thanks"/"ok"/"got it", all history before the closer is stripped from orchestrator input so old topics don't anchor the response
+
+**`packages/ai-core/src/prompts.ts`** (MODIFIED)
+- Memory block reframed as "BACKGROUND — DO NOT mention unless relevant"
+- Tool results similarly reframed as background-only context
+- User data block changed to "background only"
+- Dynamic response length: match response length to user's message energy
+- Brief reply = topic closer: "Thanks" explicitly closes previous topic, no re-reference allowed
+
+**`packages/ai-core/src/content-checker.ts`** (MODIFIED)
+- Banned "oh dear"/"oh my"/"yikes" alarm language
+- Banned premature medical escalation patterns ("I'm really concerned", "please see your doctor immediately" for non-emergency contexts)
+- Added concern-without-panic rule enforcement
+
+**`services/api/src/services/ai.service.ts`** (MODIFIED)
+- History reduced from 12 → 6 turns to reduce old-topic anchoring
+- Medical tone: 6-step mandatory response structure, 4-level graduated escalation logic (acknowledge → educate → suggest → escalate)
+- Message coalesce window increased from 2s to 3.5s
+- Emergency LLM fallback: if full pipeline crashes, minimal Gemini call still answers the user
+
+**`services/api/src/services/user.service.ts`** (MODIFIED)
+- `ensureUser()` no longer crashes when `phone_hash` column missing; `medication_time`/`sms_consent` moved to try/catch block
+
+**`services/api/src/routes/webhook.ts`** (MODIFIED)
+- RLHF feedback acknowledgment replaced: developer-like "Thanks for the feedback, I'll work on that!" → Grace-appropriate "Got it. I hear you."
+- Stray colon cleanup: format enforcer strips mid-sentence colons from LLM output
+
+**`services/api/src/scheduler/scheduler.ts`** (MODIFIED)
+- Bonus spontaneous reminders: 1 extra daily message at a varied random time
+- Scheduler tick includes the new spontaneous nudge type alongside morning/midday/evening
+
+**`services/api/src/scheduler/prompt-optimizer.ts`** (MODIFIED)
+- Switched from `gemini-2.5-flash` to `gemini-2.0-flash` for both primary and retry attempts — thinking tokens from 2.5-flash were eating the JSON output budget, causing parse failures
+
+**`services/api/src/config/ssl.ts`** (MODIFIED)
+- Reverted `rejectUnauthorized` back to `false` for Supabase transaction pooler compatibility
+
+**`Dockerfile`** (MODIFIED)
+- Added `pnpm-lock.yaml` to runtime COPY stage for frozen-lockfile install
+
+**Key architecture notes:**
+- Conversation context pipeline: 6 history turns → topic-closer detection strips old turns → LLM relevance check catches semantic drift → content checker catches banned phrases → format enforcer cleans formatting
+- Optimizer now uses `gemini-2.0-flash` (not `gemini-2.5-flash`) to avoid thinking token budget issues
+- Message coalesce window is 3.5s (was 2s)
+- Topic closers ("thanks", "ok", "got it") reset conversation context — all history before the closer is stripped
 
 ### Phase 7+8 — known follow-ups not yet shipped
 

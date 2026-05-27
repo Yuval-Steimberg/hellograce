@@ -177,15 +177,8 @@ function extractTopicKeywords(text: string): string[] {
     .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 }
 
-/**
- * Build a topic-focus marker that injects right before the new user turn.
- * Gemini Flash gets primed by long previous assistant messages in history
- * and continues the OLD topic. This marker forces attention on the current
- * intent AND explicitly quotes the last Grace message so the model knows
- * not to repeat it.
- *
- * Always returns a non-empty string (never null).
- */
+// Injected right before the user turn to prevent the LLM from anchoring on
+// old topics. Quotes the last Grace message so the model knows NOT to repeat it.
 function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssistantMessage?: string, userText?: string): string {
   const parts: string[] = [];
 
@@ -261,6 +254,9 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssi
 // `possible_medical_advice` flag handles the cases we care about.
 const RISKY_INTENT_PREFIXES = ['safety_'];
 
+// The orchestrator composes three sub-components: PlannerAgent (decides which
+// tools to call), LLMCritic (grades response safety/grounding), and
+// RelevanceChecker (verifies the response answers the user's actual question).
 export class AIOrchestrator {
   private planner: PlannerAgent;
   private critic: LLMCritic;
@@ -272,10 +268,14 @@ export class AIOrchestrator {
     this.relevance = new RelevanceChecker(deps.llm);
   }
 
+  // Main pipeline. Steps: (1) classify message type, (2) plan + execute tools,
+  // (3) generate LLM response, (4) enforce format, (5) check content rules
+  // (block/regen/log), (6) check grounding + topic drift + relevance,
+  // (7) regen if any check fails, (8) web search fallback, (9) safe fallback.
   async run(input: OrchestratorInput): Promise<OrchestratorOutput> {
     const started = Date.now();
 
-    // Fast deterministic classifier — drives typed fallbacks, planner skip, and thinking control.
+    // Step 1: Fast deterministic classifier — drives typed fallbacks, planner skip, and thinking control.
     const classification = classifyMessage(input.text);
     const simpleTypes = ['greeting', 'gibberish', 'food_log', 'weight_log', 'mood_log'];
     const skipPlanner = simpleTypes.includes(classification.type);
@@ -361,10 +361,9 @@ export class AIOrchestrator {
     let regenerated = false;
     let usedSafeFallback = false;
 
-    // ─── Content-rule enforcement (force regen on violation) ──────────
-    // Forbidden foods given a dietary restriction. We must regen — there's
-    // no way to "fix" a chicken recommendation to a vegetarian via string
-    // replacement.
+    // ─── Step 5: Content-rule enforcement ──────────────────────────────
+    // Three severity levels: block (never send, immediate safe fallback),
+    // regen (LLM must rewrite), log (telemetry only, response still sent).
     const contentCheckOpts = {
       ...(input.dietaryRestriction ? { dietaryRestriction: input.dietaryRestriction } : {}),
       ...(input.foodDislikes && input.foodDislikes.length > 0 ? { foodDislikes: input.foodDislikes } : {}),
@@ -404,10 +403,10 @@ export class AIOrchestrator {
       (v) => !v.severity || v.severity === 'regen',
     );
 
-    // ── Response relevance + duplication checks ─────────────────────────
-    // Two guards that fire EVERY message (not just on topic switches):
-    //   1. Topic drift: response answers the previous topic, not the current
-    //   2. Response duplication: response is a rephrased copy of the last one
+    // ── Step 6: Response relevance + duplication checks ─────────────────
+    // Three layers: (a) keyword overlap ratio detects obvious topic drift,
+    // (b) Jaccard similarity detects copy-paste duplication of last response,
+    // (c) LLM relevance check catches semantic mismatches keywords miss.
     let topicDrift = false;
     if (lastAssistantMessage && lastAssistantMessage.trim().length > 40 && classification.type !== 'greeting') {
       const userKws = extractTopicKeywords(input.text);
@@ -492,6 +491,8 @@ export class AIOrchestrator {
       precheck.unsupported.length > 0 ||
       this.shouldRunCritic(plan, validated);
 
+    // Step 7: If any check failed, regenerate with targeted feedback appended
+    // to the system prompt so the LLM knows exactly what to fix.
     if (needsReview) {
       critic = await this.review(precheck, input.text, validated.text, input.retrieved);
 
@@ -545,12 +546,10 @@ export class AIOrchestrator {
           validated = retryValidated;
           critic = retryCritic;
         } else {
-          // Last resort BEFORE the canned safe fallback: ask Gemini to answer
-          // with Google Search grounding. If the KB has nothing on a topic
-          // (e.g. recent research, GLP-1 muscle-loss percentages we don't index)
-          // the web has the answer. The model is forced to cite, and content
-          // checks still apply. Only blocks if web search ALSO returns nothing
-          // usable or violates a block-severity rule.
+          // Step 8: Web search fallback — last resort before the canned safe
+          // fallback. Calls Gemini with Google Search grounding when the KB
+          // has no answer. Content rules still apply. Falls through to Step 9
+          // (safe fallback) if web search also fails or violates a block rule.
           const webResult = await this.tryWebSearchFallback(
             baseSystem,
             input.text,

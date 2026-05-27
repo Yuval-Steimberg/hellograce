@@ -183,9 +183,12 @@ psql "$DATABASE_URL" -f supabase/migrations/20260513000001_prompt_optimizer_colu
 psql "$DATABASE_URL" -f supabase/migrations/20260513000002_protein_personalization.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260513000003_glp1_start_date.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260516000005_content_rules.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260527000001_enable_rls_all_tables.sql
 ```
 
 **`20260516000005_content_rules.sql`** — IMPORTANT: run in Supabase SQL Editor with "No limit" toggle OFF (not in Neon). Creates `content_rules` table + 48 seed rules. Verify with: `SELECT severity, COUNT(*) FROM content_rules GROUP BY severity;` → should show `block: 4, regen: 44`.
+
+**`20260527000001_enable_rls_all_tables.sql`** — Enables Row Level Security on all 16 public tables. Default-deny policy blocks the Supabase `anon` key from reading/writing any table. Service-role and direct connections (used by the API) are unaffected.
 
 Core tables: `users`, `conversations`, `messages`, `embeddings`, `tool_logs`,
 `feedback`, `food_logs`, `weight_logs`, `check_ins`, `injections`, `prompts`, `tool_settings`.
@@ -373,6 +376,7 @@ Roadmap (in progress, in this order):
 | 10 | DB-driven content guardbands: `content_rules` table (48 rules: 4 block + 44 regen), `ContentRulesService` with 60s cache, applied to both reactive AI and proactive scheduler paths. Admin CRUD + test endpoint. Redis distributed lock on scheduler to prevent duplicate messages across Fly machines. | ✅ 2026-05-16 |
 | 11 | AI quality pass: GREETING RULE (pure greeting → one sentence, topic reset), FOOD VARIETY rule + 40-food pool, `search_food_ideas` tool (Google Search grounding for food questions), two-pass scientific food image analysis (Pass 1: visual ID with USDA anchors; Pass 2: text-only macro calculation with 50-food USDA table). | ✅ 2026-05-19 |
 | 12 | Auto-evaluation system: 20 personas × 43 scenarios × 15 categories, multi-turn conversation simulation through real orchestrator, 15-dimension LLM judge, pattern detection, regression tracking, RLHF preference pair generation. `pnpm --filter @grace/api auto-eval`. | ✅ 2026-05-24 |
+| 13 | Security hardening + Conversation intelligence + Production quality: RLS on all tables, LLM relevance checker, topic-closer history stripping, medical tone graduated escalation, message coalescing 3.5s, bonus spontaneous reminders, emergency LLM fallback, optimizer switched to gemini-2.0-flash, Docker fix. | ✅ 2026-05-27 |
 
 ---
 
@@ -380,7 +384,7 @@ Roadmap (in progress, in this order):
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
-3. Active branch: `claude/icloud-access-clarification-5hsRr` (not yet merged to main). Latest commit: `2e5372c` — Two-pass food image analysis with USDA table.
+3. Active branch: `claude/grace-auto-evaluation-HiMb8` (merged to main). Latest commit: `d1c2cdc` — Fix optimizer: use gemini-2.0-flash for both attempts.
 4. Production is live at `https://grace-api.fly.dev` (API) and `https://grace-admin-silk.vercel.app` (web). Tail logs with `fly logs --app grace-api`.
 5. Top open items: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn, rotate DB password.
 

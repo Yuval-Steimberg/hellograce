@@ -1,3 +1,16 @@
+// ────────────────────────────────────────────────────────────────────────────
+// AIOrchestrator — the core AI response generation engine.
+//
+// This is the central pipeline that turns a user message into a Grace response.
+// Flow: classify → plan → execute tools → generate LLM response → enforce
+// format → check content rules → check grounding → check relevance → regen
+// if any check fails → web search fallback → safe fallback.
+//
+// Pure module: no DB, no env reads, no network I/O except LLM calls. All
+// external deps (user data, RAG, tool implementations) are injected by
+// ai.service.ts which calls orchestrator.run().
+// ────────────────────────────────────────────────────────────────────────────
+
 import type {
   CriticReport,
   LLMProvider,
@@ -136,11 +149,10 @@ function getToolAwareFallback(type: MessageType, toolResults: ToolResult[]): str
   return getTypedFallback(type);
 }
 
-// ── Topic keyword extraction ────────────────────────────────────────────────
-// Used to detect topic switches: if the user's new message is about "muscle
-// loss" but the last assistant message was about "nausea", we inject an
-// explicit ban on the old topic's keywords to prevent Gemini from repeating.
-
+// ── Topic drift detection — keyword extraction ────────────────────────────
+// Extracts content words from messages, filtering out stop words, so we can
+// compare what the user is asking about vs. what Grace just answered about.
+// Used by buildFocusMarker and the drift/duplication checks in run().
 const STOP_WORDS = new Set([
   'i', 'me', 'my', 'you', 'your', 'we', 'our', 'the', 'a', 'an', 'is', 'are',
   'was', 'were', 'am', 'be', 'been', 'do', 'does', 'did', 'has', 'have', 'had',

@@ -549,56 +549,69 @@ Respond with ONLY the JSON object.`,
       },
     ];
 
-    // Primary attempt — default model (gemini-2.5-flash) with thinking disabled.
-    // disableThinking prevents thinking tokens from eating the JSON output budget.
-    const resp = await this.llm.generate({
-      messages: buildMessages(negativeBlock, false),
-      temperature: 0.2,
-      maxOutputTokens: 16384,
-      responseFormat: 'json',
-      disableThinking: true,
-    });
+    // Three-attempt strategy with increasing simplicity:
+    // 1. Default model + thinking disabled + full prompt
+    // 2. Default model + thinking enabled + huge budget + short prompt
+    // 3. Hardcoded minimal JSON prompt as absolute last resort
 
-    let parsed = parseAdditionsResponse(resp.text);
+    const attempts: Array<{ label: string; generate: () => Promise<{ text: string; finishReason?: string }> }> = [
+      {
+        label: 'primary (default model, no thinking)',
+        generate: () => this.llm.generate({
+          messages: buildMessages(negativeBlock, false),
+          temperature: 0.2,
+          maxOutputTokens: 16384,
+          responseFormat: 'json',
+          disableThinking: true,
+        }),
+      },
+      {
+        label: 'retry (default model, thinking enabled, short prompt)',
+        generate: () => this.llm.generate({
+          messages: buildMessages(negativeBlock, true),
+          temperature: 0.1,
+          maxOutputTokens: 32768,
+          responseFormat: 'json',
+        }),
+      },
+      {
+        label: 'last-resort (minimal prompt, text mode)',
+        generate: () => this.llm.generate({
+          messages: [{
+            role: 'user',
+            content: `Analyze this user feedback and output ONLY a JSON object with "analysis" and "additions" keys.\n\nFeedback:\n${negativeBlock.slice(0, 2000)}\n\nJSON:`,
+          }],
+          temperature: 0.0,
+          maxOutputTokens: 4096,
+        }),
+      },
+    ];
 
-    // One-shot retry: if parsing fails (truncated JSON, malformed output, thinking
-    // markers mixed in) use a much shorter prompt so the model can't go off-track.
-    if (!parsed || parsed.additions.trim().length < MIN_ADDITIONS_LENGTH) {
-      this.logger.warn(
-        {
-          rawLength: resp.text.length,
-          rawPreview: resp.text.slice(0, 600),
-          finishReason: resp.finishReason,
-          parsedAdditionsLen: parsed?.additions.trim().length ?? 0,
-          attempt: 1,
-        },
-        'prompt_optimizer.parse_failed — retrying with simplified prompt',
-      );
-
-      const retryResp = await this.llm.generate({
-        messages: buildMessages(negativeBlock, true),
-        temperature: 0.1,
-        maxOutputTokens: 8192,
-        responseFormat: 'json',
-        model: 'gemini-2.0-flash',
-      }).catch((err) => {
-        this.logger.error({ err }, 'prompt_optimizer.retry_generate_failed');
-        return null;
-      });
-
-      if (retryResp) {
-        parsed = parseAdditionsResponse(retryResp.text);
-        if (!parsed || parsed.additions.trim().length < MIN_ADDITIONS_LENGTH) {
-          this.logger.warn(
-            { rawLength: retryResp.text.length, rawPreview: retryResp.text.slice(0, 600) },
-            'prompt_optimizer.parse_failed — both attempts failed',
-          );
-          return null;
+    let parsed: { additions: string; analysis: string } | null = null;
+    for (const attempt of attempts) {
+      try {
+        const resp = await attempt.generate();
+        this.logger.info(
+          { attempt: attempt.label, rawLen: resp.text.length, preview: resp.text.slice(0, 300) },
+          'prompt_optimizer.attempt_response',
+        );
+        parsed = parseAdditionsResponse(resp.text);
+        if (parsed && parsed.additions.trim().length >= MIN_ADDITIONS_LENGTH) {
+          this.logger.info({ attempt: attempt.label }, 'prompt_optimizer.attempt_succeeded');
+          break;
         }
-        this.logger.info('prompt_optimizer.retry_succeeded');
-      } else {
-        return null;
+        this.logger.warn(
+          { attempt: attempt.label, rawLen: resp.text.length, parsedLen: parsed?.additions.trim().length ?? 0 },
+          'prompt_optimizer.attempt_parse_failed',
+        );
+        parsed = null;
+      } catch (err) {
+        this.logger.warn({ attempt: attempt.label, err }, 'prompt_optimizer.attempt_error');
       }
+    }
+
+    if (!parsed) {
+      return null;
     }
 
     return parsed;

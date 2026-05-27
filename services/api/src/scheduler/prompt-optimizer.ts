@@ -549,28 +549,15 @@ Respond with ONLY the JSON object.`,
       },
     ];
 
-    // Primary attempt — try gemini-2.0-flash first (no thinking overhead).
-    // Falls back to the default model if 2.0-flash errors (API key restrictions, etc).
-    let resp;
-    try {
-      resp = await this.llm.generate({
-        messages: buildMessages(negativeBlock, false),
-        temperature: 0.2,
-        maxOutputTokens: 8192,
-        responseFormat: 'json',
-        model: 'gemini-2.0-flash',
-        disableThinking: true,
-      });
-    } catch (primaryErr) {
-      this.logger.warn({ err: primaryErr }, 'prompt_optimizer.primary_model_failed — trying default model');
-      resp = await this.llm.generate({
-        messages: buildMessages(negativeBlock, false),
-        temperature: 0.2,
-        maxOutputTokens: 32768,
-        responseFormat: 'json',
-        disableThinking: true,
-      });
-    }
+    // Primary attempt — default model (gemini-2.5-flash) with thinking disabled.
+    // disableThinking prevents thinking tokens from eating the JSON output budget.
+    const resp = await this.llm.generate({
+      messages: buildMessages(negativeBlock, false),
+      temperature: 0.2,
+      maxOutputTokens: 16384,
+      responseFormat: 'json',
+      disableThinking: true,
+    });
 
     let parsed = parseAdditionsResponse(resp.text);
 
@@ -594,7 +581,6 @@ Respond with ONLY the JSON object.`,
         maxOutputTokens: 8192,
         responseFormat: 'json',
         model: 'gemini-2.0-flash',
-        disableThinking: true,
       }).catch((err) => {
         this.logger.error({ err }, 'prompt_optimizer.retry_generate_failed');
         return null;

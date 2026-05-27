@@ -131,7 +131,9 @@ export class GeminiProvider implements LLMProvider {
       maxOutputTokens: req.maxOutputTokens ?? 400,
       ...(req.responseFormat === 'json' ? { responseMimeType: 'application/json' } : {}),
     };
-    if (req.disableThinking) {
+    // thinkingConfig only works on Gemini 2.5+ models. Sending it to 2.0
+    // models causes a 400 error. Check the model name before setting it.
+    if (req.disableThinking && /2\.5|gemini-exp/i.test(modelName)) {
       genConfig.thinkingConfig = { thinkingBudget: 0 };
     }
 

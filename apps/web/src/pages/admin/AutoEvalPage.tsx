@@ -1029,9 +1029,37 @@ function RunProgressPanel() {
   const [events, setEvents] = useState<AutoEvalProgressEvent[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [scenarioCount, setScenarioCount] = useState(10);
+  const [concurrency, setConcurrency] = useState(2);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [showConfig, setShowConfig] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  const ALL_CATEGORIES = [
+    'onboarding', 'food_logging', 'emotional_support', 'medical_question',
+    'topic_switching', 'correction', 'frustration', 'multi_question',
+    'slang_typos', 'long_term_memory', 'injection_day', 'side_effects',
+    'weight_tracking', 'proactive_response', 'edge_case',
+  ];
+
+  const PRESETS = [
+    { label: 'Quick smoke (5 scenarios)', count: 5, concurrency: 2, categories: [] as string[] },
+    { label: 'Standard (15 scenarios)', count: 15, concurrency: 2, categories: [] },
+    { label: 'Food + protein focus', count: 12, concurrency: 2, categories: ['food_logging', 'multi_question', 'correction'] },
+    { label: 'Emotional / medical focus', count: 12, concurrency: 2, categories: ['emotional_support', 'medical_question', 'side_effects'] },
+    { label: 'Edge cases only', count: 10, concurrency: 2, categories: ['topic_switching', 'slang_typos', 'edge_case'] },
+    { label: 'Full sweep (43+ scenarios)', count: 50, concurrency: 4, categories: [] },
+  ];
+
+  const toggleCategory = (cat: string) => {
+    setSelectedCategories((cur) => cur.includes(cat) ? cur.filter((c) => c !== cat) : [...cur, cat]);
+  };
+
+  const applyPreset = (preset: typeof PRESETS[number]) => {
+    setScenarioCount(preset.count);
+    setConcurrency(preset.concurrency);
+    setSelectedCategories(preset.categories);
+  };
 
   // Check initial status
   const { data: statusData } = useQuery({
@@ -1101,7 +1129,11 @@ function RunProgressPanel() {
   }, [events]);
 
   const startMut = useMutation({
-    mutationFn: () => api.autoEval.startRun({ scenarioCount }),
+    mutationFn: () => api.autoEval.startRun({
+      scenarioCount,
+      concurrency,
+      ...(selectedCategories.length > 0 ? { categories: selectedCategories } : {}),
+    }),
     onSuccess: () => {
       setIsRunning(true);
       setEvents([]);
@@ -1166,22 +1198,87 @@ function RunProgressPanel() {
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="flex items-center gap-4 mb-4 pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Scenarios</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={scenarioCount}
-                  onChange={(e) => setScenarioCount(Number(e.target.value))}
-                  className="w-20 bg-white/5 border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-                  style={{ borderColor: 'rgba(255,255,255,0.1)' }}
-                />
+            <div className="space-y-4 mb-4 pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              {/* Presets */}
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block mb-2">Presets</label>
+                <div className="flex flex-wrap gap-2">
+                  {PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => applyPreset(preset)}
+                      className="px-3 py-1.5 text-xs rounded-lg bg-white/5 hover:bg-white/10 border transition-colors text-foreground"
+                      style={{ borderColor: 'rgba(255,255,255,0.1)' }}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-4">
-                More scenarios = better coverage but longer run time. Each scenario generates a multi-turn conversation.
-              </p>
+
+              {/* Manual settings */}
+              <div className="flex items-center gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Scenarios</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={scenarioCount}
+                    onChange={(e) => setScenarioCount(Number(e.target.value))}
+                    className="w-20 bg-white/5 border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                    style={{ borderColor: 'rgba(255,255,255,0.1)' }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Concurrency</label>
+                  <select
+                    value={concurrency}
+                    onChange={(e) => setConcurrency(Number(e.target.value))}
+                    className="bg-white/5 border rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                    style={{ borderColor: 'rgba(255,255,255,0.1)' }}
+                  >
+                    <option value={1} className="bg-slate-900">1 (slow, gentle)</option>
+                    <option value={2} className="bg-slate-900">2 (default)</option>
+                    <option value={4} className="bg-slate-900">4 (faster)</option>
+                    <option value={8} className="bg-slate-900">8 (max, may hit rate limits)</option>
+                  </select>
+                </div>
+                <p className="text-xs text-muted-foreground mt-4 flex-1">
+                  Estimated time: ~{Math.ceil((scenarioCount * 30) / concurrency / 60)} min for {scenarioCount} scenarios at concurrency {concurrency}.
+                </p>
+              </div>
+
+              {/* Category filter */}
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground block mb-2">
+                  Categories ({selectedCategories.length === 0 ? 'all' : `${selectedCategories.length} selected`})
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {ALL_CATEGORIES.map((cat) => {
+                    const active = selectedCategories.includes(cat);
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => toggleCategory(cat)}
+                        className="px-2.5 py-1 text-xs rounded-lg border transition-colors"
+                        style={{
+                          background: active ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.03)',
+                          borderColor: active ? 'rgb(99,102,241)' : 'rgba(255,255,255,0.08)',
+                          color: active ? 'rgb(165,180,252)' : 'rgba(255,255,255,0.6)',
+                        }}
+                      >
+                        {cat.replace(/_/g, ' ')}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-2">
+                  Empty = run all categories. Click to toggle individual categories.
+                </p>
+              </div>
             </div>
           </motion.div>
         )}

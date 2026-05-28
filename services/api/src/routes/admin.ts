@@ -1388,7 +1388,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         app.log.error({ err: err instanceof Error ? err.message : String(err), runnerUrl }, 'regression.import_failed');
         return null;
       }) as {
-        runRegressionSuite: (opts: { llm: unknown; invokeGrace: (input: unknown) => Promise<unknown> }) => Promise<unknown>;
+        runRegressionSuite: (opts: { llm: unknown; invokeGrace: (input: unknown) => Promise<unknown>; dbScenarios?: unknown[] }) => Promise<unknown>;
       } | null;
       if (!mod) {
         reply.status(503).send({ error: 'MODULE_UNAVAILABLE', message: 'Regression runner not available' });
@@ -1419,7 +1419,31 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         return { text: result.text, latencyMs: Date.now() - t0 };
       };
 
-      const report = await mod.runRegressionSuite({ llm: deps.llm, invokeGrace });
+      // Fetch dynamic DB scenarios (if migration applied) and merge with static
+      let dbScenarios: unknown[] = [];
+      try {
+        const { rows } = await deps.pool.query(
+          `SELECT id, bug_description, trigger_message, banned_phrases, required_behavior,
+                  setup, persona_id, category
+           FROM regression_scenarios WHERE active = TRUE`,
+        );
+        dbScenarios = rows.map((r) => ({
+          id: r.id,
+          bugDescription: r.bug_description,
+          triggerMessage: r.trigger_message,
+          bannedInResponse: r.banned_phrases ?? [],
+          requiredBehavior: r.required_behavior ?? [],
+          setup: r.setup ?? undefined,
+          personaId: r.persona_id ?? 'sarah_new',
+          category: r.category ?? 'edge_case',
+          turnCount: 1,
+          challenges: [],
+          fixedAt: 'dynamic',
+        }));
+      } catch {
+        /* migration not applied — silently fall through */
+      }
+      const report = await mod.runRegressionSuite({ llm: deps.llm, invokeGrace, dbScenarios });
       return report;
     } catch (err) {
       app.log.error({ err }, 'regression.run_failed');
@@ -1428,13 +1452,190 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   });
 
   app.get('/admin/regression/scenarios', async () => {
+    // Merge static (code) scenarios with dynamic (DB) scenarios
+    let staticScenarios: unknown[] = [];
     try {
       const modUrl = new URL('../../auto-eval/regression-scenarios.js', import.meta.url).href;
       const mod = await import(modUrl) as { REGRESSION_SCENARIOS: unknown[] };
-      return { scenarios: mod.REGRESSION_SCENARIOS };
+      staticScenarios = mod.REGRESSION_SCENARIOS.map((s) => ({ ...(s as object), source: 'static' }));
     } catch (err) {
       app.log.error({ err }, 'regression.scenarios_import_failed');
-      return { scenarios: [] };
+    }
+    let dbScenarios: unknown[] = [];
+    try {
+      const { rows } = await deps.pool.query(
+        `SELECT id, bug_description, trigger_message, banned_phrases, required_behavior,
+                setup, persona_id, category, source, created_at
+         FROM regression_scenarios WHERE active = TRUE ORDER BY created_at DESC`,
+      );
+      dbScenarios = rows.map((r) => ({
+        id: r.id,
+        bugDescription: r.bug_description,
+        triggerMessage: r.trigger_message,
+        bannedInResponse: r.banned_phrases,
+        requiredBehavior: r.required_behavior,
+        setup: r.setup,
+        personaId: r.persona_id ?? 'sarah_new',
+        category: r.category ?? 'edge_case',
+        source: r.source,
+        fixedAt: r.created_at,
+      }));
+    } catch (err) {
+      app.log.warn({ err }, 'regression.db_scenarios_unavailable');
+    }
+    return { scenarios: [...staticScenarios, ...dbScenarios] };
+  });
+
+  // Save a new dynamic regression scenario (from Replay UI or manual entry).
+  app.post('/admin/regression/scenarios', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      id?: string;
+      bugDescription?: string;
+      triggerMessage?: string;
+      bannedPhrases?: string[];
+      requiredBehavior?: string[];
+      setup?: string;
+      personaId?: string;
+      category?: string;
+      source?: string;
+      sourceMeta?: Record<string, unknown>;
+    };
+    if (!body.bugDescription || !body.triggerMessage) {
+      reply.status(400).send({ error: 'INVALID', message: 'bugDescription and triggerMessage are required' });
+      return;
+    }
+    const id = body.id ?? `dyn_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    try {
+      await deps.pool.query(
+        `INSERT INTO regression_scenarios
+           (id, bug_description, trigger_message, banned_phrases, required_behavior,
+            setup, persona_id, category, source, source_meta)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (id) DO UPDATE SET
+           bug_description = EXCLUDED.bug_description,
+           trigger_message = EXCLUDED.trigger_message,
+           banned_phrases = EXCLUDED.banned_phrases,
+           required_behavior = EXCLUDED.required_behavior,
+           setup = EXCLUDED.setup,
+           persona_id = EXCLUDED.persona_id,
+           category = EXCLUDED.category`,
+        [
+          id,
+          body.bugDescription,
+          body.triggerMessage,
+          body.bannedPhrases ?? [],
+          body.requiredBehavior ?? [],
+          body.setup ?? null,
+          body.personaId ?? null,
+          body.category ?? null,
+          body.source ?? 'manual',
+          body.sourceMeta ? JSON.stringify(body.sourceMeta) : null,
+        ],
+      );
+      return { ok: true, id };
+    } catch (err) {
+      app.log.error({ err }, 'regression.scenario_save_failed');
+      reply.status(500).send({ error: 'SAVE_FAILED', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Delete (deactivate) a dynamic scenario
+  app.delete('/admin/regression/scenarios/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      await deps.pool.query('UPDATE regression_scenarios SET active = FALSE WHERE id = $1', [id]);
+      return { ok: true };
+    } catch (err) {
+      reply.status(500).send({ error: 'DELETE_FAILED', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Auto-generate regression scenarios from recent 👎 RLHF feedback.
+  // Uses LLM to extract: bug description, banned phrases, required behaviors.
+  // Returns DRAFT scenarios (not auto-saved) — admin reviews before persisting.
+  app.post('/admin/regression/generate-from-feedback', async (req, reply) => {
+    const body = (req.body ?? {}) as { days?: number; limit?: number };
+    const days = Math.min(Math.max(body.days ?? 14, 1), 90);
+    const limit = Math.min(Math.max(body.limit ?? 10, 1), 30);
+    if (!deps.llm) {
+      reply.status(503).send({ error: 'NO_LLM', message: 'LLM provider not configured' });
+      return;
+    }
+    try {
+      const since = new Date(Date.now() - days * 24 * 3_600_000);
+      // Fetch 👎 feedback with the user message and grace response
+      const { rows } = await deps.pool.query<{
+        feedback_id: string;
+        comment: string | null;
+        user_message: string | null;
+        assistant_message: string;
+      }>(
+        `SELECT
+           f.id AS feedback_id,
+           f.comment,
+           u.content AS user_message,
+           a.content AS assistant_message
+         FROM feedback f
+         JOIN messages a ON a.id = f.message_id
+         LEFT JOIN LATERAL (
+           SELECT content FROM messages
+           WHERE conversation_id = a.conversation_id AND role = 'user' AND created_at < a.created_at
+           ORDER BY created_at DESC LIMIT 1
+         ) u ON TRUE
+         WHERE f.rating = -1 AND f.created_at > $1
+         ORDER BY f.created_at DESC
+         LIMIT $2`,
+        [since, limit],
+      );
+      if (rows.length === 0) return { scenarios: [], message: 'No 👎 feedback in this period' };
+
+      // Ask LLM to extract scenario fields from each 👎
+      const drafts: Array<Record<string, unknown>> = [];
+      for (const r of rows) {
+        if (!r.user_message || !r.assistant_message) continue;
+        const prompt = `A user gave 👎 feedback on this Grace response. Extract a regression test scenario.
+
+USER MESSAGE: "${r.user_message.slice(0, 400)}"
+GRACE RESPONSE: "${r.assistant_message.slice(0, 600)}"
+USER COMMENT: ${r.comment ? `"${r.comment.slice(0, 200)}"` : '(no comment)'}
+
+Return ONLY a JSON object:
+{
+  "bugDescription": "<one sentence explaining what Grace did wrong>",
+  "bannedPhrases": ["<2-5 short literal phrases from Grace's response that should never appear in similar situations>"],
+  "requiredBehavior": ["<2-4 semantic behaviors Grace SHOULD have demonstrated>"]
+}
+
+Banned phrases must be exact lowercase substrings from Grace's actual response. Required behaviors are short imperatives like "states a specific number" or "logs the food without asking".`;
+        try {
+          const resp = await deps.llm.generate({
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.0,
+            maxOutputTokens: 600,
+            responseFormat: 'json',
+            model: 'gemini-2.0-flash',
+          });
+          const cleaned = resp.text.trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+          const parsed = JSON.parse(cleaned) as { bugDescription?: string; bannedPhrases?: string[]; requiredBehavior?: string[] };
+          if (parsed.bugDescription && (parsed.bannedPhrases?.length || parsed.requiredBehavior?.length)) {
+            drafts.push({
+              id: `fb_${r.feedback_id}`,
+              bugDescription: parsed.bugDescription,
+              triggerMessage: r.user_message.trim(),
+              bannedPhrases: parsed.bannedPhrases ?? [],
+              requiredBehavior: parsed.requiredBehavior ?? [],
+              source: 'feedback',
+              sourceMeta: { feedback_id: r.feedback_id, original_response: r.assistant_message.slice(0, 600) },
+            });
+          }
+        } catch {
+          /* skip on parse failure */
+        }
+      }
+      return { scenarios: drafts, message: `Generated ${drafts.length} drafts from ${rows.length} 👎 feedback entries` };
+    } catch (err) {
+      app.log.error({ err }, 'regression.generate_from_feedback_failed');
+      reply.status(500).send({ error: 'GENERATE_FAILED', message: err instanceof Error ? err.message : String(err) });
     }
   });
 

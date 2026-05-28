@@ -1,7 +1,36 @@
 import { useState } from 'react';
 import { getToken } from '@/lib/api';
 import { toast } from 'sonner';
-import { Play, GitCompare, Loader2, AlertCircle } from 'lucide-react';
+import { Play, GitCompare, Loader2, AlertCircle, Save } from 'lucide-react';
+
+const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
+
+async function saveAsRegression(userMessage: string, graceResponse: string, bannedHits: string[]): Promise<void> {
+  const token = getToken();
+  const desc = window.prompt(
+    `Save this as a regression scenario? Enter a one-sentence bug description:`,
+    `Grace responded with banned phrase(s): ${bannedHits.join(', ')}`,
+  );
+  if (!desc) return;
+  try {
+    const r = await fetch(`${API_URL}/admin/regression/scenarios`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        bugDescription: desc,
+        triggerMessage: userMessage,
+        bannedPhrases: bannedHits,
+        requiredBehavior: [],
+        source: 'replay',
+        sourceMeta: { capturedResponse: graceResponse.slice(0, 800) },
+      }),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    toast.success('Saved — will run on next regression suite');
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : 'Save failed');
+  }
+}
 
 interface ToolCallMeta {
   name: string;
@@ -280,6 +309,13 @@ export default function ReplayPage() {
 }
 
 function TurnList({ turns }: { turns: ReplayTurn[] }) {
+  // Build user-message map so each Grace turn knows the user message that preceded it.
+  const userMessageBefore = (idx: number): string => {
+    for (let j = idx - 1; j >= 0; j--) {
+      if (turns[j]?.role === 'user') return turns[j]!.text;
+    }
+    return '';
+  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
       {turns.map((t, i) => (
@@ -300,8 +336,24 @@ function TurnList({ turns }: { turns: ReplayTurn[] }) {
           </div>
           <div style={{ fontSize: '14px', color: 'white', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{t.text}</div>
           {t.bannedPhrases.length > 0 && (
-            <div style={{ marginTop: '8px', padding: '6px 10px', background: 'rgba(251,113,133,0.1)', borderRadius: '6px', fontSize: '12px', color: 'rgb(251,113,133)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <AlertCircle className="w-3 h-3" /> Banned: {t.bannedPhrases.map((b) => `"${b}"`).join(', ')}
+            <div style={{ marginTop: '8px' }}>
+              <div style={{ padding: '6px 10px', background: 'rgba(251,113,133,0.1)', borderRadius: '6px', fontSize: '12px', color: 'rgb(251,113,133)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <AlertCircle className="w-3 h-3" /> Banned: {t.bannedPhrases.map((b) => `"${b}"`).join(', ')}
+              </div>
+              {t.role === 'grace' && (
+                <button
+                  onClick={() => void saveAsRegression(userMessageBefore(i), t.text, t.bannedPhrases)}
+                  style={{
+                    marginTop: '6px', padding: '5px 10px',
+                    background: 'rgba(99,102,241,0.15)', color: 'rgb(165,180,252)',
+                    border: '1px solid rgba(99,102,241,0.3)', borderRadius: '6px',
+                    fontSize: '11px', fontWeight: 500, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: '4px',
+                  }}
+                >
+                  <Save className="w-3 h-3" /> Save as regression test
+                </button>
+              )}
             </div>
           )}
           {t.meta?.toolCalls && t.meta.toolCalls.length > 0 && (

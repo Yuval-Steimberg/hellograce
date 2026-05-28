@@ -36,13 +36,16 @@ interface RunDeps {
   // Function that takes a user message + persona and returns Grace's response.
   // Wired by the caller — uses the real orchestrator (with mocked tools when needed).
   invokeGrace: (input: { persona: Persona; userMessage: string; setup?: string }) => Promise<{ text: string; latencyMs: number }>;
+  // Optional: additional DB-backed scenarios merged with static ones.
+  dbScenarios?: RegressionScenario[];
 }
 
 export async function runRegressionSuite(deps: RunDeps): Promise<RegressionReport> {
   const startedAt = new Date().toISOString();
   const results: RegressionResult[] = [];
 
-  for (const scenario of REGRESSION_SCENARIOS) {
+  const allScenarios = [...REGRESSION_SCENARIOS, ...(deps.dbScenarios ?? [])];
+  for (const scenario of allScenarios) {
     const result = await runOne(scenario, deps);
     results.push(result);
   }

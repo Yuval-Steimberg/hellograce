@@ -229,7 +229,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       intentClass.type === 'greeting' || intentClass.type === 'gibberish' || !flags.toolsEnabled;
     const planner = new PlannerAgent(this.deps.llm);
 
-    const [retrieved, userMemories, prePlannedDecision] = await Promise.all([
+    const [retrieved, userMemories, prePlannedDecisionRaw] = await Promise.all([
       flags.ragEnabled ? rag.retrieve(augmentedText, { userId: input.userId, topK: 5 }) : Promise.resolve([]),
       this.deps.userMemory
         ? this.deps.userMemory.retrieve(input.userId, augmentedText, 3)
@@ -238,6 +238,24 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
         ? Promise.resolve<PlannerDecision>({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'classifier_fast_path' })
         : planner.plan(augmentedText).catch((): PlannerDecision => ({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'planner_error' })),
     ]);
+
+    // FORCE log_food when classifier detects food_log but planner missed it.
+    // This prevents Grace from asking "what did you eat?" when the user already
+    // said it, or asking for clarification before logging. The classifier is
+    // more reliable than the LLM planner for "I ate X" patterns.
+    let prePlannedDecision = prePlannedDecisionRaw;
+    if (
+      intentClass.type === 'food_log' &&
+      flags.toolsEnabled &&
+      !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food')
+    ) {
+      prePlannedDecision = {
+        intent: 'log_food',
+        needsTools: true,
+        toolCalls: [{ name: 'log_food', args: { food: input.text } }],
+        rationale: 'classifier_forced_log_food',
+      };
+    }
 
     // Detect side effects in the user's message and update their flow.
     if (user) await this.detectAndSetSideEffectFlow(user.phone, augmentedText, user.side_effect_flow);

@@ -1438,6 +1438,162 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     }
   });
 
+  // ─── Conversation replay ─────────────────────────────────────────────────
+  // Replays a sequence of user messages through the live Grace pipeline and
+  // returns each turn's response + meta. Use for: pasting WhatsApp screenshots
+  // to reproduce a bug, comparing two prompt versions, generating test cases.
+  app.post('/admin/replay', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      messages?: string[];               // sequential user messages
+      personaContext?: {                  // simulated user profile (optional)
+        firstName?: string;
+        medication?: string;
+        dietaryRestriction?: string;
+        foodDislikes?: string[];
+        proteinGoalGrams?: number;
+        glp1WeekNumber?: number;
+      };
+      systemPromptOverride?: string;      // test a different prompt
+    };
+    const messages = Array.isArray(body.messages) ? body.messages.filter((m) => typeof m === 'string' && m.trim().length > 0) : [];
+    if (messages.length === 0) {
+      reply.status(400).send({ error: 'NO_MESSAGES', message: 'Provide a non-empty messages array' });
+      return;
+    }
+    if (messages.length > 20) {
+      reply.status(400).send({ error: 'TOO_MANY', message: 'Max 20 messages per replay' });
+      return;
+    }
+    if (!deps.llm) {
+      reply.status(503).send({ error: 'NO_LLM', message: 'LLM provider not configured' });
+      return;
+    }
+
+    // Build a minimal system prompt for replay — no DB, no tools, no history persistence.
+    const ctx = body.personaContext ?? {};
+    const persona = [
+      `User: ${ctx.firstName ?? 'Sarah'}`,
+      `Medication: ${ctx.medication ?? 'Wegovy'}`,
+      ctx.glp1WeekNumber ? `GLP-1 week: ${ctx.glp1WeekNumber}` : '',
+      ctx.dietaryRestriction ? `Dietary restriction: ${ctx.dietaryRestriction}` : '',
+      ctx.foodDislikes?.length ? `Food dislikes: ${ctx.foodDislikes.join(', ')}` : '',
+      `Daily protein target: ${ctx.proteinGoalGrams ?? 100}g`,
+      `Today's protein logged so far: 0g`,
+    ].filter(Boolean).join('\n');
+
+    let systemPrompt = body.systemPromptOverride;
+    if (!systemPrompt) {
+      try {
+        const { rows } = await deps.pool.query<{ content: string }>(
+          `SELECT content FROM prompts WHERE active = TRUE ORDER BY created_at DESC LIMIT 1`,
+        );
+        systemPrompt = rows[0]?.content ?? 'You are Grace, a WhatsApp companion for GLP-1 users.';
+      } catch {
+        systemPrompt = 'You are Grace, a WhatsApp companion for GLP-1 users.';
+      }
+    }
+
+    const turns: Array<{
+      role: 'user' | 'grace';
+      text: string;
+      latencyMs: number;
+      bannedPhrases: string[];
+    }> = [];
+
+    const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    const llmMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: `${systemPrompt}\n\n━━━ USER CONTEXT (replay mode) ━━━\n${persona}` },
+    ];
+
+    // Banned phrases we explicitly check for to flag regressions
+    const BANNED = [
+      'too fast and potentially unhealthy', 'a very significant amount', 'oh dear',
+      'contact your healthcare provider right away', 'thanks for the feedback',
+      "i'll work on that", 'my connection blipped', 'previous total',
+      'new daily total', 'remaining for the day', "let's break down",
+      "you're making progress", 'could you tell me if that was', 'vegetarian big mac',
+      "i can't tell you exactly", "that's a significant accomplishment",
+      'great that you achieved', 'congratulations on',
+    ];
+
+    for (const userMsg of messages) {
+      turns.push({ role: 'user', text: userMsg, latencyMs: 0, bannedPhrases: [] });
+      history.push({ role: 'user', content: userMsg });
+      llmMessages.push({ role: 'user', content: userMsg });
+
+      const t0 = Date.now();
+      try {
+        const resp = await deps.llm.generate({
+          messages: llmMessages,
+          temperature: 0.4,
+          maxOutputTokens: 800,
+        });
+        const text = resp.text.trim();
+        const lower = text.toLowerCase();
+        const bannedHits = BANNED.filter((b) => lower.includes(b));
+        turns.push({ role: 'grace', text, latencyMs: Date.now() - t0, bannedPhrases: bannedHits });
+        history.push({ role: 'assistant', content: text });
+        llmMessages.push({ role: 'assistant', content: text });
+      } catch (err) {
+        turns.push({
+          role: 'grace',
+          text: `ERROR: ${err instanceof Error ? err.message : String(err)}`,
+          latencyMs: Date.now() - t0,
+          bannedPhrases: [],
+        });
+      }
+    }
+
+    return { turns, totalLatencyMs: turns.reduce((s, t) => s + t.latencyMs, 0) };
+  });
+
+  // ─── Prompt-version diff: replay same messages against two prompt versions
+  app.post('/admin/replay/diff', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      messages?: string[];
+      promptVersionA?: number;
+      promptVersionB?: number;
+      personaContext?: Record<string, unknown>;
+    };
+    const messages = Array.isArray(body.messages) ? body.messages : [];
+    if (messages.length === 0 || !body.promptVersionA || !body.promptVersionB) {
+      reply.status(400).send({ error: 'INVALID', message: 'Provide messages, promptVersionA, promptVersionB' });
+      return;
+    }
+
+    const fetchPrompt = async (version: number): Promise<string | null> => {
+      const { rows } = await deps.pool.query<{ content: string }>(
+        `SELECT content FROM prompts WHERE version = $1 LIMIT 1`,
+        [version],
+      );
+      return rows[0]?.content ?? null;
+    };
+
+    const [promptA, promptB] = await Promise.all([fetchPrompt(body.promptVersionA), fetchPrompt(body.promptVersionB)]);
+    if (!promptA || !promptB) {
+      reply.status(404).send({ error: 'PROMPT_NOT_FOUND', message: 'One or both prompt versions not found' });
+      return;
+    }
+
+    const replayOne = async (systemPromptOverride: string) => {
+      const r = await app.inject({
+        method: 'POST',
+        url: '/admin/replay',
+        headers: { authorization: req.headers.authorization ?? '' },
+        payload: { messages, systemPromptOverride, personaContext: body.personaContext },
+      });
+      return JSON.parse(r.payload);
+    };
+
+    const [a, b] = await Promise.all([replayOne(promptA), replayOne(promptB)]);
+    return {
+      versionA: body.promptVersionA,
+      versionB: body.promptVersionB,
+      replayA: a,
+      replayB: b,
+    };
+  });
+
   // ─── Business metrics ────────────────────────────────────────────────────────
 
   app.get('/admin/business', async () => {

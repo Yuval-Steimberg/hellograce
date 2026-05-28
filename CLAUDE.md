@@ -186,6 +186,7 @@ psql "$DATABASE_URL" -f supabase/migrations/20260513000002_protein_personalizati
 psql "$DATABASE_URL" -f supabase/migrations/20260513000003_glp1_start_date.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260516000005_content_rules.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260527000001_enable_rls_all_tables.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260528000001_calorie_goal.sql
 ```
 
 **`20260516000005_content_rules.sql`** — IMPORTANT: run in Supabase SQL Editor with "No limit" toggle OFF (not in Neon). Creates `content_rules` table + 48 seed rules. Verify with: `SELECT severity, COUNT(*) FROM content_rules GROUP BY severity;` → should show `block: 4, regen: 44`.
@@ -380,6 +381,7 @@ Roadmap (in progress, in this order):
 | 11 | AI quality pass: GREETING RULE (pure greeting → one sentence, topic reset), FOOD VARIETY rule + 40-food pool, `search_food_ideas` tool (Google Search grounding for food questions), two-pass scientific food image analysis (Pass 1: visual ID with USDA anchors; Pass 2: text-only macro calculation with 50-food USDA table). | ✅ 2026-05-19 |
 | 12 | Auto-evaluation system: 20 personas × 43 scenarios × 15 categories, multi-turn conversation simulation through real orchestrator, 15-dimension LLM judge, pattern detection, regression tracking, RLHF preference pair generation. `pnpm --filter @grace/api auto-eval`. | ✅ 2026-05-24 |
 | 13 | Security hardening + Conversation intelligence + Production quality: RLS on all tables, LLM relevance checker, topic-closer history stripping, medical tone graduated escalation, message coalescing 3.5s, bonus spontaneous reminders, emergency LLM fallback, optimizer switched to gemini-2.0-flash, Docker fix. | ✅ 2026-05-27 |
+| 14 | QA tools + behavioral defense + calorie parity: regression suite (`/admin/regression`, 17 scenarios replaying every fixed bug), production-realistic replay tool (`/admin/replay` with in-memory orchestrator + mock tools), prompt-version diff, auto-eval presets/category filter, calorie tracking full parity with protein (Mifflin-St Jeor + activity + GLP-1 deficit, force tool calls, prompt rules, content rules), behavioral guard (LLM judge against 10 principles), generalized content checker (catch-all regexes), force log_food with classifier + safety net + continuation. | ✅ 2026-05-28 |
 
 ---
 
@@ -387,7 +389,11 @@ Roadmap (in progress, in this order):
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
 2. `git log --oneline -10` to see recent commits.
-3. Active branch: `claude/grace-auto-evaluation-HiMb8` (merged to main). Latest commit: `d1c2cdc` — Fix optimizer: use gemini-2.0-flash for both attempts.
+3. Active branch: `claude/grace-auto-evaluation-HiMb8` (merged to main). Latest commit: `89af44a` — Add behavioral guard + generalize content checker patterns.
+4. **Daily QA workflow:** `/admin/regression` (1-2 min, runs 17 known bug scenarios) → `/admin/replay` (paste WhatsApp msgs, see what Grace would say, with tool calls + regen status) → `/admin/auto-eval` (presets: Quick smoke 5, Standard 15, focused categories, Full sweep).
+5. **Migrations needed before deploying Phase 14 code:**
+   - `20260528000001_calorie_goal.sql` — adds `calorie_goal_kcal INT` to users
+   Apply in Supabase SQL Editor: `ALTER TABLE public.users ADD COLUMN IF NOT EXISTS calorie_goal_kcal INT;`
 4. Production is live at `https://grace-api.fly.dev` (API) and `https://grace-admin-silk.vercel.app` (web). Tail logs with `fly logs --app grace-api`.
 5. Top open items: Fly payment method (machines auto-stop), WhatsApp Business sender approval (drops "Twilio Sandbox:" prefix), Vercel env vars for Stripe, disable v1 edge fn, rotate DB password.
 
@@ -668,6 +674,76 @@ All work on branch `claude/grace-auto-evaluation-HiMb8`, merged to main.
 - Optimizer now uses `gemini-2.0-flash` (not `gemini-2.5-flash`) to avoid thinking token budget issues
 - Message coalesce window is 3.5s (was 2s)
 - Topic closers ("thanks", "ok", "got it") reset conversation context — all history before the closer is stripped
+
+### Phase 14 — QA tools + behavioral defense + calorie parity (2026-05-28)
+
+**Calorie tracking — full parity with protein:**
+- `supabase/migrations/20260528000001_calorie_goal.sql` — `calorie_goal_kcal INT` column on users
+- `services/api/src/nutrition/calorie-target.ts` — Mifflin-St Jeor BMR + activity factor + GLP-1 deficit (fat_loss 500, recomp 350, maintenance 300, muscle_gain -200 surplus). Floor at BMR or 1200 kcal, cap at 4000 kcal.
+- `services/api/src/routes/users.ts` — wires calculator into onboarding, degrades silently if any input missing
+- `services/api/src/user/user.service.ts` — `calorie_goal_kcal` added to GraceUser interface
+- `services/api/src/services/ai.service.ts` — context now shows "Total calories TODAY: X / Y target (Z remaining)" as first-class line + "Personal daily calorie target: X kcal" with range guidance
+- `packages/ai-core/src/prompts.ts` — new "CALORIES LEFT FOR TODAY" required pattern mirror of protein rule
+- `services/api/src/tools/get-food-summary.ts` — added `calorie_goal_kcal`, `calorie_goal_met`, `calories_remaining` fields (parity with protein)
+- `packages/ai-core/src/content-checker.ts` — 7 calorie-shame banned patterns (under-ate, over-ate, "way over budget", starvation language, "you should be eating more/less")
+- `packages/ai-core/src/classify.ts` — added patterns for "calories left/remaining", "did I overeat", "can I still eat", "am I over my goal"
+- `services/api/src/services/ai.service.ts` — force-call get_food_summary when classifier detects calorie query
+
+**Force-call hardening (food logs not detected):**
+- `packages/ai-core/src/classify.ts` — broadened FOOD_LOG regex: present tense ("I'm eating"), comma-separated food lists, 50+ food words, "and"/"with" joiners, quantity units
+- `services/api/src/services/ai.service.ts` — additional safety net: detects food verb + food word combination, force log_food even if classifier missed. Logs `ai.handle.forced_log_food` for debug.
+- Force-call CONTINUATION turns: when last Grace message was a food question and user replies with brief detail ("one scoop", "with milk"), combine both messages and call log_food. Logs `ai.handle.forced_log_food_continuation`.
+
+**New admin QA tools:**
+- `services/api/auto-eval/regression-scenarios.ts` — 17 scenarios replaying every production bug fixed in sessions 13+14 (weight loss alarm, fatigue premature escalation, "Thanks" topic leakage, muscle loss concern, food log format/clarification, protein/calorie left today, developer feedback ack, connection excuse, memory relevance, long responses, excessive questions, protein shake log, brief continuation fallback)
+- `services/api/auto-eval/regression-runner.ts` — runs each scenario through Grace, checks for banned phrases (literal) AND required behaviors (LLM judge)
+- `POST /admin/regression/run` + `GET /admin/regression/scenarios` endpoints
+- `apps/web/src/pages/admin/RegressionPage.tsx` — one-click "Run all 17 scenarios" UI with pass/fail per scenario, expandable details
+- `services/api/src/replay/sandbox.ts` — production-realistic replay using REAL AIOrchestrator + in-memory mock tools (log_food, get_food_summary, get_user_profile). State persists across turns. Returns rich metadata: intent, tool calls, regenerated flag, critic issues.
+- `POST /admin/replay` rewritten to use sandbox (was raw llm.generate)
+- `POST /admin/replay/diff` — same messages against two prompt versions
+- `apps/web/src/pages/admin/ReplayPage.tsx` — paste WhatsApp messages, see what Grace would actually say (with tool calls, regen status, banned-phrase highlighting)
+- Auto-eval UI: 6 presets (Quick smoke 5, Standard 15, Food/protein focus, Emotional/medical focus, Edge cases, Full sweep), concurrency selector (1/2/4/8), category multi-select chips, live time estimate
+
+**Triple-layer behavioral defense:**
+- Layer 1: Prompt instructions (existing)
+- Layer 2: Generalized regex patterns — single catch-all instead of 5 specific:
+  - Sycophantic openers: `(great|awesome|wonderful|perfect|fantastic|amazing|excellent|brilliant|marvelous|splendid|terrific|superb|outstanding|incredible|stellar|nice job|good job|way to go|kudos)[!,]`
+  - Refusals: `i (don'?t|do not) (know|have) (what you'?ve|what you have|your)`, `without knowing`, `it depends on`, etc.
+  - Clarification questions: any "how much/what was/what size/which brand" on user's food
+  - Generic fallbacks: any "I'm here to help" / "what's on your mind" / "feel free to ask"
+- Layer 3 (NEW): `packages/ai-core/src/behavioral-guard.ts` — LLM judge against 10 high-level principles (uses available data, logs without clarification, answers the actual question, calm not alarmist, no sycophantic openers, no developer voice, no fabricated excuses, no irrelevant memory, concise to brief, no generic fallbacks with clear context). Runs after quality guard, before send. Returns `{violations: [{principle, reason}]}`. Triggers regen with specific principle quoted.
+
+**Scheduler cadence guardrails:**
+- `services/api/src/scheduler/scheduler.ts` — strict rules in `sendAndRecord`:
+  - Maximum **2** proactive messages per user per day (Redis counter)
+  - Minimum **3 hours** between any two proactive messages (Redis timestamp)
+- Tracked in Redis: `cadence:{phone}:{date}` counter + `cadence:last:{phone}` timestamp, both with 24h TTL
+- Exempt time-critical flows: `injection_morning`, `injection_followup`, `injection_dayafter`, `trial_expiry_reminder`
+
+**Welcome message rewrite:**
+- `services/api/src/scheduler/message-generator.ts` — 3 short paragraphs: greeting + medication, what Grace does (1-2 check-ins/day, text anytime for food/symptoms/weight/feelings, photos/voice work), expectations (no pressure to reply)
+
+**Pipeline order now:**
+1. Format enforcer (deterministic) — em dashes, markdown, bullets, colons, names, length caps
+2. Content checker — banned phrases (generalized regex)
+3. Grounding precheck — unsupported medical claims
+4. Topic drift (keyword + Jaccard) — old-topic continuation
+5. LLM relevance check — semantic off-topic
+6. Quality guard — too long, too many numbers, multiple questions
+7. **Behavioral guard (NEW)** — 10 high-level principles, LLM judge
+8. Critic (risky intents only) — safety / medical accuracy
+9. → regen if any fails → web search fallback → safe fallback
+
+**Key files added this session:**
+- `services/api/src/nutrition/calorie-target.ts`
+- `services/api/src/replay/sandbox.ts`
+- `services/api/auto-eval/regression-scenarios.ts`
+- `services/api/auto-eval/regression-runner.ts`
+- `packages/ai-core/src/behavioral-guard.ts`
+- `apps/web/src/pages/admin/RegressionPage.tsx`
+- `apps/web/src/pages/admin/ReplayPage.tsx`
+- `supabase/migrations/20260528000001_calorie_goal.sql`
 
 ### Phase 7+8 — known follow-ups not yet shipped
 

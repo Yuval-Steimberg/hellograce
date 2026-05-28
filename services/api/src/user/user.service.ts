@@ -23,6 +23,7 @@ export interface GraceUser {
   sex: string | null;
   primary_goal: string | null;
   protein_goal_grams: number | null;
+  calorie_goal_kcal: number | null;
   /** Durable dietary restriction detected from past messages.
    *  'vegan' | 'vegetarian' | 'pescatarian' | null. Written synchronously
    *  by ai.service.ts when detectDietaryRestriction matches; read on every

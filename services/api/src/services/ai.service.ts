@@ -257,6 +257,24 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       };
     }
 
+    // FORCE get_food_summary when the user asks about today's totals (protein,
+    // calories, "how much left", "did I overeat") and the planner missed it.
+    // The classifier already detects these via FOOD_SUMMARY_QUESTION regex.
+    const isFoodSummaryQuery = intentClass.type === 'food_question' &&
+      /\b(protein|calorie|kcal|carb|eat|overeat|left|remaining)\b/i.test(input.text);
+    if (
+      isFoodSummaryQuery &&
+      flags.toolsEnabled &&
+      !prePlannedDecision.toolCalls.some((c) => c.name === 'get_food_summary')
+    ) {
+      prePlannedDecision = {
+        intent: 'get_food_summary',
+        needsTools: true,
+        toolCalls: [{ name: 'get_food_summary', args: {} }],
+        rationale: 'classifier_forced_get_food_summary',
+      };
+    }
+
     // Detect side effects in the user's message and update their flow.
     if (user) await this.detectAndSetSideEffectFlow(user.phone, augmentedText, user.side_effect_flow);
 
@@ -657,6 +675,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       if (user.protein_goal_grams) {
         lines.push(`Personal daily protein target: ${user.protein_goal_grams}g â€” use THIS number, not a generic 80g.`);
       }
+      if (user.calorie_goal_kcal) {
+        lines.push(`Personal daily calorie target: ${user.calorie_goal_kcal} kcal â€” use THIS number when the user asks about calories. Express as a range Â±100 (e.g. "${user.calorie_goal_kcal - 100}â€“${user.calorie_goal_kcal + 100} kcal") to avoid false precision.`);
+      }
       if (user.glp1_start_date) {
         const weeksOn = Math.floor((Date.now() - new Date(user.glp1_start_date).getTime()) / (7 * 24 * 3_600_000));
         if (weeksOn >= 0) lines.push(`GLP-1 week: Week ${weeksOn + 1} (started ${new Date(user.glp1_start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })})`);
@@ -770,7 +791,18 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       }
       if (runtime?.todaysFood) {
         const f = runtime.todaysFood;
-        lines.push(`Total protein TODAY: ${f.protein_g}g${f.calories ? ` (${f.calories} kcal)` : ''}`);
+        const proteinGoal = user.protein_goal_grams;
+        const calorieGoal = user.calorie_goal_kcal;
+        const proteinLine = proteinGoal
+          ? `Total protein TODAY: ${f.protein_g}g / ${proteinGoal}g target (${Math.max(0, proteinGoal - f.protein_g)}g remaining)`
+          : `Total protein TODAY: ${f.protein_g}g`;
+        lines.push(proteinLine);
+        if (calorieGoal) {
+          const remaining = Math.max(0, calorieGoal - (f.calories ?? 0));
+          lines.push(`Total calories TODAY: ${f.calories ?? 0} kcal / ${calorieGoal} kcal target (${remaining} kcal remaining)`);
+        } else if (f.calories) {
+          lines.push(`Total calories TODAY: ${f.calories} kcal (no personal target set yet)`);
+        }
         if (f.items.length > 0) lines.push(`Foods logged today: ${f.items.slice(0, 8).join('; ')}`);
       }
 

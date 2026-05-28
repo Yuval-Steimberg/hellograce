@@ -8,14 +8,21 @@ export function makeGetFoodSummaryTool(deps: { users: UserService; userId: strin
     async execute() {
       const summary = await deps.users.getTodaysFoodSummary(deps.userId);
       const user = await deps.users.getById(deps.userId).catch(() => null);
-      const target = user?.protein_goal_grams ?? 80; // personalised target with sensible default
+      const proteinTarget = user?.protein_goal_grams ?? 80;
+      const calorieTarget = user?.calorie_goal_kcal ?? null;
+      const caloriesToday = Math.round(summary.calories);
       return {
         protein_g: Math.round(summary.protein_g),
-        calories: Math.round(summary.calories),
+        calories: caloriesToday,
         items: summary.items,
-        protein_goal_grams: target,
-        protein_goal_met: summary.protein_g >= target,
-        protein_remaining_g: Math.max(0, Math.round(target - summary.protein_g)),
+        protein_goal_grams: proteinTarget,
+        protein_goal_met: summary.protein_g >= proteinTarget,
+        protein_remaining_g: Math.max(0, Math.round(proteinTarget - summary.protein_g)),
+        // Calorie fields — parallel to protein. calorie_goal_kcal is null when
+        // user hasn't completed onboarding fields for Mifflin-St Jeor calc.
+        calorie_goal_kcal: calorieTarget,
+        calorie_goal_met: calorieTarget != null && caloriesToday >= calorieTarget,
+        calories_remaining: calorieTarget != null ? Math.max(0, calorieTarget - caloriesToday) : null,
         items_count: summary.items.length,
       };
     },

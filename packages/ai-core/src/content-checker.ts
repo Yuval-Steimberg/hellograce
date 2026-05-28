@@ -260,6 +260,15 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bi don'?t know (what you'?ve|what you have) (already )?eaten\b/i, reason: 'Use get_food_summary tool instead of saying you don\'t know' },
   { pattern: /\bi don'?t know your (personal )?(daily )?protein target\b/i, reason: 'protein_goal_grams is in user context — use it, don\'t say you don\'t know' },
 
+  // Calorie shame / scolding — Grace never frames calories as judgment
+  { pattern: /\byou (only|just|merely) (ate|had|consumed)\b[^.!?]*\b\d+\s*(kcal|calories?)/i, reason: '"You only ate X calories" — calorie shaming language, banned (see ANTI-OBSESSIVE FRAMING rule)' },
+  { pattern: /\b(under|over)-?ate (today|this )/i, reason: 'Labelling intake as "under-eating" or "over-eating" as judgment — use neutral framing instead' },
+  { pattern: /\byou'?re (way )?(over|above) your (calorie|kcal) (budget|target|limit|goal)\b/i, reason: 'Scolding language about calorie target — use gentle framing ("you went over today, that\'s ok")' },
+  { pattern: /\bthat'?s (way )?too many calories\b/i, reason: '"Too many calories" — judgmental, banned' },
+  { pattern: /\bthat'?s not enough calories\b/i, reason: '"Not enough calories" — alarming, use gentle framing' },
+  { pattern: /\byou should be eating (more|less)\b/i, reason: 'Directive eating instructions — use suggestions, not commands' },
+  { pattern: /\b(starvation|starve|deprive yourself)\b/i, reason: 'Diet-culture vocabulary — banned' },
+
   // Sycophantic praise — Grace is not a corporate cheerleader
   { pattern: /\bthat'?s? (a |an )?(significant|amazing|wonderful|incredible) (accomplishment|achievement|progress)\b/i, reason: '"significant accomplishment" / "amazing achievement" — corporate praise, banned' },
   { pattern: /\b(it'?s |that'?s )?great that you'?ve achieved\b/i, reason: '"Great that you achieved..." — sycophantic opener, banned' },

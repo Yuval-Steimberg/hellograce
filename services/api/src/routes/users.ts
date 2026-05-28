@@ -6,6 +6,7 @@ import type { UserService } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
 import type { MessageGenerator } from '../scheduler/message-generator.js';
 import { calculateProteinTarget } from '../nutrition/protein-target.js';
+import { calculateCalorieTarget } from '../nutrition/calorie-target.js';
 
 // Minimal onboarding spec: only medication / injection day / sex / height /
 // weight / goal weight / food dislikes are essential. Everything else is
@@ -93,6 +94,18 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       goal: b.primaryGoal ?? null,
     });
 
+    // Personalized daily calorie target (Mifflin-St Jeor + activity + GLP-1
+    // deficit). Returns null if any input is missing — column stays NULL
+    // and Grace asks the user conversationally when calorie questions come up.
+    const calorieGoalKcal = calculateCalorieTarget({
+      weightLbs: b.currentWeight ?? null,
+      heightCm: b.heightCm ?? null,
+      age: b.age ?? null,
+      sex: b.sex ?? null,
+      activityLevel: b.activityLevel ?? null,
+      goal: b.primaryGoal ?? null,
+    });
+
     // Upsert user then apply full profile.
     await users.ensureUser(phone);
 
@@ -161,6 +174,16 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
         await users.update(phone, { activity_level: b.activityLevel } as Partial<Parameters<typeof users.update>[1]>);
       } catch {
         req.log.warn({ phone }, 'onboard.activity_level.skipped (likely missing migration 20260524000001)');
+      }
+    }
+
+    // Calorie goal — depends on migration 20260528000001. Only set when calculator
+    // had enough inputs (sex/height/age/weight/activity all present).
+    if (calorieGoalKcal != null) {
+      try {
+        await users.update(phone, { calorie_goal_kcal: calorieGoalKcal } as Partial<Parameters<typeof users.update>[1]>);
+      } catch {
+        req.log.warn({ phone }, 'onboard.calorie_goal.skipped (likely missing migration 20260528000001)');
       }
     }
 

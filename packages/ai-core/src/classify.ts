@@ -34,11 +34,16 @@ export interface ClassifyResult {
 // "how many proteins did i eat today" contains "ate" but is a question
 // about totals, not a logging event.
 const FOOD_SUMMARY_QUESTION: RegExp[] = [
-  /\bhow (much|many)\s+(protein|calorie|carb|gram)/i,
+  /\bhow (much|many)\s+(protein|calorie|carb|gram|kcal)/i,
   /\b(what'?s|whats) my (protein|calorie|total)/i,
   /\bhow (much|many) did i (eat|have|consume) (today|this (week|day))/i,
   /\b(my|today'?s) (protein|calorie) (count|total|so far)/i,
   /\b(at|on) (how much|how many|what)\b.{0,30}(today|so far)/i,
+  /\b(calories|kcal|protein) (left|remaining|to go)\b/i,
+  /\bdid i (over|under)?eat\b/i,
+  /\b(can|could) i (still|even) (eat|have|drink)\b.{0,40}(today|now|left)/i,
+  /\bhow much (can|should) i (eat|have)\b.{0,40}(today|left|tonight|for dinner)/i,
+  /\bam i over (my )?(calorie|budget|target|goal)/i,
 ];
 
 const FOOD_LOG: RegExp[] = [

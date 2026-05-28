@@ -268,6 +268,36 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       );
     }
 
+    // FORCE log_food on CONTINUATION turns â€” when Grace's previous message
+    // was a food-related question and the user replied with a brief detail
+    // ("one scoop", "with milk", "Greek yogurt", etc.), the combined context
+    // is a food log. Without this, brief replies fall through to safe fallback.
+    const lastGraceMsg = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+    const lastWasFoodQuestion = /\b(how much|what|what was|how big|portion|scoop|protein|calories?|carbs?)\b.*\?/i.test(lastGraceMsg);
+    const isBriefDetail = input.text.trim().split(/\s+/).length <= 4;
+    const briefDetailMatchesFood = /\b(scoop|scoops|cup|cups|tbsp|tsp|grams?|oz|ounces?|servings?|with|and|small|medium|large|big|tiny)\b/i.test(input.text);
+    if (
+      !shouldForceLogFood &&
+      flags.toolsEnabled &&
+      lastWasFoodQuestion &&
+      isBriefDetail &&
+      briefDetailMatchesFood &&
+      !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food')
+    ) {
+      // Combine the previous food context with the new detail
+      const combined = `${lastGraceMsg.slice(0, 200).replace(/\?$/, '')}: ${input.text}`;
+      prePlannedDecision = {
+        intent: 'log_food',
+        needsTools: true,
+        toolCalls: [{ name: 'log_food', args: { food: combined } }],
+        rationale: 'continuation_of_food_question',
+      };
+      this.deps.logger.info(
+        { userId: input.userId, briefDetail: input.text, lastGraceMsgPreview: lastGraceMsg.slice(0, 80) },
+        'ai.handle.forced_log_food_continuation',
+      );
+    }
+
     // FORCE get_food_summary when the user asks about today's totals (protein,
     // calories, "how much left", "did I overeat") and the planner missed it.
     // The classifier already detects these via FOOD_SUMMARY_QUESTION regex.

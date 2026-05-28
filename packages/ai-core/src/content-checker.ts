@@ -249,6 +249,24 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bthere was (a|an) (internal|processing|system) (error|issue|glitch)\b/i, reason: 'meta-AI error acknowledgment, banned' },
   { pattern: /\b(as an AI|as a language model|as a chatbot|as an assistant)\b/i, reason: 'AI self-identification, banned' },
 
+  // Asking for clarification on food logs instead of just logging
+  { pattern: /\bhow much (protein|calories?|carbs?|fat) was in (your |the )/i, reason: '"How much protein was in your..." — asking for clarification, just estimate and log' },
+  { pattern: /\bwhat was in (your |the )(shake|smoothie|drink|meal|salad|sandwich)/i, reason: 'Asking what was in the food — just estimate and log' },
+  { pattern: /\bcan you tell me (more about |what was in )/i, reason: 'Asking for food details — just estimate' },
+  { pattern: /\b(how big|what size|how large) (was )?(your |the )/i, reason: 'Asking for portion size — estimate from common sense' },
+
+  // Sycophantic exclamations / generic openers
+  { pattern: /^great!/im, reason: '"Great!" opener — sycophantic exclamation, banned' },
+  { pattern: /^awesome!/im, reason: '"Awesome!" opener — sycophantic exclamation, banned' },
+  { pattern: /^wonderful!/im, reason: '"Wonderful!" opener — sycophantic exclamation, banned' },
+  { pattern: /^perfect!/im, reason: '"Perfect!" opener — sycophantic exclamation, banned' },
+  { pattern: /^fantastic!/im, reason: '"Fantastic!" opener — sycophantic exclamation, banned' },
+
+  // Generic fallback / "what's on your mind" deflections
+  { pattern: /\bi'?m here and ready to help\b/i, reason: '"I\'m here and ready to help" — generic fallback, banned' },
+  { pattern: /\bwhat'?s on your mind\b/i, reason: '"What\'s on your mind" — generic conversation-starter, banned unless it\'s genuinely the right opening' },
+  { pattern: /\bhow can i help you today\b/i, reason: 'Corporate-support tone, banned' },
+
   // Clarification questions on food logs — Grace must log first, never ask
   { pattern: /\bcould you (tell me|let me know) if that was\b/i, reason: 'Clarification question on food log — log first with best estimate, no questions' },
   { pattern: /\bjust want to make sure i log it correctly\b/i, reason: 'Asking for confirmation before logging — just log it' },

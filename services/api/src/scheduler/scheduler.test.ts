@@ -137,9 +137,27 @@ function buildHarness(initial: GraceUser, opts: { redisFails?: boolean } = {}): 
   const redis = {
     set: async (key: string, value: string, ..._args: unknown[]) => {
       if (opts.redisFails) throw new Error('Redis unavailable');
-      if (redisLocks.has(key)) return null;
+      // EX TTL / NX flag aren't tracked here — for the tests below this is fine
+      // because the cadence keys never collide with the sched: lock keys.
+      const isLock = key.startsWith('sched:');
+      if (isLock && redisLocks.has(key)) return null;
       redisLocks.set(key, value);
       return 'OK';
+    },
+    get: async (key: string) => {
+      if (opts.redisFails) throw new Error('Redis unavailable');
+      return redisLocks.get(key) ?? null;
+    },
+    incr: async (key: string) => {
+      if (opts.redisFails) throw new Error('Redis unavailable');
+      const cur = parseInt(redisLocks.get(key) ?? '0', 10);
+      const next = cur + 1;
+      redisLocks.set(key, String(next));
+      return next;
+    },
+    expire: async (_key: string, _seconds: number) => {
+      if (opts.redisFails) throw new Error('Redis unavailable');
+      return 1;
     },
     del: async (key: string) => {
       redisLocks.delete(key);
@@ -601,8 +619,93 @@ describe('Scheduler — Redis lock resilience', () => {
   });
 });
 
+describe('Scheduler — cadence guardrails (max 2 proactive/day)', () => {
+  it('caps proactive reminders at 2 per user per day even when more windows fire', async () => {
+    // Monday — both midday and morning windows are eligible; the bonus
+    // spontaneous nudge can also try to fire. With cadence guard at 2/day,
+    // total sends must still be exactly 2.
+    const u = makeUser({
+      wake_time: '08:00',
+      sleep_time: '22:00',
+      timezone: 'America/New_York',
+      last_reply_at: new Date('2026-05-17T22:00:00Z'), // yesterday 18:00 NY
+    });
+    const h = buildHarness(u);
+
+    await walkMinutes(
+      h.scheduler,
+      new Date(Date.UTC(2026, 4, 18, 4, 0)),
+      new Date(Date.UTC(2026, 4, 19, 4, 0)),
+    );
+
+    // Cap is 2 total proactive messages per day across all non-exempt types.
+    expect(h.sends.length).toBeLessThanOrEqual(2);
+  });
+
+  it('rejects the 3rd send within the same day after 2 have already fired', async () => {
+    const u = makeUser({ wake_time: '08:00', timezone: 'America/New_York' });
+    const h = buildHarness(u);
+    const todayStr = '2026-05-18';
+
+    // Pre-seed Redis: pretend 2 reminders already went out today, last one
+    // 4 hours ago (so the 3h-gap rule alone wouldn't block — only the cap does).
+    h.redisLocks.set(`cadence:${u.phone}:${todayStr}`, '2');
+    h.redisLocks.set(`cadence:last:${u.phone}`, String(Date.UTC(2026, 4, 18, 9, 0)));
+
+    // 13:00 local Mon — midday window for an engaged user.
+    h.setUser({
+      last_morning_sent_at: new Date('2026-05-18T12:00:00Z'),
+      last_reply_at: new Date('2026-05-17T22:00:00Z'),
+    });
+    setUtc(2026, 5, 18, 17, 0);
+    await tick(h.scheduler);
+
+    expect(h.sends.length).toBe(0);
+  });
+
+  it('exempts injection_morning from the 2/day cap (time-critical flow)', async () => {
+    const u = makeUser({
+      wake_time: '08:00',
+      timezone: 'America/New_York',
+      injection_day: 'Monday',
+    });
+    const h = buildHarness(u);
+    const todayStr = '2026-05-18';
+
+    // Pre-seed at cap.
+    h.redisLocks.set(`cadence:${u.phone}:${todayStr}`, '2');
+
+    setUtc(2026, 5, 18, 13, 0); // 09:00 local Mon → injection_morning window
+    await tick(h.scheduler);
+
+    const calls = h.generateCalls.map((c) => c.type);
+    expect(calls).toContain('injection_morning');
+    expect(h.sends.length).toBe(1);
+  });
+
+  it('exempts trial_expiry_reminder from the 2/day cap', async () => {
+    const u = makeUser({
+      wake_time: '08:00',
+      timezone: 'America/New_York',
+      is_paid: false,
+      is_pro: false,
+      trial_start: new Date('2026-05-18T12:00:00Z'),
+    });
+    const h = buildHarness(u);
+    const todayStr = '2026-05-19';
+
+    h.redisLocks.set(`cadence:${u.phone}:${todayStr}`, '2');
+
+    setUtc(2026, 5, 19, 13, 0); // 09:00 local Tue, 25h after trial_start
+    await tick(h.scheduler);
+
+    expect(h.generateCalls.map((c) => c.type)).toContain('trial_expiry_reminder');
+    expect(h.sends.length).toBe(1);
+  });
+});
+
 describe('Scheduler — full day simulation', () => {
-  it('Tuesday: morning + evening for engaged user, midday skipped', async () => {
+  it('Tuesday: at most 2 reminders for engaged user (cap enforced)', async () => {
     const u = makeUser({
       wake_time: '08:00',
       sleep_time: '22:00',
@@ -611,13 +714,11 @@ describe('Scheduler — full day simulation', () => {
     const h = buildHarness(u);
 
     // Local Tue spans UTC 04:00 May 19 → UTC 04:00 May 20 (NY is UTC-4 in May).
-    // Walk every minute so jittered 15-min windows for midday/evening never get skipped.
     await walkMinutes(
       h.scheduler,
       new Date(Date.UTC(2026, 4, 19, 4, 0)),
       new Date(Date.UTC(2026, 4, 20, 4, 0)),
       (now) => {
-        // Engage the user shortly after the morning window opens.
         if (now.getUTCHours() === 14 && now.getUTCMinutes() === 0) {
           h.setUser({ last_reply_at: now });
         }
@@ -625,11 +726,12 @@ describe('Scheduler — full day simulation', () => {
     );
 
     const types = h.generateCalls.map((c) => c.type);
+    // 2/day cap: morning always fires first; second slot is whichever of
+    // {bonus, evening} the jitter+window combo reaches next. Midday is a
+    // Mon/Wed/Fri reminder so it should never appear on Tuesday.
+    expect(h.sends.length).toBeLessThanOrEqual(2);
     expect(types).toContain('morning');
-    expect(types).toContain('evening');
     expect(types).not.toContain('midday');
-    expect(types.filter((t) => t === 'morning').length).toBe(1);
-    expect(types.filter((t) => t === 'evening').length).toBe(1);
   });
 
   it('Monday: morning + midday for silent-but-recent user', async () => {

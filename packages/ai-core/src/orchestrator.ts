@@ -23,6 +23,7 @@ import type {
 import { checkContent, buildContentRegenInstruction, type ContentViolation } from './content-checker.js';
 import { classifyMessage, type MessageType } from './classify.js';
 import { LLMCritic } from './critic.js';
+import { checkResponseQuality } from './quality-guard.js';
 import { RelevanceChecker } from './relevance-check.js';
 import { enforceFormat } from './format-enforcer.js';
 import { precheckGrounding, summarizeUnsupported, type GroundingResult } from './grounding.js';
@@ -484,6 +485,19 @@ export class AIOrchestrator {
     const truncated =
       llmResp.finishReason === 'length' || endsMidWord(validated.text);
 
+    // ─── Final quality guard (deterministic, last check before send) ──────
+    // Catches walls of text, nutrition-report formatting, numeric clutter,
+    // and excessive questions that slip past content rules and the LLM
+    // relevance check. Failures trigger regen with specific feedback.
+    const qualityIssue = checkResponseQuality(validated.text, classification.type);
+    if (qualityIssue) {
+      regenViolations.push({
+        code: qualityIssue.code,
+        message: qualityIssue.message,
+        severity: 'regen',
+      });
+    }
+
     const needsReview =
       truncated ||
       topicDrift ||
@@ -528,6 +542,17 @@ export class AIOrchestrator {
         const retryRegenViolations = retryContentViolations.filter(
           (v) => !v.severity || v.severity === 'regen',
         );
+        // Apply quality guard to the retry too — if the regen is still
+        // verbose / cluttered, fall through to safe fallback rather than
+        // shipping a bad response.
+        const retryQualityIssue = checkResponseQuality(retryValidated.text, classification.type);
+        if (retryQualityIssue) {
+          retryRegenViolations.push({
+            code: retryQualityIssue.code,
+            message: retryQualityIssue.message,
+            severity: 'regen',
+          });
+        }
         const retryCritic = await this.review(
           retryPrecheck,
           input.text,

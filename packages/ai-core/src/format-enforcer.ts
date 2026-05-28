@@ -199,9 +199,14 @@ export function enforceFormat(
   }
 
   // ─── Markdown headers (# foo, ## foo) → strip prefix ───────────────────
+  // Strip at line start AND mid-line (Gemini sometimes emits "### 1." inline)
   if (/^#{1,6}\s+/m.test(text)) {
     text = text.replace(/^#{1,6}\s+/gm, '');
     fixes.push('markdown_header_stripped');
+  }
+  if (/\s#{2,6}\s+/.test(text)) {
+    text = text.replace(/\s#{2,6}\s+/g, ' ');
+    fixes.push('inline_markdown_header_stripped');
   }
 
   // ─── Numbered lists (1. foo\n2. bar\n3. baz) → comma-joined sentence ──

@@ -249,6 +249,17 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bthere was (a|an) (internal|processing|system) (error|issue|glitch)\b/i, reason: 'meta-AI error acknowledgment, banned' },
   { pattern: /\b(as an AI|as a language model|as a chatbot|as an assistant)\b/i, reason: 'AI self-identification, banned' },
 
+  // Clarification questions on food logs — Grace must log first, never ask
+  { pattern: /\bcould you (tell me|let me know) if that was\b/i, reason: 'Clarification question on food log — log first with best estimate, no questions' },
+  { pattern: /\bjust want to make sure i log it correctly\b/i, reason: 'Asking for confirmation before logging — just log it' },
+  { pattern: /\bi noticed you mentioned\b/i, reason: '"I noticed you mentioned" — corporate observation tone, banned' },
+  { pattern: /\bi remember you'?re (vegetarian|vegan|pescatarian)\b/i, reason: 'Surfacing dietary memory — keep it silent, just log accordingly' },
+
+  // Non-answers to protein queries
+  { pattern: /\bi can'?t tell you exactly\b/i, reason: '"I can\'t tell you exactly" — must use protein_goal_grams + get_food_summary tool, not refuse' },
+  { pattern: /\bi don'?t know (what you'?ve|what you have) (already )?eaten\b/i, reason: 'Use get_food_summary tool instead of saying you don\'t know' },
+  { pattern: /\bi don'?t know your (personal )?(daily )?protein target\b/i, reason: 'protein_goal_grams is in user context — use it, don\'t say you don\'t know' },
+
   // Sycophantic praise — Grace is not a corporate cheerleader
   { pattern: /\bthat'?s? (a |an )?(significant|amazing|wonderful|incredible) (accomplishment|achievement|progress)\b/i, reason: '"significant accomplishment" / "amazing achievement" — corporate praise, banned' },
   { pattern: /\b(it'?s |that'?s )?great that you'?ve achieved\b/i, reason: '"Great that you achieved..." — sycophantic opener, banned' },

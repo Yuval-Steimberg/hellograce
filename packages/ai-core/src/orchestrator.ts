@@ -455,14 +455,19 @@ export class AIOrchestrator {
     // ─── LLM relevance check (semantic) ─────────────────────────────
     // Keyword checks catch obvious drift but miss semantic mismatches.
     // A fast LLM call verifies the response actually answers the user's
-    // latest message. Skipped for greetings, gibberish, and when there's
-    // no prior assistant message (nothing to drift toward).
+    // latest message. Now fires on ANY question-like message (contains '?'
+    // or "but"/"how"/"what"/"why"/"am I" etc.) — these are the cases where
+    // sycophantic congratulation or generic acknowledgment most often slip
+    // through. Still respects prior history when present.
+    const looksLikeQuestion =
+      /\?/.test(input.text) ||
+      /\b(how|what|why|when|where|am i|are you|can i|should i|is it|do you|does this|but i|but my)\b/i.test(input.text);
     if (
       !topicDrift &&
-      lastAssistantMessage &&
+      (lastAssistantMessage || looksLikeQuestion) &&
       classification.type !== 'greeting' &&
       classification.type !== 'gibberish' &&
-      input.text.length > 3
+      input.text.length > 10
     ) {
       const verdict = await this.relevance.check(
         input.text,
@@ -473,7 +478,7 @@ export class AIOrchestrator {
         topicDrift = true;
         regenViolations.push({
           code: 'relevance_check_failed',
-          message: `LLM relevance check: response does NOT answer the user's latest message. Reason: ${verdict.reason}. You MUST answer THIS message: "${input.text.slice(0, 120)}". Ignore all previous topics.`,
+          message: `LLM relevance check: response does NOT answer the user's latest message. Reason: ${verdict.reason}. You MUST answer THIS message: "${input.text.slice(0, 120)}". Address the user's actual question or concern — do not give empty acknowledgment or congratulation.`,
           severity: 'regen',
         });
       }

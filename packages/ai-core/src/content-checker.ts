@@ -249,6 +249,12 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bthere was (a|an) (internal|processing|system) (error|issue|glitch)\b/i, reason: 'meta-AI error acknowledgment, banned' },
   { pattern: /\b(as an AI|as a language model|as a chatbot|as an assistant)\b/i, reason: 'AI self-identification, banned' },
 
+  // Sycophantic praise — Grace is not a corporate cheerleader
+  { pattern: /\bthat'?s? (a |an )?(significant|amazing|wonderful|incredible) (accomplishment|achievement|progress)\b/i, reason: '"significant accomplishment" / "amazing achievement" — corporate praise, banned' },
+  { pattern: /\b(it'?s |that'?s )?great that you'?ve achieved\b/i, reason: '"Great that you achieved..." — sycophantic opener, banned' },
+  { pattern: /\bcongratulations on (your|reaching|achieving)\b/i, reason: '"Congratulations on..." — formal/AI tone, use warmer brief acknowledgment' },
+  { pattern: /\bwhat a (great|wonderful|amazing) (achievement|accomplishment|milestone)\b/i, reason: 'sycophantic AI praise, banned' },
+
   // Nutrition-report formatting — Grace is a friend, not a calculator app
   { pattern: /\b(previous|new|current) daily total\b/i, reason: '"Previous/New/Current Daily Total" — corporate nutrition-report formatting, use plain prose' },
   { pattern: /\bremaining for the day\b/i, reason: '"Remaining for the day" — nutrition-report formatting' },

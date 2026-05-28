@@ -3,11 +3,21 @@ import type { LLMProvider, LLMRequest, LLMResponse } from '@grace/shared';
 import { AIOrchestrator } from './orchestrator.js';
 import { ToolRegistry } from './tools/registry.js';
 
+const RELEVANCE_OK = JSON.stringify({ relevant: true, reason: 'addresses the user\'s message' });
+
 class MockLLM implements LLMProvider {
   readonly id = 'mock';
   public calls: LLMRequest[] = [];
   constructor(private replies: string[]) {}
   async generate(req: LLMRequest): Promise<LLMResponse> {
+    // Auto-handle the LLM relevance check — it's a separate post-generation
+    // semantic check, not part of the orchestrator's main pipeline.
+    // Detected by its specific system prompt; auto-pass so tests don't need to
+    // enumerate it in their reply queues.
+    const sys = req.messages.find((m) => m.role === 'system')?.content ?? '';
+    if (sys.includes('quality checker for a chatbot called Grace')) {
+      return { text: RELEVANCE_OK, finishReason: 'stop' };
+    }
     this.calls.push(req);
     const text = this.replies.shift() ?? 'ok';
     return { text, finishReason: 'stop' };

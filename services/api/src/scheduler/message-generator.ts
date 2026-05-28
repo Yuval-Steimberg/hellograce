@@ -269,7 +269,9 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
   welcome: (u) => {
     const name = u.first_name ?? 'there';
     const med = u.medication ?? 'your GLP-1';
-    return `Hi ${name} — I'm Grace, your ${med} companion 🤍 I'll check in lightly each day, never overwhelm you. Text me anything, anytime — even just "tired" works.`;
+    // Welcome must: feel strong + welcoming, explain what Grace does, set expectations,
+    // explain how to interact, make user feel supported. Concise + confident + human.
+    return `Hi ${name} — I'm Grace, your ${med} companion 🤍\n\nI'll text you 1-2 times a day with a light check-in. You can text me anytime about food, symptoms, weight, or just how you're feeling. Photos and voice notes work too.\n\nNo pressure to reply — even "tired" or a thumbs-up is enough. I'm here when you need me.`;
   },
   trial_expiry_reminder: (u) => {
     const upgradeUrl = buildUpgradeUrl(u.phone);
@@ -439,7 +441,6 @@ export class MessageGenerator {
 
   private buildPrompt(type: MsgType, user: GraceUser, opts?: GenerateOpts): string {
     const name = user.first_name ?? 'the user';
-    const goal = user.goals[0] ?? 'general wellness';
     const cleanDislikes = user.food_dislikes
       .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
       .filter(Boolean);
@@ -533,7 +534,16 @@ export class MessageGenerator {
       side_effect_nausea: `${base}Context: they reported nausea earlier. Soft follow-up only — no question stack. Offer one practical tip in passing.`,
       side_effect_fatigue: `${base}Context: they reported fatigue. Validate it's real, suggest one gentle helper. No quiz.`,
       side_effect_constipation: `${base}Context: they reported constipation. Soft check-in with one tip woven in. No question barrage.`,
-      welcome: `${base}Context: their very first message. Welcome them warmly. Use their first name ONCE. Mention their medication (${user.medication ?? 'GLP-1'}) and main goal (${goal}). ${dislikes ? `If you reference food dislikes, paraphrase naturally — e.g. "I'll keep [item] off the menu" or "I remember you don't like X". NEVER echo their dislike text verbatim (do not write "you're not a fan of i don't like rice" — that's broken English).` : ''} Make clear you'll be light-touch. ONE or TWO short sentences max. Do NOT send a second follow-up message.`,
+      welcome: `${base}Context: their very first message ever from Grace. This sets the tone for the whole relationship — make it count.
+
+Structure (2-3 short paragraphs, separated by blank lines):
+1. Warm greeting using their first name ONCE + mention their medication (${user.medication ?? 'GLP-1'})
+2. Explain what Grace does: 1-2 light check-ins per day, plus they can text anytime about food, symptoms, weight, or feelings. Photos and voice notes work.
+3. Set expectations: no pressure to reply, even short replies work, you're here when needed
+
+Tone: confident, warm, human. Not gushing or salesy. Make them feel supported immediately.
+${dislikes ? `If you reference food dislikes, paraphrase naturally — never echo their text verbatim.` : ''}
+Do NOT ask a question. Do NOT send a second follow-up.`,
       trial_expiry_reminder: (() => {
         const upgradeUrl = buildUpgradeUrl(user.phone, this.webUrl);
         return `${base}Context: this is Day 2 of the user's 3-day free trial — their trial ends tomorrow. Send a warm, pressure-free reminder that their trial ends tomorrow and they can subscribe at ${upgradeUrl}. ALWAYS include the literal URL ${upgradeUrl} — never write a placeholder. NEVER use their name. NEVER use "upgrade" language — say "continue" or "keep going." NEVER exclamation marks. NEVER salesy tone. ONE or TWO short sentences max. Example: "Your Grace trial ends tomorrow 🧡 Head to ${upgradeUrl} anytime to keep your check-ins going."`;

@@ -280,8 +280,8 @@ export class Scheduler {
     // ─── Cadence guardrails ──────────────────────────────────────────────────
     // STRICT RULES (apply to all reminder types EXCEPT injection flow + trial
     // expiry which are time-critical user-facing flows):
-    //   1. Maximum 3 proactive messages per user per day
-    //   2. Minimum 3 hours between proactive messages
+    //   1. Maximum 2 proactive reminders per user per day
+    //   2. Minimum 3 hours between proactive reminders
     // Tracked in Redis: `cadence:{phone}:{YYYY-MM-DD}` counter + `cadence:last:{phone}` timestamp.
     const todayStr = toDateStr(localNow(user.timezone || 'America/New_York'));
     const EXEMPT_TYPES = new Set(['injection_morning', 'injection_followup', 'injection_dayafter', 'trial_expiry_reminder']);
@@ -290,7 +290,7 @@ export class Scheduler {
       const lastKey = `cadence:last:${user.phone}`;
       try {
         const currentCount = parseInt((await this.deps.redis.get(countKey)) ?? '0', 10);
-        if (currentCount >= 3) {
+        if (currentCount >= 2) {
           this.deps.logger.info({ phone: user.phone, type, count: currentCount }, 'scheduler.skipped_daily_cap');
           return;
         }

@@ -249,6 +249,15 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bthere was (a|an) (internal|processing|system) (error|issue|glitch)\b/i, reason: 'meta-AI error acknowledgment, banned' },
   { pattern: /\b(as an AI|as a language model|as a chatbot|as an assistant)\b/i, reason: 'AI self-identification, banned' },
 
+  // Nutrition-report formatting — Grace is a friend, not a calculator app
+  { pattern: /\b(previous|new|current) daily total\b/i, reason: '"Previous/New/Current Daily Total" — corporate nutrition-report formatting, use plain prose' },
+  { pattern: /\bremaining for the day\b/i, reason: '"Remaining for the day" — nutrition-report formatting' },
+  { pattern: /\blet'?s (break down|update your daily protein)\b/i, reason: '"Let\'s break down" / "Let\'s update your daily protein" — robotic preamble, just state the number' },
+  { pattern: /\bhere'?s (an |the )?estimate for\b/i, reason: '"Here\'s an estimate for..." — robotic preamble' },
+  { pattern: /\byou'?re making progress towards your goal\b/i, reason: '"You\'re making progress" — corporate praise, banned' },
+  { pattern: /\bdo you want to log (anything|something) else\b/i, reason: 'unsolicited follow-up question after food log' },
+  { pattern: /\bare you (curious|interested) (in|about) (the protein in )?other foods\b/i, reason: 'unsolicited follow-up question after food log' },
+
   // Fabricated technical excuses — Grace never has connection issues
   { pattern: /\b(my |the )?connection (blipped|dropped|cut out|failed|went down)\b/i, reason: '"connection blipped" — fabricated technical excuse, banned' },
   { pattern: /\b(had|having|experienced) a (glitch|hiccup|technical issue|error)\b/i, reason: 'fabricated technical excuse, banned' },

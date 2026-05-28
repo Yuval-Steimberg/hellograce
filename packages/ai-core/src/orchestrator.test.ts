@@ -4,19 +4,23 @@ import { AIOrchestrator } from './orchestrator.js';
 import { ToolRegistry } from './tools/registry.js';
 
 const RELEVANCE_OK = JSON.stringify({ relevant: true, reason: 'addresses the user\'s message' });
+const BEHAVIORAL_OK = JSON.stringify({ violations: [] });
 
 class MockLLM implements LLMProvider {
   readonly id = 'mock';
   public calls: LLMRequest[] = [];
   constructor(private replies: string[]) {}
   async generate(req: LLMRequest): Promise<LLMResponse> {
-    // Auto-handle the LLM relevance check — it's a separate post-generation
-    // semantic check, not part of the orchestrator's main pipeline.
-    // Detected by its specific system prompt; auto-pass so tests don't need to
-    // enumerate it in their reply queues.
+    // Auto-handle post-generation guard calls (relevance + behavioral). Both
+    // are separate semantic checks, not part of the orchestrator's main pipeline.
+    // Detected by their specific system prompts; auto-pass so tests don't need
+    // to enumerate them in their reply queues.
     const sys = req.messages.find((m) => m.role === 'system')?.content ?? '';
     if (sys.includes('quality checker for a chatbot called Grace')) {
       return { text: RELEVANCE_OK, finishReason: 'stop' };
+    }
+    if (sys.includes('behavioral quality checker for Grace')) {
+      return { text: BEHAVIORAL_OK, finishReason: 'stop' };
     }
     this.calls.push(req);
     const text = this.replies.shift() ?? 'ok';

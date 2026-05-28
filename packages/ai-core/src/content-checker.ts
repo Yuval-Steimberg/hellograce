@@ -249,23 +249,25 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bthere was (a|an) (internal|processing|system) (error|issue|glitch)\b/i, reason: 'meta-AI error acknowledgment, banned' },
   { pattern: /\b(as an AI|as a language model|as a chatbot|as an assistant)\b/i, reason: 'AI self-identification, banned' },
 
-  // Asking for clarification on food logs instead of just logging
-  { pattern: /\bhow much (protein|calories?|carbs?|fat) was in (your |the )/i, reason: '"How much protein was in your..." — asking for clarification, just estimate and log' },
-  { pattern: /\bwhat was in (your |the )(shake|smoothie|drink|meal|salad|sandwich)/i, reason: 'Asking what was in the food — just estimate and log' },
-  { pattern: /\bcan you tell me (more about |what was in )/i, reason: 'Asking for food details — just estimate' },
-  { pattern: /\b(how big|what size|how large) (was )?(your |the )/i, reason: 'Asking for portion size — estimate from common sense' },
+  // Asking for clarification on food logs instead of just logging — generalized
+  { pattern: /\bhow much (protein|calories?|carbs?|fat|fiber|sugar) (was |were |is )?in (your |the |that )/i, reason: 'Asking macro detail — just estimate and log' },
+  { pattern: /\b(what|which|what kind of|what type of|what brand) (was |were |is )?in (your |the |that )/i, reason: 'Asking what was in the food — just estimate and log with best guess' },
+  { pattern: /\bcan you tell me (more about|what was in|what kind|the brand)/i, reason: 'Asking for food details — just estimate' },
+  { pattern: /\b(how big|how large|how small|what size|what portion) (was |were |is )?(your |the |that |it )/i, reason: 'Asking for portion size — estimate from common sense' },
+  { pattern: /\bdo you (remember|recall|know) (the )?(brand|portion|amount|exact|specific)\b/i, reason: 'Asking the user to recall specifics — just estimate' },
+  { pattern: /\bcould you (clarify|specify|tell me|let me know)\b.{0,40}(food|meal|portion|amount|brand)/i, reason: 'Clarification request on food — just log it' },
 
-  // Sycophantic exclamations / generic openers
-  { pattern: /^great!/im, reason: '"Great!" opener — sycophantic exclamation, banned' },
-  { pattern: /^awesome!/im, reason: '"Awesome!" opener — sycophantic exclamation, banned' },
-  { pattern: /^wonderful!/im, reason: '"Wonderful!" opener — sycophantic exclamation, banned' },
-  { pattern: /^perfect!/im, reason: '"Perfect!" opener — sycophantic exclamation, banned' },
-  { pattern: /^fantastic!/im, reason: '"Fantastic!" opener — sycophantic exclamation, banned' },
+  // Sycophantic exclamations / generic openers — generalized to any
+  // single-word praise opener followed by ! or , at line start
+  { pattern: /^(great|awesome|wonderful|perfect|fantastic|amazing|excellent|brilliant|marvelous|splendid|terrific|superb|outstanding|incredible|stellar|nice job|good job|way to go|kudos)\s*[!,]/im, reason: 'Sycophantic exclamatory opener — Grace is calm and warm, not a cheerleader' },
 
-  // Generic fallback / "what's on your mind" deflections
-  { pattern: /\bi'?m here and ready to help\b/i, reason: '"I\'m here and ready to help" — generic fallback, banned' },
-  { pattern: /\bwhat'?s on your mind\b/i, reason: '"What\'s on your mind" — generic conversation-starter, banned unless it\'s genuinely the right opening' },
-  { pattern: /\bhow can i help you today\b/i, reason: 'Corporate-support tone, banned' },
+  // Generic fallback / deflections — generalized
+  { pattern: /\bi'?m here (and )?(ready )?to (help|listen|support)\b/i, reason: 'Generic "I\'m here to help" deflection — answer the actual message' },
+  { pattern: /\bwhat'?s on your mind\b/i, reason: '"What\'s on your mind" — generic deflection, address the latest message' },
+  { pattern: /\bhow can i (help|assist|support) you (today|now)?\b/i, reason: 'Corporate-support tone, banned' },
+  { pattern: /\bfeel free to (ask|share|tell)\b/i, reason: '"Feel free to..." — corporate filler, banned' },
+  { pattern: /\bis there anything (else|in particular)\b/i, reason: '"Is there anything else" — forced conversation continuation' },
+  { pattern: /\blet me know if you (have|need|want)\b/i, reason: '"Let me know if you need..." — passive deflection' },
 
   // Clarification questions on food logs — Grace must log first, never ask
   { pattern: /\bcould you (tell me|let me know) if that was\b/i, reason: 'Clarification question on food log — log first with best estimate, no questions' },
@@ -273,10 +275,14 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bi noticed you mentioned\b/i, reason: '"I noticed you mentioned" — corporate observation tone, banned' },
   { pattern: /\bi remember you'?re (vegetarian|vegan|pescatarian)\b/i, reason: 'Surfacing dietary memory — keep it silent, just log accordingly' },
 
-  // Non-answers to protein queries
-  { pattern: /\bi can'?t tell you exactly\b/i, reason: '"I can\'t tell you exactly" — must use protein_goal_grams + get_food_summary tool, not refuse' },
-  { pattern: /\bi don'?t know (what you'?ve|what you have) (already )?eaten\b/i, reason: 'Use get_food_summary tool instead of saying you don\'t know' },
-  { pattern: /\bi don'?t know your (personal )?(daily )?protein target\b/i, reason: 'protein_goal_grams is in user context — use it, don\'t say you don\'t know' },
+  // Non-answers / refusals — generalized patterns
+  { pattern: /\bi can'?t (tell|give|say|provide|share) you (exactly|the exact)\b/i, reason: 'Refusal to give specific answer — use stored data + tools instead' },
+  { pattern: /\bi (don'?t|do not) (know|have) (what you'?ve|what you have|your) /i, reason: 'Refusing using "I don\'t know your X" — that data is in your context, use it' },
+  { pattern: /\bi (don'?t|do not) have access to (your |the )/i, reason: '"I don\'t have access" — Grace has access via tools and context' },
+  { pattern: /\bwithout knowing (your |the |more )/i, reason: '"Without knowing your X" — use what you have, ask only ONE focused question if truly missing' },
+  { pattern: /\bit depends on (your |the |many |several |various )/i, reason: '"It depends on..." — give an actual answer using available data' },
+  { pattern: /\bhowever,? i can help you figure out\b/i, reason: 'Listing what Grace "could help with" instead of just answering' },
+  { pattern: /\bi'?d need to know more\b/i, reason: '"I\'d need to know more" — use what you have, ask only ONE focused question' },
 
   // Calorie shame / scolding — Grace never frames calories as judgment
   { pattern: /\byou (only|just|merely) (ate|had|consumed)\b[^.!?]*\b\d+\s*(kcal|calories?)/i, reason: '"You only ate X calories" — calorie shaming language, banned (see ANTI-OBSESSIVE FRAMING rule)' },

@@ -23,6 +23,7 @@ import type {
 import { checkContent, buildContentRegenInstruction, type ContentViolation } from './content-checker.js';
 import { classifyMessage, type MessageType } from './classify.js';
 import { LLMCritic } from './critic.js';
+import { BehavioralGuard } from './behavioral-guard.js';
 import { checkResponseQuality } from './quality-guard.js';
 import { RelevanceChecker } from './relevance-check.js';
 import { enforceFormat } from './format-enforcer.js';
@@ -262,11 +263,13 @@ export class AIOrchestrator {
   private planner: PlannerAgent;
   private critic: LLMCritic;
   private relevance: RelevanceChecker;
+  private behavioral: BehavioralGuard;
 
   constructor(private deps: OrchestratorDeps) {
     this.planner = deps.planner ?? new PlannerAgent(deps.llm);
     this.critic = deps.critic ?? new LLMCritic(deps.llm);
     this.relevance = new RelevanceChecker(deps.llm);
+    this.behavioral = new BehavioralGuard(deps.llm);
   }
 
   // Main pipeline. Steps: (1) classify message type, (2) plan + execute tools,
@@ -501,6 +504,35 @@ export class AIOrchestrator {
         message: qualityIssue.message,
         severity: 'regen',
       });
+    }
+
+    // ─── Behavioral guard (LLM, catches paraphrased violations) ───────────
+    // The content checker bans literal phrases ("Great!", "I can't tell you")
+    // but the LLM can rephrase and slip through. This guard checks the response
+    // against 10 high-level principles using an LLM judge. Catches:
+    // refusals when data is in context, clarification before logging,
+    // sycophantic openers in any wording, irrelevant memory surfacing, etc.
+    //
+    // Skipped for greetings/gibberish (low risk) and very short responses.
+    const skipBehavioral = classification.type === 'greeting' || classification.type === 'gibberish' || validated.text.length < 40;
+    if (!skipBehavioral && !topicDrift && regenViolations.length === 0) {
+      const userContextBlock = baseSystem.includes('━━━ THIS USER')
+        ? baseSystem.slice(baseSystem.indexOf('━━━ THIS USER'), baseSystem.indexOf('━━━ END OF USER DATA ━━━') + 24)
+        : '';
+      const behavioralViolations = await this.behavioral.check({
+        userMessage: input.text,
+        graceResponse: validated.text,
+        userContext: userContextBlock,
+      });
+      if (behavioralViolations.length > 0) {
+        // Take the most severe (first reported by judge) as the regen feedback
+        const top = behavioralViolations[0]!;
+        regenViolations.push({
+          code: 'behavioral_violation',
+          message: `Behavioral guard flagged: ${top.principle}. ${top.reason}. Rewrite the response to follow this principle directly. ${behavioralViolations.length > 1 ? `Also fix: ${behavioralViolations.slice(1).map((v) => v.principle).join(', ')}.` : ''}`,
+          severity: 'regen',
+        });
+      }
     }
 
     const needsReview =

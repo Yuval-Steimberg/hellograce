@@ -5,6 +5,7 @@ export * from './planner.js';
 export * from './validator.js';
 export * from './critic.js';
 export * from './grounding.js';
+export * from './behavioral-guard.js';
 export * from './quality-guard.js';
 export * from './relevance-check.js';
 export * from './orchestrator.js';

@@ -277,6 +277,37 @@ export class Scheduler {
   }
 
   private async sendAndRecord(user: GraceUser, type: Parameters<MessageGenerator['generate']>[0], opts?: GenerateOpts): Promise<void> {
+    // ─── Cadence guardrails ──────────────────────────────────────────────────
+    // STRICT RULES (apply to all reminder types EXCEPT injection flow + trial
+    // expiry which are time-critical user-facing flows):
+    //   1. Maximum 3 proactive messages per user per day
+    //   2. Minimum 3 hours between proactive messages
+    // Tracked in Redis: `cadence:{phone}:{YYYY-MM-DD}` counter + `cadence:last:{phone}` timestamp.
+    const todayStr = toDateStr(localNow(user.timezone || 'America/New_York'));
+    const EXEMPT_TYPES = new Set(['injection_morning', 'injection_followup', 'injection_dayafter', 'trial_expiry_reminder']);
+    if (!EXEMPT_TYPES.has(type)) {
+      const countKey = `cadence:${user.phone}:${todayStr}`;
+      const lastKey = `cadence:last:${user.phone}`;
+      try {
+        const currentCount = parseInt((await this.deps.redis.get(countKey)) ?? '0', 10);
+        if (currentCount >= 3) {
+          this.deps.logger.info({ phone: user.phone, type, count: currentCount }, 'scheduler.skipped_daily_cap');
+          return;
+        }
+        const lastSentMs = parseInt((await this.deps.redis.get(lastKey)) ?? '0', 10);
+        const hoursSinceLast = (Date.now() - lastSentMs) / 3_600_000;
+        if (lastSentMs > 0 && hoursSinceLast < 3) {
+          this.deps.logger.info(
+            { phone: user.phone, type, hoursSinceLast: hoursSinceLast.toFixed(2) },
+            'scheduler.skipped_min_gap',
+          );
+          return;
+        }
+      } catch (err) {
+        this.deps.logger.warn({ err, phone: user.phone }, 'scheduler.cadence_check_failed_proceeding');
+      }
+    }
+
     // Distributed lock: prevent two Fly machines from sending the same
     // message type to the same user on the same day. TTL = 23h so the key
     // expires before tomorrow's window opens. NX means only the first
@@ -284,7 +315,6 @@ export class Scheduler {
     // Failure-open: if Redis is unavailable (rate-limited, network error),
     // we proceed without the lock rather than blocking reminders entirely.
     // Worst case: a user gets a duplicate message — vastly better than none.
-    const todayStr = toDateStr(localNow(user.timezone || 'America/New_York'));
     const lockKey = `sched:${user.phone}:${type}:${todayStr}`;
     let lockAcquired = false;
     try {
@@ -311,6 +341,18 @@ export class Scheduler {
         type,
         messageSent: message,
       });
+      // Increment cadence counters (skip for exempt time-critical flows).
+      if (!EXEMPT_TYPES.has(type)) {
+        try {
+          const countKey = `cadence:${user.phone}:${todayStr}`;
+          const lastKey = `cadence:last:${user.phone}`;
+          await this.deps.redis.incr(countKey);
+          await this.deps.redis.expire(countKey, 86400);
+          await this.deps.redis.set(lastKey, Date.now().toString(), 'EX', 86400);
+        } catch (err) {
+          this.deps.logger.warn({ err, phone: user.phone }, 'scheduler.cadence_increment_failed');
+        }
+      }
       this.deps.logger.info({ phone: user.phone, type }, 'scheduler.sent');
     } catch (err) {
       if (lockAcquired) {

@@ -1,0 +1,299 @@
+// Regression scenarios — one per production bug fixed in this session.
+// Each scenario replays the exact failure pattern with the user message that
+// triggered it, plus the expected behavior. The evaluator checks for
+// specific failure phrases (BANNED_PHRASES) and required behaviors.
+//
+// These run as part of the auto-eval suite and surface in the admin portal
+// under "Regression coverage" so we can see at a glance which fixes still
+// hold and which have regressed.
+
+import type { ConversationScenario } from './types.js';
+
+export interface RegressionScenario extends ConversationScenario {
+  // The exact user message that triggered the original bug
+  triggerMessage: string;
+  // Phrases that must NOT appear in Grace's response (regression markers)
+  bannedInResponse: string[];
+  // Phrases or patterns Grace SHOULD demonstrate
+  requiredBehavior: string[];
+  // What the bug was, for the report
+  bugDescription: string;
+  // When the bug was first observed and fixed
+  fixedAt: string;
+}
+
+export const REGRESSION_SCENARIOS: RegressionScenario[] = [
+  {
+    id: 'reg_weight_loss_alarm',
+    personaId: 'sarah_new',
+    category: 'medical_question',
+    description: 'User reports rapid weight loss — Grace must NOT use alarm language',
+    turnCount: 1,
+    challenges: ['concern without panic', 'gather context first'],
+    triggerMessage: 'I lost 4 kg this week. Is that too fast?',
+    bannedInResponse: [
+      'too fast and potentially unhealthy',
+      'a very significant amount',
+      'that is generally considered',
+      'that is dangerous',
+      'oh dear',
+      'oh no',
+    ],
+    requiredBehavior: [
+      'acknowledges calmly without alarm',
+      'mentions early-treatment water loss / appetite as common cause',
+      'asks at most one clarifying question',
+      'uses conditional language ("if this continues" / "worth mentioning")',
+    ],
+    bugDescription: 'Grace responded with "too fast and potentially unhealthy" — alarm language on a single data point',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_fatigue_premature_escalation',
+    personaId: 'lisa_emotional',
+    category: 'side_effects',
+    description: 'User reports exhaustion + injection note — Grace must not jump to "see your doctor right away"',
+    turnCount: 1,
+    challenges: ['graduated escalation', 'practical guidance before urgency'],
+    triggerMessage: 'Hey last time I injected it was to my right thigh. Please remember that. I\'m constantly exhausted since starting the medication.',
+    bannedInResponse: [
+      'oh dear',
+      'contact your healthcare provider right away',
+      'contact your doctor right away',
+      'seek medical attention',
+      'you need to see a doctor',
+    ],
+    requiredBehavior: [
+      'normalizes early-medication fatigue',
+      'mentions hydration / protein / calories as common contributors',
+      'only conditional escalation if specific symptoms appear',
+    ],
+    bugDescription: 'Grace said "Oh dear" and immediately recommended contacting the doctor for common fatigue',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_thanks_topic_leakage',
+    personaId: 'mike_terse',
+    category: 'topic_switching',
+    description: '"Thanks" after nausea advice → next message asks about dinner. Grace must not anchor on nausea',
+    turnCount: 3,
+    challenges: ['topic closer detection', 'history truncation', 'fresh topic'],
+    setup: 'Previous turn: user said "I feel nauseous", Grace gave nausea advice.',
+    triggerMessage: 'Thanks',
+    bannedInResponse: [
+      'that nausea is no fun',
+      'nausea',
+      'ginger',
+      'still feeling',
+    ],
+    requiredBehavior: [
+      'responds to "Thanks" with single warm word',
+      'does not re-reference nausea',
+    ],
+    bugDescription: 'After "Thanks", Grace responded "That nausea is no fun. Always." continuing the closed topic',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_muscle_loss_concern',
+    personaId: 'alex_frustrated',
+    category: 'medical_question',
+    description: 'User asks about muscle loss with worry — Grace must answer the concern, not congratulate the number',
+    turnCount: 1,
+    challenges: ['answer the concern', 'no sycophantic congratulation'],
+    triggerMessage: 'i lost 18 pounds but i feel flabby not strong, am i loosing muscle how do i know?',
+    bannedInResponse: [
+      'that\'s a significant accomplishment',
+      'great that you\'ve achieved',
+      'congratulations on',
+      'what a great achievement',
+      'fantastic progress',
+    ],
+    requiredBehavior: [
+      'directly addresses muscle loss question',
+      'mentions GLP-1 lean mass loss percentage (~25-40%)',
+      'suggests protein + resistance training',
+      'does not lead with congratulation',
+    ],
+    bugDescription: 'Grace replied "Great that you achieved your weight loss goal! That\'s a significant accomplishment" — ignored both questions',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_food_log_format',
+    personaId: 'mike_terse',
+    category: 'food_logging',
+    description: 'User logs a meal — Grace must NOT produce nutrition-report formatting',
+    turnCount: 1,
+    challenges: ['concise food log format', 'no bulleted breakdown'],
+    triggerMessage: 'I ate a Big Mac, fries, and a banana',
+    bannedInResponse: [
+      'previous total',
+      'new daily total',
+      'remaining for the day',
+      'let\'s break down',
+      'here\'s an estimate for',
+      'you\'re making progress',
+      'do you want to log anything else',
+      'are you curious about',
+    ],
+    requiredBehavior: [
+      'states protein in one short sentence',
+      'mentions running daily total',
+      'no per-item bullet breakdown',
+      'no follow-up question',
+    ],
+    bugDescription: 'Grace gave a multi-paragraph nutrition report with "Previous Total / New Daily Total / Remaining" formatting',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_food_log_no_clarification',
+    personaId: 'priya_vegan',
+    category: 'food_logging',
+    description: 'Vegetarian user mentions a Big Mac — Grace must log first, ask never',
+    turnCount: 1,
+    challenges: ['log first ask never', 'no fabrication'],
+    triggerMessage: 'I ate a banana, a Big Mac, and drank Coke',
+    bannedInResponse: [
+      'could you tell me if that was',
+      'just want to make sure i log it correctly',
+      'i noticed you mentioned',
+      'i remember you\'re vegetarian',
+      'vegetarian big mac',
+    ],
+    requiredBehavior: [
+      'logs the meal with best-estimate protein',
+      'states protein number',
+      'does not ask for clarification',
+      'does not invent food items',
+    ],
+    bugDescription: 'Grace asked "Could you tell me if that was a vegetarian version?" then invented "Vegetarian Big Mac" in the log',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_protein_left_today',
+    personaId: 'sarah_new',
+    category: 'food_logging',
+    description: 'User asks how much protein is left for today — Grace must use protein_goal_grams + get_food_summary, not refuse',
+    turnCount: 1,
+    challenges: ['use tools', 'use stored goal', 'no refusal'],
+    triggerMessage: 'How much protein is left for me for today?',
+    bannedInResponse: [
+      'i can\'t tell you exactly',
+      'i don\'t know what you\'ve already eaten',
+      'i don\'t know your personal daily protein target',
+      'however, i can help you figure out',
+    ],
+    requiredBehavior: [
+      'gives a specific number',
+      'references the daily goal',
+      'optionally suggests a food to close the gap',
+    ],
+    bugDescription: 'Grace said "I can\'t tell you because I don\'t know your target" — but protein_goal_grams was in her context',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_developer_feedback_ack',
+    personaId: 'alex_frustrated',
+    category: 'frustration',
+    description: 'User sends # feedback — Grace must not respond like a developer receiving a bug report',
+    turnCount: 1,
+    challenges: ['Grace persona', 'not a chatbot'],
+    setup: 'User has RLHF feedback enabled.',
+    triggerMessage: '#you answered out of context, please focus on the latest question',
+    bannedInResponse: [
+      'thanks for the feedback',
+      'i\'ll work on that',
+      'i\'ll adjust my responses',
+      'i\'ll improve',
+      'i\'ll update my',
+    ],
+    requiredBehavior: [
+      'short human acknowledgment ("got it" / "I hear you" / "noted")',
+    ],
+    bugDescription: 'Grace responded "Thanks for the feedback, I\'ll work on that!" — developer-like, not Grace',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_connection_excuse',
+    personaId: 'sarah_new',
+    category: 'edge_case',
+    description: 'Grace must never fabricate technical excuses',
+    turnCount: 1,
+    challenges: ['no technical fabrication'],
+    triggerMessage: 'Hey Grace, how are things?',
+    bannedInResponse: [
+      'my connection blipped',
+      'had a glitch',
+      'connection dropped',
+      'lost your message',
+      'something went wrong on my end',
+    ],
+    requiredBehavior: [
+      'natural greeting response',
+    ],
+    bugDescription: 'Grace fabricated "My connection blipped, what were you saying?" out of nowhere',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_memory_relevance',
+    personaId: 'lisa_emotional',
+    category: 'long_term_memory',
+    description: 'User mentions fatigue — Grace must not randomly surface unrelated stored memories',
+    turnCount: 2,
+    challenges: ['memory relevance', 'no random fact surfacing'],
+    setup: 'User has previously logged that their last injection was to the right thigh.',
+    triggerMessage: 'I\'m constantly exhausted since starting the medication',
+    bannedInResponse: [
+      'i\'ve made a note that your last injection was to your right thigh',
+      'i\'ll keep in mind your injection',
+      'noted on the right thigh',
+    ],
+    requiredBehavior: [
+      'addresses fatigue concern',
+      'does not surface injection site memory (irrelevant)',
+    ],
+    bugDescription: 'Grace responded "Got it, I\'ve made a note that your last injection was to your right thigh" — completely unrelated to fatigue',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_long_response_simple_question',
+    personaId: 'mike_terse',
+    category: 'edge_case',
+    description: 'Simple question gets a short answer, not a paragraph',
+    turnCount: 1,
+    challenges: ['dynamic length matching'],
+    triggerMessage: 'hi',
+    bannedInResponse: [],
+    requiredBehavior: [
+      'one sentence response',
+      'under 100 characters',
+    ],
+    bugDescription: 'Grace responded to greetings with 3-4 sentences and context-dumping',
+    fixedAt: '2026-05-27',
+  },
+  {
+    id: 'reg_excessive_questions',
+    personaId: 'sarah_new',
+    category: 'multi_question',
+    description: 'Grace must not end every response with a question',
+    turnCount: 1,
+    challenges: ['no forced engagement'],
+    triggerMessage: 'I had eggs for breakfast',
+    bannedInResponse: [
+      'is there anything else',
+      'do you want to log anything else',
+      'how are you feeling',
+      'what else',
+    ],
+    requiredBehavior: [
+      'logs the meal',
+      'states protein',
+      'ends with statement, not question',
+    ],
+    bugDescription: 'Grace ended every food log with "How are you feeling? Anything else to log?"',
+    fixedAt: '2026-05-27',
+  },
+];
+
+export function getRegressionScenarios(): RegressionScenario[] {
+  return REGRESSION_SCENARIOS;
+}

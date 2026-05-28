@@ -1370,6 +1370,74 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     });
   });
 
+  // ─── Regression suite ─────────────────────────────────────────────────────
+  // Replays each known production bug with its exact trigger message and
+  // scores deterministically against banned phrases + LLM-judged required
+  // behaviors. Fast, focused, reliable signal — pass rate should be 100%
+  // after every deploy.
+
+  app.post('/admin/regression/run', async (_req, reply) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      reply.status(503).send({ error: 'NO_API_KEY', message: 'GEMINI_API_KEY not configured' });
+      return;
+    }
+    try {
+      const runnerUrl = new URL('../../auto-eval/regression-runner.js', import.meta.url).href;
+      const mod = await import(runnerUrl).catch((err: unknown) => {
+        app.log.error({ err: err instanceof Error ? err.message : String(err), runnerUrl }, 'regression.import_failed');
+        return null;
+      }) as {
+        runRegressionSuite: (opts: { llm: unknown; invokeGrace: (input: unknown) => Promise<unknown> }) => Promise<unknown>;
+      } | null;
+      if (!mod) {
+        reply.status(503).send({ error: 'MODULE_UNAVAILABLE', message: 'Regression runner not available' });
+        return;
+      }
+
+      // invokeGrace: simulates a single user message through the live AI service.
+      // We don't persist anything — this is a sandboxed eval, not a real conversation.
+      const invokeGrace = async (input: unknown): Promise<{ text: string; latencyMs: number }> => {
+        const inp = input as { persona: { medication: string; foodDislikes?: string[]; dietaryRestriction?: string }; userMessage: string };
+        if (!deps.llm) throw new Error('LLM provider not configured');
+        const t0 = Date.now();
+        const result = await deps.llm.generate({
+          messages: [
+            {
+              role: 'system',
+              content: `You are Grace, a WhatsApp companion for ${inp.persona.medication} users. Respond naturally and concisely.${
+                inp.persona.dietaryRestriction ? ` User is ${inp.persona.dietaryRestriction}.` : ''
+              }${
+                inp.persona.foodDislikes?.length ? ` Dislikes: ${inp.persona.foodDislikes.join(', ')}.` : ''
+              }`,
+            },
+            { role: 'user', content: inp.userMessage },
+          ],
+          temperature: 0.4,
+          maxOutputTokens: 600,
+        });
+        return { text: result.text, latencyMs: Date.now() - t0 };
+      };
+
+      const report = await mod.runRegressionSuite({ llm: deps.llm, invokeGrace });
+      return report;
+    } catch (err) {
+      app.log.error({ err }, 'regression.run_failed');
+      reply.status(500).send({ error: 'RUN_FAILED', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.get('/admin/regression/scenarios', async () => {
+    try {
+      const modUrl = new URL('../../auto-eval/regression-scenarios.js', import.meta.url).href;
+      const mod = await import(modUrl) as { REGRESSION_SCENARIOS: unknown[] };
+      return { scenarios: mod.REGRESSION_SCENARIOS };
+    } catch (err) {
+      app.log.error({ err }, 'regression.scenarios_import_failed');
+      return { scenarios: [] };
+    }
+  });
+
   // ─── Business metrics ────────────────────────────────────────────────────────
 
   app.get('/admin/business', async () => {

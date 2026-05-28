@@ -47,13 +47,26 @@ const FOOD_SUMMARY_QUESTION: RegExp[] = [
 ];
 
 const FOOD_LOG: RegExp[] = [
-  /^(i )?(just |already )?(had|ate|eaten|finished|grabbed|made|cooked|ordered|got) (a |an |some |the )?\w/i,
-  /\b(breakfast|lunch|dinner|snack|meal)\s*(was|had|:\s*)/i,
-  /\bfor (breakfast|lunch|dinner|snack)[,: ]/i,
-  /\b\d+\s*(eggs?|slices?|cups?|grams?|oz|ounces?|servings?|pieces?|bites?)\b/i,
-  /\b(drank|drinking|had) (a |some )?(water|coffee|tea|shake|smoothie|juice)/i,
+  // Direct past-tense verbs at start of message
+  /^(i )?(just |already |i'?ve |i've )?(had|ate|eaten|finished|grabbed|made|cooked|ordered|got|drank|consumed|tried|enjoyed) (a |an |some |the |my |2 |3 |4 )?\w/i,
+  // "I'm eating", "I'm having" (present tense)
+  /^i'?m (eating|having|drinking|finishing|munching)\b/i,
+  // Meal context phrases
+  /\b(breakfast|lunch|dinner|snack|meal|brunch)\s*(was|had|:\s*|today|consist)/i,
+  /\bfor (breakfast|lunch|dinner|snack|brunch)[,: ]/i,
+  // Quantities
+  /\b\d+\s*(eggs?|slices?|cups?|grams?|oz|ounces?|servings?|pieces?|bites?|tablespoons?|tbsp|tsp|portions?)\b/i,
+  // Drinks
+  /\b(drank|drinking|had) (a |some )?(water|coffee|tea|shake|smoothie|juice|coke|soda|beer|wine)/i,
   /\b(protein shake|whey|smoothie) (with|had|drank|made|after)/i,
-  /\b(had|ate) (salad|chicken|fish|beef|pork|tofu|eggs?|yogurt|oatmeal|rice|pasta|pizza)/i,
+  // Common foods at the start of message (no verb, just a food list)
+  /^(a |an |some |the |my )?(salad|chicken|fish|beef|pork|tofu|eggs?|yogurt|oatmeal|rice|pasta|pizza|sushi|sandwich|burger|burrito|taco|wrap|soup|steak|salmon|tuna|turkey|bagel|toast|cereal|pancakes?|waffles?|fruit|banana|apple|orange|berries|smoothie)/i,
+  // "I had X" / "I ate X" — broader food terms
+  /\b(had|ate|eating) (salad|chicken|fish|beef|pork|tofu|eggs?|yogurt|oatmeal|rice|pasta|pizza|sushi|sandwich|burger|burrito|taco|wrap|soup|steak|salmon|tuna|turkey|bagel|toast|cereal|pancakes?|waffles?|fruit|banana|apple|orange|berries|big mac|fries|coke)/i,
+  // Comma-separated food list (multi-item meal: "banana, eggs, coffee")
+  /^[A-Za-z][a-z]+(\s+[a-z]+)?,\s*[A-Za-z][a-z]+/i,
+  // "and" joiner with food words anywhere
+  /\b(banana|egg|chicken|rice|salad|fries|burger|pizza|yogurt|toast|oatmeal|sandwich|pasta|salmon|tuna|steak|tofu) (and|with) (a |an |some |the )?(banana|egg|chicken|rice|salad|fries|burger|pizza|yogurt|toast|oatmeal|sandwich|pasta|salmon|tuna|steak|tofu|coffee|water|coke|soda|juice)/i,
 ];
 
 const FOOD_QUESTION: RegExp[] = [

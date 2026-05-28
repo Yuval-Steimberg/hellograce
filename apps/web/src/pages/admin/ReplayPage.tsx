@@ -3,11 +3,30 @@ import { getToken } from '@/lib/api';
 import { toast } from 'sonner';
 import { Play, GitCompare, Loader2, AlertCircle } from 'lucide-react';
 
+interface ToolCallMeta {
+  name: string;
+  ok: boolean;
+  output?: unknown;
+  error?: string;
+  latencyMs: number;
+}
+
+interface TurnMeta {
+  intent: string;
+  confidence: string;
+  toolCalls: ToolCallMeta[];
+  regenerated: boolean;
+  usedSafeFallback: boolean;
+  criticPass?: boolean;
+  criticIssues?: string[];
+}
+
 interface ReplayTurn {
   role: 'user' | 'grace';
   text: string;
   latencyMs: number;
   bannedPhrases: string[];
+  meta?: TurnMeta;
 }
 
 interface ReplayResult {
@@ -35,6 +54,7 @@ export default function ReplayPage() {
     dietaryRestriction: '',
     foodDislikes: '',
     proteinGoalGrams: '100',
+    calorieGoalKcal: '1700',
   });
   const [versionA, setVersionA] = useState('');
   const [versionB, setVersionB] = useState('');
@@ -56,6 +76,7 @@ export default function ReplayPage() {
     dietaryRestriction: persona.dietaryRestriction.trim() || undefined,
     foodDislikes: persona.foodDislikes.split(',').map((s) => s.trim()).filter(Boolean),
     proteinGoalGrams: Number(persona.proteinGoalGrams) || 100,
+    calorieGoalKcal: Number(persona.calorieGoalKcal) || 1700,
   };
 
   const runReplay = async () => {
@@ -182,7 +203,7 @@ export default function ReplayPage() {
             PERSONA CONTEXT
           </label>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-            {(['firstName', 'medication', 'dietaryRestriction', 'foodDislikes', 'proteinGoalGrams'] as const).map((key) => (
+            {(['firstName', 'medication', 'dietaryRestriction', 'foodDislikes', 'proteinGoalGrams', 'calorieGoalKcal'] as const).map((key) => (
               <div key={key}>
                 <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginBottom: '4px', textTransform: 'capitalize' }}>
                   {key.replace(/([A-Z])/g, ' $1').trim()}
@@ -270,13 +291,32 @@ function TurnList({ turns }: { turns: ReplayTurn[] }) {
             border: t.bannedPhrases.length > 0 ? '1px solid rgb(251,113,133)' : '1px solid rgba(255,255,255,0.07)',
           }}
         >
-          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginBottom: '4px', textTransform: 'uppercase' }}>
-            {t.role} {t.latencyMs > 0 && `· ${t.latencyMs}ms`}
+          <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginBottom: '4px', textTransform: 'uppercase', display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <span>{t.role}</span>
+            {t.latencyMs > 0 && <span>· {t.latencyMs}ms</span>}
+            {t.meta?.intent && <span style={{ padding: '1px 6px', background: 'rgba(99,102,241,0.2)', borderRadius: '4px', color: 'rgb(165,180,252)' }}>{t.meta.intent}</span>}
+            {t.meta?.regenerated && <span style={{ padding: '1px 6px', background: 'rgba(251,191,36,0.15)', borderRadius: '4px', color: 'rgb(251,191,36)' }}>regenerated</span>}
+            {t.meta?.usedSafeFallback && <span style={{ padding: '1px 6px', background: 'rgba(251,113,133,0.15)', borderRadius: '4px', color: 'rgb(251,113,133)' }}>safe fallback</span>}
           </div>
           <div style={{ fontSize: '14px', color: 'white', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{t.text}</div>
           {t.bannedPhrases.length > 0 && (
             <div style={{ marginTop: '8px', padding: '6px 10px', background: 'rgba(251,113,133,0.1)', borderRadius: '6px', fontSize: '12px', color: 'rgb(251,113,133)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <AlertCircle className="w-3 h-3" /> Banned: {t.bannedPhrases.map((b) => `"${b}"`).join(', ')}
+            </div>
+          )}
+          {t.meta?.toolCalls && t.meta.toolCalls.length > 0 && (
+            <div style={{ marginTop: '8px' }}>
+              <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: '4px' }}>Tool calls</div>
+              {t.meta.toolCalls.map((tc, j) => (
+                <div key={j} style={{ padding: '6px 10px', background: tc.ok ? 'rgba(52,211,153,0.08)' : 'rgba(251,113,133,0.08)', borderRadius: '6px', fontSize: '12px', color: tc.ok ? 'rgb(110,231,183)' : 'rgb(251,113,133)', marginBottom: '4px', fontFamily: 'monospace' }}>
+                  {tc.ok ? '✓' : '✗'} {tc.name} ({tc.latencyMs}ms){tc.output != null ? ` → ${JSON.stringify(tc.output).slice(0, 200)}` : ''}{tc.error ? ` — ${tc.error}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
+          {t.meta?.criticIssues && t.meta.criticIssues.length > 0 && (
+            <div style={{ marginTop: '8px', padding: '6px 10px', background: 'rgba(251,191,36,0.1)', borderRadius: '6px', fontSize: '12px', color: 'rgb(251,191,36)' }}>
+              Critic flagged: {t.meta.criticIssues.join('; ')}
             </div>
           )}
         </div>

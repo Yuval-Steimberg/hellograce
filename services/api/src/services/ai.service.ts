@@ -239,22 +239,33 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
         : planner.plan(augmentedText).catch((): PlannerDecision => ({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'planner_error' })),
     ]);
 
-    // FORCE log_food when classifier detects food_log but planner missed it.
-    // This prevents Grace from asking "what did you eat?" when the user already
-    // said it, or asking for clarification before logging. The classifier is
-    // more reliable than the LLM planner for "I ate X" patterns.
+    // FORCE log_food on food_log classification OR when the message contains
+    // obvious food words but the classifier missed it. This prevents Grace
+    // from asking "what did you eat?" or just chatting back when the user
+    // clearly mentioned food.
     let prePlannedDecision = prePlannedDecisionRaw;
-    if (
-      intentClass.type === 'food_log' &&
+    const obviousFoodMention =
+      // Has past-tense food verb anywhere
+      /\b(ate|had|finished|grabbed|drank|ordered|made|cooked|got|consumed|enjoyed)\b/i.test(augmentedText) &&
+      // AND mentions an actual food/drink word
+      /\b(banana|apple|orange|berry|berries|chicken|beef|pork|fish|salmon|tuna|tofu|egg|eggs|yogurt|oatmeal|rice|pasta|pizza|salad|sushi|sandwich|burger|burrito|taco|wrap|soup|steak|bagel|toast|cereal|pancake|waffle|fruit|smoothie|shake|coffee|tea|water|coke|soda|juice|beer|wine|big mac|fries|coke|nuts|almonds?|granola|cheese|milk|bread|chocolate|cookie|cake|brownie|donut|ice cream|protein|carrot|broccoli|spinach|lettuce|tomato|potato|avocado)\b/i.test(augmentedText);
+
+    const shouldForceLogFood =
       flags.toolsEnabled &&
-      !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food')
-    ) {
+      !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food') &&
+      (intentClass.type === 'food_log' || obviousFoodMention);
+
+    if (shouldForceLogFood) {
       prePlannedDecision = {
         intent: 'log_food',
         needsTools: true,
         toolCalls: [{ name: 'log_food', args: { food: input.text } }],
-        rationale: 'classifier_forced_log_food',
+        rationale: intentClass.type === 'food_log' ? 'classifier_forced_log_food' : 'food_words_detected',
       };
+      this.deps.logger.info(
+        { userId: input.userId, classifierType: intentClass.type, obviousFoodMention, textPreview: input.text.slice(0, 100) },
+        'ai.handle.forced_log_food',
+      );
     }
 
     // FORCE get_food_summary when the user asks about today's totals (protein,

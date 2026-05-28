@@ -1438,24 +1438,32 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     }
   });
 
-  // ─── Conversation replay ─────────────────────────────────────────────────
-  // Replays a sequence of user messages through the live Grace pipeline and
-  // returns each turn's response + meta. Use for: pasting WhatsApp screenshots
-  // to reproduce a bug, comparing two prompt versions, generating test cases.
+  // ─── Conversation replay (sandbox mode) ──────────────────────────────────
+  // Replays user messages through the REAL AIOrchestrator with in-memory mock
+  // tools (log_food, get_food_summary, get_user_profile). Output is what
+  // production WhatsApp would send: post format-enforcer, content checker,
+  // relevance check, quality guard, regen loops.
+  //
+  // The in-memory food state persists across turns within a single replay,
+  // so "I ate X" then "how much protein left" actually works correctly.
   app.post('/admin/replay', async (req, reply) => {
     const body = (req.body ?? {}) as {
-      messages?: string[];               // sequential user messages
-      personaContext?: {                  // simulated user profile (optional)
+      messages?: string[];
+      personaContext?: {
         firstName?: string;
         medication?: string;
         dietaryRestriction?: string;
         foodDislikes?: string[];
         proteinGoalGrams?: number;
+        calorieGoalKcal?: number;
         glp1WeekNumber?: number;
+        preloadedFoods?: Array<{ food: string; protein_g: number; calories: number }>;
       };
-      systemPromptOverride?: string;      // test a different prompt
+      systemPromptOverride?: string;
     };
-    const messages = Array.isArray(body.messages) ? body.messages.filter((m) => typeof m === 'string' && m.trim().length > 0) : [];
+    const messages = Array.isArray(body.messages)
+      ? body.messages.filter((m) => typeof m === 'string' && m.trim().length > 0)
+      : [];
     if (messages.length === 0) {
       reply.status(400).send({ error: 'NO_MESSAGES', message: 'Provide a non-empty messages array' });
       return;
@@ -1469,18 +1477,6 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       return;
     }
 
-    // Build a minimal system prompt for replay — no DB, no tools, no history persistence.
-    const ctx = body.personaContext ?? {};
-    const persona = [
-      `User: ${ctx.firstName ?? 'Sarah'}`,
-      `Medication: ${ctx.medication ?? 'Wegovy'}`,
-      ctx.glp1WeekNumber ? `GLP-1 week: ${ctx.glp1WeekNumber}` : '',
-      ctx.dietaryRestriction ? `Dietary restriction: ${ctx.dietaryRestriction}` : '',
-      ctx.foodDislikes?.length ? `Food dislikes: ${ctx.foodDislikes.join(', ')}` : '',
-      `Daily protein target: ${ctx.proteinGoalGrams ?? 100}g`,
-      `Today's protein logged so far: 0g`,
-    ].filter(Boolean).join('\n');
-
     let systemPrompt = body.systemPromptOverride;
     if (!systemPrompt) {
       try {
@@ -1493,58 +1489,36 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       }
     }
 
-    const turns: Array<{
-      role: 'user' | 'grace';
-      text: string;
-      latencyMs: number;
-      bannedPhrases: string[];
-    }> = [];
+    const ctx = body.personaContext ?? {};
+    const restrictionLabel = ctx.dietaryRestriction?.toUpperCase();
+    const dietaryRestriction: { label: 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN'; forbidden: string[]; allowed: string[] } | undefined =
+      restrictionLabel === 'VEGAN' || restrictionLabel === 'VEGETARIAN' || restrictionLabel === 'PESCATARIAN'
+        ? { label: restrictionLabel, forbidden: [], allowed: [] }
+        : undefined;
 
-    const history: Array<{ role: 'user' | 'assistant'; content: string }> = [];
-    const llmMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-      { role: 'system', content: `${systemPrompt}\n\n━━━ USER CONTEXT (replay mode) ━━━\n${persona}` },
-    ];
-
-    // Banned phrases we explicitly check for to flag regressions
-    const BANNED = [
-      'too fast and potentially unhealthy', 'a very significant amount', 'oh dear',
-      'contact your healthcare provider right away', 'thanks for the feedback',
-      "i'll work on that", 'my connection blipped', 'previous total',
-      'new daily total', 'remaining for the day', "let's break down",
-      "you're making progress", 'could you tell me if that was', 'vegetarian big mac',
-      "i can't tell you exactly", "that's a significant accomplishment",
-      'great that you achieved', 'congratulations on',
-    ];
-
-    for (const userMsg of messages) {
-      turns.push({ role: 'user', text: userMsg, latencyMs: 0, bannedPhrases: [] });
-      history.push({ role: 'user', content: userMsg });
-      llmMessages.push({ role: 'user', content: userMsg });
-
-      const t0 = Date.now();
-      try {
-        const resp = await deps.llm.generate({
-          messages: llmMessages,
-          temperature: 0.4,
-          maxOutputTokens: 800,
-        });
-        const text = resp.text.trim();
-        const lower = text.toLowerCase();
-        const bannedHits = BANNED.filter((b) => lower.includes(b));
-        turns.push({ role: 'grace', text, latencyMs: Date.now() - t0, bannedPhrases: bannedHits });
-        history.push({ role: 'assistant', content: text });
-        llmMessages.push({ role: 'assistant', content: text });
-      } catch (err) {
-        turns.push({
-          role: 'grace',
-          text: `ERROR: ${err instanceof Error ? err.message : String(err)}`,
-          latencyMs: Date.now() - t0,
-          bannedPhrases: [],
-        });
-      }
+    try {
+      const { runSandboxReplay } = await import('../replay/sandbox.js');
+      const result = await runSandboxReplay({
+        messages,
+        persona: {
+          ...(ctx.firstName ? { firstName: ctx.firstName } : {}),
+          ...(ctx.medication ? { medication: ctx.medication } : {}),
+          ...(dietaryRestriction ? { dietaryRestriction } : {}),
+          ...(ctx.foodDislikes ? { foodDislikes: ctx.foodDislikes } : {}),
+          ...(ctx.proteinGoalGrams ? { proteinGoalGrams: ctx.proteinGoalGrams } : {}),
+          ...(ctx.calorieGoalKcal ? { calorieGoalKcal: ctx.calorieGoalKcal } : {}),
+          ...(ctx.glp1WeekNumber ? { glp1WeekNumber: ctx.glp1WeekNumber } : {}),
+          ...(ctx.preloadedFoods ? { preloadedFoods: ctx.preloadedFoods } : {}),
+        },
+        systemPrompt,
+        llm: deps.llm,
+      });
+      const totalLatencyMs = result.turns.reduce((s, t) => s + t.latencyMs, 0);
+      return { turns: result.turns, totalLatencyMs };
+    } catch (err) {
+      app.log.error({ err }, 'replay.failed');
+      reply.status(500).send({ error: 'REPLAY_FAILED', message: err instanceof Error ? err.message : String(err) });
     }
-
-    return { turns, totalLatencyMs: turns.reduce((s, t) => s + t.latencyMs, 0) };
   });
 
   // ─── Prompt-version diff: replay same messages against two prompt versions

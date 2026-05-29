@@ -6,8 +6,27 @@ describe('detectVagueFood — flags vague brand/category mentions', () => {
     const r = detectVagueFood('I ate kfc this morning it was delicious');
     expect(r.vague).toBe(true);
     expect(r.matched).toBe('kfc');
-    expect(r.response).toMatch(/exactly|what.*order|specific|details/i);
+    expect(r.response).toMatch(/what.*order|what.*had|specifics|specific|estimate/i);
     expect(r.response).toMatch(/kfc/i);
+  });
+
+  it('flags "I ate veggie KFC this morning" (2026-05-29 screenshot — "veggie" alone is not specific)', () => {
+    const r = detectVagueFood('I ate veggie KFC this morning');
+    expect(r.vague).toBe(true);
+    expect(r.matched).toBe('kfc');
+    // Never claims to log or estimate without specifics.
+    expect(r.response).not.toMatch(/\d+\s*g\b/i);
+    expect(r.response!.toLowerCase()).not.toMatch(/logged that you had|i'?ve logged/);
+  });
+
+  it('uses the follow-up template when Grace already asked for clarification', () => {
+    const firstAsk = "Sounds like you enjoyed it 😊. What did you have at KFC?";
+    const r = detectVagueFood('I ate veggie KFC this morning', firstAsk);
+    expect(r.vague).toBe(true);
+    // Follow-up templates use softer ack words (got it / noted / thanks) and
+    // re-ask for the specific item.
+    expect(r.response!.toLowerCase()).toMatch(/got it|noted|thanks/);
+    expect(r.response!.toLowerCase()).toMatch(/which.*item|specific/);
   });
 
   it('flags fast food brands without specifics', () => {
@@ -102,7 +121,16 @@ describe('detectVagueFood — response style', () => {
   it('never contains a fabricated protein number', () => {
     const r = detectVagueFood('ate kfc');
     expect(r.response).not.toMatch(/\d+\s*g\b/i);
-    expect(r.response).not.toMatch(/protein|calorie/i);
+    // Mentioning the word "protein" in the ASK is fine ("I can estimate the protein"),
+    // but it must not present a specific number as fact.
+    expect(r.response).not.toMatch(/\b\d+\s*g\s*(of\s+)?protein\b/i);
+  });
+
+  it('never claims to have logged something it has not', () => {
+    // Per 2026-05-29 feedback: don't say "logged" before we actually know what
+    // to log. "Got it — noting that you had X" is fine; "I've logged X" is not.
+    const r = detectVagueFood('I ate kfc');
+    expect(r.response!.toLowerCase()).not.toMatch(/\bi(?:'ve)?\s+logged\b/);
   });
 
   it('returns the same response for the same input (stable hash)', () => {

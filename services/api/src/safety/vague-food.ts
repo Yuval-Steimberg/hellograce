@@ -117,17 +117,31 @@ function hasSpecificity(text: string): boolean {
 }
 
 // ── Response templates ─────────────────────────────────────────────────────
-// Short, warm, ASKS the user to specify. Mentions what brand/category they
-// said so it feels heard, not robotic. Rotated by stable hash.
-function buildClarification(matched: string): string {
+// Per the 2026-05-29 feedback spec:
+//   - Never present a guess as fact (no "logged" or "X grams" before we know)
+//   - Acknowledge what they said so it feels heard
+//   - Explain WHY we need more info (different items = different protein)
+//   - Ask one focused follow-up question
+//
+// Two template sets:
+//   1. First time we see a vague mention → warm acknowledge + ask
+//   2. User REPLIED to a prior ask but their reply was still vague → softer
+//      ack ("got it") + more focused ask ("but which item specifically?")
+function buildClarification(matched: string, followUp: boolean): string {
   const m = matched.replace(/\b\w/g, (c) => c.toUpperCase()); // title-case the brand
-  const templates = [
-    `Sounds good! What exactly did you have from ${m}? Knowing the items (and rough portions) lets me log it accurately.`,
-    `Nice — what'd you order at ${m}? Once I know the specific items I can log it properly.`,
-    `Yum. Give me the rough details — what did you get from ${m}? Then I can log it right.`,
-    `Got it. What did you eat exactly? ${m} portions vary a lot, so tell me the items and I'll log it accurately.`,
+  const initialTemplates = [
+    `Sounds like you enjoyed it 😊. What did you have at ${m}? Once I know roughly what you ordered, I can estimate the protein and calories accurately.`,
+    `Nice. To estimate the protein I'd need to know what you actually had at ${m} — was it tenders, a sandwich, a wrap? Share the specifics and I'll log it.`,
+    `Got it — noting that you had ${m} this morning. ${m} portions vary a lot, so tell me which items and I can give you an accurate protein estimate.`,
+    `Yum. What did you order at ${m}? The more specific (e.g. "3 tenders" or "a chicken sandwich"), the more accurate the protein estimate I can give you.`,
   ];
-  // Stable hash of the matched brand so the same brand → same template.
+  const followUpTemplates = [
+    `Got it. Which specific item, though? ${m} has a few options — knowing the exact one lets me give you an accurate number instead of a guess.`,
+    `Noted. To estimate the protein accurately I still need to know which item — a sandwich, tenders, a wrap? Different items have very different protein.`,
+    `Thanks. Just to nail the protein down: which item exactly from ${m}? Each has a different protein range so I don't want to give you a wrong number.`,
+  ];
+  const templates = followUp ? followUpTemplates : initialTemplates;
+  // Stable hash so same input → same template (avoids feeling random).
   let h = 0;
   for (let i = 0; i < matched.length; i++) h = (h * 31 + matched.charCodeAt(i)) | 0;
   return templates[Math.abs(h) % templates.length]!;
@@ -141,8 +155,12 @@ function buildClarification(matched: string): string {
  * the message lacks specificity indicators. False positives are avoided by
  * the specificity check — once the user names an item or quantity, we log
  * normally.
+ *
+ * `lastGraceMessage` (optional) is used to detect when Grace already asked
+ * for clarification — if so, we use a softer "but which item specifically"
+ * follow-up template instead of repeating the initial ask verbatim.
  */
-export function detectVagueFood(text: string): VagueFoodCheck {
+export function detectVagueFood(text: string, lastGraceMessage?: string): VagueFoodCheck {
   const lower = text.toLowerCase().trim();
   if (lower.length === 0) return { vague: false };
 
@@ -171,9 +189,18 @@ export function detectVagueFood(text: string): VagueFoodCheck {
   // If the message has any specificity, it's NOT vague — let log_food run.
   if (hasSpecificity(text)) return { vague: false };
 
+  // If Grace's previous message was our own clarification ask, use the
+  // follow-up template variant so the user doesn't see the same question twice.
+  const followUp = !!lastGraceMessage && PRIOR_ASK_RE.test(lastGraceMessage);
+
   return {
     vague: true,
     matched,
-    response: buildClarification(matched),
+    response: buildClarification(matched, followUp),
   };
 }
+
+// Detects whether the previous Grace message was OUR vague-food clarification.
+// Matches all four initial templates AND all three follow-up templates.
+const PRIOR_ASK_RE =
+  /\b(what did you (have|order|get|eat)|what(?:'s)? did you (?:actually )?have|which (?:specific )?item|which item|estimate the protein accurately|share the specifics|the more specific)\b/i;

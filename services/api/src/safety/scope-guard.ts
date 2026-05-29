@@ -32,7 +32,8 @@ export type ScopeCategory =
   | 'science_trivia'
   | 'sexual'
   | 'dangerous'
-  | 'news_general';
+  | 'news_general'
+  | 'meta_internals';
 
 export interface ScopeCheck {
   blocked: boolean;
@@ -180,6 +181,53 @@ const SCOPE_PATTERNS: ScopePattern[] = [
       /\bwhat\s+do\s+you\s+think\s+(about|of)\s+the\s+(news|current\s+(situation|event))/i,
     ],
   },
+  {
+    category: 'meta_internals',
+    patterns: [
+      // ── Other users / user counts / population queries ────────────────────
+      // "how many users / people / women / customers / subscribers do you / does grace have"
+      /\bhow\s+many\s+(users?|people|women|men|customers?|subscribers?|members?|clients?|patients?)\s+(do\s+(you|grace)\s+have|(are\s+)?(on|using|signed\s+up\s+(for|to)))\b/i,
+      /\b(how\s+many|number\s+of)\s+(users?|people|women|customers?|subscribers?)\b.*\bgrace\b/i,
+      // "who else uses grace" / "what do other users do/say" / "show me other users"
+      /\b(who\s+else|what\s+(do|are)\s+other\s+(users?|people|women))\b/i,
+      /\b(other\s+users'?|other\s+people'?s?)\s+(data|info|information|messages?|conversations?|profiles?|weight|protein|results?)\b/i,
+      /\bshow\s+me\s+(other\s+|all\s+)?(users?|user\s+list|the\s+user\s+list|everyone'?s)\b/i,
+      /\btell\s+me\s+about\s+(other\s+|your\s+other\s+)?(users?|customers?|patients?)\b/i,
+      /\bcan\s+you\s+(see|access|show)\s+other\s+(users?|people'?s?)\b/i,
+      // ── Database / SQL / queries ──────────────────────────────────────────
+      /\b(your\s+|the\s+)?database\b.*\?/i,
+      /\b(sql|postgres|postgresql|supabase|mysql|redis|mongo|mongodb|nosql)\b/i,
+      /\bshow\s+me\s+(the\s+)?(schema|tables?|columns?|rows?|records?|queries|sql)\b/i,
+      /\b(run|execute|write)\s+(a\s+|me\s+a\s+)?(query|sql|select|insert|update|delete)\b/i,
+      /\bwhat('s|\s+is)\s+(in\s+)?(your|the)\s+(database|db|datastore|backend)\b/i,
+      /\bwhere\s+(do\s+you|is\s+(my|user|the))\s+(?:\w+\s+)?(store|stored|kept|saved)\b/i,
+      // ── Codebase / source / repository ────────────────────────────────────
+      /\b(your\s+|the\s+|grace'?s\s+)?(source\s+code|codebase|code\s+base|repo|repository|github|gitlab)\b/i,
+      /\bshow\s+me\s+(your\s+|the\s+)?(code|implementation|source)\b/i,
+      /\bhow\s+(are|were)\s+you\s+(built|coded|programmed|developed|implemented)\b/i,
+      /\bwhat\s+(framework|language|stack|tech\s+stack)\s+(do\s+you\s+use|are\s+you\s+(built|written)\s+(in|on|with))\b/i,
+      // ── AI model / prompt / internals ─────────────────────────────────────
+      /\b(what|which)\s+(ai\s+)?(model|llm)\s+(are\s+you|do\s+you\s+use|powers\s+you|is\s+(this|grace))\b/i,
+      /\b(are\s+you|is\s+grace)\s+(gpt|chatgpt|claude|gemini|llama|mistral)\b/i,
+      /\bwhat('s|\s+is)\s+(your|the)\s+(system\s+)?prompt\b/i,
+      /\bshow\s+me\s+(your\s+|the\s+)?(system\s+)?prompt\b/i,
+      /\b(reveal|leak|share|tell\s+me)\s+(your|the)\s+(system\s+)?(prompt|instructions|rules)\b/i,
+      /\bwhat\s+(are\s+your\s+|were\s+you\s+given\s+as\s+)?(initial\s+)?instructions\b/i,
+      /\bignore\s+(?:(?:your|all|previous|the\s+above|prior|earlier)\s+)*(instructions|prompt|rules|system|directives)\b/i,
+      // ── Infrastructure / deployment ───────────────────────────────────────
+      /\b(fly\.?io|vercel|netlify|aws|gcp|azure|cloudflare|render|heroku)\b.*\?/i,
+      /\b(api\s+key|api\s+token|secret\s+key|admin\s+token|env(?:\s+|ironment\s+)?(?:vars?|variables?))\b/i,
+      /\bwhat\s+server\s+(is\s+)?(this|grace)\s+(running\s+on|hosted\s+on)\b/i,
+      // ── Privacy/data infrastructure (technical, not personal data) ────────
+      // "how do you store / encrypt my data" is meta-internal.
+      // "what data do you have about me?" / "delete my data" → in-scope (personal).
+      // "how do you store/encrypt my data" + passive "how is user/my data stored/encrypted"
+      /\bhow\s+do\s+you\s+(store|encrypt|protect|secure|process|handle|hash)\s+(my\s+|user\s+|the\s+|all\s+)?data\b/i,
+      /\bhow\s+is\s+(my|user|the|all|customer)\s+data\s+(stored|encrypted|protected|secured|processed|kept|saved|handled|hashed)\b/i,
+      /\b(are\s+you\s+|is\s+grace\s+)?hipaa\s+(compliant|certified)\b/i,
+      /\b(privacy\s+policy|terms\s+of\s+service|data\s+retention\s+policy)\b/i,
+    ],
+  },
 ];
 
 // ── Negation guard ──────────────────────────────────────────────────────────
@@ -189,9 +237,9 @@ const DISMISSAL_RE = /\b(don'?t\s+(care|follow|watch|read|want\s+to\s+talk|want\
 
 // ── Response templates ─────────────────────────────────────────────────────
 // Per spec: ONE response, short, calm, professional. NEVER mention memory.
-// Five templates rotated by stable hash so it doesn't sound robotic across
+// Templates rotated by stable hash so it doesn't sound robotic across
 // repeated off-topic messages from the same user.
-const RESPONSES: readonly string[] = [
+const RESPONSES_GENERAL: readonly string[] = [
   "That's outside what I can help with — I'm here for your GLP-1 journey, nutrition, symptoms, and progress.",
   "Not my area, but I can help with food, protein, medication, symptoms, or how you're feeling.",
   "I'm focused on your health journey. Want to talk through anything around food, symptoms, or your goals?",
@@ -199,36 +247,68 @@ const RESPONSES: readonly string[] = [
   "I'll leave that one to the experts. What I can help with: your protein, weight, symptoms, or anything about your journey.",
 ] as const;
 
-function pickResponse(text: string): string {
+// Privacy-respecting refusals for meta/internals questions. Acknowledge the
+// privacy boundary without revealing infrastructure, user counts, or model
+// details. Always offer the in-scope alternative.
+const RESPONSES_META: readonly string[] = [
+  "I can't share anything about other users or how things work behind the scenes — that's private. I'm here for your journey though. Want to talk through food, symptoms, or your goals?",
+  "That's not something I can speak to — other people's data and the technical side stay private. I can help with your protein, weight, medication, or how you're feeling.",
+  "I keep what happens behind the scenes private — and the same goes for every user. Happy to focus on your journey though: food, symptoms, mood, anything.",
+  "Not something I'll get into — your privacy and everyone else's matters here. What I can do: help with your meals, symptoms, weight, or how today's going.",
+  "That stays behind the curtain — privacy first, always. I'm fully focused on your GLP-1 journey if you want to talk through anything.",
+] as const;
+
+function pickResponse(text: string, category: ScopeCategory): string {
+  const pool = category === 'meta_internals' ? RESPONSES_META : RESPONSES_GENERAL;
   // Stable hash of the inbound text → same off-topic message always gets the
   // same template for the same user. Across users the choice still varies.
   let h = 0;
   for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
-  const idx = Math.abs(h) % RESPONSES.length;
-  return RESPONSES[idx]!;
+  const idx = Math.abs(h) % pool.length;
+  return pool[idx]!;
 }
 
 /**
  * Classify whether the inbound message is out-of-scope for Grace.
  *
  * Decision order:
- *  1. If an in-scope health anchor word appears → NOT blocked (Grace handles it normally)
- *  2. If a dismissal phrase appears ("I don't follow politics") → NOT blocked
- *  3. If any off-topic pattern matches → blocked with that category
- *  4. Otherwise → NOT blocked
+ *  1. meta_internals ALWAYS checked first — even if an in-scope anchor is
+ *     present. "How many users with weight loss goals?" mentions "weight"
+ *     but is still a privacy/internals leak attempt and must be blocked.
+ *  2. If an in-scope health anchor word appears → NOT blocked
+ *  3. If a dismissal phrase appears ("I don't follow politics") → NOT blocked
+ *  4. If any other off-topic pattern matches → blocked
+ *  5. Otherwise → NOT blocked
  */
 export function classifyScope(text: string): ScopeCheck {
   const lower = text.toLowerCase().trim();
   if (lower.length === 0) return { blocked: false };
 
-  // Rule 1: any health anchor word → defer to normal pipeline.
+  // Rule 1: meta_internals takes precedence over in-scope anchors.
+  const metaGroup = SCOPE_PATTERNS.find((g) => g.category === 'meta_internals');
+  if (metaGroup) {
+    for (const re of metaGroup.patterns) {
+      const m = re.exec(text);
+      if (m) {
+        return {
+          blocked: true,
+          category: 'meta_internals',
+          matched: m[0],
+          response: pickResponse(text, 'meta_internals'),
+        };
+      }
+    }
+  }
+
+  // Rule 2: any health anchor word → defer to normal pipeline.
   if (hasInScopeAnchor(lower)) return { blocked: false };
 
-  // Rule 2: dismissal phrase → user isn't asking, just venting. Defer.
+  // Rule 3: dismissal phrase → user isn't asking, just venting. Defer.
   if (DISMISSAL_RE.test(lower)) return { blocked: false };
 
-  // Rule 3: scan all off-topic patterns.
+  // Rule 4: scan remaining off-topic patterns.
   for (const group of SCOPE_PATTERNS) {
+    if (group.category === 'meta_internals') continue; // already checked above
     for (const re of group.patterns) {
       const m = re.exec(text);
       if (m) {
@@ -236,7 +316,7 @@ export function classifyScope(text: string): ScopeCheck {
           blocked: true,
           category: group.category,
           matched: m[0],
-          response: pickResponse(text),
+          response: pickResponse(text, group.category),
         };
       }
     }

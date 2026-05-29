@@ -260,18 +260,47 @@ const Settings = () => {
   const handleManageSubscription = async () => {
     setPortalLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("customer-portal", {
-        body: { userId },
-      });
-      if (error || !data?.url) {
-        toast.error("Couldn't open subscription manager. Try again.");
-        return;
-      }
-      window.open(data.url, "_blank");
-    } catch {
-      toast.error("Something went wrong. Try again.");
+      await openCustomerPortalWithRetry(userId, /* attempt */ 1);
     } finally {
       setPortalLoading(false);
+    }
+  };
+
+  // Same retry logic as Upgrade.tsx (kept here to avoid circular imports for
+  // a 30-line helper). See Upgrade.tsx for the rationale on the 30-60s
+  // Stripe-search indexing lag.
+  const openCustomerPortalWithRetry = async (uid: string, attempt: number): Promise<void> => {
+    try {
+      const { data, error } = await supabase.functions.invoke("customer-portal", {
+        body: { userId: uid },
+      });
+
+      if (!error && data?.url) {
+        window.open(data.url, "_blank");
+        return;
+      }
+
+      const code = (data as { code?: string } | null | undefined)?.code
+        || (error as { context?: { code?: string } } | null | undefined)?.context?.code;
+      const message = (data as { error?: string } | null | undefined)?.error
+        || error?.message
+        || "Couldn't open subscription manager. Try again.";
+
+      if (code === "no_stripe_customer" && attempt < 2) {
+        toast.info("Just a moment — finalizing your subscription…");
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        await openCustomerPortalWithRetry(uid, attempt + 1);
+        return;
+      }
+
+      if (code === "portal_not_configured") {
+        toast.error("Subscription manager isn't configured yet. Please contact support.");
+        return;
+      }
+
+      toast.error(message);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong. Try again.");
     }
   };
 

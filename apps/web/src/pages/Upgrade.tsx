@@ -95,17 +95,46 @@ export default function Upgrade() {
 
   const handleManageSubscription = async () => {
     if (!user) return;
+    await openCustomerPortal(user.id, /* attempt */ 1);
+  };
+
+  // Stripe's customers.search() takes ~30-60s to index newly-created customers.
+  // If the user JUST subscribed and clicks "Manage", the first call returns
+  // `no_stripe_customer`. We auto-retry once after a short delay before
+  // surfacing the error. Frontend retry is faster than asking the user to wait.
+  const openCustomerPortal = async (userId: string, attempt: number): Promise<void> => {
     try {
       const { data, error } = await supabase.functions.invoke("customer-portal", {
-        body: { userId: user.id },
+        body: { userId },
       });
-      if (error || !data?.url) {
-        toast.error("Couldn't open subscription manager. Try again.");
+
+      if (!error && data?.url) {
+        window.open(data.url, "_blank");
         return;
       }
-      window.open(data.url, "_blank");
-    } catch {
-      toast.error("Something went wrong. Try again.");
+
+      // Edge function now returns { error, code } — read both.
+      const code = (data as { code?: string } | null | undefined)?.code
+        || (error as { context?: { code?: string } } | null | undefined)?.context?.code;
+      const message = (data as { error?: string } | null | undefined)?.error
+        || error?.message
+        || "Couldn't open subscription manager. Try again.";
+
+      if (code === "no_stripe_customer" && attempt < 2) {
+        toast.info("Just a moment — finalizing your subscription…");
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        await openCustomerPortal(userId, attempt + 1);
+        return;
+      }
+
+      if (code === "portal_not_configured") {
+        toast.error("Subscription manager isn't configured yet. Please contact support.");
+        return;
+      }
+
+      toast.error(message);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Something went wrong. Try again.");
     }
   };
 

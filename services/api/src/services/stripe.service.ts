@@ -84,7 +84,16 @@ export async function getBillingSnapshot(
   const graceUserId = rows[0]?.id;
   if (!graceUserId) return null;
 
-  const customer = await findCustomer(phone, graceUserId);
+  let customer: Stripe.Customer | null = null;
+  try {
+    customer = await findCustomer(phone, graceUserId);
+  } catch (err) {
+    // Stripe search can transiently 5xx or return a "search index unavailable"
+    // error. Treat as "no customer found" rather than aborting the whole UI.
+    // The error is the same shape the user would see if they actually had no
+    // customer — admin can retry to clear.
+    console.warn('[stripe.service] findCustomer failed', (err as Error).message);
+  }
   if (!customer) {
     return {
       customer_id: null,
@@ -94,33 +103,53 @@ export async function getBillingSnapshot(
     };
   }
 
-  // Active subscription (active + trialing + past_due all count as "current").
-  // expand the price + product so we can name the plan in the UI.
-  const subs = await stripe.subscriptions.list({
-    customer: customer.id,
-    status: 'all',
-    limit: 5,
-    expand: ['data.items.data.price.product', 'data.default_payment_method'],
-  });
+  // Active subscription. We split the lookup into two steps so an expand
+  // failure on the product side doesn't void the whole snapshot.
+  let subs: Stripe.ApiList<Stripe.Subscription> | null = null;
+  try {
+    subs = await stripe.subscriptions.list({
+      customer: customer.id,
+      status: 'all',
+      limit: 5,
+      expand: ['data.default_payment_method'],
+    });
+  } catch (err) {
+    console.warn('[stripe.service] subscriptions.list failed', (err as Error).message);
+  }
   // Prefer the active/trialing/past_due over canceled/incomplete.
-  const ranked = [...subs.data].sort((a, b) => statusPriority(a.status) - statusPriority(b.status));
+  const ranked = subs ? [...subs.data].sort((a, b) => statusPriority(a.status) - statusPriority(b.status)) : [];
   const sub = ranked[0] ?? null;
 
   let subscription: StripeBillingSnapshot['subscription'] = null;
   if (sub) {
     const item = sub.items.data[0];
     const price = item?.price;
-    const product = price?.product;
-    const planName =
-      typeof product === 'object' && product && 'name' in product
-        ? (product as Stripe.Product).name
-        : price?.nickname ?? null;
+    // Fetch the product separately — safer than expand. Only call when we
+    // have a string product id; if the price already came back with an
+    // expanded product object (rare with our minimal expand list), use that.
+    let planName: string | null = price?.nickname ?? null;
+    try {
+      if (price?.product) {
+        if (typeof price.product === 'string') {
+          const prod = await stripe.products.retrieve(price.product).catch(() => null);
+          if (prod && !prod.deleted) planName = prod.name ?? planName;
+        } else if ('name' in price.product) {
+          planName = (price.product as Stripe.Product).name ?? planName;
+        }
+      }
+    } catch (err) {
+      console.warn('[stripe.service] products.retrieve failed', (err as Error).message);
+    }
+    // current_period_end lives on the Subscription (top-level) in the public
+    // API. Cast through unknown because Stripe's TS types in v22 are noisier.
+    const periodEnd = (sub as unknown as { current_period_end?: number }).current_period_end
+      ?? item?.current_period_end
+      ?? null;
     subscription = {
       id: sub.id,
       status: sub.status,
       plan_name: planName,
-      // current_period_end is on the SubscriptionItem in 2025+ API.
-      current_period_end: item?.current_period_end ?? null,
+      current_period_end: periodEnd,
       amount: price?.unit_amount ?? null,
       currency: price?.currency ?? null,
       cancel_at_period_end: sub.cancel_at_period_end,
@@ -130,14 +159,18 @@ export async function getBillingSnapshot(
 
   // Default payment method on the subscription (preferred) or customer.
   let pm: Stripe.PaymentMethod | null = null;
-  if (sub && typeof sub.default_payment_method === 'object' && sub.default_payment_method) {
-    pm = sub.default_payment_method;
-  } else if (customer.invoice_settings?.default_payment_method) {
-    const pmId =
-      typeof customer.invoice_settings.default_payment_method === 'string'
-        ? customer.invoice_settings.default_payment_method
-        : customer.invoice_settings.default_payment_method.id;
-    pm = await stripe.paymentMethods.retrieve(pmId).catch(() => null);
+  try {
+    if (sub && typeof sub.default_payment_method === 'object' && sub.default_payment_method) {
+      pm = sub.default_payment_method;
+    } else if (customer.invoice_settings?.default_payment_method) {
+      const pmId =
+        typeof customer.invoice_settings.default_payment_method === 'string'
+          ? customer.invoice_settings.default_payment_method
+          : customer.invoice_settings.default_payment_method.id;
+      pm = await stripe.paymentMethods.retrieve(pmId).catch(() => null);
+    }
+  } catch (err) {
+    console.warn('[stripe.service] payment method lookup failed', (err as Error).message);
   }
 
   const card = pm?.card ?? null;

@@ -595,10 +595,16 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       }
       return snapshot;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      req.log.error({ err: msg, phone }, 'admin.stripe_info_failed');
+      // Include the FULL error (stack + Stripe error fields) in the log so
+      // we can root-cause. The user-facing message stays short.
+      req.log.error({
+        err: err instanceof Error ? { message: err.message, stack: err.stack, name: err.name } : err,
+        stripeCode: (err as { code?: string })?.code,
+        stripeType: (err as { type?: string })?.type,
+        phone,
+      }, 'admin.stripe_info_failed');
       reply.code(500);
-      return { error: `Stripe lookup failed: ${msg}` };
+      return { error: `Stripe lookup failed: ${err instanceof Error ? err.message : String(err)}` };
     }
   });
 

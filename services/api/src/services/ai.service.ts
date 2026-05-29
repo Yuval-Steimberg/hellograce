@@ -15,6 +15,7 @@ import type { TopicTrackerService } from './topic-tracker.service.js';
 import type { UsdaFoodService } from './usda-food.service.js';
 import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
+import { detectVagueFood } from '../safety/vague-food.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
 import { makeLogFoodTool } from '../tools/log-food.js';
 import { makeLogWeightTool } from '../tools/log-weight.js';
@@ -250,6 +251,59 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       // AND mentions an actual food/drink word
       /\b(banana|apple|orange|berry|berries|chicken|beef|pork|fish|salmon|tuna|tofu|egg|eggs|yogurt|oatmeal|rice|pasta|pizza|salad|sushi|sandwich|burger|burrito|taco|wrap|soup|steak|bagel|toast|cereal|pancake|waffle|fruit|smoothie|shake|coffee|tea|water|coke|soda|juice|beer|wine|big mac|fries|coke|nuts|almonds?|granola|cheese|milk|bread|chocolate|cookie|cake|brownie|donut|ice cream|protein|carrot|broccoli|spinach|lettuce|tomato|potato|avocado)\b/i.test(augmentedText);
 
+    // ── Vague-food guard ────────────────────────────────────────────────────
+    // Detect brand/category mentions without portion specifics ("I had KFC",
+    // "I ate pizza") BEFORE force_log_food fires. The LLM would otherwise
+    // hallucinate "KFC logged. ~35g protein" without actually calling the
+    // tool. Return a canned clarification asking what they ate; the next
+    // turn's continuation logic will then trigger log_food with details.
+    //
+    // Skip vague check when this is a continuation reply — if Grace just
+    // asked a food question, the user's brief follow-up isn't vague, it's
+    // the answer to OUR ask.
+    const lastGraceMessage = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+    const isFollowupReplyToFoodQuestion =
+      /\bwhat\s+(exactly|did\s+you)\b|\bportion|\bhow\s+much\b|\bspecific\b/i.test(lastGraceMessage);
+
+    if (
+      flags.toolsEnabled &&
+      !isFollowupReplyToFoodQuestion &&
+      !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food')
+    ) {
+      const vague = detectVagueFood(input.text);
+      if (vague.vague) {
+        this.deps.logger.info(
+          { userId: input.userId, matched: vague.matched, textPreview: input.text.slice(0, 100) },
+          'ai.handle.vague_food_clarification',
+        );
+        // Persist both turns so the next message hits the continuation logic.
+        // The "what exactly did you have" wording matches the regex on line
+        // ~257 (isFollowupReplyToFoodQuestion) so the user's brief follow-up
+        // ("3 tenders", "a chicken sandwich") triggers log_food.
+        void this.deps.memory.appendTurn({
+          userId: input.userId,
+          conversationId,
+          role: 'user',
+          content: input.text,
+        }).catch((err) => this.deps.logger.warn({ err }, 'vague_food.append_user.failed'));
+        void this.deps.memory.appendTurn({
+          userId: input.userId,
+          conversationId,
+          role: 'assistant',
+          content: vague.response!,
+        }).catch((err) => this.deps.logger.warn({ err }, 'vague_food.append_assistant.failed'));
+
+        return {
+          text: vague.response!,
+          intent: 'vague_food_clarification',
+          confidence: 'high' as const,
+          toolResults: [],
+          usedRetrieval: false,
+          latencyMs: Date.now() - t0,
+        };
+      }
+    }
+
     const shouldForceLogFood =
       flags.toolsEnabled &&
       !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food') &&
@@ -275,7 +329,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     const lastGraceMsg = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
     const lastWasFoodQuestion = /\b(how much|what|what was|how big|portion|scoop|protein|calories?|carbs?)\b.*\?/i.test(lastGraceMsg);
     const isBriefDetail = input.text.trim().split(/\s+/).length <= 4;
-    const briefDetailMatchesFood = /\b(scoop|scoops|cup|cups|tbsp|tsp|grams?|oz|ounces?|servings?|with|and|small|medium|large|big|tiny)\b/i.test(input.text);
+    // Broadened so brief replies after a vague-food clarification ("3 tenders",
+    // "a chicken sandwich", "4 wings") trigger continuation log_food.
+    const briefDetailMatchesFood = /\b(scoop|scoops|cup|cups|tbsp|tsp|grams?|oz|ounces?|servings?|with|and|small|medium|large|big|tiny|tender|tenders|wing|wings|nugget|nuggets|piece|pieces|slice|slices|sandwich|sandwiches|burger|burgers|taco|tacos|burrito|burritos|wrap|wraps|bowl|bowls|sub|subs|footlong|combo|meal|chicken|beef|fish|salmon|tuna|veggie|cheese)\b/i.test(input.text);
     if (
       !shouldForceLogFood &&
       flags.toolsEnabled &&

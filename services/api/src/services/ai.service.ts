@@ -253,27 +253,23 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
 
     // ── Vague-food guard ────────────────────────────────────────────────────
     // Detect brand/category mentions without portion specifics ("I had KFC",
-    // "I ate pizza") BEFORE force_log_food fires. The LLM would otherwise
-    // hallucinate "KFC logged. ~35g protein" without actually calling the
-    // tool. Return a canned clarification asking what they ate; the next
-    // turn's continuation logic will then trigger log_food with details.
+    // "I ate pizza") and return a clarification ask. Runs BEFORE force_log_food
+    // AND overrides any planner decision to call log_food — the whole point
+    // is to prevent log_food from running on vague input that would otherwise
+    // produce a fabricated estimate.
     //
-    // Skip vague check when this is a continuation reply — if Grace just
-    // asked a food question, the user's brief follow-up isn't vague, it's
-    // the answer to OUR ask.
+    // Skip only when this is a continuation reply — if Grace just asked a
+    // food question, the user's brief follow-up isn't vague, it's the answer
+    // to OUR ask, and the continuation logic below will handle it.
     const lastGraceMessage = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
     const isFollowupReplyToFoodQuestion =
       /\bwhat\s+(exactly|did\s+you)\b|\bportion|\bhow\s+much\b|\bspecific\b/i.test(lastGraceMessage);
 
-    if (
-      flags.toolsEnabled &&
-      !isFollowupReplyToFoodQuestion &&
-      !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food')
-    ) {
+    if (flags.toolsEnabled && !isFollowupReplyToFoodQuestion) {
       const vague = detectVagueFood(input.text);
       if (vague.vague) {
         this.deps.logger.info(
-          { userId: input.userId, matched: vague.matched, textPreview: input.text.slice(0, 100) },
+          { userId: input.userId, matched: vague.matched, plannerPlannedLogFood: prePlannedDecision.toolCalls.some((c) => c.name === 'log_food'), textPreview: input.text.slice(0, 100) },
           'ai.handle.vague_food_clarification',
         );
         // Persist both turns so the next message hits the continuation logic.

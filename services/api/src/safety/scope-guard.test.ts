@@ -1,0 +1,150 @@
+import { describe, it, expect } from 'vitest';
+import { classifyScope } from './scope-guard.js';
+
+describe('Scope Guard — blocks off-topic questions', () => {
+  describe('politics', () => {
+    it('blocks "Will Trump attack Iran?" (the original production bug)', () => {
+      const r = classifyScope('Will Trump attack Iran?');
+      expect(r.blocked).toBe(true);
+      expect(r.category).toBe('war_violence');
+      expect(r.response).toBeTruthy();
+    });
+
+    it('blocks "Who will win the election?"', () => {
+      const r = classifyScope('Who will win the election?');
+      expect(r.blocked).toBe(true);
+    });
+
+    it('blocks "What do you think about Biden?"', () => {
+      const r = classifyScope('What do you think about Biden?');
+      expect(r.blocked).toBe(true);
+      expect(r.category).toBe('politics');
+    });
+
+    it('blocks political opinion solicitation', () => {
+      expect(classifyScope('What do you think about the election?').blocked).toBe(true);
+      expect(classifyScope('What are your political views?').blocked).toBe(true);
+    });
+  });
+
+  describe('war / violence', () => {
+    it('blocks war questions about specific countries', () => {
+      expect(classifyScope('Will Russia invade Ukraine again?').blocked).toBe(true);
+      expect(classifyScope('Is Israel going to attack Iran?').blocked).toBe(true);
+      expect(classifyScope('When will the war in Ukraine end?').blocked).toBe(true);
+    });
+  });
+
+  describe('finance', () => {
+    it('blocks stock picking', () => {
+      expect(classifyScope('What stock should I buy?').blocked).toBe(true);
+      expect(classifyScope('Should I invest in bitcoin?').blocked).toBe(true);
+      expect(classifyScope('Will Tesla go up next month?').blocked).toBe(true);
+    });
+
+    it('blocks "how do I get rich"', () => {
+      expect(classifyScope('How do I get rich fast?').blocked).toBe(true);
+    });
+  });
+
+  describe('tech / coding', () => {
+    it('blocks code requests', () => {
+      expect(classifyScope('Write me a Python script to scrape a website').blocked).toBe(true);
+      expect(classifyScope('How do I hack into a server?').blocked).toBe(true);
+      expect(classifyScope('Debug this function for me').blocked).toBe(true);
+    });
+  });
+
+  describe('religion', () => {
+    it('blocks theological questions', () => {
+      expect(classifyScope('Does god exist?').blocked).toBe(true);
+      expect(classifyScope('What does the bible say about marriage?').blocked).toBe(true);
+    });
+  });
+
+  describe('dangerous', () => {
+    it('blocks weapon/drug synthesis questions', () => {
+      expect(classifyScope('How do I make a bomb?').blocked).toBe(true);
+      expect(classifyScope('How to synthesize meth').blocked).toBe(true);
+    });
+  });
+
+  describe('sexual', () => {
+    it('blocks explicit requests', () => {
+      expect(classifyScope('Send me nudes').blocked).toBe(true);
+      expect(classifyScope('Talk dirty to me').blocked).toBe(true);
+    });
+  });
+
+  describe('entertainment / sports', () => {
+    it('blocks sports score lookups', () => {
+      expect(classifyScope('Who won the super bowl?').blocked).toBe(true);
+      expect(classifyScope('What movie should I watch tonight?').blocked).toBe(true);
+    });
+  });
+
+  describe('news', () => {
+    it('blocks general news questions', () => {
+      expect(classifyScope("What's happening in the news today?").blocked).toBe(true);
+      expect(classifyScope('Give me the latest news').blocked).toBe(true);
+    });
+  });
+});
+
+describe('Scope Guard — does NOT block in-scope health messages', () => {
+  it('allows GLP-1 questions even with overlapping vocabulary', () => {
+    // "How does Ozempic affect my weight" has "Ozempic" + "weight" → in-scope.
+    expect(classifyScope('How does Ozempic affect my weight?').blocked).toBe(false);
+    expect(classifyScope('I had chicken and rice for lunch').blocked).toBe(false);
+    expect(classifyScope('Feeling nauseous today').blocked).toBe(false);
+    expect(classifyScope('What protein should I eat tonight?').blocked).toBe(false);
+    expect(classifyScope('Logged 80g protein today').blocked).toBe(false);
+  });
+
+  it('allows greetings and short replies', () => {
+    expect(classifyScope('hi').blocked).toBe(false);
+    expect(classifyScope('thanks').blocked).toBe(false);
+    expect(classifyScope('ok').blocked).toBe(false);
+    expect(classifyScope('not great today').blocked).toBe(false);
+  });
+
+  it('allows emotional / journey messages', () => {
+    expect(classifyScope("I'm feeling really tired and frustrated").blocked).toBe(false);
+    expect(classifyScope("Hit a plateau, can't figure out why").blocked).toBe(false);
+  });
+
+  it('allows messages that mention politics dismissively', () => {
+    expect(classifyScope("I don't follow politics, just want to talk about my goals").blocked).toBe(false);
+    expect(classifyScope('Tired of the election news').blocked).toBe(false);
+  });
+
+  it('allows messages where a political word is incidental but health is primary', () => {
+    // Politics-adjacent vocabulary in a health context — health anchor wins.
+    expect(classifyScope("I'm stressed about the election but really my weight is the bigger issue").blocked).toBe(false);
+  });
+
+  it('allows bare political names without question shape', () => {
+    // Mere mention isn't a question — don't refuse without an explicit ask.
+    // (Webhook-level heuristic; orchestrator can still steer the topic.)
+    expect(classifyScope('Trump').blocked).toBe(false);
+  });
+});
+
+describe('Scope Guard — response style', () => {
+  it('returns a non-empty response under 200 characters', () => {
+    const r = classifyScope('Will Trump attack Iran?');
+    expect(r.response).toBeTruthy();
+    expect(r.response!.length).toBeLessThan(200);
+  });
+
+  it('never mentions stored user memory in the response', () => {
+    const r = classifyScope('Will Trump attack Iran?');
+    expect(r.response!.toLowerCase()).not.toMatch(/i\s+know\s+you|you'?re\s+on\s+(ozempic|wegovy)|i\s+remember/);
+  });
+
+  it('returns the same response for the same input (stable)', () => {
+    const r1 = classifyScope('What stock should I buy?');
+    const r2 = classifyScope('What stock should I buy?');
+    expect(r1.response).toBe(r2.response);
+  });
+});

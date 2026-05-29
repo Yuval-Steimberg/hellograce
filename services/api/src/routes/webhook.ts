@@ -8,6 +8,7 @@ import type { MessageTemplatesService } from '../services/message-templates.serv
 import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { UnauthorizedError, UpstreamError } from '../errors.js';
+import { classifyScope } from '../safety/scope-guard.js';
 
 const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 
@@ -75,6 +76,28 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
 
     // Fire-and-forget AI processing.
     void (async () => {
+      // In-flight lock: prevents TWO concurrent AI pipelines from running for
+      // the same user, which would otherwise produce duplicate replies (e.g.
+      // both a short refusal AND a long memory-dump in the same minute — the
+      // exact bug reported 2026-05-29). 30s TTL covers the slowest realistic
+      // turn; release in finally so the next turn isn't blocked.
+      // Failure-open: if Redis is down, proceed without the lock rather than
+      // dropping the user's message entirely.
+      const inflightKey = `inflight:${normalized.userId}`;
+      let inflightAcquired = false;
+      if (deps.redis) {
+        try {
+          const ok = await deps.redis.set(inflightKey, '1', 'EX', 30, 'NX');
+          if (ok === null) {
+            req.log.warn({ userId: normalized.userId }, 'webhook.inflight_skip');
+            return;
+          }
+          inflightAcquired = true;
+        } catch (err) {
+          req.log.warn({ err: (err as Error).message }, 'webhook.inflight_lock_failed_proceeding');
+        }
+      }
+
       try {
         // Coalesce rapid consecutive text messages (corrections, continuations).
         // If this message is absorbed into a pending window, exit early — the
@@ -201,6 +224,30 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           }
         }
 
+        // ── Scope guard ──────────────────────────────────────────────────────
+        // Off-topic queries (politics, war, finance, coding, sports, etc.) get
+        // a short canned boundary response. This runs BEFORE the AI pipeline
+        // so memory retrieval, context summarization, and the orchestrator
+        // never see the message — preventing leaks like
+        //   User: "Will Trump attack Iran?"
+        //   Grace: "I know you're on Ozempic, working towards your weight loss…"
+        // Text-only: media (food/body photos, voice notes) is always in-scope.
+        if (normalized.type === 'text') {
+          const scope = classifyScope(normalized.text);
+          if (scope.blocked) {
+            req.log.info(
+              { userId: normalized.userId, category: scope.category, matched: scope.matched },
+              'webhook.scope_blocked',
+            );
+            await deps.sender.send({
+              to: normalized.userId,
+              channel: normalized.channel,
+              body: scope.response!,
+            });
+            return;
+          }
+        }
+
         const result = await withRetry(() => deps.ai.handleMessage(normalized), {
           attempts: 2,
           delayMs: 2000,
@@ -229,6 +276,13 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         await deps.sender
           .send({ to: normalized.userId, channel: normalized.channel, body: fallback })
           .catch(() => null);
+      } finally {
+        // Release the in-flight lock so this user's next message isn't blocked.
+        // Best-effort: a transient Redis failure here is fine because the lock
+        // would expire on its own after 30s.
+        if (inflightAcquired && deps.redis) {
+          await deps.redis.del(inflightKey).catch(() => undefined);
+        }
       }
     })();
   });

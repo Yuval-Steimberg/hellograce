@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Logger } from 'pino';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@grace/shared';
-import { PromptOptimizer, parseAdditionsResponse } from './prompt-optimizer.js';
+import { PromptOptimizer, parseAdditionsResponse, buildDeterministicAdditions } from './prompt-optimizer.js';
 import type { OptimizerRunReport } from './prompt-optimizer.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -169,6 +169,60 @@ describe('parseAdditionsResponse', () => {
   });
 });
 
+// ─── buildDeterministicAdditions (last-resort, no-LLM fallback) ──────────────
+
+describe('buildDeterministicAdditions', () => {
+  it('returns null when there are no negative samples', () => {
+    expect(buildDeterministicAdditions([])).toBeNull();
+  });
+
+  it('builds one rule per unique 👎 response with verbatim ✗ quote', () => {
+    const result = buildDeterministicAdditions([
+      { user_message: 'how much protein in salmon', assistant_message: 'I cannot help with that without more info.', comment: 'just estimate it' },
+      { user_message: 'what about chicken', assistant_message: 'I need more details about your meal.', comment: null },
+    ]);
+    expect(result).not.toBeNull();
+    expect(result!.additions).toContain('I cannot help with that without more info');
+    expect(result!.additions).toContain('I need more details about your meal');
+    expect(result!.additions).toContain('just estimate it');
+  });
+
+  it('deduplicates near-identical Grace responses', () => {
+    const result = buildDeterministicAdditions([
+      { user_message: 'q1', assistant_message: 'The same boring fallback response that fired twice.', comment: null },
+      { user_message: 'q2', assistant_message: 'The same boring fallback response that fired twice.', comment: null },
+      { user_message: 'q3', assistant_message: 'A different bad response.', comment: null },
+    ]);
+    const ruleCount = (result!.additions.match(/Never repeat/g) ?? []).length;
+    expect(ruleCount).toBe(2); // duplicates collapsed
+  });
+
+  it('caps output at 10 rules even with many samples', () => {
+    const samples = Array.from({ length: 25 }, (_, i) => ({
+      user_message: `user ${i}`,
+      assistant_message: `Unique bad response number ${i} that should each become a rule.`,
+      comment: null,
+    }));
+    const result = buildDeterministicAdditions(samples);
+    const ruleCount = (result!.additions.match(/Never repeat/g) ?? []).length;
+    expect(ruleCount).toBe(10);
+  });
+
+  it('returns null if all samples have empty assistant_message', () => {
+    expect(buildDeterministicAdditions([
+      { user_message: 'q', assistant_message: '', comment: null },
+      { user_message: 'q', assistant_message: null, comment: null },
+    ])).toBeNull();
+  });
+
+  it('includes user comment in the ✓ fix when present', () => {
+    const r = buildDeterministicAdditions([
+      { user_message: 'q', assistant_message: 'Bad answer.', comment: 'just say roughly X grams' },
+    ]);
+    expect(r!.additions).toMatch(/just say roughly X grams/);
+  });
+});
+
 // ─── Full optimizer run — skipped paths ─────────────────────────────────────
 
 describe('PromptOptimizer — skipped paths', () => {
@@ -201,30 +255,50 @@ describe('PromptOptimizer — skipped paths', () => {
     expect(report.stats.totalMessages).toBe(5);
   });
 
-  it('skips when Gemini returns unparseable JSON', async () => {
+  it('falls back to deterministic additions when ALL Gemini attempts return unparseable JSON', async () => {
+    // With 1+ negative samples, the deterministic builder kicks in after the
+    // 3 LLM attempts all fail. Optimizer should NOT skip — it should activate
+    // (or save as draft) using the verbatim 👎 quotes as rules.
     const pool = buildPool([
       { pattern: 'FROM prompts WHERE active', rows: [{ content: BASE_PROMPT }] },
-      { pattern: 'f.rating = -1', rows: [{ assistant_message: 'bad response', user_message: 'why?', comment: null, rating: -1 }] },
+      { pattern: 'f.rating = -1', rows: [{ assistant_message: 'I cannot help with that without more info.', user_message: 'how much protein in salmon', comment: 'just estimate it', rating: -1 }] },
       { pattern: 'f.rating = 1', rows: [] },
       { pattern: 'ILIKE', rows: [{ count: '0' }] },
       { pattern: "role = 'user' AND created_at", rows: [{ count: '20' }] },
     ]);
-    const report = await runOptimizer(pool, new MockLLM('this is not json at all'));
-    expect(report.status).toBe('skipped_generation_failed');
-    expect(report.activated).toBe(false);
+    // All 3 LLM attempts return garbage → deterministic fallback kicks in.
+    const report = await runOptimizer(pool, new MockLLM('garbage1', 'garbage2', 'garbage3'));
+    expect(report.status).not.toBe('skipped_generation_failed');
+    expect(report.analysis).toMatch(/Gemini unavailable.*deterministically/i);
   });
 
-  it('skips when generated additions are too short (< 20 chars)', async () => {
+  it('skips_generation_failed only when Gemini fails AND no negative samples exist', async () => {
+    // Without 👎 samples there's nothing for the deterministic builder to use,
+    // so we correctly return skipped_generation_failed.
     const pool = buildPool([
       { pattern: 'FROM prompts WHERE active', rows: [{ content: BASE_PROMPT }] },
-      { pattern: 'f.rating = -1', rows: [{ assistant_message: 'bad', user_message: 'q', comment: null, rating: -1 }] },
+      { pattern: 'f.rating = -1', rows: [] }, // no negative samples
+      { pattern: 'f.rating = 1', rows: [{ assistant_message: 'great', user_message: 'thx', comment: null, rating: 1 }] },
+      { pattern: 'ILIKE', rows: [{ count: '0' }] },
+      { pattern: "role = 'user' AND created_at", rows: [{ count: '20' }] },
+    ]);
+    const report = await runOptimizer(pool, new MockLLM('garbage1', 'garbage2', 'garbage3'));
+    expect(report.status).toBe('skipped_generation_failed');
+  });
+
+  it('falls back to deterministic when all LLM attempts return too-short additions, with negative samples present', async () => {
+    // 3 short LLM attempts all fail the MIN_ADDITIONS_LENGTH check → deterministic builder activates.
+    const pool = buildPool([
+      { pattern: 'FROM prompts WHERE active', rows: [{ content: BASE_PROMPT }] },
+      { pattern: 'f.rating = -1', rows: [{ assistant_message: 'A long enough bad response that the builder will quote.', user_message: 'q', comment: null, rating: -1 }] },
       { pattern: 'f.rating = 1', rows: [] },
       { pattern: 'ILIKE', rows: [{ count: '0' }] },
       { pattern: "role = 'user' AND created_at", rows: [{ count: '20' }] },
     ]);
-    const shortAdditions = JSON.stringify({ analysis: 'minor', additions: '- ok.' }); // <20 chars
-    const report = await runOptimizer(pool, new MockLLM(shortAdditions));
-    expect(report.status).toBe('skipped_generation_failed');
+    const shortAdditions = JSON.stringify({ analysis: 'minor', additions: '- ok.' });
+    const report = await runOptimizer(pool, new MockLLM(shortAdditions, shortAdditions, shortAdditions));
+    expect(report.status).not.toBe('skipped_generation_failed');
+    expect(report.analysis).toMatch(/deterministically/i);
   });
 });
 

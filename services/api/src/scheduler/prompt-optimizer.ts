@@ -549,33 +549,38 @@ Respond with ONLY the JSON object.`,
       },
     ];
 
-    // Three-attempt strategy with increasing simplicity:
-    // 1. Default model + thinking disabled + full prompt
-    // 2. Default model + thinking enabled + huge budget + short prompt
-    // 3. Hardcoded minimal JSON prompt as absolute last resort
+    // Four-attempt strategy with increasing simplicity. All LLM attempts force
+    // gemini-2.0-flash — gemini-2.5-flash's JSON+thinking output is unreliable
+    // for this prompt (~5% of nightly runs return empty/garbage text). 2.0-flash
+    // is rock-solid for structured JSON. Final attempt is deterministic — no
+    // LLM call at all — so the optimizer ALWAYS produces a usable result when
+    // 👎 feedback exists, even during a full Gemini outage.
+
+    const OPTIMIZER_MODEL = 'gemini-2.0-flash';
 
     const attempts: Array<{ label: string; generate: () => Promise<{ text: string; finishReason?: string }> }> = [
       {
-        label: 'primary (default model, no thinking)',
+        label: 'primary (gemini-2.0-flash, full prompt, json)',
         generate: () => this.llm.generate({
           messages: buildMessages(negativeBlock, false),
           temperature: 0.2,
-          maxOutputTokens: 16384,
+          maxOutputTokens: 8192,
           responseFormat: 'json',
-          disableThinking: true,
+          model: OPTIMIZER_MODEL,
         }),
       },
       {
-        label: 'retry (default model, thinking enabled, short prompt)',
+        label: 'retry (gemini-2.0-flash, short prompt, json)',
         generate: () => this.llm.generate({
           messages: buildMessages(negativeBlock, true),
           temperature: 0.1,
-          maxOutputTokens: 32768,
+          maxOutputTokens: 8192,
           responseFormat: 'json',
+          model: OPTIMIZER_MODEL,
         }),
       },
       {
-        label: 'last-resort (minimal prompt, text mode)',
+        label: 'last-resort (gemini-2.0-flash, minimal prompt, text mode)',
         generate: () => this.llm.generate({
           messages: [{
             role: 'user',
@@ -583,6 +588,7 @@ Respond with ONLY the JSON object.`,
           }],
           temperature: 0.0,
           maxOutputTokens: 4096,
+          model: OPTIMIZER_MODEL,
         }),
       },
     ];
@@ -608,6 +614,15 @@ Respond with ONLY the JSON object.`,
       } catch (err) {
         this.logger.warn({ attempt: attempt.label, err }, 'prompt_optimizer.attempt_error');
       }
+    }
+
+    // Deterministic last-resort: build additions directly from negative samples.
+    // No LLM. Guarantees we never return null when there's real 👎 feedback —
+    // the worst case is a simple "Never say <verbatim>" rule per sample, which
+    // is still actionable. This kicks in only when ALL 3 LLM attempts failed.
+    if (!parsed && signals.negativeSamples.length > 0) {
+      this.logger.warn('prompt_optimizer.falling_back_to_deterministic');
+      parsed = buildDeterministicAdditions(signals.negativeSamples);
     }
 
     if (!parsed) {
@@ -703,6 +718,57 @@ function emptyStats(): OptimizerRunReport['stats'] {
     positiveCount: 0,
     fallbackCount: 0,
     satisfactionPct: null,
+  };
+}
+
+/**
+ * Last-resort deterministic additions builder. Runs when all LLM attempts
+ * failed (Gemini outage, JSON garble, persistent thinking-token issues).
+ * Produces ONE rule per unique 👎 sample by extracting the verbatim Grace
+ * response as the ✗ quote and pairing it with the user's comment (or a
+ * generic ✓ directive when no comment exists). No LLM call — this MUST
+ * always succeed when negative samples exist.
+ *
+ * Quality bar: lower than LLM output but always actionable. Worst case is
+ * "Never repeat: <verbatim quote>" — still better than the empty alert
+ * users were seeing in production.
+ */
+export function buildDeterministicAdditions(
+  negativeSamples: Array<{ user_message: string | null; assistant_message: string | null; comment: string | null }>,
+): { additions: string; analysis: string } | null {
+  if (negativeSamples.length === 0) return null;
+
+  // Dedup by the first 80 chars of Grace's response — collapse near-duplicates.
+  const seen = new Set<string>();
+  const rules: string[] = [];
+
+  for (const s of negativeSamples) {
+    const asst = (s.assistant_message ?? '').trim();
+    if (!asst) continue;
+    // Trim to a quotable snippet — first sentence or 150 chars, whichever shorter.
+    const firstSentence = asst.split(/(?<=[.!?])\s/)[0] ?? asst;
+    const quote = (firstSentence.length > 0 ? firstSentence : asst).slice(0, 150).trim();
+    const dedupKey = quote.slice(0, 80).toLowerCase();
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+
+    const userMsg = (s.user_message ?? '').trim().slice(0, 80);
+    const comment = (s.comment ?? '').trim().slice(0, 200);
+    const fix = comment
+      ? `Address the user's actual point: "${comment}"`
+      : 'Rewrite this response to address what the user actually asked.';
+
+    const userCtx = userMsg ? `When the user says something like "${userMsg}":\n  ` : '';
+    rules.push(`- ${userCtx}✗ Never repeat: "${quote}"\n  ✓ ${fix}`);
+
+    if (rules.length >= 10) break; // Cap at 10 rules — matches LLM output limit
+  }
+
+  if (rules.length === 0) return null;
+
+  return {
+    analysis: `Gemini unavailable for behavioral synthesis — generated ${rules.length} rule(s) deterministically from ${negativeSamples.length} 👎 sample(s). Each rule cites the verbatim failing response.`,
+    additions: rules.join('\n\n'),
   };
 }
 

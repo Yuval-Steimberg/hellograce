@@ -130,6 +130,43 @@ describe('checkBannedPhrases', () => {
     const v = checkBannedPhrases('That sounds rough. Want to talk about it?');
     expect(v).toHaveLength(0);
   });
+
+  // ── Model-identity leak protection (2026-05-29 production bug) ──────────────
+  it('flags "I\'m a large language model"', () => {
+    expect(checkBannedPhrases("I'm a large language model and my interactions happen across many different applications and services.").length).toBeGreaterThan(0);
+  });
+
+  it('flags "I don\'t have a specific number of users" (the exact screenshot phrase)', () => {
+    expect(checkBannedPhrases("I don't have a specific number of users I can share.").length).toBeGreaterThan(0);
+  });
+
+  it('flags "developed by Google/OpenAI/Anthropic"', () => {
+    expect(checkBannedPhrases('I was developed by Google.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('a model developed by OpenAI').length).toBeGreaterThan(0);
+  });
+
+  it('flags "I\'m Gemini/GPT/Claude"', () => {
+    expect(checkBannedPhrases("I'm Gemini, here to help.").length).toBeGreaterThan(0);
+    expect(checkBannedPhrases("I'm powered by GPT.").length).toBeGreaterThan(0);
+  });
+
+  it('flags "my interactions happen across many different applications"', () => {
+    expect(checkBannedPhrases('My interactions happen across many different applications and services.').length).toBeGreaterThan(0);
+  });
+
+  it('flags "across many different applications and services"', () => {
+    expect(checkBannedPhrases('I operate across multiple different services.').length).toBeGreaterThan(0);
+  });
+
+  it('flags "I am an AI assistant developed by..."', () => {
+    expect(checkBannedPhrases('I am an AI assistant developed by a tech company.').length).toBeGreaterThan(0);
+  });
+
+  it('does NOT flag normal Grace identity statements', () => {
+    // Grace can say she's Grace, a companion, etc. — just not the model details.
+    expect(checkBannedPhrases("I'm Grace, here to support your GLP-1 journey.")).toHaveLength(0);
+    expect(checkBannedPhrases("I'm your companion for the medication journey.")).toHaveLength(0);
+  });
 });
 
 describe('checkLinkPlaceholder', () => {

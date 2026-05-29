@@ -104,6 +104,27 @@ export class Scheduler {
     const sleepBaseMin = sHour * 60 + sMin;
     const nowMin = hour * 60 + minute;
 
+    // ── Post-injection followup (any day, outside quiet hours).
+    // Lives OUTSIDE handleInjectionFlow because evening injectors who reply
+    // "Done" at 7-8pm have their 3h window fall in quiet hours (21:00+).
+    // The next-morning tick is NOT an injection day, so it would never run
+    // handleInjectionFlow. Hoisting this check up means the followup fires
+    // on the next available day-time tick after the 3h window opens.
+    if (
+      user.injection_flow_stage === 'done_confirmed' &&
+      user.injection_done_at
+    ) {
+      const elapsed =
+        (Date.now() - new Date(user.injection_done_at).getTime()) / 3_600_000;
+      if (elapsed >= 3) {
+        await this.sendAndRecord(user, 'injection_followup');
+        await this.deps.users.setInjectionStage(user.phone, 'followup_sent', {
+          injection_evening_followup_due: true,
+        });
+        return;
+      }
+    }
+
     // ── Injection day flow (runs any day matching injection_day)
     if (user.injection_day && user.injection_day === DAYS[dayOfWeek]) {
       await this.handleInjectionFlow(user, hour);
@@ -242,6 +263,26 @@ export class Scheduler {
     const injectionTargetMin = wakeBaseMin + injectionOffset;
     const nowMin = hour * 60 + minute;
 
+    // Safety reset: if the previous injection flow never completed (user
+    // never replied "Done"), stage stays stuck at 'morning_sent' indefinitely
+    // and blocks next week's injection morning from firing. Reset to null
+    // once it's been >24h — today is a fresh injection day for this user.
+    if (
+      (stage === 'morning_sent' || stage === 'done_confirmed') &&
+      user.injection_flow_started_at
+    ) {
+      const hoursSinceStart =
+        (Date.now() - new Date(user.injection_flow_started_at).getTime()) / 3_600_000;
+      if (hoursSinceStart >= 24) {
+        await this.deps.users.setInjectionStage(user.phone, null, {
+          injection_flow_started_at: null,
+          injection_done_at: null,
+        });
+        // Tick will reach the !stage branch below on the next minute.
+        return;
+      }
+    }
+
     // Stage 0: Send injection morning message during randomized morning window
     if (!stage && nowMin >= injectionTargetMin) {
       await this.sendAndRecord(user, 'injection_morning');
@@ -251,29 +292,16 @@ export class Scheduler {
       return;
     }
 
-    // Stage 1: Send followup 3 hours after morning message
-    if (stage === 'morning_sent' && user.injection_flow_started_at) {
-      const elapsed = (Date.now() - new Date(user.injection_flow_started_at).getTime()) / 3_600_000;
-      if (elapsed >= 3) {
-        await this.sendAndRecord(user, 'injection_followup');
-        await this.deps.users.setInjectionStage(user.phone, 'followup_sent', {
-          injection_evening_followup_due: true,
-        });
-      }
-    }
-
-    // 'done_confirmed' is set when user replies 'done' in the webhook handler
-    if (stage === 'done_confirmed') {
-      const elapsed = user.injection_done_at
-        ? (Date.now() - new Date(user.injection_done_at).getTime()) / 3_600_000
-        : 3;
-      if (elapsed >= 3) {
-        await this.sendAndRecord(user, 'injection_followup');
-        await this.deps.users.setInjectionStage(user.phone, 'followup_sent', {
-          injection_evening_followup_due: true,
-        });
-      }
-    }
+    // NOTE: Followup is GATED on user replying "Done" (webhook handler sets
+    // stage='done_confirmed' + injection_done_at). It does NOT fire 3h after
+    // the morning reminder — that was the pre-2026-05-29 bug, which caused
+    // the post-shot check-in to land at 10:29am for users who hadn't
+    // injected yet (e.g. evening injectors).
+    //
+    // The done_confirmed → injection_followup transition is now handled in
+    // processUser() so it fires on ANY day, not just the injection day —
+    // critical for evening injectors whose 3h window crosses into quiet
+    // hours and defers to the next morning's tick.
   }
 
   private async sendAndRecord(user: GraceUser, type: Parameters<MessageGenerator['generate']>[0], opts?: GenerateOpts): Promise<void> {

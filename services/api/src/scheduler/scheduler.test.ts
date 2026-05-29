@@ -471,7 +471,11 @@ describe('Scheduler — injection day flow', () => {
     expect(h.user.injection_flow_stage).toBe('morning_sent');
   });
 
-  it('fires injection_followup ~3h after morning_sent (no done reply)', async () => {
+  it('does NOT fire injection_followup just because 3h elapsed — requires user to reply "Done"', async () => {
+    // Pre-2026-05-29 bug: followup fired 3h after the morning reminder even
+    // when the user hadn't injected yet. Evening injectors got a "Post-shot
+    // check-in" at 10:29am while they were still planning to inject after
+    // dinner. The followup is now gated on stage='done_confirmed'.
     const u = makeUser({
       wake_time: '08:00',
       timezone: 'America/New_York',
@@ -481,11 +485,65 @@ describe('Scheduler — injection day flow', () => {
     });
     const h = buildHarness(u);
 
-    // 3h later = 12:00 local NY = 16:00 UTC
+    // 3h later — would have fired before the fix.
     setUtc(2026, 5, 19, 16, 0);
+    await tick(h.scheduler);
+    // Even 6h later, still no followup without "Done" reply.
+    setUtc(2026, 5, 19, 19, 0);
+    await tick(h.scheduler);
+
+    expect(h.generateCalls.filter((c) => c.type === 'injection_followup').length).toBe(0);
+    expect(h.user.injection_flow_stage).toBe('morning_sent');
+  });
+
+  it('fires injection_followup 3h after user replied "Done" (evening injection)', async () => {
+    // User injects at 7pm and replies "Done". Followup should fire 3h later
+    // (10pm), but quiet hours start at 21:00 → deferred to next morning.
+    const u = makeUser({
+      wake_time: '08:00',
+      timezone: 'America/New_York',
+      injection_day: 'Tuesday',
+      injection_flow_stage: 'done_confirmed',
+      injection_flow_started_at: new Date('2026-05-19T13:00:00Z'), // 09:00 NY (morning ack)
+      injection_done_at: new Date('2026-05-19T23:00:00Z'),         // 19:00 NY (user replied Done)
+    });
+    const h = buildHarness(u);
+
+    // 22:00 NY = quiet hours, must NOT fire even though 3h has elapsed.
+    setUtc(2026, 5, 20, 2, 0);
+    await tick(h.scheduler);
+    expect(h.generateCalls.filter((c) => c.type === 'injection_followup').length).toBe(0);
+
+    // Next morning 08:30 NY = 12:30 UTC, out of quiet hours, elapsed > 3h.
+    setUtc(2026, 5, 20, 12, 30);
     await tick(h.scheduler);
     expect(h.generateCalls.filter((c) => c.type === 'injection_followup').length).toBe(1);
     expect(h.user.injection_flow_stage).toBe('followup_sent');
+  });
+
+  it('safety-resets a stuck morning_sent stage after 24h so next week fires', async () => {
+    // User never replied "Done" last week → stage stuck at morning_sent.
+    // Without the reset, this would block next Tuesday's injection_morning
+    // forever because the !stage guard would never be true.
+    const u = makeUser({
+      wake_time: '08:00',
+      timezone: 'America/New_York',
+      injection_day: 'Tuesday',
+      injection_flow_stage: 'morning_sent',
+      injection_flow_started_at: new Date('2026-05-12T13:00:00Z'), // last Tuesday
+    });
+    const h = buildHarness(u);
+
+    // This Tuesday 09:00 NY = 13:00 UTC. First tick resets the stale stage.
+    setUtc(2026, 5, 19, 13, 0);
+    await tick(h.scheduler);
+    expect(h.user.injection_flow_stage).toBeNull();
+
+    // Second tick fires injection_morning with clean state.
+    setUtc(2026, 5, 19, 13, 1);
+    await tick(h.scheduler);
+    expect(h.generateCalls.filter((c) => c.type === 'injection_morning').length).toBe(1);
+    expect(h.user.injection_flow_stage).toBe('morning_sent');
   });
 
   it('fires injection_dayafter the morning following injection day', async () => {

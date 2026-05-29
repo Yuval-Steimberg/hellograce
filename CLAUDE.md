@@ -291,6 +291,34 @@ curl -X POST http://localhost:3001/chat/send \
 
 ---
 
+## Canonical deploy workflow
+
+**Always use this exact sequence to deploy to production. Do not improvise alternatives.**
+
+The flow: work on a feature branch → open a PR → merge via GitHub (squash) → user runs the command below to pull latest main and deploy.
+
+```bash
+cd "$(git -C ~/Grace rev-parse --show-toplevel 2>/dev/null || find ~ -maxdepth 4 -type d -name Grace -exec test -d '{}/.git' \; -print 2>/dev/null | head -1)"
+git fetch origin
+git checkout main
+git pull origin main
+fly deploy --app grace-api --config services/api/fly.toml --no-cache
+```
+
+Why each piece exists:
+- `cd "$(...)"` — the user's repo isn't at `~/Grace`; this finds the real Git toplevel wherever it lives. Failing silently in zsh was a recurring bug.
+- `git fetch origin` — refreshes remote-tracking refs. Without this, `git merge` and `git pull` operate on stale local copies of remote branches and silently say "Already up to date".
+- `git pull origin main` — fast-forwards local main to remote HEAD (which now includes the squash-merged PR).
+- `--no-cache` — Depot's build cache aggressively reuses layers keyed on file content, but quirks have caused "all CACHED" deploys to ship stale code. `--no-cache` adds ~3 minutes but guarantees the new code compiles into the image. Use it on every production deploy.
+
+**Verification after deploy:**
+- `git pull origin main` should report `Updating XXXX..YYYY  Fast-forward` (NOT "Already up to date")
+- The build should run `[build 5/5] RUN pnpm ... build` for ~11s (NOT `CACHED`)
+- `curl https://grace-api.fly.dev/health` returns `{"status":"ok",...}`
+- `fly logs --app grace-api | grep <log-tag-for-the-new-code>` shows the new path firing on real traffic
+
+---
+
 ## Accuracy / eval harness
 
 Lives in `services/api/eval/`. Runs every case through real Gemini + mocked tools, grades against expected intent / tool calls / required + forbidden phrases / length bounds, writes JSON to `eval/results/<timestamp>.json`.

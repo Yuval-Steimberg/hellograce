@@ -261,7 +261,10 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bi'?(?:m| am)\s+(?:powered\s+by\s+|based\s+on\s+|running\s+on\s+)?(gemini|gpt|chatgpt|claude|llama|mistral|palm|bard)\b/i, reason: 'Model name leak — never identify the underlying model' },
   { pattern: /\bi'?(?:m| am)\s+(?:integrated\s+into|deployed\s+as|available\s+(?:in|on))\s+(?:various|multiple|many)\s+(applications|services|platforms|products)\b/i, reason: 'Platform-integration leak — Grace exists only as Grace' },
   { pattern: /\bmy\s+(training|training\s+data|knowledge\s+cutoff|model|weights|parameters)\b/i, reason: 'Training/model internals leak, banned' },
-  { pattern: /\bi\s+don'?t\s+have\s+(?:a\s+)?(?:specific\s+)?count\s+of\s+(?:["']?users["']?|people|members)/i, reason: 'Discussing user counts at all — refuse via scope guard, never engage' },
+  { pattern: /\bi\s+don'?t\s+have\s+(?:a\s+)?(?:specific\s+)?(?:count|number|figure|total|tally)\s+of\s+(?:["']?users["']?|people|members|customers)/i, reason: 'Discussing user counts at all — refuse via scope guard, never engage' },
+  { pattern: /\bmy\s+(?:interactions?|conversations?|responses?)\s+(?:happen|occur|take\s+place|are)\s+(?:across|on|in|over)\s+(?:many|multiple|various|different|several)\b/i, reason: 'Platform-spread leak — Grace exists only as Grace, not across platforms' },
+  { pattern: /\b(?:across|on|in|over)\s+(?:many|multiple|various|several)\s+(?:different\s+)?(?:applications?|apps?|services?|platforms?|products?)\b/i, reason: 'Platform-spread leak — never describe being deployed across platforms' },
+  { pattern: /\bi'?(?:m| am)\s+(?:an?\s+)?(?:ai\s+|virtual\s+|digital\s+)?(?:assistant|model|bot|program|system|tool)\s+(?:developed|built|created|made|trained|powered|designed|operated)\b/i, reason: 'AI self-description leak — Grace is Grace, not "an AI assistant developed by…"' },
 
   // Asking for clarification on food logs instead of just logging — generalized
   { pattern: /\bhow much (protein|calories?|carbs?|fat|fiber|sugar) (was |were |is )?in (your |the |that )/i, reason: 'Asking macro detail — just estimate and log' },

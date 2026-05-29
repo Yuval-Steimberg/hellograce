@@ -31,10 +31,12 @@ import { Scheduler } from './scheduler/scheduler.js';
 import { PromptOptimizer, type OptimizerRunReport, type SyntheticFeedback } from './scheduler/prompt-optimizer.js';
 import { AppError } from './errors.js';
 import { initFieldEncryption } from './crypto/field-encrypt.js';
+import { initStripe } from './services/stripe.service.js';
 
 async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Promise<void> }> {
   const env = loadEnv();
   initFieldEncryption(env.FIELD_ENCRYPTION_KEY);
+  initStripe(env.STRIPE_SECRET_KEY);
   const logger = createLogger({ level: env.LOG_LEVEL, pretty: env.NODE_ENV !== 'production' });
 
   const pool = createPool(env);

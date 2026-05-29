@@ -227,6 +227,26 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       req.log.warn({ err, phone }, 'onboard.welcome_send.failed');
     }
 
+    // Create a Stripe customer at signup so every Grace user is visible in
+    // the Stripe dashboard from day 1 (not just paid users). This lets admin
+    // see / search every user in Stripe regardless of trial status, and
+    // ensures the customer_id is already in place when they upgrade.
+    // Fire-and-forget: failure must never break onboarding.
+    void (async () => {
+      try {
+        const { ensureStripeCustomer } = await import('../services/stripe.service.js');
+        await ensureStripeCustomer({
+          graceUserId: user.id,
+          phone,
+          firstName: b.firstName,
+          medication: b.medication,
+        });
+        req.log.info({ phone, graceUserId: user.id }, 'onboard.stripe_customer_ensured');
+      } catch (err) {
+        req.log.warn({ err: (err as Error).message, phone }, 'onboard.stripe_customer.failed');
+      }
+    })();
+
     req.log.info({ phone, medication: b.medication }, 'user.onboarded');
     return { ok: true, userId: user.id, phone: user.phone };
   });

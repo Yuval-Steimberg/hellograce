@@ -12,7 +12,17 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { MessageSquare, Scale, Activity, AlertTriangle } from 'lucide-react';
+import { MessageSquare, Scale, Activity, AlertTriangle, CreditCard, ExternalLink } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface Props {
   user: AdminUser | null;
@@ -128,6 +138,52 @@ export default function UserDrawer({ user, onClose }: Props) {
     onError: () => toast.error('Delete failed'),
   });
 
+  // ─── Stripe billing ──────────────────────────────────────────────────────
+  // Pulled on demand when the drawer opens. Failures render an inline "Stripe
+  // not configured / no customer found" message instead of throwing — the
+  // rest of the drawer must still work for trial/comp users without billing.
+  const { data: stripeData, isLoading: stripeLoading, error: stripeError } = useQuery({
+    queryKey: ['user-stripe', user?.phone],
+    queryFn: () => api.stripeBilling(user!.phone),
+    enabled: !!user,
+    retry: false,
+  });
+
+  const cancelStripeMutation = useMutation({
+    mutationFn: () => api.cancelStripeSubscription(user!.phone),
+    onSuccess: () => {
+      toast.success('Stripe subscription will cancel at period end');
+      void qc.invalidateQueries({ queryKey: ['user-stripe', user?.phone] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Cancel failed'),
+  });
+
+  // Confirmation dialog for paid/pro toggle-OFF: ask whether to also cancel
+  // the Stripe subscription. Two choices: just override (toggle DB only) or
+  // cancel Stripe too. Cancel button to abort entirely.
+  const [pendingToggle, setPendingToggle] = useState<null | { field: 'is_paid' | 'is_pro'; label: string }>(null);
+
+  function handleAccountToggle(field: 'is_paid' | 'is_pro' | 'paused' | 'blocked', newValue: boolean) {
+    // Toggle ON: just flip the DB field. Toggle OFF for paid/pro: ask first.
+    if (newValue || (field !== 'is_paid' && field !== 'is_pro')) {
+      toggleMutation.mutate({ [field]: newValue });
+      return;
+    }
+    setPendingToggle({
+      field,
+      label: field === 'is_paid' ? 'Paid subscriber' : 'Pro subscriber',
+    });
+  }
+
+  function resolveToggleOff(cancelStripe: boolean) {
+    if (!pendingToggle) return;
+    toggleMutation.mutate({ [pendingToggle.field]: false });
+    if (cancelStripe) {
+      cancelStripeMutation.mutate();
+    }
+    setPendingToggle(null);
+  }
+
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   function handleSaveProfile() {
@@ -206,13 +262,13 @@ export default function UserDrawer({ user, onClose }: Props) {
                         ['is_pro', 'Pro subscriber', 'purple'],
                         ['paused', 'Paused (no proactive messages)', 'amber'],
                         ['blocked', 'Blocked (ignores all messages)', 'red'],
-                      ] as [keyof typeof detail, string, string][]).map(([field, label]) => (
+                      ] as ['is_paid' | 'is_pro' | 'paused' | 'blocked', string, string][]).map(([field, label]) => (
                         <div key={field} className="flex items-center justify-between">
                           <Label className="text-sm">{label}</Label>
                           <Switch
                             checked={!!(detail as Record<string, unknown>)?.[field]}
-                            onCheckedChange={(val) => toggleMutation.mutate({ [field]: val })}
-                            disabled={toggleMutation.isPending}
+                            onCheckedChange={(val) => handleAccountToggle(field, val)}
+                            disabled={toggleMutation.isPending || cancelStripeMutation.isPending}
                           />
                         </div>
                       ))}
@@ -310,6 +366,93 @@ export default function UserDrawer({ user, onClose }: Props) {
                     <Button className="mt-4 w-full" onClick={handleSaveProfile} disabled={updateMutation.isPending}>
                       {updateMutation.isPending ? 'Saving…' : 'Save profile'}
                     </Button>
+                  </section>
+
+                  <Separator />
+
+                  {/* Stripe billing — live view (read-only, source of truth) */}
+                  <section>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3 flex items-center gap-1.5">
+                      <CreditCard className="h-3.5 w-3.5" /> Stripe billing
+                    </p>
+                    {stripeLoading ? (
+                      <p className="text-sm text-muted-foreground">Loading Stripe data…</p>
+                    ) : stripeError ? (
+                      <p className="text-xs text-muted-foreground">
+                        {(stripeError as Error).message?.includes('not configured')
+                          ? 'Stripe not configured on the API server.'
+                          : `Failed to load: ${(stripeError as Error).message}`}
+                      </p>
+                    ) : !stripeData?.customer_id ? (
+                      <p className="text-sm text-muted-foreground">
+                        No Stripe customer yet — user is on trial or hasn't started checkout.
+                      </p>
+                    ) : (
+                      <div className="space-y-2 text-sm">
+                        {stripeData.subscription ? (
+                          <>
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Status</span>
+                              <Badge variant={
+                                stripeData.subscription.status === 'active' ? 'default'
+                                  : stripeData.subscription.status === 'trialing' ? 'secondary'
+                                  : stripeData.subscription.status === 'past_due' ? 'destructive'
+                                  : 'outline'
+                              } className="capitalize">
+                                {stripeData.subscription.status.replace(/_/g, ' ')}
+                              </Badge>
+                            </div>
+                            {stripeData.subscription.plan_name && (
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Plan</span>
+                                <span>{stripeData.subscription.plan_name}</span>
+                              </div>
+                            )}
+                            {stripeData.subscription.amount !== null && (
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Amount</span>
+                                <span>
+                                  {(stripeData.subscription.amount / 100).toFixed(2)}{' '}
+                                  {stripeData.subscription.currency?.toUpperCase()}
+                                </span>
+                              </div>
+                            )}
+                            {stripeData.subscription.current_period_end && (
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">
+                                  {stripeData.subscription.cancel_at_period_end ? 'Cancels on' : 'Next billing'}
+                                </span>
+                                <span>
+                                  {formatDate(new Date(stripeData.subscription.current_period_end * 1000).toISOString())}
+                                </span>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No subscription on file.</p>
+                        )}
+                        {stripeData.payment_method && (
+                          <div className="flex justify-between pt-2 border-t">
+                            <span className="text-muted-foreground">Card</span>
+                            <span className="font-mono text-xs">
+                              {stripeData.payment_method.brand?.toUpperCase()} •••• {stripeData.payment_method.last4} (exp{' '}
+                              {String(stripeData.payment_method.exp_month).padStart(2, '0')}/{String(stripeData.payment_method.exp_year ?? '').slice(-2)})
+                            </span>
+                          </div>
+                        )}
+                        {stripeData.customer_dashboard_url && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full mt-2 h-8 text-xs"
+                            onClick={() => window.open(stripeData.customer_dashboard_url!, '_blank', 'noopener,noreferrer')}
+                          >
+                            <ExternalLink className="h-3 w-3 mr-1.5" />
+                            Open in Stripe Dashboard
+                          </Button>
+                        )}
+                      </div>
+                    )}
                   </section>
 
                   <Separator />
@@ -416,6 +559,41 @@ export default function UserDrawer({ user, onClose }: Props) {
           </Tabs>
         )}
       </SheetContent>
+      <AlertDialog
+        open={!!pendingToggle}
+        onOpenChange={(open) => { if (!open) setPendingToggle(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Turning off {pendingToggle?.label.toLowerCase()}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Cancel the Stripe subscription too? The user's billing record stays in Stripe but
+              renewal will be turned off at period end.
+              <br /><br />
+              <span className="text-foreground font-medium">Just override:</span> revokes access in Grace
+              only — Stripe keeps charging.
+              <br />
+              <span className="text-foreground font-medium">Cancel Stripe too:</span> revokes access AND
+              cancels the subscription in Stripe at period end.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel onClick={() => setPendingToggle(null)}>Never mind</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              onClick={() => resolveToggleOff(false)}
+            >
+              Just override
+            </AlertDialogAction>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => resolveToggleOff(true)}
+            >
+              Cancel Stripe too
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sheet>
   );
 }

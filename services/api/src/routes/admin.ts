@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { GRACE_SYSTEM_PROMPT } from '@grace/ai-core';
 import { UnauthorizedError, ValidationError } from '../errors.js';
 import { encryptField, decryptField } from '../crypto/field-encrypt.js';
+import { getBillingSnapshot, cancelSubscriptionAtPeriodEnd, isStripeEnabled, ensureStripeCustomer } from '../services/stripe.service.js';
 import type { Cache } from '../cache/cache.js';
 import type { LLMProvider } from '@grace/shared';
 import type { PromptOptimizer } from '../scheduler/prompt-optimizer.js';
@@ -574,6 +575,90 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     );
     if (!rowCount) throw new ValidationError('User not found');
     return { ok: true };
+  });
+
+  // ─── Stripe billing (admin) ──────────────────────────────────────────────────
+
+  /** Live Stripe billing snapshot for a user — subscription status, plan,
+   *  next billing, payment method on file. */
+  app.get('/admin/users/:phone/stripe', async (req, reply) => {
+    if (!isStripeEnabled()) {
+      reply.code(503);
+      return { error: 'Stripe not configured' };
+    }
+    const { phone } = req.params as { phone: string };
+    try {
+      const snapshot = await getBillingSnapshot(deps.pool, phone);
+      if (!snapshot) {
+        reply.code(404);
+        return { error: 'User not found' };
+      }
+      return snapshot;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      req.log.error({ err: msg, phone }, 'admin.stripe_info_failed');
+      reply.code(500);
+      return { error: `Stripe lookup failed: ${msg}` };
+    }
+  });
+
+  /** Backfill Stripe customers for all existing users who don't have one yet.
+   *  Runs idempotently — users that already exist in Stripe are skipped via
+   *  the search step inside ensureStripeCustomer. Use after deploying the
+   *  signup-time Stripe sync to bring trial users that pre-date this change
+   *  into the Stripe dashboard. */
+  app.post('/admin/stripe/backfill-customers', async (req, reply) => {
+    if (!isStripeEnabled()) {
+      reply.code(503);
+      return { error: 'Stripe not configured' };
+    }
+    const { rows } = await deps.pool.query<{ id: string; phone: string; first_name: string | null; medication: string | null }>(
+      `SELECT id, phone, first_name, medication FROM users
+       WHERE phone IS NOT NULL AND phone <> ''
+       ORDER BY created_at DESC
+       LIMIT 1000`,
+    );
+    let ensured = 0;
+    let failed = 0;
+    for (const u of rows) {
+      try {
+        await ensureStripeCustomer({
+          graceUserId: u.id,
+          phone: u.phone,
+          firstName: u.first_name ? decryptField(u.first_name) : undefined,
+          medication: u.medication ? decryptField(u.medication) : undefined,
+        });
+        ensured++;
+      } catch (err) {
+        req.log.warn({ err: (err as Error).message, phone: u.phone }, 'admin.stripe_backfill.user_failed');
+        failed++;
+      }
+    }
+    void auditLog(deps.pool, 'admin.stripe_backfill', req.ip);
+    return { ok: true, total: rows.length, ensured, failed };
+  });
+
+  /** Cancel the user's active Stripe subscription at period end. Idempotent. */
+  app.post('/admin/users/:phone/cancel-subscription', async (req, reply) => {
+    if (!isStripeEnabled()) {
+      reply.code(503);
+      return { error: 'Stripe not configured' };
+    }
+    const { phone } = req.params as { phone: string };
+    try {
+      const result = await cancelSubscriptionAtPeriodEnd(deps.pool, phone);
+      if (!result) {
+        reply.code(404);
+        return { error: 'No active subscription to cancel' };
+      }
+      void auditLog(deps.pool, 'admin.stripe_cancel_subscription', req.ip);
+      return { ok: true, ...result };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      req.log.error({ err: msg, phone }, 'admin.stripe_cancel_failed');
+      reply.code(500);
+      return { error: `Cancel failed: ${msg}` };
+    }
   });
 
   /** Permanently delete a user and all their data. */

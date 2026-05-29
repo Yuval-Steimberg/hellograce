@@ -123,6 +123,27 @@ export interface CheckIn {
   created_at: string;
 }
 
+export interface StripeBillingSnapshot {
+  customer_id: string | null;
+  customer_dashboard_url: string | null;
+  subscription: {
+    id: string;
+    status: 'active' | 'trialing' | 'past_due' | 'canceled' | 'unpaid' | 'incomplete' | 'incomplete_expired' | 'paused';
+    plan_name: string | null;
+    current_period_end: number | null;
+    amount: number | null;
+    currency: string | null;
+    cancel_at_period_end: boolean;
+    canceled_at: number | null;
+  } | null;
+  payment_method: {
+    brand: string | null;
+    last4: string | null;
+    exp_month: number | null;
+    exp_year: number | null;
+  } | null;
+}
+
 export interface WeightLog {
   weight: number;
   created_at: string;
@@ -390,6 +411,15 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ enabled }),
     }),
+
+  stripeBilling: (phone: string) =>
+    apiFetch<StripeBillingSnapshot>(`/admin/users/${encodeURIComponent(phone)}/stripe`),
+
+  cancelStripeSubscription: (phone: string) =>
+    apiFetch<{ ok: boolean; subscription_id: string; cancel_at: number | null }>(
+      `/admin/users/${encodeURIComponent(phone)}/cancel-subscription`,
+      { method: 'POST' },
+    ),
 
   onboard: (body: {
     firstName: string; phone: string; medication: string;

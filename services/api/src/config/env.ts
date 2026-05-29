@@ -45,6 +45,11 @@ const EnvSchema = z.object({
    *  Generate with: openssl rand -hex 32. When unset, encryption is disabled. */
   FIELD_ENCRYPTION_KEY: z.string().length(64).optional(),
 
+  /** Stripe secret key. When unset, admin Stripe-billing read/cancel routes
+   *  return 503; the rest of the API works normally. Production: set on Fly
+   *  via `fly secrets set STRIPE_SECRET_KEY=sk_live_...`. */
+  STRIPE_SECRET_KEY: z.string().optional(),
+
   /** Phase 5: USDA FoodData Central API key. When unset, log_food falls back
    *  to the legacy LLM-only macro estimate. Free signup at
    *  https://fdc.nal.usda.gov/api-key-signup.html (1000 requests/hour). */

@@ -6,6 +6,7 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { GRACE_SYSTEM_PROMPT } from '@grace/ai-core';
 import { UnauthorizedError, ValidationError } from '../errors.js';
+import { encryptField, decryptField } from '../crypto/field-encrypt.js';
 import type { Cache } from '../cache/cache.js';
 import type { LLMProvider } from '@grace/shared';
 import type { PromptOptimizer } from '../scheduler/prompt-optimizer.js';
@@ -467,7 +468,13 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       [limit, offset],
     );
     const { rows: countRows } = await deps.pool.query<{ total: string }>(`SELECT count(*)::text AS total FROM users`);
-    return { users: rows, total: Number(countRows[0]?.total ?? 0) };
+    // Decrypt encrypted-at-rest fields so the admin sees plaintext, not `enc:...`.
+    const decrypted = rows.map((r) => ({
+      ...r,
+      ...(r.first_name ? { first_name: decryptField(r.first_name) } : {}),
+      ...(r.medication ? { medication: decryptField(r.medication) } : {}),
+    }));
+    return { users: decrypted, total: Number(countRows[0]?.total ?? 0) };
   });
 
   /** Full user detail with check-in and weight history. */
@@ -504,8 +511,15 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         `SELECT count(*)::text FROM messages WHERE user_id = $1`, [phone],
       ),
     ]);
+    // Decrypt encrypted-at-rest fields so the admin sees plaintext in the
+    // inputs (otherwise first_name and medication show as `enc:...` ciphertext).
+    const decryptedUser = {
+      ...userRows[0],
+      ...(userRows[0].first_name ? { first_name: decryptField(userRows[0].first_name) } : {}),
+      ...(userRows[0].medication ? { medication: decryptField(userRows[0].medication) } : {}),
+    };
     return {
-      user: userRows[0],
+      user: decryptedUser,
       check_ins: checkIns,
       weight_logs: weightLogs,
       message_count: Number(msgCountRows[0]?.count ?? 0),
@@ -542,6 +556,15 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     const parsed = UpdateUserSchema.safeParse(req.body);
     if (!parsed.success) throw new ValidationError(parsed.error.message);
     const fields = parsed.data as Record<string, unknown>;
+    // Re-encrypt fields that are stored encrypted at rest. Without this, the
+    // admin save would write plaintext to columns that ai.service.ts expects
+    // to decrypt, corrupting the row (subsequent reads decrypt a non-cipher).
+    if (typeof fields.first_name === 'string' && fields.first_name.length > 0) {
+      fields.first_name = encryptField(fields.first_name);
+    }
+    if (typeof fields.medication === 'string' && fields.medication.length > 0) {
+      fields.medication = encryptField(fields.medication);
+    }
     const keys = Object.keys(fields);
     if (keys.length === 0) return { ok: true };
     const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');

@@ -239,10 +239,17 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
               { userId: normalized.userId, category: scope.category, matched: scope.matched },
               'webhook.scope_blocked',
             );
+            // Append RLHF rating prompt for opted-in users — same as the AI
+            // handler path. Lets users 👎 a refusal that felt off (e.g. too
+            // curt, missed an in-scope follow-up) so we can tune the guard.
+            const isRlhfUser = user?.rlhf_enabled ?? false;
+            const body = isRlhfUser
+              ? `${scope.response!}\n\nRate this: 👍 👎\nOr start your reply with # to share a thought.`
+              : scope.response!;
             await deps.sender.send({
               to: normalized.userId,
               channel: normalized.channel,
-              body: scope.response!,
+              body,
             });
             return;
           }

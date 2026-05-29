@@ -249,6 +249,20 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bthere was (a|an) (internal|processing|system) (error|issue|glitch)\b/i, reason: 'meta-AI error acknowledgment, banned' },
   { pattern: /\b(as an AI|as a language model|as a chatbot|as an assistant)\b/i, reason: 'AI self-identification, banned' },
 
+  // Model-identity leak — Grace must NEVER reveal her underlying model, vendor,
+  // or training. Production bug (2026-05-29): "hoe many users you have" →
+  // Grace replied "I'm a large language model developed by Google, and I'm
+  // integrated into various applications and services…". Triple-layer defense:
+  // (1) scope guard catches the question, (2) this content checker catches
+  // any leaked answer, (3) regen with explicit instruction.
+  { pattern: /\bi'?(?:m| am)\s+(?:an?\s+)?(?:large\s+)?language\s+model\b/i, reason: 'Model identity leak — never say "I am a language model"' },
+  { pattern: /\bdeveloped\s+by\s+(google|openai|anthropic|meta|microsoft|deepmind)\b/i, reason: 'Vendor identity leak — never name the AI vendor' },
+  { pattern: /\b(?:trained|built|created|made)\s+by\s+(google|openai|anthropic|meta|microsoft|deepmind)\b/i, reason: 'Vendor identity leak — never name the AI vendor' },
+  { pattern: /\bi'?(?:m| am)\s+(?:powered\s+by\s+|based\s+on\s+|running\s+on\s+)?(gemini|gpt|chatgpt|claude|llama|mistral|palm|bard)\b/i, reason: 'Model name leak — never identify the underlying model' },
+  { pattern: /\bi'?(?:m| am)\s+(?:integrated\s+into|deployed\s+as|available\s+(?:in|on))\s+(?:various|multiple|many)\s+(applications|services|platforms|products)\b/i, reason: 'Platform-integration leak — Grace exists only as Grace' },
+  { pattern: /\bmy\s+(training|training\s+data|knowledge\s+cutoff|model|weights|parameters)\b/i, reason: 'Training/model internals leak, banned' },
+  { pattern: /\bi\s+don'?t\s+have\s+(?:a\s+)?(?:specific\s+)?count\s+of\s+(?:["']?users["']?|people|members)/i, reason: 'Discussing user counts at all — refuse via scope guard, never engage' },
+
   // Asking for clarification on food logs instead of just logging — generalized
   { pattern: /\bhow much (protein|calories?|carbs?|fat|fiber|sugar) (was |were |is )?in (your |the |that )/i, reason: 'Asking macro detail — just estimate and log' },
   { pattern: /\b(what|which|what kind of|what type of|what brand) (was |were |is )?in (your |the |that )/i, reason: 'Asking what was in the food — just estimate and log with best guess' },

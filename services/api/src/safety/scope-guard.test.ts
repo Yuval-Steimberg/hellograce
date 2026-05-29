@@ -154,11 +154,30 @@ describe('Scope Guard — blocks off-topic questions', () => {
       expect(classifyScope('Are you HIPAA compliant?').blocked).toBe(true);
     });
 
-    it('uses the privacy-respecting response template (not the generic one)', () => {
+    it('uses the privacy/security-professional response template', () => {
       const r = classifyScope('How many users does Grace have?');
       expect(r.response).toBeTruthy();
-      // Privacy refusals use words like "private", "behind the scenes", "behind the curtain"
-      expect(r.response!.toLowerCase()).toMatch(/private|behind\s+the\s+(scenes|curtain)/);
+      // Templates now lean into security/privacy framing.
+      expect(r.response!.toLowerCase()).toMatch(/privacy|security/);
+    });
+
+    it('catches the production typo case "hoe many users you have"', () => {
+      // 2026-05-29 production bug: typo "hoe" bypassed strict "how" match
+      // and the LLM revealed model identity. Must block.
+      const r = classifyScope('hoe many users you have');
+      expect(r.blocked).toBe(true);
+      expect(r.category).toBe('meta_internals');
+    });
+
+    it('catches other common typos for "how"', () => {
+      expect(classifyScope('hwo many users does grace have?').blocked).toBe(true);
+      expect(classifyScope('ho many people use grace').blocked).toBe(true);
+    });
+
+    it('catches lazy phrasings without the "how many"', () => {
+      expect(classifyScope('users you have?').blocked).toBe(true);
+      expect(classifyScope('total users grace?').blocked).toBe(true);
+      expect(classifyScope('how many people').blocked).toBe(true);
     });
   });
 });

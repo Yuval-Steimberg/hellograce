@@ -359,7 +359,14 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\b(incredibly|quite|really|very)\s+common(\s+(challenge|experience|issue|problem|side[\s-]?effect))?\b/i, reason: '"X common" framing — flattens user\'s specific experience, banned' },
   { pattern: /\bcommon\s+experience\s+for\s+many\s+people\b/i, reason: '"common experience for many people" — depersonalizing cliche, banned' },
   { pattern: /\bit'?s actually quite common to (hit|experience|have)\s+(plateaus|stalls?|setbacks?)\b/i, reason: '"it\'s actually quite common to hit plateaus" — verbatim banned phrase from report' },
-  { pattern: /\bthat'?s a really (understandable|valid|complex)\s+(worry|concern|feeling|emotion)\b/i, reason: '"That\'s a really understandable/complex …" — validation cliche, banned' },
+  { pattern: /\bthat'?s a really (understandable|valid|complex)\s+(worry|concern|feeling|emotion|fear|fears|anxiety|thought)\b/i, reason: '"That\'s a really understandable/complex …" — validation cliche, banned' },
+  { pattern: /\bthat'?s a (really |very |so )?(understandable|valid|common)\s+(and\s+(common|understandable|valid)\s+)?(fear|worry|concern|anxiety)\b/i, reason: '"That\'s a really understandable and common fear" — pure validation filler, banned' },
+  { pattern: /\b(common|understandable)\s+(and\s+)?(common|understandable)\s+(fear|worry|concern|anxiety|thought)\b/i, reason: '"common and understandable fear/worry" — dual-validation filler, banned' },
+  { pattern: /\bit takes a lot of courage to (work\s+towards|begin|start|stick|commit)\b/i, reason: '"It takes a lot of courage to..." — AI-generated motivational filler, banned' },
+  { pattern: /\bmany people on a (weight loss|glp-?1|wellness|health)\s+journey\s+(experience|feel|face|go through)\b/i, reason: '"Many people on a weight loss journey experience…" — depersonalizing cliche, banned' },
+  { pattern: /\bthe thought of (losing that progress|gaining (it|the weight) back|not maintaining|relapsing)\s+can be (scary|hard|frightening|overwhelming|daunting)\b/i, reason: 'Restating the user\'s fear as filler — banned. Reframe and offer one practical step instead' },
+  { pattern: /\bit'?s something (so many|many|a lot of) (people|users|women|men)\s+(feel|experience|go through)\b/i, reason: '"It\'s something many people feel" — depersonalizing, banned' },
+  { pattern: /\bthat fear is (so|really|very|completely)\s+valid\b/i, reason: '"That fear is so valid" — pure validation filler, banned. Validate + reframe + practical step instead' },
   { pattern: /\bit'?s a (very |really )?valid concern\b/i, reason: '"It\'s a very valid concern" — clinical validation cliche, banned' },
 
   // ── 2026-05-30 Session 3 + full-feedback banned phrases ──────────────────

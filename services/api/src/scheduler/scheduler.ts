@@ -20,6 +20,10 @@ interface SchedulerDeps {
   promptOptimizer?: PromptOptimizer;
   /** Phase 4: behavioral anomaly detector. Runs nightly at 4:30am UTC. */
   anomalyDetector?: AnomalyDetectorService;
+  /** Engagement cooldown window in hours. After a user sends a message,
+   *  all non-critical proactive reminders are suppressed for this window.
+   *  Default 2h. Set to 0 to disable. Configurable via ENGAGEMENT_COOLDOWN_HOURS. */
+  engagementCooldownHours?: number;
 }
 
 export class Scheduler {
@@ -306,30 +310,58 @@ export class Scheduler {
 
   private async sendAndRecord(user: GraceUser, type: Parameters<MessageGenerator['generate']>[0], opts?: GenerateOpts): Promise<void> {
     // ─── Cadence guardrails ──────────────────────────────────────────────────
-    // STRICT RULES (apply to all reminder types EXCEPT injection flow + trial
-    // expiry which are time-critical user-facing flows):
-    //   1. Skip if user replied to Grace in the last 2 hours (active engagement)
-    //   2. Maximum 2 proactive reminders per user per day
-    //   3. Minimum 3 hours between proactive reminders
-    // Tracked in Redis: `cadence:{phone}:{YYYY-MM-DD}` counter + `cadence:last:{phone}` timestamp.
+    // Two layers of suppression, applied in order:
+    //
+    //   LAYER 1 — ENGAGEMENT COOLDOWN (applies to ALL non-critical types)
+    //     If the user has sent a message in the last ENGAGEMENT_COOLDOWN_HOURS
+    //     (default 2h), suppress the proactive reminder entirely. Grace is a
+    //     companion, not a notification system — recent engagement always wins
+    //     over a scheduled reminder. Resets automatically on every user reply
+    //     because last_reply_at is updated by UserService.ensureUser on each
+    //     inbound message.
+    //
+    //   LAYER 2 — DAILY CADENCE (applies to non-critical, non-injection types)
+    //     1. Max 2 proactive reminders per user per day
+    //     2. Min 3 hours between reminders
+    //
+    // Exemptions (truly time-critical health flows):
+    //   - injection_morning: today is injection day, the user needs to know
+    //   - injection_followup: same-day "did you take it?" check
+    //   - trial_expiry_reminder: time-bound to trial-end day
+    //
+    // injection_dayafter is NOT exempt — it's a check-in, not urgent. An
+    // engaged user already knows the injection happened yesterday.
     const todayStr = toDateStr(localNow(user.timezone || 'America/New_York'));
-    const EXEMPT_TYPES = new Set(['injection_morning', 'injection_followup', 'injection_dayafter', 'trial_expiry_reminder']);
-    if (!EXEMPT_TYPES.has(type)) {
-      // Rule 1 (2026-05-30): if the user has sent a message in the last 2 hours,
-      // don't interrupt with a proactive reminder. The user is actively engaging
-      // — Grace doesn't need to ping them. Defer to a later window naturally
-      // (next scheduler tick will re-check). This keeps Grace feeling responsive
-      // rather than naggy when the user is mid-conversation.
-      if (user.last_reply_at) {
-        const hoursSinceUserReply = (Date.now() - new Date(user.last_reply_at).getTime()) / 3_600_000;
-        if (hoursSinceUserReply < 2) {
-          this.deps.logger.info(
-            { phone: user.phone, type, hoursSinceUserReply: hoursSinceUserReply.toFixed(2) },
-            'scheduler.skipped_recent_user_activity',
-          );
-          return;
-        }
+    const CRITICAL_HEALTH_TYPES = new Set([
+      'injection_morning',
+      'injection_followup',
+      'trial_expiry_reminder',
+    ]);
+    const isCritical = CRITICAL_HEALTH_TYPES.has(type);
+
+    // ─── LAYER 1: Engagement cooldown ─────────────────────────────────────────
+    // Applies to EVERY type except truly critical health alerts. Skipping is
+    // the right behavior: the user is already talking to Grace, the next
+    // scheduled tick will re-check and send if the cooldown has expired.
+    const cooldownH = this.deps.engagementCooldownHours ?? 2;
+    if (cooldownH > 0 && !isCritical && user.last_reply_at) {
+      const hoursSinceUserReply = (Date.now() - new Date(user.last_reply_at).getTime()) / 3_600_000;
+      if (hoursSinceUserReply < cooldownH) {
+        this.deps.logger.info(
+          {
+            phone: user.phone,
+            type,
+            hoursSinceUserReply: hoursSinceUserReply.toFixed(2),
+            cooldownH,
+          },
+          'scheduler.engagement_cooldown_active',
+        );
+        return;
       }
+    }
+
+    // ─── LAYER 2: Daily cadence (existing) ────────────────────────────────────
+    if (!isCritical) {
       const countKey = `cadence:${user.phone}:${todayStr}`;
       const lastKey = `cadence:last:${user.phone}`;
       try {
@@ -385,8 +417,9 @@ export class Scheduler {
         type,
         messageSent: message,
       });
-      // Increment cadence counters (skip for exempt time-critical flows).
-      if (!EXEMPT_TYPES.has(type)) {
+      // Increment cadence counters (skip for critical time-bound flows that
+      // don't participate in the daily cap).
+      if (!isCritical) {
         try {
           const countKey = `cadence:${user.phone}:${todayStr}`;
           const lastKey = `cadence:last:${user.phone}`;

@@ -66,6 +66,12 @@ const EnvSchema = z.object({
    *  When unset, HybridRagService silently degrades to dense-only retrieval —
    *  identical behavior to the legacy RagService. */
   RERANKER_URL: z.string().url().optional(),
+
+  /** Engagement cooldown (hours): after a user sends a message, suppress all
+   *  non-critical proactive reminders for this window. Resets on every user
+   *  reply. Default 2h — recommended minimum so Grace feels like a companion,
+   *  not a notification system. Set to 0 to disable. */
+  ENGAGEMENT_COOLDOWN_HOURS: z.coerce.number().min(0).max(48).default(2),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

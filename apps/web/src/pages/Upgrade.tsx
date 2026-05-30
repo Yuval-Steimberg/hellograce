@@ -109,7 +109,11 @@ export default function Upgrade() {
       });
 
       if (!error && data?.url) {
-        window.open(data.url, "_blank");
+        // Same-tab navigation: window.open(..., "_blank") after `await` is
+        // silently blocked by Safari/iOS because the user gesture is lost
+        // once we await the Supabase call. Stripe Portal's return_url brings
+        // the user back to /upgrade or /settings when they finish.
+        window.location.href = data.url;
         return;
       }
 

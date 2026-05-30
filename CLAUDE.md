@@ -50,6 +50,7 @@ set the 5 Vercel env vars (`VITE_API_URL`, `VITE_WHATSAPP_NUMBER`, `VITE_WHATSAP
 ├── docs/
 │   ├── STATUS.md           # Phase tracker + open todos
 │   ├── OPERATIONS.md       # Production setup guide + subscriptions + admin
+│   ├── CACHING.md          # Canonical caching + latency reference (every layer documented)
 │   ├── USER_GUIDE.md       # End-user guide (share with users)
 │   └── WELCOME_EMAIL.md    # Welcome email template with personalization notes
 ├── docker-compose.yml      # One-command local: Postgres+pgvector + Redis + api
@@ -70,10 +71,15 @@ POST /webhook/twilio
         ├── UserService.ensureUser() — upsert, update last_reply_at
         ├── injection "done" detection → advances state machine
         ├── RLHF feedback intercept (👍/👎/FEEDBACK:) for opted-in users
+        ├── shouldSkipCoalesce() — trivial messages bypass the 2s buffer
         │
         ▼
 AIService.handleMessage()
         │
+        ├── tryFastPath() — 14 categories of trivial messages (greetings,
+        │                   brief feelings, thanks, goodnight, etc.) get
+        │                   instant deterministic replies, ZERO LLM call.
+        │                   Pure latency win: ~150ms instead of ~3s.
         ├── analyzeMedia() — if media present (runs before orchestrator)
         │     ├── fetchMedia() with Twilio Basic Auth (SID:token)
         │     ├── image → classifyImage() → 'food' | 'body' | 'other'
@@ -108,7 +114,8 @@ TwilioSender → WhatsApp/SMS
   - Side-effect follow-up 4h after keyword detected
   - Bonus spontaneous nudge: 1 extra daily message at a varied random time (adds variety to the schedule)
 - **Engagement dampener** (`userEngagedToday`, `userSilentDays` helpers): caps a silent user at 2 messages/day (morning + 1 nudge), drops to 1/day (morning only) after >1 day of no reply. Engaged users still get the full 3-message schedule.
-- **Message coalescing**: 3.5s window to merge rapid multi-message sends into a single AI turn.
+- **Engagement cooldown** (Phase 15, configurable via `ENGAGEMENT_COOLDOWN_HOURS`, default 2h): after a user sends a message, ALL non-critical proactive types are suppressed for the cooldown window. Resets on every user reply. Critical-exempt types (always allowed): `injection_morning`, `injection_followup`, `trial_expiry_reminder`. `injection_dayafter` is NOT exempt — it's a check-in, not urgent. Logs `scheduler.engagement_cooldown_active` with the elapsed hours.
+- **Message coalescing**: 2s window to merge rapid multi-message sends into a single AI turn. Trivial messages (greetings, brief acks, thanks, goodnights, etc.) bypass coalesce via `shouldSkipCoalesce()` for instant response.
 - Daily 3am UTC → personalization engine (low_mood_mode, midday_skip)
 
 ---
@@ -217,6 +224,7 @@ The following are already filled in for this project:
 | `TWILIO_WHATSAPP_FROM` | ✅ sandbox `whatsapp:+14155238886` |
 | `PUBLIC_BASE_URL` | ✅ `https://grace-api.fly.dev` in Fly secrets — used by Twilio signature verification |
 | `ADMIN_TOKEN` | ✅ set in `.env` and Fly secrets |
+| `ENGAGEMENT_COOLDOWN_HOURS` | ⚙️  Optional, default 2. Window in hours during which scheduled non-critical proactive messages are suppressed after the user replies. Set to 0 to disable. |
 | `ADMIN_PHONE` | ✅ set in Fly secrets (`+972547722420`) — receives WhatsApp RLHF optimizer report after each nightly run |
 
 Full deployment instructions: `docs/DEPLOY.md`
@@ -410,14 +418,15 @@ Roadmap (in progress, in this order):
 | 12 | Auto-evaluation system: 20 personas × 43 scenarios × 15 categories, multi-turn conversation simulation through real orchestrator, 15-dimension LLM judge, pattern detection, regression tracking, RLHF preference pair generation. `pnpm --filter @grace/api auto-eval`. | ✅ 2026-05-24 |
 | 13 | Security hardening + Conversation intelligence + Production quality: RLS on all tables, LLM relevance checker, topic-closer history stripping, medical tone graduated escalation, message coalescing 3.5s, bonus spontaneous reminders, emergency LLM fallback, optimizer switched to gemini-2.0-flash, Docker fix. | ✅ 2026-05-27 |
 | 14 | QA tools + behavioral defense + calorie parity: regression suite (`/admin/regression`, 17 scenarios replaying every fixed bug), production-realistic replay tool (`/admin/replay` with in-memory orchestrator + mock tools), prompt-version diff, auto-eval presets/category filter, calorie tracking full parity with protein (Mifflin-St Jeor + activity + GLP-1 deficit, force tool calls, prompt rules, content rules), behavioral guard (LLM judge against 10 principles), generalized content checker (catch-all regexes), force log_food with classifier + safety net + continuation. | ✅ 2026-05-28 |
+| 15 | Latency + comprehensive feedback pass: fast-path responder (14 categories of trivial messages get instant ~150ms replies skipping LLM entirely), parallel LLM guards (relevance + behavioral + critic via Promise.all), per-intent token budgets, coalesce 3.5s→2s + bypass for fast-path messages, RAG embed cache 5min→30min, critic on gemini-2.0-flash + disableThinking, image follow-up context (preserves analyzed image across turns), food-log preamble leak guard, privacy rule strict scoping (no more misfires on self-referencing health questions), banned-phrase expansion (18 new patterns), list-format hardening, appointment_prep intent + classifier, EMOTION BEFORE DATA rule, ANSWER ONLY THE CURRENT MESSAGE rule with 7 production-failure examples, clinical redirect template, plateau-feeling education rule, two-question detector, protein-from-current-weight guard, configurable engagement cooldown (suppresses non-critical proactive messages within ENGAGEMENT_COOLDOWN_HOURS of any user reply — default 2h, set via env). | ✅ 2026-05-30 |
 
 ---
 
 ## Where to start in a new session
 
-1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md`.
+1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).
 2. `git log --oneline -10` to see recent commits.
-3. Active branch: `claude/grace-auto-evaluation-HiMb8` (merged to main). Latest commit: `89af44a` — Add behavioral guard + generalize content checker patterns.
+3. Active branch: `main`. Latest commit: `9b365c9` — Engagement cooldown: configurable, applies to all non-critical proactive types. All Phase 15 work has been merged to main.
 4. **Daily QA workflow:** `/admin/regression` (1-2 min, runs 17 known bug scenarios) → `/admin/replay` (paste WhatsApp msgs, see what Grace would say, with tool calls + regen status) → `/admin/auto-eval` (presets: Quick smoke 5, Standard 15, focused categories, Full sweep).
 5. **Migrations needed before deploying Phase 14 code:**
    - `20260528000001_calorie_goal.sql` — adds `calorie_goal_kcal INT` to users
@@ -772,6 +781,76 @@ All work on branch `claude/grace-auto-evaluation-HiMb8`, merged to main.
 - `apps/web/src/pages/admin/RegressionPage.tsx`
 - `apps/web/src/pages/admin/ReplayPage.tsx`
 - `supabase/migrations/20260528000001_calorie_goal.sql`
+
+### Phase 15 — Latency pass + comprehensive feedback fixes (2026-05-30)
+
+Driven by two production feedback reports (`gracefullfeedback.html` — 24 exchanges across 7 screenshots; `gracefeedbacksession3.txt` — 11 exchanges) plus targeted latency work.
+
+**`services/api/src/services/fast-path.ts`** (NEW) — instant deterministic responder. 14 categories (greeting, brief_positive, brief_negative, brief_ack, thanks, goodnight, farewell, laughter, apology, reaction, appreciation, love_it, confirmation, denial). Each has a rotating reply pool seeded by `hash(userId + text)` so same user doesn't repeat the same line. Hard guards: length >40 chars / `?` / digits / media → falls through to LLM. `NEVER_FAST_PATH_RE` defensively blocks medical/food/crisis keywords. Wired into `AIService.handleMessage()` before `handleMessageInner()`. Logs `ai.fast_path.hit` with category + latencyMs. End-to-end: ~150ms.
+
+**`services/api/src/routes/webhook.ts`** — `shouldSkipCoalesce()` mirrors fast-path patterns. Trivial messages bypass the 2-second coalesce buffer entirely. Coalesce window also dropped 3.5s → 2s for messages that still go through it.
+
+**`packages/ai-core/src/orchestrator.ts`** — parallel LLM guards: relevance, behavioral, critic now run via `Promise.all` instead of sequentially. Skip rules for trivial intents and very short responses (<40 chars) avoid the LLM calls entirely. Critic gated by `shouldRunCriticEarly` — joins the parallel batch only when needed, otherwise runs lazily inside the regen branch. Per-intent token budgets: greeting/gibberish 256, food_log/weight_log/mood_log 512, emotional 1024, knowledge/complex 8192. New `appointment_prep` intent type with 8192 budget. Truncation recovery addendum on regen: when finishReason was 'length' or response ended mid-word, the retry prompt is appended with "TRUNCATION RECOVERY: rewrite in 2-3 short sentences, no lists, ensure complete sentence ending."
+
+**`packages/ai-core/src/critic.ts` + `packages/ai-core/src/behavioral-guard.ts`** — both now run on `gemini-2.0-flash` + `disableThinking: true`. Saves 300-500ms per call vs default 2.5-flash with thinking enabled. Critic also bumped from 300 → 500 maxOutputTokens (smaller models truncated JSON at 300 → malformed_response).
+
+**`services/api/src/rag/gemini-embedder.ts`** — embed cache TTL bumped 5min → 30min. Query embeddings are deterministic — same "what should I eat?" hits cache instead of re-embedding (~350ms saved per hit).
+
+**`packages/ai-core/src/classify.ts`** — added `appointment_prep` MessageType + `APPOINTMENT_PREP` regex patterns. Detection runs BEFORE knowledge/general so "Help me write my questions for my endocrinologist appointment" routes correctly on the FIRST message, not the second (fixes Session 3 feedback Exchange 6 bug).
+
+**`packages/ai-core/src/content-checker.ts`** — major expansion driven by the feedback reports:
+- 18 new banned-phrase patterns (incredibly common, completely understandable, really important question, excellent that you're thinking, absolutely critical questions, you MUST discuss, holistic approach, layers of complexity, hope it hit the spot, classic breakfast, I'm here and ready to help, etc.)
+- Context-aware checks accepting `userMessage`:
+  - `checkPrivacyMisfire()` — Grace said "I only know about you and your journey" on a self-referencing health question (e.g. "I feel nauseous after my shot") → regen. Fixes Bug 1 from feedback.
+  - `checkTwoQuestions()` — counts `?` in response, regen if >1.
+  - `checkFoodLogPreambleLeak()` — if user's message is a food log AND response opens with "That's great you're feeling…" callback → regen. Fixes the "just had protein shake" → "That's great you're feeling strong" production bug from screenshot.
+- List-introducing phrase blocks: `Here's a breakdown:`, `Here's why it's happening:`, `Why it's happening:` etc.
+- Wrong-redirect block: `share this feeling with your doctor` when paired with "isn't working" language (the user's frustration about a plateau is NOT a clinical question).
+- Image capability denial blocks: `I cannot see images` / `text-based AI` / `describe the picture to me` (Grace HAS image analysis — denying it contradicts the prior turn).
+- Protein-from-goal-weight factual error block: `per kilogram of your goal body weight`.
+
+**`packages/ai-core/src/format-enforcer.ts`** — label-colon threshold dropped 2 → 1 (a single `Bananas: easy to digest` leaks list-feel through). Added `list_intro_stripped` and `section_header_stripped` passes for `Here's a breakdown:` / `Why it's happening:` / `What to do:` patterns. Added `appointment_prep` MessageContext with 800-char cap.
+
+**`packages/ai-core/src/quality-guard.ts`** — added `appointment_prep` to sentence and char limits (8 sentences / 800 chars).
+
+**`packages/ai-core/src/prompts.ts`** — major rewrite at the top of the system prompt:
+- **PRIVACY RULE — STRICTLY SCOPED**: fires ONLY on third-party queries, with the exact "I feel nauseous after my shot" production failure as a memorized example.
+- **ANSWER ONLY THE CURRENT MESSAGE — RULE #1**: highest-priority rule with 7 exact production transcripts as ✗/✓ pairs (hair vs nausea, face vs hair, constipation vs face, bloating vs exhaustion, food noise vs plateau, failing-feeling vs stale food log, protein shake vs stale "feeling strong"). SELF-CHECK instruction before every response.
+- **EMOTION BEFORE DATA — HARD RULE**: if user's message is emotional, respond to the emotion FIRST. Never open with food logging, protein numbers, or data.
+- **H3 PROSE ONLY** strengthened: 6 production list-format failures shown with ✗/✓ pairs (BRAT staples, Why Muscle Loss Can Happen, breakdown of how they differ, etc.) + self-check.
+- **H3a NO TWO QUESTIONS**: max one `?` per response, at the end.
+- **H9 PROTEIN TARGET — NOT goal weight**: explicit ✗/✓ examples for the "per kilogram of your current body weight" phrasing.
+- **H10 CLINICAL REDIRECT TEMPLATE**: gold-standard "That one I'd genuinely leave to your doctor. They can [reason]. Worth calling them this week." Banned warning-label phrasing list.
+- **H11 "FEELING LIKE IT'S NOT WORKING" — EDUCATION**: never redirect plateau-feeling vents to doctor. The right response is validate + plateau science + grounded hope.
+- **H12 banned phrases list expanded** to match content-checker.
+- **IMAGE FOLLOW-UP — CRITICAL** (in non-negotiable truth #5): if Grace already analyzed an image earlier, follow-up questions like "what do you see?" MUST reference what was seen. Never deny image capability.
+- **BANNED FOREVER list expanded** with all 18 new patterns.
+
+**`services/api/src/services/ai.service.ts`** — image follow-up context injection. When user's message references "picture/image/photo/the meal" but no new image was sent, scan recent history for Grace's prior image analysis reply (matching "looks like / that meal" + grams or protein) and inject as `[IMAGE FOLLOW-UP — your previous analysis said: "…". Reference what you saw.]`. Prevents Grace from denying she analyzed the image.
+
+**`services/api/src/scheduler/scheduler.ts`** — engagement cooldown. New `engagementCooldownHours` dep (configurable via `ENGAGEMENT_COOLDOWN_HOURS` env var, default 2). LAYER 1: cooldown applies to ALL non-critical types — if `user.last_reply_at` is within window, skip. Resets automatically when next user message updates `last_reply_at`. Critical-exempt list narrowed: `injection_morning`, `injection_followup`, `trial_expiry_reminder`. `injection_dayafter` now respects cooldown. Logs `scheduler.engagement_cooldown_active`.
+
+**`services/api/src/config/env.ts`** — added `ENGAGEMENT_COOLDOWN_HOURS` z.coerce.number().min(0).max(48).default(2).
+
+**`services/api/src/server.ts`** — passes `env.ENGAGEMENT_COOLDOWN_HOURS` into `new Scheduler(...)`.
+
+**Key files added/touched this phase:**
+- `services/api/src/services/fast-path.ts` (NEW)
+- `services/api/src/routes/webhook.ts` (coalesce 3.5→2, shouldSkipCoalesce)
+- `services/api/src/services/ai.service.ts` (fast-path wiring, image follow-up context)
+- `services/api/src/scheduler/scheduler.ts` (engagement cooldown)
+- `services/api/src/config/env.ts` (cooldown env var)
+- `services/api/src/server.ts` (cooldown wiring)
+- `services/api/src/rag/gemini-embedder.ts` (embed TTL 5→30 min)
+- `packages/ai-core/src/orchestrator.ts` (parallel guards, per-intent budgets, truncation addendum)
+- `packages/ai-core/src/critic.ts` (gemini-2.0-flash + disableThinking)
+- `packages/ai-core/src/behavioral-guard.ts` (disableThinking)
+- `packages/ai-core/src/classify.ts` (appointment_prep)
+- `packages/ai-core/src/content-checker.ts` (18 new bans, 3 context-aware checks)
+- `packages/ai-core/src/format-enforcer.ts` (label-colon 2→1, list-intro stripping)
+- `packages/ai-core/src/quality-guard.ts` (appointment_prep limits)
+- `packages/ai-core/src/prompts.ts` (PRIVACY scoped, ANSWER ONLY RULE #1, EMOTION BEFORE DATA, H3 hardened, H10–H12, IMAGE FOLLOW-UP, BANNED FOREVER expanded)
+- `docs/CACHING.md` (NEW — caching + latency layers reference)
 
 ### Phase 7+8 — known follow-ups not yet shipped
 

@@ -404,3 +404,37 @@ describe('checkBannedPhrases — 2026-05-30 clinical report additions', () => {
     expect(checkBannedPhrases('Greek yogurt, cottage cheese, a hard-boiled egg, cold sliced chicken.')).toHaveLength(0);
   });
 });
+
+describe('checkUserMessageEcho (via checkContent)', () => {
+  it('flags Grace echoing the user\'s opening words verbatim (production bug)', () => {
+    const violations = checkContent(
+      'Feeling good, just ate two eggs and salad is about 15g protein. You\'re at 40/60g today.',
+      { userMessage: 'Feeling good, just ate two eggs and salad' },
+    );
+    expect(violations.some((v) => v.code === 'user_message_echo')).toBe(true);
+  });
+
+  it('does NOT flag a well-formed food log response (no echo)', () => {
+    const violations = checkContent(
+      'Two eggs and a salad — about 15g protein. You\'re at 40/60g today.',
+      { userMessage: 'Feeling good, just ate two eggs and salad' },
+    );
+    expect(violations.some((v) => v.code === 'user_message_echo')).toBe(false);
+  });
+
+  it('does NOT flag short user messages (avoids false positives on "ok"/"yes")', () => {
+    const violations = checkContent(
+      'Got it — what\'s up?',
+      { userMessage: 'ok' },
+    );
+    expect(violations.some((v) => v.code === 'user_message_echo')).toBe(false);
+  });
+
+  it('does NOT flag responses that share only 1-2 leading words with the user', () => {
+    const violations = checkContent(
+      'Two eggs and toast is around 14g protein for the morning.',
+      { userMessage: 'Two scoops of whey protein this morning' },
+    );
+    expect(violations.some((v) => v.code === 'user_message_echo')).toBe(false);
+  });
+});

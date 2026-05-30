@@ -65,6 +65,7 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
     violations.push(...checkPrivacyMisfire(text, opts.userMessage));
     violations.push(...checkTwoQuestions(text));
     violations.push(...checkFoodLogPreambleLeak(text, opts.userMessage));
+    violations.push(...checkUserMessageEcho(text, opts.userMessage));
   }
   if (opts.dbRules && opts.dbRules.length > 0) {
     violations.push(...checkDbRules(text, opts.dbRules));
@@ -135,6 +136,39 @@ function checkFoodLogPreambleLeak(response: string, userMessage: string): Conten
     }];
   }
   return [];
+}
+
+// ── User-message echo ────────────────────────────────────────────────────────
+// Catches the bug where Grace echoes the user's own words back at the start of
+// her response, e.g.:
+//   User:  "Feeling good, just ate two eggs and salad"
+//   Grace: "Feeling good, just ate two eggs and salad is about 15g protein..."
+// This is a classic LLM auto-complete failure that reads like a chatbot
+// parroting input. Triggers when ≥4 leading words of the response match the
+// leading words of the user message verbatim (case- and punctuation-insensitive).
+function normalizeForEcho(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s']/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 0);
+}
+
+function checkUserMessageEcho(response: string, userMessage: string): ContentViolation[] {
+  const userWords = normalizeForEcho(userMessage);
+  const respWords = normalizeForEcho(response);
+  // Need enough words on both sides to be a real echo (not just "ok" / "yes").
+  if (userWords.length < 4 || respWords.length < 4) return [];
+  // Compare the first N=4 words. If they match, this is a verbatim echo.
+  const N = 4;
+  for (let i = 0; i < N; i++) {
+    if (userWords[i] !== respWords[i]) return [];
+  }
+  return [{
+    code: 'user_message_echo',
+    message: `Response opens by echoing the user's own words back ("${userWords.slice(0, N).join(' ')}..."). Rewrite so the first words are Grace's own framing — never parrot the user's sentence as a prefix. Example: user says "Feeling good, just ate two eggs and salad" → Grace replies "Two eggs and a salad — about 15g protein. You're at Xg of your Yg target today." NOT "Feeling good, just ate two eggs and salad is about 15g..."`,
+    severity: 'regen',
+  }];
 }
 
 /**

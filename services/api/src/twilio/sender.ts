@@ -40,6 +40,24 @@ export class EmptyOutboundError extends Error {
 export function sanitizeOutbound(input: string): string {
   let text = input;
 
+  // ─── Markdown strip (Bug 4 remediation, 2026-05-30) ────────────────────
+  // Last-line defense: format-enforcer already strips these earlier in the
+  // pipeline, but messages can reach the sender via paths that skip the
+  // orchestrator (scheduler welcome, hardcoded webhook replies, scope-guard
+  // canned responses). SMS/WhatsApp render markdown literally, so any of
+  // these characters reaching the user would appear as garbage punctuation.
+  //
+  // Done BEFORE em-dash collapse so a "**bold**" with em-dash inside is
+  // unwrapped first then its content gets the dash treatment.
+  text = text.replace(/\*\*([^*\n]+)\*\*/g, '$1');           // **bold** → bold
+  text = text.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '$1');  // *italic* → italic
+  text = text.replace(/(?<![\w_])_([^_\n]+)_(?![\w_])/g, '$1'); // _italic_ → italic
+  text = text.replace(/^#{1,6}\s+/gm, '');                    // # header → header
+  text = text.replace(/^\s*[-*•]\s+/gm, '');                  // - bullet → bullet
+  text = text.replace(/^\s*\d+\.\s+/gm, '');                  // 1. item → item
+  // Backticks for inline code — strip wrapping, keep content.
+  text = text.replace(/`([^`\n]+)`/g, '$1');
+
   // Replace em-dash, en-dash, and 2+ hyphens with comma (preserves words).
   text = text.replace(/\s*[—–]\s*/g, ', ');
   text = text.replace(/\s*--+\s*/g, ', ');

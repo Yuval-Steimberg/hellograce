@@ -134,4 +134,46 @@ describe('sanitizeOutbound — placeholder & role-marker stripping', () => {
     const out = sanitizeOutbound('User testing went well today.');
     expect(out).toContain('User testing');
   });
+
+  // ── Bug 4 remediation: outbound markdown strip (2026-05-30) ────────────
+  describe('markdown strip (Bug 4)', () => {
+    it('strips **bold**', () => {
+      expect(sanitizeOutbound('**Cottage cheese** has 25g protein.')).toBe(
+        'Cottage cheese has 25g protein.',
+      );
+    });
+
+    it('strips *italic*', () => {
+      expect(sanitizeOutbound('Try *cold* foods first.')).toBe('Try cold foods first.');
+    });
+
+    it('strips _italic_', () => {
+      expect(sanitizeOutbound('Try _cold_ foods first.')).toBe('Try cold foods first.');
+    });
+
+    it('strips # headers', () => {
+      const out = sanitizeOutbound('# Protein\nAim for 100g today.');
+      expect(out).not.toContain('# ');
+      expect(out).toContain('Protein');
+    });
+
+    it('strips bullet markers at line start', () => {
+      const out = sanitizeOutbound('- Greek yogurt\n- Cottage cheese\n- Eggs');
+      expect(out).not.toMatch(/^\s*-\s/m);
+    });
+
+    it('strips numbered-list markers', () => {
+      const out = sanitizeOutbound('1. Greek yogurt\n2. Cottage cheese');
+      expect(out).not.toMatch(/^\d+\.\s/m);
+    });
+
+    it('strips backtick inline code', () => {
+      expect(sanitizeOutbound('Use the `log_food` tool.')).toBe('Use the log_food tool.');
+    });
+
+    it('does NOT touch normal prose with no markdown', () => {
+      const input = 'Greek yogurt, cottage cheese, eggs all sit well on a GLP-1 stomach.';
+      expect(sanitizeOutbound(input)).toBe(input);
+    });
+  });
 });

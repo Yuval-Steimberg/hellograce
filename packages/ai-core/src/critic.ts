@@ -43,7 +43,7 @@ export class LLMCritic {
           { role: 'user', content: user },
         ],
         temperature: 0.0,
-        maxOutputTokens: 300,
+        maxOutputTokens: 500,
         responseFormat: 'json',
       });
       raw = resp.text;

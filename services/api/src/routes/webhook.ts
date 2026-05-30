@@ -199,19 +199,31 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             }
           }
 
-          // ── In-chat upgrade intent ("upgrade", "go pro", "subscribe" …).
-          // Sent to ANY user — both trial and paid users may want to manage
-          // their plan. Replies with the admin-editable upgrade_nudge template
-          // containing a Stripe checkout link.
+          // ── In-chat upgrade / manage intent ("upgrade", "go pro", "manage
+          // subscription", "pricing" …). The destination URL depends on the
+          // user's current subscription state:
+          //   - Trial / unpaid users → /upgrade (Stripe checkout flow)
+          //   - Paid / Pro users    → /settings (Stripe Customer Portal /
+          //                                       cancel / update payment)
+          // Wording also adapts so it matches the destination — telling a
+          // paid user to "upgrade" sends them through checkout again, which
+          // was the production bug here. Telling a trial user to "manage"
+          // doesn't fit either.
           if (user && detectUpgradeIntent(normalized.text)) {
-            const upgradeUrl = buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL);
+            const isPaidUser = user.is_paid || user.is_pro;
+            const destinationUrl = isPaidUser
+              ? buildSettingsUrl(user.phone, deps.env.PUBLIC_WEB_URL)
+              : buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL);
+            const fallbackText = isPaidUser
+              ? `You can manage your subscription anytime at ${destinationUrl} 🧡`
+              : `You can upgrade your plan anytime at ${destinationUrl} 🧡`;
             const reply = deps.templates
               ? await deps.templates.render(
-                  'upgrade_nudge',
-                  { upgrade_url: upgradeUrl, first_name: user.first_name ?? '' },
-                  `You can upgrade or manage your subscription anytime at ${upgradeUrl} 🧡`,
+                  isPaidUser ? 'manage_subscription' : 'upgrade_nudge',
+                  { upgrade_url: destinationUrl, first_name: user.first_name ?? '' },
+                  fallbackText,
                 )
-              : `You can upgrade or manage your subscription anytime at ${upgradeUrl} 🧡`;
+              : fallbackText;
             await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: reply });
             return;
           }
@@ -583,4 +595,17 @@ export function buildUpgradeUrl(phone: string, webUrl: string = DEFAULT_WEB_URL)
   const encoded = encodeURIComponent(phone);
   const base = webUrl.replace(/\/$/, '');
   return `${base}/upgrade?phone=${encoded}`;
+}
+
+/**
+ * Settings / Customer-Portal URL. Used for users who already have an
+ * active subscription and want to MANAGE it (update payment, cancel,
+ * change plan). The settings page hosts the Stripe Customer Portal
+ * button — sending them straight to /upgrade would trigger a second
+ * checkout flow instead of letting them manage what they already have.
+ */
+export function buildSettingsUrl(phone: string, webUrl: string = DEFAULT_WEB_URL): string {
+  const encoded = encodeURIComponent(phone);
+  const base = webUrl.replace(/\/$/, '');
+  return `${base}/settings?phone=${encoded}`;
 }

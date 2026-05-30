@@ -45,6 +45,8 @@ export class LLMCritic {
         temperature: 0.0,
         maxOutputTokens: 500,
         responseFormat: 'json',
+        model: 'gemini-2.0-flash',
+        disableThinking: true,
       });
       raw = resp.text;
     } catch {

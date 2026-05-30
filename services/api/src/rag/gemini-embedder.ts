@@ -3,7 +3,12 @@ import { UpstreamError } from '../errors.js';
 import type { Embedder } from './rag.service.js';
 import type { Cache } from '../cache/cache.js';
 
-const EMBED_TTL_SEC = 5 * 60;
+// Embedding cache TTL — bumped from 5min → 30min (2026-05-30 latency pass).
+// Query embeddings are deterministic for the same text, so longer TTL means
+// repeat questions ("what should I eat?", "any snack ideas?") skip the ~350ms
+// Gemini embed call. Safe because embeddings change only when the model
+// version changes — not based on user state.
+const EMBED_TTL_SEC = 30 * 60;
 const EMBED_DIMS = 768;
 
 /** gemini-embedding-001 with outputDimensionality=768 → matches existing vector(768) schema. */

@@ -445,9 +445,11 @@ function detectInjectionDayChange(text: string): string | null {
 
 // ─── Message coalescing ───────────────────────────────────────────────────────
 // WhatsApp users send corrections/continuations within seconds ("Will i go
-// bold?" → "Bald"). This buffers text messages for 3.5s in Redis; the first
+// bold?" → "Bald"). This buffers text messages for 2s in Redis; the first
 // arrival holds a lock and waits, follow-ups append to a list, then all parts
 // are merged into one turn. Prevents duplicate replies. Media fires immediately.
+// Window tightened from 3.5s → 2s (2026-05-30 latency pass) — 2s still catches
+// genuine multi-message bursts while shaving 1.5s off median response time.
 export async function coalesceMessages(redis: Redis, phone: string, text: string): Promise<string | null> {
   const bufKey = `coalesce:buf:${phone}`;
   const lockKey = `coalesce:lock:${phone}`;
@@ -460,7 +462,7 @@ export async function coalesceMessages(redis: Redis, phone: string, text: string
   const acquired = await redis.set(lockKey, '1', 'EX', 5, 'NX');
   if (!acquired) return null; // absorbed — the lock-holder will pick this up
 
-  await new Promise<void>((resolve) => setTimeout(resolve, 3500));
+  await new Promise<void>((resolve) => setTimeout(resolve, 2000));
 
   const parts = await redis.lrange(bufKey, 0, -1);
   await redis.del(bufKey);

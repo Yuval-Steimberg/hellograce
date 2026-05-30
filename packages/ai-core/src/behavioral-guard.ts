@@ -79,6 +79,7 @@ Check the response against all 15 principles. Be strict — flag any clear viola
         maxOutputTokens: 400,
         responseFormat: 'json',
         model: 'gemini-2.0-flash',
+        disableThinking: true,
       });
 
       const cleaned = resp.text.trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();

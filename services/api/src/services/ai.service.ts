@@ -573,6 +573,29 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       }
     }
 
+    // Image follow-up context: when the user asks about "the picture/image/photo"
+    // in a follow-up turn AND the current turn has no new image, scan recent
+    // history for the most recent food/body image Grace analyzed and inject the
+    // visual context so the LLM doesn't deny having seen the image.
+    const hasNewImage = input.media.some((m) => m.kind === 'image');
+    const isImageFollowup = !hasNewImage && /\b(picture|image|photo|pic|the meal|that meal|that dish|that food|in it|see in|in the bowl|in the plate)\b/i.test(input.text);
+    let priorImageContext = '';
+    if (isImageFollowup && history.length > 0) {
+      // Find the most recent Grace message that referenced a food/body image
+      // analysis. The food-image reply pattern includes "looks like" + grams,
+      // and body replies typically describe physical observations.
+      for (let i = history.length - 1; i >= 0; i--) {
+        const turn = history[i];
+        if (turn?.role !== 'assistant') continue;
+        const content = turn.content;
+        if (/\b(looks like|that looks|that meal|that dish|that plate|that bowl|protein.*photo|in the photo|in the picture|in the image)\b/i.test(content)
+          && /\b\d+\s*g\b|\bgrams?\b|\bprotein\b/i.test(content)) {
+          priorImageContext = content;
+          break;
+        }
+      }
+    }
+
     // After a conversation gap (>4h — common after Twilio sandbox reconnect),
     // inject a hard inline instruction so the LLM treats this as a fresh start.
     // History is kept intact so anti-repetition (Jaccard dedup) still works —
@@ -580,6 +603,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     const isGreeting = intentClass.type === 'greeting';
     const hasGap = !isNew && hoursSinceLastReply > 4;
     let finalText = isNew ? `[FIRST MESSAGE — greet the user warmly] ${augmentedText}` : augmentedText;
+    if (priorImageContext) {
+      finalText = `[IMAGE FOLLOW-UP — the user is asking about a photo you ALREADY analyzed earlier in this conversation. Your previous analysis said: "${priorImageContext}". You DO have image capability — you analyzed their photo. NEVER say "I can't see images" or "I'm a text-based AI" or "describe the picture to me". Reference what you saw in the image when answering their question.] ${augmentedText}`;
+    }
     if (hasGap) {
       const gapH = Math.floor(hoursSinceLastReply);
       if (isGreeting) {

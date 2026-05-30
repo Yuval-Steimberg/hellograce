@@ -291,6 +291,16 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bthat'?s a really (understandable|valid|complex)\s+(worry|concern|feeling|emotion)\b/i, reason: '"That\'s a really understandable/complex …" — validation cliche, banned' },
   { pattern: /\bit'?s a (very |really )?valid concern\b/i, reason: '"It\'s a very valid concern" — clinical validation cliche, banned' },
 
+  // ── Image capability denial — Grace CAN see and analyze images ────────────
+  // After Grace has already analyzed an image, denying capability contradicts
+  // the previous turn and destroys user trust. These patterns block any reply
+  // that claims Grace can't see/receive/analyze images.
+  { pattern: /\bi (cannot|can'?t|am (not|unable))\s+(actually\s+)?(see|view|access|receive|read|analyze|process|look at|interpret)\s+(images?|pictures?|photos?|pics?|the (image|picture|photo))/i, reason: 'Denying image capability — Grace HAS visual analysis via Gemini, never deny' },
+  { pattern: /\b(as|i'?m) a text[\s-]based ai\b/i, reason: '"text-based AI" — denies capabilities Grace has, banned' },
+  { pattern: /\bi don'?t have (the )?(capability|ability) to (see|view|analyze|process)\s+(images?|pictures?|photos?)/i, reason: 'Denying image capability — Grace has it, banned' },
+  { pattern: /\b(if you|please) describe the (picture|image|photo)\s+(to me|for me)/i, reason: 'Asking user to describe their photo — Grace sees images, never ask this' },
+  { pattern: /\bi (cannot|can'?t)\s+["'"]?see["'"]?\s+or receive (images?|pictures?|photos?)/i, reason: 'Denying image capability — Grace has visual analysis, banned' },
+
   // ── Premature medical redirect on normal GLP-1 effects ────────────────────
   // The report specifically flagged Grace redirecting users to a doctor for
   // PLATEAUS, "isn't working anymore" feelings, hair loss, fatigue, etc.

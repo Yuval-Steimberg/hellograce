@@ -26,6 +26,8 @@ export interface AdminDeps {
   templates?: MessageTemplatesService;
   /** Phase 5: contextual bandit state read-only endpoint. */
   bandit?: BanditService;
+  /** 2026-05-30: FAQ semantic cache for latency telemetry. */
+  faqCache?: import('../cache/faq-semantic-cache.js').FaqSemanticCache;
 }
 
 async function auditLog(pool: Pool, action: string, ip: string, details?: Record<string, unknown>): Promise<void> {
@@ -101,6 +103,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
       tools: toolRows,
       feedback_last_7d: feedbackRows,
       cache: deps.cache?.stats() ?? null,
+      faq_cache: deps.faqCache ? deps.faqCache.stats() : null,
       user_stats: userStatsRows[0] ?? { total: 0, paid: 0, pro: 0, trial: 0, paused: 0, new_this_week: 0 },
     };
   });

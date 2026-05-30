@@ -11,6 +11,7 @@ import { getRedisClient, closeRedis } from './cache/redis.js';
 import { Cache } from './cache/cache.js';
 import { GeminiProvider } from './llm/gemini.js';
 import { GeminiEmbedder } from './rag/gemini-embedder.js';
+import { FaqSemanticCache } from './cache/faq-semantic-cache.js';
 import { RagService } from './rag/rag.service.js';
 import { MemoryService } from './memory/memory.service.js';
 import { UserMemoryService } from './memory/user-memory.service.js';
@@ -70,6 +71,17 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
 
   const userMemory = new UserMemoryService(pool, embedder, llm, logger);
 
+  // FAQ semantic cache — opt-in via FAQ_CACHE_ENABLED env var. Initializes
+  // (embeds all seeds) in the background so server boot isn't blocked.
+  let faqCache: FaqSemanticCache | undefined;
+  if (env.FAQ_CACHE_ENABLED) {
+    const threshold = env.FAQ_CACHE_THRESHOLD ?? 0.92;
+    faqCache = new FaqSemanticCache(embedder, logger, threshold);
+    void faqCache.initialize().catch((err) =>
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'faq_cache.init_failed'),
+    );
+  }
+
   const ai = new AIService({
     pool,
     llm,
@@ -87,6 +99,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     systemPrompt: await loadActivePrompt(),
     contentRulesService,
     userMemory,
+    faqCache,
   });
 
   const sender = new TwilioSender(
@@ -214,7 +227,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService });
   registerUserRoutes(app, { pool, users, sender, generator });
   registerChatRoutes(app, ai, pool);
-  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
+  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, faqCache, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
 
   const shutdown = async () => {
     app.log.info('shutdown.start');

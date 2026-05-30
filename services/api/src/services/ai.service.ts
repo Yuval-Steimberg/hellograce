@@ -16,6 +16,7 @@ import type { UsdaFoodService } from './usda-food.service.js';
 import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
 import { makeLogFoodTool } from '../tools/log-food.js';
 import { makeLogWeightTool } from '../tools/log-weight.js';
@@ -67,6 +68,7 @@ export interface AIServiceDeps {
   topicTracker?: TopicTrackerService;
   usda?: UsdaFoodService;
   bandit?: BanditService;
+  faqCache?: FaqSemanticCache;
 }
 
 export class AIService {
@@ -290,6 +292,66 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         return {
           text: vague.response!,
           intent: 'vague_food_clarification',
+          confidence: 'high' as const,
+          toolResults: [],
+          usedRetrieval: false,
+          latencyMs: Date.now() - t0,
+        };
+      }
+    }
+
+    // ── FAQ semantic cache (2026-05-30 latency optimization #2) ─────────────
+    // For fresh / near-fresh conversations whose user message embeds within
+    // 0.92 cosine of a pre-seeded educational FAQ, return the canonical
+    // response immediately — bypasses planner, RAG, orchestrator, critic.
+    // Saves ~1500ms per cache hit.
+    //
+    // Hard gates (defense-in-depth so we never replace a contextually-aware
+    // answer with a generic one):
+    //   1. Intent is NOT a food log / weight log / mood log
+    //   2. No injection-flow stage active (those need their own state machine)
+    //   3. Conversation history is short (< 4 turns) OR the last reply was
+    //      more than 2h ago (treat as a fresh topic)
+    //   4. The cache must be initialized (initialize() completed at boot)
+    const FAQ_INTENT_BLOCK = new Set(['food_log', 'weight_log', 'mood_log']);
+    const conversationIsFresh =
+      history.length < 4 ||
+      (user?.last_reply_at && Date.now() - new Date(user.last_reply_at).getTime() > 2 * 3_600_000);
+    if (
+      this.deps.faqCache &&
+      this.deps.faqCache.isReady() &&
+      !FAQ_INTENT_BLOCK.has(intentClass.type) &&
+      !user?.injection_flow_stage &&
+      conversationIsFresh
+    ) {
+      const hit = await this.deps.faqCache.lookup(input.text);
+      if (hit) {
+        this.deps.logger.info(
+          {
+            userId: input.userId,
+            matchedQuery: hit.matchedQuery.slice(0, 60),
+            similarity: hit.similarity.toFixed(3),
+            category: hit.category,
+            ms: Date.now() - t0,
+          },
+          'ai.handle.faq_cache_hit',
+        );
+        // Persist both turns so the next message has context.
+        void this.deps.memory.appendTurn({
+          userId: input.userId,
+          conversationId,
+          role: 'user',
+          content: input.text,
+        }).catch((err) => this.deps.logger.warn({ err }, 'faq_cache.append_user.failed'));
+        void this.deps.memory.appendTurn({
+          userId: input.userId,
+          conversationId,
+          role: 'assistant',
+          content: hit.response,
+        }).catch((err) => this.deps.logger.warn({ err }, 'faq_cache.append_assistant.failed'));
+        return {
+          text: hit.response,
+          intent: `faq_cache_${hit.category}`,
           confidence: 'high' as const,
           toolResults: [],
           usedRetrieval: false,

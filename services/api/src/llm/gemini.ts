@@ -120,9 +120,14 @@ export class GeminiProvider implements LLMProvider {
       ? ([{ googleSearch: {} }] as unknown as Parameters<typeof this.client.getGenerativeModel>[0]['tools'])
       : undefined;
 
-    // Context caching: cache large system prompts (>4000 chars) to save ~75% on input tokens.
+    // Context caching: cache system prompts >2500 chars to save ~75% on input
+    // tokens. Threshold lowered from 4000 to 2500 (2026-05-30 latency pass) so
+    // the behavioral-guard and critic prompts (~3000 chars) also cache. The
+    // Gemini API requires a minimum of 1024 tokens (~3000 chars) for context
+    // caching to be billed at the cached rate; we set the floor at 2500 chars
+    // to stay comfortably above the minimum on every cached call.
     let cachedContentName: string | null = null;
-    if (systemInstruction && systemInstruction.length > 4000 && !req.useGoogleSearch) {
+    if (systemInstruction && systemInstruction.length > 2500 && !req.useGoogleSearch) {
       cachedContentName = await this.getOrCreateCachedContent(systemInstruction, modelName);
     }
 

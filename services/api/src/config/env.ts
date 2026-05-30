@@ -50,6 +50,13 @@ const EnvSchema = z.object({
    *  via `fly secrets set STRIPE_SECRET_KEY=sk_live_...`. */
   STRIPE_SECRET_KEY: z.string().optional(),
 
+  /** FAQ semantic cache — when true, fresh-conversation messages whose
+   *  embedding matches a seeded FAQ entry above the threshold bypass the
+   *  full LLM pipeline and return the canonical response (~50ms vs ~1500ms).
+   *  Default OFF until verified in production. */
+  FAQ_CACHE_ENABLED: z.coerce.boolean().default(false),
+  FAQ_CACHE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.92),
+
   /** Phase 5: USDA FoodData Central API key. When unset, log_food falls back
    *  to the legacy LLM-only macro estimate. Free signup at
    *  https://fdc.nal.usda.gov/api-key-signup.html (1000 requests/hour). */

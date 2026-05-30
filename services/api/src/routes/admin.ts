@@ -1512,28 +1512,77 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         return;
       }
 
-      // invokeGrace: simulates a single user message through the live AI service.
-      // We don't persist anything — this is a sandboxed eval, not a real conversation.
+      // invokeGrace: runs each scenario through the FULL production pipeline
+      // (sandbox replay → real orchestrator + classifier-forced tool calls +
+      // protein/calorie context block + content checker + relevance/behavioral
+      // guards). The previous direct llm.generate path bypassed all of that,
+      // so scenarios like reg_protein_left_today failed because Grace literally
+      // didn't have protein_goal_grams in scope. See replay/sandbox.ts.
+      const { runSandboxReplay } = await import('../replay/sandbox.js');
+
+      // Load the active system prompt — the rules (PRIVACY, EMOTION-BEFORE-DATA,
+      // protein-from-CURRENT-weight, clinical-redirect template, etc.) are what
+      // most regression scenarios are actually testing.
+      let regressionSystemPrompt = 'You are Grace, a WhatsApp companion for GLP-1 users.';
+      try {
+        const { rows } = await deps.pool.query<{ content: string }>(
+          `SELECT content FROM prompts WHERE active = TRUE ORDER BY created_at DESC LIMIT 1`,
+        );
+        if (rows[0]?.content) regressionSystemPrompt = rows[0].content;
+      } catch {
+        /* fall through with default */
+      }
+
       const invokeGrace = async (input: unknown): Promise<{ text: string; latencyMs: number }> => {
-        const inp = input as { persona: { medication: string; foodDislikes?: string[]; dietaryRestriction?: string }; userMessage: string };
+        const inp = input as {
+          persona: {
+            name?: string;
+            medication?: string;
+            goals?: string[];
+            foodDislikes?: string[];
+            dietaryRestriction?: string;
+            weekOnGlp1?: number;
+          };
+          userMessage: string;
+        };
         if (!deps.llm) throw new Error('LLM provider not configured');
+
+        // Extract protein target from the persona's goals string (e.g.
+        // "hit 80g protein daily"). Falls back to 80g — Grace's default.
+        let proteinGoalGrams = 80;
+        for (const g of inp.persona.goals ?? []) {
+          const m = /(\d{2,3})\s*g\s*(of\s+)?protein/i.exec(g);
+          if (m && m[1]) {
+            proteinGoalGrams = parseInt(m[1], 10);
+            break;
+          }
+        }
+
+        const restrictionLabel = inp.persona.dietaryRestriction?.toUpperCase();
+        const dietaryRestriction =
+          restrictionLabel === 'VEGAN' || restrictionLabel === 'VEGETARIAN' || restrictionLabel === 'PESCATARIAN'
+            ? { label: restrictionLabel as 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN', forbidden: [], allowed: [] }
+            : undefined;
+
         const t0 = Date.now();
-        const result = await deps.llm.generate({
-          messages: [
-            {
-              role: 'system',
-              content: `You are Grace, a WhatsApp companion for ${inp.persona.medication} users. Respond naturally and concisely.${
-                inp.persona.dietaryRestriction ? ` User is ${inp.persona.dietaryRestriction}.` : ''
-              }${
-                inp.persona.foodDislikes?.length ? ` Dislikes: ${inp.persona.foodDislikes.join(', ')}.` : ''
-              }`,
-            },
-            { role: 'user', content: inp.userMessage },
-          ],
-          temperature: 0.4,
-          maxOutputTokens: 600,
+        const result = await runSandboxReplay({
+          messages: [inp.userMessage],
+          persona: {
+            ...(inp.persona.name ? { firstName: inp.persona.name } : {}),
+            ...(inp.persona.medication ? { medication: inp.persona.medication } : {}),
+            ...(dietaryRestriction ? { dietaryRestriction } : {}),
+            ...(inp.persona.foodDislikes ? { foodDislikes: inp.persona.foodDislikes } : {}),
+            proteinGoalGrams,
+            ...(inp.persona.weekOnGlp1 ? { glp1WeekNumber: inp.persona.weekOnGlp1 } : {}),
+          },
+          systemPrompt: regressionSystemPrompt,
+          llm: deps.llm,
         });
-        return { text: result.text, latencyMs: Date.now() - t0 };
+        const lastGrace = [...result.turns].reverse().find((t) => t.role === 'grace');
+        return {
+          text: lastGrace?.text ?? '',
+          latencyMs: Date.now() - t0,
+        };
       };
 
       // Fetch dynamic DB scenarios (if migration applied) and merge with static

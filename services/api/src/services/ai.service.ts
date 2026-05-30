@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
 import type { ChatTurn, DietaryRestriction, InboundMessage, OrchestratorOutput } from '@grace/shared';
 import { AIOrchestrator, PlannerAgent, ToolRegistry, classifyMessage as classifyIntent } from '@grace/ai-core';
+import { tryFastPath } from './fast-path.js';
 import type { LLMProvider, PlannerDecision } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { UserMemoryService } from '../memory/user-memory.service.js';
@@ -98,6 +99,29 @@ export class AIService {
         usedRetrieval: false,
         latencyMs: Date.now() - t0,
       };
+    }
+
+    // Fast-path: pure greetings, brief positive feelings, thanks, brief acks
+    // get a deterministic warm reply with zero LLM call — ~50-150ms total
+    // instead of ~2-4s. Skipped when media is attached (photo/voice always
+    // needs analysis). Tool results / RAG / memory are all skipped for these
+    // turns because they don't add anything to a "Hi" → "Hey there" exchange.
+    if (input.media.length === 0) {
+      const fast = tryFastPath(input.text, input.userId);
+      if (fast) {
+        this.deps.logger.info(
+          { userId: input.userId, category: fast.category, latencyMs: Date.now() - t0 },
+          'ai.fast_path.hit',
+        );
+        return {
+          text: fast.text,
+          confidence: 'high',
+          intent: `fast_path_${fast.category}`,
+          toolResults: [],
+          usedRetrieval: false,
+          latencyMs: Date.now() - t0,
+        };
+      }
     }
 
     try {

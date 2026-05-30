@@ -102,10 +102,18 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         // Coalesce rapid consecutive text messages (corrections, continuations).
         // If this message is absorbed into a pending window, exit early — the
         // lock-holder will process the merged text. Media messages fire immediately.
+        //
+        // Fast-path bypass (2026-05-30): pure greetings / brief acks / thanks
+        // get an instant deterministic reply, so the 2-second coalesce wait is
+        // pure dead time for them. Skip coalesce when the message is short and
+        // matches a no-continuation pattern. Real multi-message bursts (food
+        // logs, questions, longer content) still go through the buffer.
         if (deps.redis && normalized.type === 'text') {
-          const coalesced = await coalesceMessages(deps.redis, normalized.userId, normalized.text);
-          if (coalesced === null) return;
-          normalized.text = coalesced;
+          if (!shouldSkipCoalesce(normalized.text)) {
+            const coalesced = await coalesceMessages(deps.redis, normalized.userId, normalized.text);
+            if (coalesced === null) return;
+            normalized.text = coalesced;
+          }
         }
 
         let user: GraceUser | null = null;
@@ -441,6 +449,21 @@ function detectInjectionDayChange(text: string): string | null {
   if (!dayMatch) return null;
   const key = dayMatch[1]?.toLowerCase() ?? '';
   return INJECTION_DAY_MAP[key] ?? null;
+}
+
+// Detect messages that don't need the coalesce window. Pure greetings, brief
+// acks, thanks, and short positive feelings are complete in one message —
+// users don't send "Hi" followed by a correction. Skipping the 2-second
+// buffer for these brings perceived latency from ~3-4s down to ~200-500ms.
+// Keep this list TIGHT — false positives here mean some real follow-up texts
+// won't get merged.
+const COALESCE_SKIP_RE = /^(hi|hey|hello|hii+|heyy+|good\s+morning|good\s+afternoon|good\s+evening|morning|evening|sup|yo|howdy|whats?\s+up|ok|okay|kk|got\s+it|noted|cool|sweet|solid|nice|alright|sure|yep|yup|yes|will\s+do|sounds?\s+good|thanks|thank\s+you|thx|ty|appreciate\s+it|i'?m\s+(feeling\s+|doing\s+)?(strong|great|good|amazing|wonderful|fantastic|awesome|excellent|fine|okay|ok|alright|well|happy|grateful|tired|exhausted|sad|frustrated)|feeling\s+(strong|great|good|amazing|tired|exhausted|sad|rough)|👍|👌|🤍|🧡|❤️|🙏)\s*[.!?]?\s*$/i;
+
+function shouldSkipCoalesce(text: string): boolean {
+  const t = text.trim();
+  // Anything longer than 40 chars is too complex to assume single-message
+  if (t.length === 0 || t.length > 40) return false;
+  return COALESCE_SKIP_RE.test(t);
 }
 
 // ─── Message coalescing ───────────────────────────────────────────────────────

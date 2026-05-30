@@ -452,12 +452,15 @@ function detectInjectionDayChange(text: string): string | null {
 }
 
 // Detect messages that don't need the coalesce window. Pure greetings, brief
-// acks, thanks, and short positive feelings are complete in one message —
-// users don't send "Hi" followed by a correction. Skipping the 2-second
+// acks, thanks, farewells, goodnights, laughter, apologies, appreciation, and
+// short positive/negative feelings are complete in one message — users don't
+// send "Hi" or "goodnight" followed by a correction. Skipping the 2-second
 // buffer for these brings perceived latency from ~3-4s down to ~200-500ms.
-// Keep this list TIGHT — false positives here mean some real follow-up texts
-// won't get merged.
-const COALESCE_SKIP_RE = /^(hi|hey|hello|hii+|heyy+|good\s+morning|good\s+afternoon|good\s+evening|morning|evening|sup|yo|howdy|whats?\s+up|ok|okay|kk|got\s+it|noted|cool|sweet|solid|nice|alright|sure|yep|yup|yes|will\s+do|sounds?\s+good|thanks|thank\s+you|thx|ty|appreciate\s+it|i'?m\s+(feeling\s+|doing\s+)?(strong|great|good|amazing|wonderful|fantastic|awesome|excellent|fine|okay|ok|alright|well|happy|grateful|tired|exhausted|sad|frustrated)|feeling\s+(strong|great|good|amazing|tired|exhausted|sad|rough)|👍|👌|🤍|🧡|❤️|🙏)\s*[.!?]?\s*$/i;
+//
+// This list mirrors the fast-path categories in services/fast-path.ts. Keep
+// it broad on these no-continuation patterns — false positives here just mean
+// a 2-second wait was skipped, no behavioral change.
+const COALESCE_SKIP_RE = /^(?:hi|hey|hello|hii+|heyy+|good\s+morning|good\s+afternoon|good\s+evening|morning|evening|sup|yo|howdy|whats?\s*up|hiya|ok|okay|kk|k|got\s+it|noted|cool|sweet|solid|nice|alright|sure|yep|yup|yes|nope|nah|no|will\s+do|sounds?\s+good|copy\s+that|gotcha|thanks|thank\s+you|thx|ty|tysm|appreciate\s+(?:it|you|that)|thanks\s+so\s+much|thank\s+you\s+so\s+much|much\s+appreciated|goodnight|good\s+night|night|nighty|nite|gn|nighty\s+night|sweet\s+dreams|heading\s+to\s+bed|going\s+to\s+bed|off\s+to\s+bed|going\s+to\s+sleep|bedtime|bye|byee+|goodbye|see\s+you|see\s+ya|see\s+you\s+(?:later|tomorrow)|talk\s+(?:later|tomorrow)|catch\s+you\s+later|ttyl|ttys|later|peace|cya|gtg|gotta\s+go|have\s+to\s+go|brb|lol|lolol|haha+|hehe+|hahah+a*|lmao+|lmfao+|rofl|hah|heh|sorry|sry|i'?m\s+sorry|im\s+sorry|so\s+sorry|my\s+bad|my\s+apologies|apologies|sorry\s+about\s+(?:that|it)|oops|oof|mb|wow|woah|whoa|woww+|omg|oh\s+my|gosh|oh\s+gosh|huh|hmm+|interesting|oh|oh\s+wow|oh\s+okay|oh\s+ok|geez|sheesh|dang|damn|love\s+you|love\s+ya|i\s+love\s+you|you'?re\s+the\s+best|you\s+rock|you'?re\s+amazing|you'?re\s+great|you'?re\s+awesome|best\s+ever|amazing|you'?re\s+helpful|so\s+helpful|love\s+(?:it|that|this)|like\s+(?:it|that)|that'?s\s+(?:helpful|great|perfect)|that\s+helps|helpful|perfect|yes|yeah|yep|yup|absolutely|definitely|for\s+sure|of\s+course|certainly|right|exactly|true|correct|indeed|100%|i'?m\s+good|i'?m\s+ok|i'?m\s+okay|i'?m\s+fine\s+thanks|no\s+thanks|no\s+thank\s+you|not\s+really|i'?m\s+(?:feeling\s+|doing\s+)?(?:strong|great|good|amazing|wonderful|fantastic|awesome|excellent|fine|okay|ok|alright|well|happy|grateful|blessed|energized|motivated|focused|positive|chill|calm|peaceful|content|relaxed|refreshed|hopeful|optimistic|proud|tired|exhausted|drained|wiped|spent|done|knackered|rough|stressed|anxious|overwhelmed|frustrated|sad|down|low|blue|lonely|defeated|burned\s+out|burnt\s+out|meh|blah|off|terrible|awful)|feeling\s+(?:strong|great|good|amazing|tired|exhausted|sad|rough|stressed|anxious|overwhelmed|frustrated|down|low|blue|lonely|meh|blah)|(?:not\s+great|not\s+good|not\s+okay|not\s+ok|rough\s+day|long\s+day|hard\s+day|tough\s+day|rough\s+night|the\s+worst)|👍|👌|🤍|🧡|❤️|💛|💚|💙|💜|🙏|😄|😆|😅|🤣|😂|😆|💯)\s*[.!?]?\s*$/i;
 
 function shouldSkipCoalesce(text: string): boolean {
   const t = text.trim();

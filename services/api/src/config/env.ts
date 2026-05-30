@@ -22,9 +22,9 @@ const EnvSchema = z.object({
 
   LLM_PROVIDER: z.enum(['gemini']).default('gemini'),
   GEMINI_API_KEY: z.string().min(1),
-  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
+  GEMINI_MODEL: z.string().default('gemini-2.0-flash'),
   /** Used when the primary model returns 503/429 even after retries. */
-  GEMINI_FALLBACK_MODEL: z.string().default('gemini-2.0-flash'),
+  GEMINI_FALLBACK_MODEL: z.string().default('gemini-2.5-flash'),
 
   RAG_ENABLED: z
     .string()

@@ -133,7 +133,7 @@ export class GeminiProvider implements LLMProvider {
 
     const genConfig: Record<string, unknown> = {
       temperature: req.temperature ?? 0.6,
-      maxOutputTokens: req.maxOutputTokens ?? 400,
+      maxOutputTokens: req.maxOutputTokens ?? 200,
       ...(req.responseFormat === 'json' ? { responseMimeType: 'application/json' } : {}),
     };
     // thinkingConfig only works on Gemini 2.5+ models. Sending it to 2.0

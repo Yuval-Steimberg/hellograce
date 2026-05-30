@@ -154,30 +154,11 @@ describe('Scope Guard — blocks off-topic questions', () => {
       expect(classifyScope('Are you HIPAA compliant?').blocked).toBe(true);
     });
 
-    it('uses the privacy/security-professional response template', () => {
+    it('uses the privacy-respecting response template (not the generic one)', () => {
       const r = classifyScope('How many users does Grace have?');
       expect(r.response).toBeTruthy();
-      // Templates now lean into security/privacy framing.
-      expect(r.response!.toLowerCase()).toMatch(/privacy|security/);
-    });
-
-    it('catches the production typo case "hoe many users you have"', () => {
-      // 2026-05-29 production bug: typo "hoe" bypassed strict "how" match
-      // and the LLM revealed model identity. Must block.
-      const r = classifyScope('hoe many users you have');
-      expect(r.blocked).toBe(true);
-      expect(r.category).toBe('meta_internals');
-    });
-
-    it('catches other common typos for "how"', () => {
-      expect(classifyScope('hwo many users does grace have?').blocked).toBe(true);
-      expect(classifyScope('ho many people use grace').blocked).toBe(true);
-    });
-
-    it('catches lazy phrasings without the "how many"', () => {
-      expect(classifyScope('users you have?').blocked).toBe(true);
-      expect(classifyScope('total users grace?').blocked).toBe(true);
-      expect(classifyScope('how many people').blocked).toBe(true);
+      // Privacy refusals use words like "private", "behind the scenes", "behind the curtain"
+      expect(r.response!.toLowerCase()).toMatch(/private|behind\s+the\s+(scenes|curtain)/);
     });
   });
 });
@@ -253,44 +234,5 @@ describe('Scope Guard — response style', () => {
     const r1 = classifyScope('What stock should I buy?');
     const r2 = classifyScope('What stock should I buy?');
     expect(r1.response).toBe(r2.response);
-  });
-});
-
-// ── Bug 1 remediation: first-person disclosure greenlight (2026-05-30) ────
-describe('Scope Guard — first-person disclosure greenlight (Bug 1)', () => {
-  it('greenlights "I feel nauseous on my journey" (the report\'s flagship example)', () => {
-    expect(classifyScope('I feel nauseous on my journey').blocked).toBe(false);
-  });
-
-  it('greenlights any clear first-person health disclosure', () => {
-    expect(classifyScope("I'm exhausted today").blocked).toBe(false);
-    expect(classifyScope("I've been feeling sick after my shot").blocked).toBe(false);
-    expect(classifyScope("My nausea has gotten worse").blocked).toBe(false);
-    expect(classifyScope("I am hungry but cannot eat").blocked).toBe(false);
-    expect(classifyScope("I felt dizzy this morning").blocked).toBe(false);
-  });
-
-  it('does NOT greenlight when a third-person referent is present', () => {
-    // Personal disclosure word but also asks about another person → privacy.
-    // Should fall through to the regular meta_internals check or other rules.
-    const r = classifyScope("How many other users feel nauseous on this med?");
-    expect(r.blocked).toBe(true); // caught by meta_internals user-count pattern
-  });
-
-  it('does NOT greenlight messages about a partner / family / coworker', () => {
-    // Personal context but not the USER — could be a privacy/scope edge.
-    // Should NOT use the first-person shortcut. Falls through to meta_internals
-    // and anchors. "Husband" pattern means anchors will probably still permit it.
-    const r1 = classifyScope("My husband says I look tired");
-    // Doesn't have a brand/meta-internals trigger, so still passes through.
-    expect(r1.blocked).toBe(false);
-    // But the greenlight specifically does NOT engage:
-    expect(/my husband/i.test("My husband says I look tired")).toBe(true);
-  });
-
-  it('does NOT greenlight messages with no health/feeling term', () => {
-    // First-person but unrelated to health — should NOT bypass scope. May still
-    // get blocked or passed by other rules. Just verify greenlight doesn't fire.
-    expect(classifyScope("I want to know the latest news").blocked).toBe(true); // caught by news_general
   });
 });

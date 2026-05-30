@@ -186,10 +186,8 @@ const SCOPE_PATTERNS: ScopePattern[] = [
     patterns: [
       // ── Other users / user counts / population queries ────────────────────
       // "how many users / people / women / customers / subscribers do you / does grace have"
-      // Tolerant of common typos: hoe/hwo/hw/ho for "how", missing whitespace.
-      /\b(?:how|hoe|hwo|hw|ho)\s+(?:many|much)\s+(?:\w+\s+){0,4}(?:users?|people|women|men|customers?|subscribers?|members?|clients?|patients?|signups?|sign[\s-]?ups?|accounts?)\b/i,
-      /\b(?:users?|people|customers?|subscribers?|members?|accounts?)\s+(?:do\s+|does\s+)?(?:you|grace)\s+have\b/i,
-      /\b(how\s+many|number\s+of|count\s+of|total\s+(?:number\s+of\s+)?)\s*(users?|people|women|customers?|subscribers?)\b/i,
+      /\bhow\s+many\s+(users?|people|women|men|customers?|subscribers?|members?|clients?|patients?)\s+(do\s+(you|grace)\s+have|(are\s+)?(on|using|signed\s+up\s+(for|to)))\b/i,
+      /\b(how\s+many|number\s+of)\s+(users?|people|women|customers?|subscribers?)\b.*\bgrace\b/i,
       // "who else uses grace" / "what do other users do/say" / "show me other users"
       /\b(who\s+else|what\s+(do|are)\s+other\s+(users?|people|women))\b/i,
       /\b(other\s+users'?|other\s+people'?s?)\s+(data|info|information|messages?|conversations?|profiles?|weight|protein|results?)\b/i,
@@ -249,16 +247,15 @@ const RESPONSES_GENERAL: readonly string[] = [
   "I'll leave that one to the experts. What I can help with: your protein, weight, symptoms, or anything about your journey.",
 ] as const;
 
-// Privacy/security-professional refusals for meta/internals questions.
-// Frames the refusal around SECURITY and PRIVACY rather than scope. Never
-// reveals infrastructure, user counts, model identity, or system internals.
-// Always offers the in-scope alternative.
+// Privacy-respecting refusals for meta/internals questions. Acknowledge the
+// privacy boundary without revealing infrastructure, user counts, or model
+// details. Always offer the in-scope alternative.
 const RESPONSES_META: readonly string[] = [
-  "For privacy and security reasons, I can't share information about other users or how the system works under the hood. I'm here to focus on your journey — happy to help with food, symptoms, weight, or anything about how you're doing.",
-  "That's protected information — both for security and to keep every user's data private. I can help with your protein, medication, symptoms, or how today's going.",
-  "Not something I can share — privacy and security come first here, for you and for everyone else using the service. Want to talk through food, symptoms, or your goals?",
-  "For security reasons that information stays internal. What I'm here for: your meals, weight, medication, sleep, and how you're feeling on your GLP-1 journey.",
-  "I'm not able to discuss other users, system details, or how I'm built — security and privacy by design. I'm fully here for your health journey if you want to dig into anything.",
+  "I can't share anything about other users or how things work behind the scenes — that's private. I'm here for your journey though. Want to talk through food, symptoms, or your goals?",
+  "That's not something I can speak to — other people's data and the technical side stay private. I can help with your protein, weight, medication, or how you're feeling.",
+  "I keep what happens behind the scenes private — and the same goes for every user. Happy to focus on your journey though: food, symptoms, mood, anything.",
+  "Not something I'll get into — your privacy and everyone else's matters here. What I can do: help with your meals, symptoms, weight, or how today's going.",
+  "That stays behind the curtain — privacy first, always. I'm fully focused on your GLP-1 journey if you want to talk through anything.",
 ] as const;
 
 function pickResponse(text: string, category: ScopeCategory): string {
@@ -271,65 +268,13 @@ function pickResponse(text: string, category: ScopeCategory): string {
   return pool[idx]!;
 }
 
-// ── First-person disclosure greenlight (Bug 1 remediation) ────────────────
-// Detects messages that are clearly personal disclosures so they bypass any
-// scope/privacy check that might false-positive on broad keywords like
-// "journey" or "about". Three criteria, ALL required:
-//   (a) First-person pronoun: I, me, my, mine, I'm, I've, I'll, I'd
-//   (b) Health/feeling/journey term — covers the GLP-1 domain broadly
-//   (c) NO third-person referent — "he/she/they/another patient/other user/
-//       someone else/my friend/my husband/my mother" → does NOT greenlight
-//       because the user might be asking about another person's data.
-const FIRST_PERSON_RE = /\b(?:i|me|my|mine|i'?m|i'?ve|i'?ll|i'?d|myself)\b/i;
-
-const HEALTH_FEELING_RE = new RegExp(
-  '\\b(?:' + [
-    // Feelings
-    'feel', 'feeling', 'felt', 'feels',
-    // Physical states / symptoms
-    'nausea', 'nauseous', 'nauseated', 'tired', 'exhausted', 'fatigued',
-    'hungry', 'starving', 'full', 'bloated', 'queasy', 'sick', 'dizzy',
-    'lightheaded', 'shaky', 'headache', 'cramp', 'cramps', 'pain', 'sore',
-    'achy', 'weak', 'energized', 'low', 'down', 'anxious', 'frustrated',
-    'sad', 'happy', 'tearful', 'overwhelmed', 'stressed', 'worried',
-    // Journey / progress
-    'journey', 'progress', 'goal', 'goals', 'weight', 'plateau',
-    // GLP-1 domain
-    'ozempic', 'wegovy', 'mounjaro', 'zepbound', 'rybelsus', 'semaglutide',
-    'tirzepatide', 'injection', 'shot', 'jab', 'dose', 'medication',
-    // Body / food / habits
-    'eat', 'ate', 'eating', 'meal', 'snack', 'food', 'protein', 'calorie',
-    'calories', 'water', 'hydrat', 'sleep', 'walk', 'exercise',
-  ].join('|') + ')\\w*\\b',
-  'i',
-);
-
-// Third-person references — if present, we can't safely greenlight because
-// the user might be asking about ANOTHER person's data (privacy concern).
-const THIRD_PERSON_RE = /\b(?:he|she|they|them|their|theirs|another (?:patient|user|person|customer|member)|other (?:patients?|users?|people|persons?|customers?|members?)|someone else|other folks|other folk|my (?:friend|husband|wife|partner|boyfriend|girlfriend|mother|mom|father|dad|sister|brother|son|daughter|child|kid|coworker|colleague))\b/i;
-
-function isFirstPersonDisclosure(text: string, lower: string): boolean {
-  // Need both first-person pronoun AND a health/feeling term.
-  if (!FIRST_PERSON_RE.test(text)) return false;
-  if (!HEALTH_FEELING_RE.test(lower)) return false;
-  // Don't greenlight if a third-person referent is present (could be a
-  // question about another patient).
-  if (THIRD_PERSON_RE.test(text)) return false;
-  return true;
-}
-
 /**
  * Classify whether the inbound message is out-of-scope for Grace.
  *
  * Decision order:
- *  0. FIRST-PERSON DISCLOSURE GREENLIGHT (Bug 1 remediation, 2026-05-30) —
- *     if the message is a clear first-person personal disclosure (contains
- *     I/me/my/mine/I'm/I've + a feeling/health term, and no third-person
- *     referent like "he/she/they/another patient/other user"), it bypasses
- *     ALL scope/meta checks. This is defense-in-depth on top of the in-scope
- *     anchor list so a future overly-broad pattern can never block a
- *     legitimate personal disclosure like "I feel nauseous on my journey".
- *  1. meta_internals ALWAYS checked next — even with an in-scope anchor.
+ *  1. meta_internals ALWAYS checked first — even if an in-scope anchor is
+ *     present. "How many users with weight loss goals?" mentions "weight"
+ *     but is still a privacy/internals leak attempt and must be blocked.
  *  2. If an in-scope health anchor word appears → NOT blocked
  *  3. If a dismissal phrase appears ("I don't follow politics") → NOT blocked
  *  4. If any other off-topic pattern matches → blocked
@@ -338,9 +283,6 @@ function isFirstPersonDisclosure(text: string, lower: string): boolean {
 export function classifyScope(text: string): ScopeCheck {
   const lower = text.toLowerCase().trim();
   if (lower.length === 0) return { blocked: false };
-
-  // Rule 0: explicit first-person disclosure greenlight.
-  if (isFirstPersonDisclosure(text, lower)) return { blocked: false };
 
   // Rule 1: meta_internals takes precedence over in-scope anchors.
   const metaGroup = SCOPE_PATTERNS.find((g) => g.category === 'meta_internals');

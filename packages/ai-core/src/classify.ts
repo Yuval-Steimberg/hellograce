@@ -19,6 +19,7 @@ export type MessageType =
   | 'emotional'      // distress, struggle, frustration, giving up
   | 'scheduling'     // wants more / fewer check-ins
   | 'knowledge'      // GLP-1 / medication / side-effect question
+  | 'appointment_prep' // doctor / endocrinologist appointment — help draft questions
   | 'gibberish'      // emoji-only, random chars, unparseable
   | 'general';       // catch-all — let the planner decide
 
@@ -116,6 +117,20 @@ const SCHEDULING: RegExp[] = [
   /\byou('?re| are) (texting|messaging) (me )?(too much|too often|a lot)\b/i,
 ];
 
+// ─── Doctor appointment prep ───────────────────────────────────────────────────
+// Fires on combos of (appointment | doctor | endocrinologist | specialist visit)
+// + (help me | prep | prepare | write | questions | what should I ask).
+// Detection has to be eager — Session 3 feedback showed Grace responding
+// "What's on your mind?" to a clear appointment prep request. The hard
+// override must fire on the FIRST message, not the second.
+const APPOINTMENT_PREP: RegExp[] = [
+  // Explicit "help me prep / write questions" + doctor/appointment mention
+  /\b(help me (write|draft|prepare|prep)|prepare me (for|to)|prep me (for)?|what should i ask|questions (for|to ask)|write (down |out )?(my |some )?questions)\b[^.?!]{0,80}\b(doctor|endocrinologist|endo|specialist|appointment|visit|consult|consultation|gp|pcp|provider|prescriber)\b/i,
+  /\b(doctor|endocrinologist|endo|specialist|gp|pcp|provider|prescriber)\b[^.?!]{0,80}\b(appointment|visit|consult|consultation)\b[^.?!]{0,80}\b(help|prepare|prep|questions|what should i ask|write)/i,
+  /\b(i have (?:my |an? )?(?:appointment|visit|consult)|(?:my )?appointment (?:is |coming|next))\b[^.?!]{0,80}\b(help|prepare|prep|questions|what should i ask|write)/i,
+  /\bprepare (?:me )?(?:for )?(?:the |my )?(?:appointment|visit|consult|doctor|endocrinologist)\b/i,
+];
+
 const KNOWLEDGE: RegExp[] = [
   /\bwhy (is|does|do|am|are)\b.{5,}/i,
   /\bhow (does|do|long|often|much|come)\b.{5,}/i,
@@ -154,6 +169,11 @@ function matches(text: string, patterns: RegExp[]): boolean {
 export function classifyMessage(text: string): ClassifyResult {
   if (isGibberish(text)) return { type: 'gibberish', confidence: 0.9 };
   if (matches(text, GREETING)) return { type: 'greeting', confidence: 0.95 };
+  // Appointment prep MUST come BEFORE knowledge / general, since "Help me write
+  // my questions for my endocrinologist appointment next week" otherwise
+  // matches knowledge patterns weakly and falls into general → generic chat
+  // fallback. The hard override fires here on the first message.
+  if (matches(text, APPOINTMENT_PREP)) return { type: 'appointment_prep', confidence: 0.95 };
   // Food summary questions MUST come before food_log — "how many proteins
   // i ate today" contains "ate" but is asking about totals, not logging.
   if (matches(text, FOOD_SUMMARY_QUESTION)) return { type: 'food_question', confidence: 0.95 };

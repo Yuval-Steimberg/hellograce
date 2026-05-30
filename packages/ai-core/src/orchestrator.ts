@@ -87,10 +87,14 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "I'm here — what would you like to talk about?",
     "What's going on? Feel free to share anything.",
   ],
+  appointment_prep: [
+    "Good idea to prep. Bring up your protein intake, side effects (nausea, fatigue, constipation), and ask whether your current dose is still right given how you're feeling. Also worth asking about labs.",
+    "A few solid questions: is my current dose still right for me given my progress, what can I do about the side effects I'm feeling, and is muscle loss something I should be testing for. Want me to add a few specific to you?",
+  ],
   general: [
-    "I'm here and ready to help. What's on your mind?",
-    "Let me help with that. What would be most useful right now?",
-    "I'm listening. What would you like to talk about?",
+    "I'm listening — tell me a bit more so I can actually help.",
+    "Tell me a bit more about what's going on so I can give you something useful.",
+    "I'm here — share a bit more so I can help with the right thing.",
   ],
 };
 
@@ -235,6 +239,7 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssi
     emotional: 'sharing a feeling or struggle. Validate first. Do NOT continue any previous topic.',
     scheduling: 'asking about message frequency. Do NOT continue any previous topic.',
     knowledge: 'asking a GLP-1 / medication / nutrition knowledge question. Answer directly with facts. Do NOT continue any previous topic.',
+    appointment_prep: 'asking for help preparing for a doctor / endocrinologist / specialist appointment. Draft 4-6 SPECIFIC questions for them to bring, using their conversation context (current side effects, protein struggles, dose, journey stage). DO NOT respond with "What\'s on your mind?" — they told you what\'s on their mind: the appointment. Provide questions immediately. Write as flowing prose (no bullets / numbers / headers).',
     gibberish: 'sending an unclear message. Ask a brief clarifying question.',
     general: 'sending a new message. Answer ONLY what they just asked. Do NOT continue any previous topic. Do NOT repeat or paraphrase any previous Grace message.',
   };
@@ -347,6 +352,11 @@ export class AIOrchestrator {
       generationTokenBudget = 512; // log ack + macro number, thinking off
     } else if (classification.type === 'emotional') {
       generationTokenBudget = 1024; // 2-sentence empathic reply, thinking off
+    } else if (classification.type === 'appointment_prep') {
+      // Appointment prep needs full thinking room — quality matters more than
+      // latency for a doctor-visit response. Keep the same 8192 ceiling and
+      // ensure thinking stays enabled.
+      generationTokenBudget = 8192;
     } else {
       generationTokenBudget = 8192; // knowledge / food question — thinking enabled, full room
     }
@@ -389,6 +399,7 @@ export class AIOrchestrator {
       ...(input.medicationType ? { medicationType: input.medicationType } : {}),
       ...(input.responseMode ? { responseMode: input.responseMode } : {}),
       ...(input.dbRules && input.dbRules.length > 0 ? { dbRules: input.dbRules } : {}),
+      userMessage: input.text,
     };
     const contentViolations: ContentViolation[] = checkContent(validated.text, contentCheckOpts);
 
@@ -588,11 +599,20 @@ export class AIOrchestrator {
 
       if (hardFail) {
         regenerated = true;
+        // When the original response was truncated (length finishReason or
+        // ended mid-word), add an explicit brevity instruction so the retry
+        // fits comfortably inside the token budget. This is the safeguard
+        // for Bug 3 in the 2026-05-30 full-feedback report — responses
+        // cutting off mid-sentence multiple times per session.
+        const truncationAddendum = truncated
+          ? '\n\n━━━ TRUNCATION RECOVERY ━━━\nYour previous draft cut off mid-sentence — it was TOO LONG. Rewrite in MAXIMUM 2-3 SHORT sentences. Pure prose only. No lists. No headers. No "Here\'s a breakdown". State the most important thing FIRST, in one sentence. Then stop. The message MUST end with a complete sentence and proper punctuation.\n'
+          : '';
         const addendum =
           buildCriticAddendum(critic) +
           (regenViolations.length > 0
             ? buildContentRegenInstruction(regenViolations, input.dietaryRestriction)
-            : '');
+            : '') +
+          truncationAddendum;
         const retryResp = await this.deps.llm.generate({
           messages: [
             { role: 'system', content: baseSystem + addendum },

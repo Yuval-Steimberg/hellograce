@@ -21,6 +21,7 @@ export type MessageContext =
   | 'emotional'
   | 'scheduling'
   | 'knowledge'
+  | 'appointment_prep'
   | 'gibberish'
   | 'general';
 
@@ -68,6 +69,7 @@ const ALLOWED_OPENERS_BY_CONTEXT: Record<MessageContext, RegExp[][]> = {
   emotional: [],
   scheduling: [],
   knowledge: [],
+  appointment_prep: [],
   gibberish: [],
   general: [],
 };
@@ -256,19 +258,38 @@ export function enforceFormat(
 
   // ─── Label:description list disguised as prose (H3) ────────────────────
   // Patterns like "Bananas: easy to digest. Eggs: high protein." — these
-  // are list items pretending to be prose. Replace the colon with a comma
-  // and a connector so they read as flowing prose. Only collapses when 2+
-  // such "Capital words: …" structures appear in sequence (single one might
-  // be a legitimate definition).
+  // are list items pretending to be prose. Replace the colon with em-dash
+  // so they read as flowing prose. Threshold lowered from 2 → 1 (2026-05-30
+  // feedback) — a single "Bananas: easy to digest" is still a list-item leak.
+  // The risk of stripping a legitimate definition is low because most
+  // definitions in Grace's voice are written as "X means Y" not "X: Y".
   //
   // Lookahead `(?=[.\n])` for the trailing terminator so consecutive matches
   // can re-anchor on the SAME period that ended the previous match.
   const labelColonRe = /(^|[.!?]\s+)([A-Z][\w\s]{2,28}):\s+(\w[^.\n]{4,80})(?=[.\n])/g;
   let labelHits = 0;
   text.replace(labelColonRe, () => { labelHits++; return ''; });
-  if (labelHits >= 2) {
+  if (labelHits >= 1) {
     text = text.replace(labelColonRe, (_, prefix, label, body) => `${prefix}${label} — ${body}`);
     fixes.push('label_colon_flattened');
+  }
+
+  // ─── List-introducing phrases (2026-05-30 feedback) ────────────────────
+  // "Here's a breakdown of...:" / "Here's why it's happening:" / etc.
+  // These guarantee a list follows. Strip them so the remaining text reads
+  // as direct prose. We replace the colon with a period so the next sentence
+  // stands alone instead of dangling as a list intro.
+  const listIntroRe = /\b(here'?s (?:a |the |my )?(?:breakdown|summary|explanation|overview)[^.:!?\n]{0,60}|here'?s why(?:\s+it'?s\s+happening)?|here'?s what (?:you (?:can|should) do|to do)|here are (?:the |some |a few |my )?(?:key |main |important |top )?(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?))\s*:\s*/gi;
+  if (listIntroRe.test(text)) {
+    text = text.replace(listIntroRe, '');
+    fixes.push('list_intro_stripped');
+  }
+
+  // Section-header colons at line start (e.g. "Why it's happening:" / "What to do:")
+  const sectionHeaderRe = /^\s*(why it'?s happening|what to do|causes?|solutions?|tips?|steps?|key points?|main points?|background|the answer|the (?:short|tl;?dr) (?:answer|version))\s*:\s*/gim;
+  if (sectionHeaderRe.test(text)) {
+    text = text.replace(sectionHeaderRe, '');
+    fixes.push('section_header_stripped');
   }
 
   // ─── "[link]" placeholder → real settings URL ──────────────────────────
@@ -331,16 +352,17 @@ export function enforceFormat(
   // Responses over the cap are truncated at the last sentence boundary
   // that fits. If the response is already under the limit this is a no-op.
   const CONTEXT_MAX: Record<MessageContext, number> = {
-    greeting:      160,  // one warm sentence
-    emotional:     260,  // 2 sentences of warmth, no unsolicited tips
-    mood_log:      220,  // acknowledge the score + one warm observation
-    weight_log:    240,  // confirm the log + brief reaction
-    food_log:      480,  // protein number + daily total + optional brief tip
-    food_question: 420,  // 3-4 food options with brief reasoning
-    scheduling:    220,  // confirm the change and done
-    knowledge:     600,  // educational answers need room for facts + user tie-in
-    gibberish:     160,  // short clarifying question
-    general:       500,  // default cap — enough for a real answer
+    greeting:         160,  // one warm sentence
+    emotional:        260,  // 2 sentences of warmth, no unsolicited tips
+    mood_log:         220,  // acknowledge the score + one warm observation
+    weight_log:       240,  // confirm the log + brief reaction
+    food_log:         480,  // protein number + daily total + optional brief tip
+    food_question:    420,  // 3-4 food options with brief reasoning
+    scheduling:       220,  // confirm the change and done
+    knowledge:        600,  // educational answers need room for facts + user tie-in
+    appointment_prep: 800,  // 4-6 specific questions for the doctor visit
+    gibberish:        160,  // short clarifying question
+    general:          500,  // default cap — enough for a real answer
   };
   const MAX_CHARS = opts?.messageContext ? (CONTEXT_MAX[opts.messageContext] ?? 420) : 420;
   if (text.length > MAX_CHARS) {

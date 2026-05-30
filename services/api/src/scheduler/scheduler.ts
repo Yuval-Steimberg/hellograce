@@ -308,12 +308,28 @@ export class Scheduler {
     // ─── Cadence guardrails ──────────────────────────────────────────────────
     // STRICT RULES (apply to all reminder types EXCEPT injection flow + trial
     // expiry which are time-critical user-facing flows):
-    //   1. Maximum 2 proactive reminders per user per day
-    //   2. Minimum 3 hours between proactive reminders
+    //   1. Skip if user replied to Grace in the last 2 hours (active engagement)
+    //   2. Maximum 2 proactive reminders per user per day
+    //   3. Minimum 3 hours between proactive reminders
     // Tracked in Redis: `cadence:{phone}:{YYYY-MM-DD}` counter + `cadence:last:{phone}` timestamp.
     const todayStr = toDateStr(localNow(user.timezone || 'America/New_York'));
     const EXEMPT_TYPES = new Set(['injection_morning', 'injection_followup', 'injection_dayafter', 'trial_expiry_reminder']);
     if (!EXEMPT_TYPES.has(type)) {
+      // Rule 1 (2026-05-30): if the user has sent a message in the last 2 hours,
+      // don't interrupt with a proactive reminder. The user is actively engaging
+      // — Grace doesn't need to ping them. Defer to a later window naturally
+      // (next scheduler tick will re-check). This keeps Grace feeling responsive
+      // rather than naggy when the user is mid-conversation.
+      if (user.last_reply_at) {
+        const hoursSinceUserReply = (Date.now() - new Date(user.last_reply_at).getTime()) / 3_600_000;
+        if (hoursSinceUserReply < 2) {
+          this.deps.logger.info(
+            { phone: user.phone, type, hoursSinceUserReply: hoursSinceUserReply.toFixed(2) },
+            'scheduler.skipped_recent_user_activity',
+          );
+          return;
+        }
+      }
       const countKey = `cadence:${user.phone}:${todayStr}`;
       const lastKey = `cadence:last:${user.phone}`;
       try {

@@ -39,6 +39,8 @@ export interface ContentCheckOpts {
   responseMode?: 'text' | 'image_food' | 'image_body' | 'voice';
   /** Active DB-driven rules loaded by ContentRulesService. */
   dbRules?: DbContentRule[];
+  /** User's latest message — for context-aware checks like privacy misfire and double-question detection. */
+  userMessage?: string;
 }
 
 export function checkContent(text: string, opts: ContentCheckOpts): ContentViolation[] {
@@ -59,11 +61,55 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   violations.push(...checkBannedPhrases(text));
   violations.push(...checkLinkPlaceholder(text));
   violations.push(...checkPrivacyLeak(text));
+  if (opts.userMessage) {
+    violations.push(...checkPrivacyMisfire(text, opts.userMessage));
+    violations.push(...checkTwoQuestions(text));
+  }
   if (opts.dbRules && opts.dbRules.length > 0) {
     violations.push(...checkDbRules(text, opts.dbRules));
   }
 
   return violations;
+}
+
+// ── Privacy rule misfire ─────────────────────────────────────────────────────
+// Grace says "I only know about you and your journey" when the user's message
+// is about THEIR OWN health/feelings/body — NEVER about another person. This
+// catches the production bug where "I feel so nauseous after my shot" got
+// the privacy refusal as the opener.
+const HEALTH_ANCHOR_RE = /\b(nausea|nauseous|tired|exhaust\w+|fatigue|sick|pain|cramp|bloat\w+|gas|stomach|belly|constipat\w+|diarrhea|hair|face|saggy|skin|weight|protein|calorie|kcal|food|meal|snack|breakfast|lunch|dinner|eat|ate|hungry|appetite|water|hydrat\w+|shot|injection|jab|dose|ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|rybelsus|glp|mood|sad|anxious|depressed|lonely|frustrat\w+|plateau|stall)\b/i;
+// Other-person query patterns — the ONLY case where the privacy line is correct
+const OTHER_PERSON_RE = /\b(another user|other user|other users|do you have a user|is .{1,20} a user|my (friend|husband|wife|partner|mom|dad|sister|brother|daughter|son|coworker) (use|using|on grace|signed up)|can you (text|contact|message|call) (my |someone)|how many (users|people|women|men))\b/i;
+
+function checkPrivacyMisfire(response: string, userMessage: string): ContentViolation[] {
+  const privacyLine = /\bi only know about you (and your journey)?\b/i;
+  if (!privacyLine.test(response)) return [];
+  // The privacy line was used. Check the user's message: if it's about their
+  // OWN health/feelings/body and not about another person, this is a misfire.
+  const userHasHealthAnchor = HEALTH_ANCHOR_RE.test(userMessage);
+  const userAsksAboutOther = OTHER_PERSON_RE.test(userMessage);
+  if (userHasHealthAnchor && !userAsksAboutOther) {
+    return [{
+      code: 'privacy_misfire',
+      message: 'Privacy rule fired on a self-referencing health message — REWRITE without the "I only know about you and your journey" line. The user is asking about THEIR OWN health, not another person. Answer the question directly.',
+      severity: 'regen',
+    }];
+  }
+  return [];
+}
+
+// ── Two-question detector ────────────────────────────────────────────────────
+// Grace must ask at most one question per response, at the END. Multi-question
+// chains ("How long does it last? And do you take it with food?") leave users
+// unsure which to answer.
+function checkTwoQuestions(response: string): ContentViolation[] {
+  const questionMarks = (response.match(/\?/g) ?? []).length;
+  if (questionMarks <= 1) return [];
+  return [{
+    code: 'two_questions',
+    message: `Response contains ${questionMarks} question marks. Maximum ONE question per response, at the end. Pick the more important one and delete the rest.`,
+    severity: 'regen',
+  }];
 }
 
 /**
@@ -290,6 +336,41 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bit'?s actually quite common to (hit|experience|have)\s+(plateaus|stalls?|setbacks?)\b/i, reason: '"it\'s actually quite common to hit plateaus" — verbatim banned phrase from report' },
   { pattern: /\bthat'?s a really (understandable|valid|complex)\s+(worry|concern|feeling|emotion)\b/i, reason: '"That\'s a really understandable/complex …" — validation cliche, banned' },
   { pattern: /\bit'?s a (very |really )?valid concern\b/i, reason: '"It\'s a very valid concern" — clinical validation cliche, banned' },
+
+  // ── 2026-05-30 Session 3 + full-feedback banned phrases ──────────────────
+  { pattern: /\byou'?re asking a really important question\b/i, reason: '"You\'re asking a really important question" — patronizing opener, banned' },
+  { pattern: /\bit'?s excellent that you'?re thinking about\b/i, reason: '"It\'s excellent that you\'re thinking about this" — patronizing, banned' },
+  { pattern: /\b(these are )?absolutely critical questions\b/i, reason: '"absolutely critical questions" — warning-label language, banned in clinical redirects' },
+  { pattern: /\byou\s+must\s+discuss\s+(?:this\s+|these\s+)?(?:with\s+(?:your\s+)?(?:doctor|provider|prescriber))/i, reason: '"you MUST discuss with your doctor" — pharmaceutical warning tone, use the warm template instead' },
+  { pattern: /\byou\s+should\s+not\s+make\s+any\s+changes\b/i, reason: '"you should not make any changes" — preachy redirect, banned' },
+  { pattern: /\bwithout\s+their\s+explicit\s+guidance\b/i, reason: '"without their explicit guidance" — warning-label phrasing, banned' },
+  { pattern: /\bit'?s really important to share this feeling with your (doctor|provider|prescriber)/i, reason: 'Sending an emotional/plateau message to the doctor — wrong redirect, educate + empathize instead' },
+  { pattern: /\bhope it hit the spot\b/i, reason: '"Hope it hit the spot" — greeting-card filler, banned' },
+  { pattern: /\b(sounds|sounded)\s+like\s+a\s+(good|nice|classic)\s+(breakfast|lunch|dinner|meal|snack)\b/i, reason: 'Generic meal compliment without logging — log the food instead' },
+  { pattern: /\blayers? of complexity\b/i, reason: '"layers of complexity" — vague filler, give specific information' },
+  { pattern: /\bholistic approach\b/i, reason: '"holistic approach" — wellness jargon, be specific instead' },
+  { pattern: /\bmore careful monitoring\b/i, reason: '"more careful monitoring" — vague, name what to monitor specifically' },
+
+  // ── Protein-from-goal-weight factual error ───────────────────────────────
+  // The feedback flagged Grace saying "per kilogram of your goal body weight"
+  // — incorrect. Should be current body weight. Forces regen with the right phrasing.
+  { pattern: /\bper\s+kilogram\s+of\s+your\s+goal\s+(body\s+)?weight\b/i, reason: 'Protein target uses CURRENT body weight, not goal weight — factually incorrect' },
+  { pattern: /\bper\s+kg\s+of\s+(your\s+)?goal\s+(body\s+)?weight\b/i, reason: 'Protein target uses CURRENT body weight, not goal weight — factually incorrect' },
+
+  // ── Wrong redirect on "Ozempic isn't working anymore" ────────────────────
+  // This is emotional/plateau venting, not a clinical question. The feedback
+  // gave this as a critical wrong call. Block redirect framing on the topic.
+  { pattern: /\b(share|talk to|discuss|reach out)\b[^.?!]{0,60}\b(doctor|provider|prescriber|clinician|healthcare provider)\b[^.?!]{0,60}\b(isn'?t working|not working anymore|stopped working|feels? like|feeling like|frustrated|frustration)\b/i, reason: 'Redirecting an emotional/plateau message to doctor — educate + empathize instead' },
+  { pattern: /\b(feels? like|feeling like|i feel like)\b[^.?!]{0,40}\b(?:medication|ozempic|wegovy|mounjaro|shot|injection|it)\s+(isn'?t|is\s+not|stopped)\s+working\b[^.?!]{0,80}\b(doctor|provider|prescriber|clinician)\b/i, reason: 'Redirecting "isn\'t working anymore" feeling to doctor — wrong call, educate calmly' },
+
+  // ── List-introducing phrases (H3 in prompt) ──────────────────────────────
+  // These guarantee a list follows. Block + force prose rewrite.
+  { pattern: /\bhere'?s a breakdown\b/i, reason: '"Here\'s a breakdown" — introduces a list, rewrite as prose' },
+  { pattern: /\bhere'?s why it'?s happening\b/i, reason: '"Here\'s why it\'s happening" — introduces a list, rewrite as prose' },
+  { pattern: /\bhere'?s what you can do\b/i, reason: '"Here\'s what you can do" — introduces a list, rewrite as prose' },
+  { pattern: /\bhere are (the |some |a few |my )?(key |main |important |top )?(points|tips|things|options|suggestions|ideas|steps|reasons|causes|ways)\b/i, reason: '"Here are the X" — introduces a list, rewrite as prose' },
+  { pattern: /^why it'?s happening:?$/im, reason: '"Why it\'s happening:" header — banned, write prose' },
+  { pattern: /^(what to do|causes?|solutions?|tips|steps|key points?|main points?):/im, reason: 'Header line followed by colon — banned, write prose' },
 
   // ── Image capability denial — Grace CAN see and analyze images ────────────
   // After Grace has already analyzed an image, denying capability contradicts

@@ -18,6 +18,7 @@ const SENTENCE_LIMITS: Record<MessageType, number> = {
   general: 4,
   food_question: 5,
   knowledge: 6,
+  appointment_prep: 8, // 4-6 questions + brief framing
 };
 
 export interface QualityIssue {
@@ -102,6 +103,7 @@ export function checkResponseQuality(text: string, type: MessageType): QualityIs
     general: 350,
     food_question: 450,
     knowledge: 600,
+    appointment_prep: 800,
   };
   const maxChars = charLimit[type] ?? 350;
   if (clean.length > maxChars) {

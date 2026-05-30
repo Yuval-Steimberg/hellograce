@@ -64,6 +64,7 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   if (opts.userMessage) {
     violations.push(...checkPrivacyMisfire(text, opts.userMessage));
     violations.push(...checkTwoQuestions(text));
+    violations.push(...checkFoodLogPreambleLeak(text, opts.userMessage));
   }
   if (opts.dbRules && opts.dbRules.length > 0) {
     violations.push(...checkDbRules(text, opts.dbRules));
@@ -110,6 +111,30 @@ function checkTwoQuestions(response: string): ContentViolation[] {
     message: `Response contains ${questionMarks} question marks. Maximum ONE question per response, at the end. Pick the more important one and delete the rest.`,
     severity: 'regen',
   }];
+}
+
+// ── Food log preamble leak ───────────────────────────────────────────────────
+// When the user logs food ("just had X", "I had Y", "I ate Z"), Grace's response
+// must open with food acknowledgment — NOT with a callback to the previous
+// emotional/feeling topic. This catches the production bug where Grace replied
+// to "just had protein shake" with "That's great you're feeling strong. A protein
+// shake is..." — the "feeling strong" was from a prior turn and was already
+// acknowledged. The food log response should jump straight to the food.
+const FOOD_LOG_USER_RE = /\b(just\s+(had|ate|finished|drank|made|cooked|grabbed)|i\s+(had|ate|finished|drank|made|cooked|grabbed)|i'?m\s+(having|eating|drinking)|just\s+(finishing|having|eating|drinking))\b/i;
+const FEELING_CALLBACK_OPENER_RE = /^(that'?s (great|wonderful|amazing|awesome|good|nice)|glad|love (hearing|that)|so glad|wonderful|happy to hear|great to hear)\s+(you'?re|to hear (?:you'?re|that you'?re)|that you'?re|you (?:are|feel|are feeling))\s+(feeling|doing|having|getting|sleeping|staying)\s+\w+/i;
+
+function checkFoodLogPreambleLeak(response: string, userMessage: string): ContentViolation[] {
+  if (!FOOD_LOG_USER_RE.test(userMessage)) return [];
+  // The user logged food. Check the response's opening sentence.
+  const firstSentence = response.split(/[.!?]\s/)[0] ?? '';
+  if (FEELING_CALLBACK_OPENER_RE.test(firstSentence)) {
+    return [{
+      code: 'food_log_preamble_leak',
+      message: `Response to a food log MUST open with the food + protein number, NOT with a callback to a previous feeling/emotion topic. The user just said: "${userMessage.slice(0, 80)}". Rewrite so the FIRST WORDS are about the food they just logged. Example: "Protein shake logged — about 24g protein, you're at Xg today." Do NOT mention how they're feeling — that topic is closed.`,
+      severity: 'regen',
+    }];
+  }
+  return [];
 }
 
 /**

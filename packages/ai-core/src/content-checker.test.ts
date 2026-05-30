@@ -331,3 +331,76 @@ describe('checkContent (orchestration)', () => {
     expect(v).toHaveLength(0);
   });
 });
+
+// ── 2026-05-30 clinical report — banned phrase + SMS format guards ──────────
+describe('checkBannedPhrases — 2026-05-30 clinical report additions', () => {
+  it('flags "I understand how frustrating"', () => {
+    const v = checkBannedPhrases('I understand how frustrating this is. Try cold foods.');
+    expect(v.length).toBeGreaterThan(0);
+  });
+
+  it('flags "It\'s completely understandable"', () => {
+    const v = checkBannedPhrases("It's completely understandable that you feel that way.");
+    expect(v.length).toBeGreaterThan(0);
+  });
+
+  it('flags "incredibly common" / "quite common" / "very common"', () => {
+    expect(checkBannedPhrases('Hair shedding is incredibly common on GLP-1s.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('Bloating is quite common.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('Nausea is very common in the first month.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('Plateaus are a really common challenge.').length).toBeGreaterThan(0);
+  });
+
+  it('flags "common experience for many people"', () => {
+    const v = checkBannedPhrases('This is a common experience for many people on this medication.');
+    expect(v.length).toBeGreaterThan(0);
+  });
+
+  it('flags "That\'s a really understandable worry"', () => {
+    expect(checkBannedPhrases("That's a really understandable worry.").length).toBeGreaterThan(0);
+    expect(checkBannedPhrases("That's a really complex feeling.").length).toBeGreaterThan(0);
+  });
+
+  it('flags premature medical redirect on a normal GLP-1 effect (plateau)', () => {
+    const v = checkBannedPhrases('A plateau like that is something you should talk to your doctor about.');
+    expect(v.length).toBeGreaterThan(0);
+  });
+
+  it('flags premature medical redirect on hair loss', () => {
+    const v = checkBannedPhrases('For the hair shedding, please share this with your prescriber.');
+    expect(v.length).toBeGreaterThan(0);
+  });
+
+  it('does NOT flag a referral for SEVERE abdominal pain (the legitimate triage case)', () => {
+    const v = checkBannedPhrases('Severe localized abdominal pain needs your doctor right away.');
+    expect(v).toHaveLength(0);
+  });
+
+  it('flags any "!" in the response (H5)', () => {
+    expect(checkBannedPhrases('That makes sense! Try cold foods.').length).toBeGreaterThan(0);
+  });
+
+  it('flags two or more question marks (H6)', () => {
+    expect(checkBannedPhrases('How long does it last? And do you take it with food?').length).toBeGreaterThan(0);
+  });
+
+  it('flags a single question at the end (allowed) — should NOT trigger H6', () => {
+    expect(checkBannedPhrases('Stick to cold bland foods. How long after the shot does it start?')).toHaveLength(0);
+  });
+
+  it('flags markdown bullet lines', () => {
+    expect(checkBannedPhrases('Try these:\n- Greek yogurt\n- Cottage cheese').length).toBeGreaterThan(0);
+  });
+
+  it('flags markdown bold', () => {
+    expect(checkBannedPhrases('**Cottage cheese** has 25g protein.').length).toBeGreaterThan(0);
+  });
+
+  it('flags label:description list layout', () => {
+    expect(checkBannedPhrases('Greek yogurt: high protein, easy on stomach.\nCottage cheese: high protein, mild flavor.').length).toBeGreaterThan(0);
+  });
+
+  it('does NOT flag normal flowing prose with a list of foods', () => {
+    expect(checkBannedPhrases('Greek yogurt, cottage cheese, a hard-boiled egg, cold sliced chicken.')).toHaveLength(0);
+  });
+});

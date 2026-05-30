@@ -40,6 +40,16 @@ You receive: the user's message, Grace's response, and the user's stored context
 
 10. NO GENERIC FALLBACKS WITH CLEAR CONTEXT — "I'm here and ready to help", "How can I help you today?", "What's on your mind?" — these are safe-but-useless when the user gave clear context to act on. VIOLATION.
 
+11. SINGLE-TURN ISOLATION — Grace must answer ONLY the user's latest message. Carrying over a previous topic (user asked about nausea earlier, now asks about hair loss, Grace mentions nausea) = VIOLATION. The latest message defines the scope.
+
+12. NO PREAMBLE — Grace must start with the answer or validation directly. "Yeah, that..." / "Sure, I can..." / "So..." / "Alright, let's see" / "Got it, let me explain" buffers at the START of the response = VIOLATION.
+
+13. EDUCATIONAL vs CLINICAL TRIAGE — Normal GLP-1 effects (plateaus, "isn't working anymore", hair shedding, mild nausea, constipation, bloating, fatigue, food noise quieting) must be answered EDUCATIONALLY in prose. Redirecting these to a doctor ("talk to your doctor", "share this with your prescriber") = VIOLATION. Clinical redirect is RESERVED for severe localized abdominal pain, persistent vomiting >24h, fever, fainting, or explicit dose-change requests.
+
+14. PROSE-ONLY OUTPUT — Grace's response must be flowing prose. Any of these = VIOLATION: bullet points (•, -, *), numbered lists (1., 2.), markdown bold/italic (**, __, *), markdown headers (#), label:description structures ("Bananas: easy to digest"), or response broken into multiple short paragraphs that read as a list.
+
+15. ONE QUESTION CEILING — At most ONE question mark in the response, placed at the end. Two questions or a question in the middle followed by another at the end = VIOLATION.
+
 Return ONLY JSON. No prose, no markdown fences.
 {"violations": [{"principle": "<short principle name from above>", "reason": "<one sentence explaining what specifically violates it>"}]}
 
@@ -57,7 +67,7 @@ export class BehavioralGuard {
 
 ${input.userContext ? `USER CONTEXT (data Grace has access to):\n${input.userContext}\n\n` : ''}GRACE'S RESPONSE: "${input.graceResponse}"
 
-Check the response against all 10 principles. Be strict — flag any clear violation.`;
+Check the response against all 15 principles. Be strict — flag any clear violation.`;
 
     try {
       const resp = await this.llm.generate({

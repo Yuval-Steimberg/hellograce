@@ -94,9 +94,13 @@ describe('enforceFormat', () => {
       expect(text).toBe('Hi Sarah. How are you feeling today.');
     });
 
-    it('does not touch "thanks!" or mid-sentence exclamations', () => {
-      const { text } = enforceFormat('Sounds great, thanks!');
-      expect(text).toBe('Sounds great, thanks!');
+    it('strips mid-sentence exclamations too (2026-05-30 clinical report H5)', () => {
+      // Updated from the original "preserves thanks!" behavior — the report
+      // requires "!" to be banned ANYWHERE in the response, not just on
+      // greetings. Auto-rewrite to "." regardless of position.
+      const { text, fixes } = enforceFormat('Sounds great, thanks!');
+      expect(text).toBe('Sounds great, thanks.');
+      expect(fixes).toContain('exclamation_marks_stripped');
     });
   });
 
@@ -261,6 +265,36 @@ describe('enforceFormat', () => {
       // Either way, must not be cut mid-word.
       expect(text.endsWith('.')).toBe(true);
       expect(text.endsWith('great choice.')).toBe(true);
+    });
+  });
+
+  // ── 2026-05-30 clinical report additions ───────────────────────────────
+  describe('clinical report H5 — exclamation marks stripped anywhere', () => {
+    it('strips multiple "!" anywhere in the response', () => {
+      const { text, fixes } = enforceFormat('That makes sense! Try cold foods first! It really helps!');
+      expect(text).not.toContain('!');
+      expect(text).toBe('That makes sense. Try cold foods first. It really helps.');
+      expect(fixes).toContain('exclamation_marks_stripped');
+    });
+
+    it('does not add the fix when there were no exclamations', () => {
+      const { fixes } = enforceFormat('Greek yogurt, cottage cheese, eggs.');
+      expect(fixes).not.toContain('exclamation_marks_stripped');
+    });
+  });
+
+  describe('clinical report H3 — label:description list disguised as prose', () => {
+    it('flattens 2+ "Label: description" lines into prose with em-dash connector', () => {
+      const input = 'Try these. Greek yogurt: 15g protein in a cup. Cottage cheese: 25g protein.';
+      const { text, fixes } = enforceFormat(input);
+      expect(fixes).toContain('label_colon_flattened');
+      expect(text).not.toMatch(/Greek yogurt:/);
+      expect(text).not.toMatch(/Cottage cheese:/);
+    });
+
+    it('leaves a single Label: description alone (could be a definition)', () => {
+      const { fixes } = enforceFormat('Telogen effluvium: temporary hair shedding from rapid weight loss.');
+      expect(fixes).not.toContain('label_colon_flattened');
     });
   });
 });

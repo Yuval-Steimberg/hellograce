@@ -245,6 +245,32 @@ export function enforceFormat(
     fixes.push('greeting_exclamation_stripped');
   }
 
+  // ─── Global exclamation strip (2026-05-30 clinical report H5) ──────────
+  // SMS channel must stay calm and grounded. "!" anywhere in the response
+  // is a violation. Auto-rewrite to "." regardless of position. Skip the
+  // rate-this RLHF appended block (added AFTER format enforcement runs).
+  if (text.includes('!')) {
+    text = text.replace(/!/g, '.');
+    fixes.push('exclamation_marks_stripped');
+  }
+
+  // ─── Label:description list disguised as prose (H3) ────────────────────
+  // Patterns like "Bananas: easy to digest. Eggs: high protein." — these
+  // are list items pretending to be prose. Replace the colon with a comma
+  // and a connector so they read as flowing prose. Only collapses when 2+
+  // such "Capital words: …" structures appear in sequence (single one might
+  // be a legitimate definition).
+  //
+  // Lookahead `(?=[.\n])` for the trailing terminator so consecutive matches
+  // can re-anchor on the SAME period that ended the previous match.
+  const labelColonRe = /(^|[.!?]\s+)([A-Z][\w\s]{2,28}):\s+(\w[^.\n]{4,80})(?=[.\n])/g;
+  let labelHits = 0;
+  text.replace(labelColonRe, () => { labelHits++; return ''; });
+  if (labelHits >= 2) {
+    text = text.replace(labelColonRe, (_, prefix, label, body) => `${prefix}${label} — ${body}`);
+    fixes.push('label_colon_flattened');
+  }
+
   // ─── "[link]" placeholder → real settings URL ──────────────────────────
   // Cheap auto-fix saves a regen for the most common variants.
   if (/\[(link|settings link|url|here)\]/i.test(text)) {

@@ -278,6 +278,50 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   // single-word praise opener followed by ! or , at line start
   { pattern: /^(great|awesome|wonderful|perfect|fantastic|amazing|excellent|brilliant|marvelous|splendid|terrific|superb|outstanding|incredible|stellar|nice job|good job|way to go|kudos)\s*[!,]/im, reason: 'Sycophantic exclamatory opener — Grace is calm and warm, not a cheerleader' },
 
+  // ── 2026-05-30 clinical-report banned phrases ─────────────────────────────
+  // Wellness-corporate jargon and validated-feeling cliches that the report
+  // flagged as breaking the peer-companion tone. Each is matched verbatim
+  // (with apostrophe variants) so a single regex won't accidentally catch
+  // legitimate uses of the underlying words.
+  { pattern: /\bi understand how (frustrating|hard|difficult|tough)\b/i, reason: '"I understand how frustrating" — clinical empathy cliche, banned by 2026-05-30 report' },
+  { pattern: /\bit'?s completely understandable\b/i, reason: '"It\'s completely understandable" — validation cliche, banned' },
+  { pattern: /\b(incredibly|quite|really|very)\s+common(\s+(challenge|experience|issue|problem|side[\s-]?effect))?\b/i, reason: '"X common" framing — flattens user\'s specific experience, banned' },
+  { pattern: /\bcommon\s+experience\s+for\s+many\s+people\b/i, reason: '"common experience for many people" — depersonalizing cliche, banned' },
+  { pattern: /\bit'?s actually quite common to (hit|experience|have)\s+(plateaus|stalls?|setbacks?)\b/i, reason: '"it\'s actually quite common to hit plateaus" — verbatim banned phrase from report' },
+  { pattern: /\bthat'?s a really (understandable|valid|complex)\s+(worry|concern|feeling|emotion)\b/i, reason: '"That\'s a really understandable/complex …" — validation cliche, banned' },
+  { pattern: /\bit'?s a (very |really )?valid concern\b/i, reason: '"It\'s a very valid concern" — clinical validation cliche, banned' },
+
+  // ── Premature medical redirect on normal GLP-1 effects ────────────────────
+  // The report specifically flagged Grace redirecting users to a doctor for
+  // PLATEAUS, "isn't working anymore" feelings, hair loss, fatigue, etc.
+  // These are educational events, not clinical referrals. The patterns below
+  // match the most common redirect phrasings AS COMBINED with a normal-effect
+  // word so we don't false-fire on legitimate referrals for severe pain.
+  // Two directions for the redirect-on-normal-effect anti-pattern:
+  //   (a) "talk to your doctor about [normal effect]"  → redirect → topic
+  //   (b) "for the [normal effect], share this with your doctor"  → topic → redirect
+  // Word allowance widened to 0-50 chars between verb and clinician to cover
+  // "share this with your prescriber" (where "this with" sits in between).
+  { pattern: /\b(?:talk to|share|message|reach out to|consult|call)\b[^.?!]{0,50}\b(?:doctor|provider|prescriber|clinician|healthcare provider|gp)\b[^.?!]{0,100}\b(plateau|stall|isn'?t working|stopped working|not working anymore|hair (?:loss|shedding|thinning)|mild nausea|constipation|bloating|gas|fatigue|tiredness|food noise)\b/i, reason: 'Premature medical redirect on a NORMAL GLP-1 effect — answer educationally per H7/H8 in prompt' },
+  { pattern: /\b(plateau|stall|isn'?t working|stopped working|hair (?:loss|shedding|thinning)|food noise|fatigue|mild nausea|constipation|bloating)\b[^.?!]{0,100}\b(?:talk to|share|message|consult|call|reach out to)\b[^.?!]{0,50}\b(?:doctor|provider|prescriber|clinician|healthcare provider|gp)\b/i, reason: 'Premature medical redirect on a NORMAL GLP-1 effect — answer educationally' },
+
+  // ── SMS channel format violations (H3, H5, H6 in prompt) ─────────────────
+  // Markdown stripping is handled by the format enforcer; these patterns
+  // catch what slips through and trigger regen rather than silent stripping.
+  { pattern: /^\s*[-•*]\s+\w/m, reason: 'Bullet-list character at line start — SMS does not render markdown, write in prose' },
+  { pattern: /^\s*\d+\.\s+\w/m, reason: 'Numbered-list line — SMS does not render markdown, write in prose' },
+  { pattern: /^\s*#{1,6}\s+\w/m, reason: 'Markdown header line — SMS does not render, write in prose' },
+  { pattern: /\*\*[^*\n]+\*\*/, reason: 'Markdown bold (**text**) — SMS shows the asterisks literally, write in prose' },
+  { pattern: /(?<!\w)_[^_\n]+_(?!\w)/, reason: 'Markdown italic (_text_) — SMS shows the underscores literally, write in prose' },
+  // Label: description layouts ("Bananas: easy to digest, Eggs: high protein")
+  // Match 2+ such label-colons in a row, which is a list disguised as prose.
+  { pattern: /^[A-Z][\w\s]{2,30}:\s+[^\n]{5,80}\n[A-Z][\w\s]{2,30}:\s+/m, reason: 'Label:description list pattern — H3 prohibits structured layouts, write continuous prose' },
+  // Exclamation mark — any one is a violation per H5.
+  { pattern: /!/, reason: 'Exclamation mark — H5 prohibits "!" anywhere in the response, replace with period' },
+  // Multi-question response — count of "?" > 1 (excluding rate-this prompt).
+  // Pattern matches two question marks anywhere in body.
+  { pattern: /\?[^?\n]{0,200}\?/, reason: 'Two question marks in one response — H6 allows a single question only, at the end' },
+
   // Generic fallback / deflections — generalized
   { pattern: /\bi'?m here (and )?(ready )?to (help|listen|support)\b/i, reason: 'Generic "I\'m here to help" deflection — answer the actual message' },
   { pattern: /\bwhat'?s on your mind\b/i, reason: '"What\'s on your mind" — generic deflection, address the latest message' },

@@ -45,6 +45,17 @@ const FOOD_SUMMARY_QUESTION: RegExp[] = [
   /\b(can|could) i (still|even) (eat|have|drink)\b.{0,40}(today|now|left)/i,
   /\bhow much (can|should) i (eat|have)\b.{0,40}(today|left|tonight|for dinner)/i,
   /\bam i over (my )?(calorie|budget|target|goal)/i,
+  // Production failure (2026-05-31): user asked "How did I reached 40 g of
+  // protein?" and the classifier put it in general → planner missed the tool
+  // call → Grace returned the safe fallback. These patterns ask Grace to
+  // EXPLAIN/BREAK DOWN today's totals — same intent as the above, just
+  // different phrasing.
+  /\bhow (did i|do i|have i) (reach|reached|get|got|hit|hit at|end up at|arrive at|end up with) (to |at |my )?(\d+|the|my)/i,
+  /\b(what|which) (foods?|meals?|items?|things?) (did i|have i) (eat|log|consume|have)\b/i,
+  /\b(what'?s|whats) (in|on) my (food|protein|calorie) (log|count|total)/i,
+  /\b(show|list|tell) me (what|all|the foods) i('?ve| have)? (eaten|logged|consumed|had) (today|so far)/i,
+  /\b(break ?down|breakdown) (of|my) (today'?s )?(protein|calorie|food)/i,
+  /\bwhere (is|are) (the|my) (\d+|extra )?(protein|calorie|gram|kcal) (coming from|from)/i,
 ];
 
 const FOOD_LOG: RegExp[] = [

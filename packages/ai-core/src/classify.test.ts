@@ -41,3 +41,35 @@ describe('classifyMessage — appointment_prep (session 3 production fix)', () =
     expect(result.type).not.toBe('appointment_prep');
   });
 });
+
+describe('classifyMessage — food_question patterns (2026-05-31 production fix)', () => {
+  it('matches "How did I reached 40 g of protein?" (exact production failure)', () => {
+    const result = classifyMessage('How did I reached 40 g of protein?');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "How did I get to 80g of protein?"', () => {
+    const result = classifyMessage('How did I get to 80g of protein?');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "what foods did I eat today?"', () => {
+    const result = classifyMessage('what foods did I eat today?');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "show me what I logged today"', () => {
+    const result = classifyMessage('show me what I logged today');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "break down my protein today"', () => {
+    const result = classifyMessage('break down my protein today');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "where is the extra protein coming from?"', () => {
+    const result = classifyMessage('where is the extra protein coming from?');
+    expect(result.type).toBe('food_question');
+  });
+});

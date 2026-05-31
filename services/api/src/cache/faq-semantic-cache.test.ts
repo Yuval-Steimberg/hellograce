@@ -120,4 +120,46 @@ describe('FaqSemanticCache', () => {
       expect(seed.response).not.toMatch(/^\s*\d+\.\s/m);
     }
   });
+
+  it('FAQ_SEEDS responses contain no production-banned phrases', () => {
+    // The ai.service.ts cache-safety-check runs checkContent against the
+    // cached response. These banned phrases would cause every cache hit on
+    // the entry to be rejected (silent latency regression). Catch them at
+    // test time so any future seed addition is vetted up-front.
+    const BANNED_IN_CACHE = [
+      /\babsolutely critical\b/i,
+      /\byou must discuss\b/i,
+      /\bwithout their explicit guidance\b/i,
+      /\bholistic approach\b/i,
+      /\blayers of complexity\b/i,
+      /\bhope it hit the spot\b/i,
+      /\bi only know about you\b/i,
+      /\*\*/,                       // markdown bold
+      /^\s*here'?s a breakdown:/im, // list intro
+    ];
+    for (const seed of FAQ_SEEDS) {
+      for (const banned of BANNED_IN_CACHE) {
+        expect(seed.response, `Seed "${seed.query}" contains banned: ${banned}`).not.toMatch(banned);
+      }
+    }
+  });
+
+  it('new mechanism / comparison / dose_error / drug_interaction entries are present and short', () => {
+    // Guard against accidental removal of the session-3 latency-pass entries.
+    const mustHave = [
+      'How does Ozempic actually work?',
+      'How is Mounjaro different from Ozempic?',
+      'Why did my food obsession just disappear?',
+      'I think I injected too much.',
+      'Can I take another medication with my injection?',
+      'My face is looking saggy on Ozempic.',
+    ];
+    for (const q of mustHave) {
+      const found = FAQ_SEEDS.find((s) => s.query === q);
+      expect(found, `Missing FAQ seed: ${q}`).toBeDefined();
+      // SMS-length sanity check: each response stays well under WhatsApp's
+      // soft 1000-char ceiling. The cache exists to be fast AND tight.
+      expect(found!.response.length).toBeLessThan(500);
+    }
+  });
 });

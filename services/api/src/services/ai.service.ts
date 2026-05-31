@@ -2,7 +2,7 @@ import type { Logger } from 'pino';
 import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
 import type { ChatTurn, DietaryRestriction, InboundMessage, OrchestratorOutput } from '@grace/shared';
-import { AIOrchestrator, PlannerAgent, ToolRegistry, classifyMessage as classifyIntent } from '@grace/ai-core';
+import { AIOrchestrator, PlannerAgent, ToolRegistry, classifyMessage as classifyIntent, checkContent } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
 import type { LLMProvider, PlannerDecision } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
@@ -262,20 +262,24 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     const CLASSIFIER_SKIP_PLANNER = new Set([
       'greeting',
       'gibberish',
-      // High-value adds (session-3 latency pass): the planner LLM call was
-      // ~600ms and added no value because:
-      //   - knowledge / appointment_prep / emotional → no tools needed, RAG
-      //     chunks are already injected from input.retrieved
-      //   - food_log / food_question / weight_log / mood_log → the FORCE
-      //     blocks downstream override the planner anyway, so its result is
-      //     discarded
+      // Safe adds (session-3 latency pass): these intents need NO tool calls,
+      // so the planner LLM (~600ms) is pure overhead.
+      //   - knowledge: RAG chunks already injected from input.retrieved; the
+      //     orchestrator generates from the system prompt + RAG context
+      //   - appointment_prep: needs no tools, just generation
+      //   - emotional: needs no tools, just generation
+      //   - food_log: the shouldForceLogFood block downstream guarantees the
+      //     log_food tool fires regardless of planner output
       'knowledge',
       'appointment_prep',
       'emotional',
       'food_log',
-      'food_question',
-      'weight_log',
-      'mood_log',
+      // INTENTIONALLY NOT INCLUDED (planner needed for correct tool call):
+      //   - food_question: "what should I eat tonight?" needs search_food_ideas;
+      //     only "protein left today" gets force-overridden to get_food_summary
+      //   - weight_log: needs log_weight tool, no force block exists
+      //   - mood_log: needs log_mood tool, no force block exists
+      //   - general: planner picks the right tool based on full text analysis
     ]);
     const skipPlanner =
       CLASSIFIER_SKIP_PLANNER.has(intentClass.type) || !flags.toolsEnabled;
@@ -375,6 +379,47 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     ) {
       const hit = await this.deps.faqCache.lookup(input.text);
       if (hit) {
+        // ── SAFETY: validate cached response against THIS user's context ──
+        // The cache stores generic responses, but a user-specific guard must
+        // still fire. Without this check, a vegan user asking "best high-
+        // protein foods" would get Greek yogurt / eggs / cottage cheese back.
+        // Or a Rybelsus (daily pill) user asking "I think I injected too
+        // much" would get a response that doesn't apply to their med form.
+        //
+        // We run the FULL content checker against the cached response with
+        // this user's dietary pattern, food dislikes, medication type, and
+        // intent. ANY violation → bail out of cache and fall through to the
+        // full pipeline so Grace generates a contextually-correct reply.
+        const cachedDietary = user?.dietary_pattern
+          ? buildRestrictionFromLabel(user.dietary_pattern)
+          : null;
+        const cachedMedType = inferMedicationType(user?.medication ?? null);
+        const cleanedDislikes = (user?.food_dislikes ?? [])
+          .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+          .filter(Boolean);
+        const cacheViolations = checkContent(hit.response, {
+          ...(cachedDietary ? { dietaryRestriction: cachedDietary } : {}),
+          ...(cleanedDislikes.length > 0 ? { foodDislikes: cleanedDislikes } : {}),
+          ...(cachedMedType !== 'unknown' ? { medicationType: cachedMedType } : {}),
+          userMessage: input.text,
+          intentType: intentClass.type,
+        });
+        const cacheBlocked = cacheViolations.filter(
+          (v) => v.severity === 'block' || v.severity === 'regen' || !v.severity,
+        );
+        if (cacheBlocked.length > 0) {
+          this.deps.logger.info(
+            {
+              userId: input.userId,
+              matchedQuery: hit.matchedQuery.slice(0, 60),
+              similarity: hit.similarity.toFixed(3),
+              violations: cacheBlocked.map((v) => v.code),
+            },
+            'ai.handle.faq_cache_rejected',
+          );
+          // Don't return — let the full pipeline produce a contextually-
+          // correct response. The cache miss is logged so we can audit.
+        } else {
         this.deps.logger.info(
           {
             userId: input.userId,
@@ -406,6 +451,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
           usedRetrieval: false,
           latencyMs: Date.now() - t0,
         };
+        } // end of `else` (cache passes safety check)
       }
     }
 

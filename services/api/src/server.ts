@@ -203,8 +203,21 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
         'https://grace-admin-silk.vercel.app',
         'https://graceglp.com',
         'https://www.graceglp.com',
+        // Allow local web dev (Vite on :8080) to call the live API for quick
+        // UI iteration. Safe because only the browser origin is checked —
+        // sensitive endpoints still require the admin Bearer token.
+        'http://localhost:8080',
+        'http://127.0.0.1:8080',
       ]
-    : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'];
+    : [
+        'http://localhost:5173',
+        'http://localhost:3000',
+        'http://localhost:3001',
+        // Match the Vite config (apps/web/vite.config.ts) so the local web
+        // dev server on :8080 can call a locally-running API too.
+        'http://localhost:8080',
+        'http://127.0.0.1:8080',
+      ];
   await app.register(cors, { origin: allowedOrigins, credentials: true });
   await app.register(helmet);
   await app.register(formbody);

@@ -154,9 +154,72 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     onRunComplete: async (report: OptimizerRunReport) => {
       const adminPhone = env.ADMIN_PHONE;
       if (!adminPhone) return;
-      const msg = buildOptimizerReport(report);
+
+      // Run a coverage smoke (~50 cases) after a successful prompt activation
+      // so the admin WhatsApp report includes a delta vs the previous run.
+      // Phase 4 of the deep-research coverage plan. The coverage run is
+      // best-effort — any failure is logged and skipped, never blocks the
+      // optimizer report.
+      let coverageSnippet = '';
+      if (report.status === 'activated') {
+        try {
+          // Load the freshly-activated prompt from DB for the coverage run.
+          const { rows: promptRows } = await pool.query<{ content: string }>(
+            `SELECT content FROM prompts WHERE active = TRUE ORDER BY created_at DESC LIMIT 1`,
+          );
+          const currentPrompt = promptRows[0]?.content ?? '';
+          if (!currentPrompt) {
+            logger.warn('coverage.smoke.no_active_prompt');
+            throw new Error('no active prompt');
+          }
+
+          const suiteUrl = new URL('../coverage/suite.js', import.meta.url).href;
+          const runnerUrl = new URL('../coverage/runner.js', import.meta.url).href;
+          const reporterUrl = new URL('../coverage/reporter.js', import.meta.url).href;
+          const suiteMod = await import(suiteUrl) as {
+            buildSuite: (opts: { limit?: number }) => unknown[];
+          };
+          const runnerMod = await import(runnerUrl) as {
+            runCoverage: (opts: unknown) => Promise<{ run_id: string; stats: { pass_rate: number; passed: number; total: number; by_domain: Record<string, { pass_rate: number; total: number }> } }>;
+          };
+          const reporterMod = await import(reporterUrl) as {
+            saveReport: (r: unknown) => string;
+            listReports: () => Array<{ run_id: string; pass_rate: number }>;
+            loadReport: (id: string) => unknown | null;
+            reportDelta: (prev: unknown, curr: unknown) => { regressions: unknown[]; pass_rate_delta: number };
+          };
+          const cases = suiteMod.buildSuite({ limit: 50 });
+          const past = reporterMod.listReports();
+          const coverageReport = await runnerMod.runCoverage({
+            cases,
+            llm,
+            systemPrompt: currentPrompt,
+            concurrency: 4,
+            systemPromptVersion: report.version ?? null,
+          } as never);
+          reporterMod.saveReport(coverageReport);
+          const previous = past.find(() => true);
+          const delta = previous ? reporterMod.reportDelta(reporterMod.loadReport(previous.run_id)!, coverageReport) : null;
+          const worstDomain = Object.entries(coverageReport.stats.by_domain)
+            .sort(([, a], [, b]) => a.pass_rate - b.pass_rate)[0];
+          coverageSnippet = `\n\n🎯 Coverage smoke (${coverageReport.stats.total} cases): ${coverageReport.stats.pass_rate}%`;
+          if (delta) {
+            coverageSnippet += ` (${delta.pass_rate_delta >= 0 ? '+' : ''}${delta.pass_rate_delta.toFixed(1)}% vs previous)`;
+            if (delta.regressions.length > 0) {
+              coverageSnippet += `\n⚠️ ${delta.regressions.length} regression${delta.regressions.length === 1 ? '' : 's'}`;
+            }
+          }
+          if (worstDomain) {
+            coverageSnippet += `\nWeakest domain: ${worstDomain[0]} (${worstDomain[1].pass_rate}%)`;
+          }
+        } catch (err) {
+          logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'coverage.smoke.failed');
+        }
+      }
+
+      const msg = buildOptimizerReport(report) + coverageSnippet;
       await sender.send({ to: adminPhone, body: msg, channel: 'whatsapp', raw: true });
-      logger.info({ adminPhone, version: report.version }, 'prompt_optimizer.report_sent');
+      logger.info({ adminPhone, version: report.version, hasCoverage: coverageSnippet.length > 0 }, 'prompt_optimizer.report_sent');
     },
   });
 

@@ -2447,4 +2447,80 @@ Banned phrases must be exact lowercase substrings from Grace's actual response. 
     }
     return report;
   });
+
+  // Production message ingestion (Phase 4) — accepts a list of real user
+  // messages (e.g. from a prod log scrape or CSV export) and classifies each,
+  // mapping to the closest existing intent in intents.json. Used to:
+  //   1. Verify our taxonomy covers real-world phrasings (>= 95% should map)
+  //   2. Discover NEW question shapes that need new intents added
+  //
+  // Does NOT mutate intents.json — output is a report you eyeball, then
+  // manually add to intents.json (or run the generator on the uncovered set).
+  app.post('/admin/coverage/ingest', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      messages?: Array<string | { text: string; metadata?: Record<string, unknown> }>;
+    };
+    const rawMessages = Array.isArray(body.messages) ? body.messages : [];
+    const messages = rawMessages
+      .map((m) => (typeof m === 'string' ? { text: m, metadata: undefined } : m))
+      .filter((m) => m && typeof m.text === 'string' && m.text.trim().length > 0);
+
+    if (messages.length === 0) {
+      reply.status(400).send({ error: 'NO_MESSAGES', message: 'Provide a non-empty messages array' });
+      return;
+    }
+    if (messages.length > 2000) {
+      reply.status(400).send({ error: 'TOO_MANY', message: 'Max 2000 messages per ingest call' });
+      return;
+    }
+
+    try {
+      // Pure classifier-only ingestion — no LLM cost, deterministic, ~50µs/msg.
+      const aiCoreUrl = new URL('@grace/ai-core', import.meta.url).href;
+      const { classifyMessage } = await import(aiCoreUrl) as typeof import('@grace/ai-core');
+      const suiteUrl = new URL('../../coverage/suite.js', import.meta.url).href;
+      const suiteMod = await import(suiteUrl) as {
+        loadIntents: () => { intents: Array<{ id: string; domain: string; subtopic: string; expected_intent: string; safety_level: string; variations: string[] }> };
+      };
+      const intentsFile = suiteMod.loadIntents();
+
+      const classified = messages.map((m) => {
+        const intent = classifyMessage(m.text).type;
+        // Find candidate intents for this MessageType — they cover this
+        // question shape. If none match, flag as "uncovered taxonomy gap".
+        const candidates = intentsFile.intents
+          .filter((i) => i.expected_intent === intent)
+          .map((i) => ({ id: i.id, domain: i.domain, subtopic: i.subtopic }));
+        return {
+          text: m.text.slice(0, 280),
+          classified_intent: intent,
+          candidate_intent_ids: candidates.slice(0, 5).map((c) => c.id),
+          covered: candidates.length > 0,
+        };
+      });
+
+      const total = classified.length;
+      const covered = classified.filter((c) => c.covered).length;
+      const byClassifiedIntent = classified.reduce<Record<string, number>>((acc, c) => {
+        acc[c.classified_intent] = (acc[c.classified_intent] ?? 0) + 1;
+        return acc;
+      }, {});
+      const uncovered = classified.filter((c) => !c.covered);
+
+      return {
+        total,
+        covered,
+        coverage_pct: total > 0 ? Math.round((covered / total) * 1000) / 10 : 0,
+        by_classified_intent: byClassifiedIntent,
+        uncovered_examples: uncovered.slice(0, 30).map((u) => ({
+          text: u.text,
+          classified_intent: u.classified_intent,
+        })),
+        classified,
+      };
+    } catch (err) {
+      app.log.error({ err }, 'coverage.ingest.failed');
+      reply.status(500).send({ error: 'INGEST_FAILED', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
 }

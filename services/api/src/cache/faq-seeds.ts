@@ -31,7 +31,12 @@ export interface FaqSeed {
     | 'guilt'
     | 'relationship'
     | 'stress_eating'
-    | 'protein_food';
+    | 'protein_food'
+    | 'mechanism'
+    | 'comparison'
+    | 'ozempic_face'
+    | 'drug_interaction'
+    | 'dose_error';
 }
 
 export const FAQ_SEEDS: FaqSeed[] = [
@@ -165,5 +170,108 @@ export const FAQ_SEEDS: FaqSeed[] = [
     category: 'protein_food',
     response:
       'Greek yogurt (15-20g per cup), cottage cheese, eggs, canned fish, protein shakes, all gentle on GLP-1 digestion and high in protein.',
+  },
+
+  // ── Mechanism of action (session 3 feedback) ───────────────────────────
+  {
+    query: 'How does Ozempic actually work?',
+    category: 'mechanism',
+    response:
+      "It mimics a hormone your gut releases when you eat, called GLP-1. This tells your brain you're full, slows how quickly food leaves your stomach, and keeps that fullness signal on for hours. That's why appetite drops and food thoughts quiet down, and why nausea and constipation can show up too.",
+  },
+  {
+    query: 'How does semaglutide work in the body?',
+    category: 'mechanism',
+    response:
+      "It mimics a hormone your gut releases when you eat, called GLP-1. This tells your brain you're full, slows how quickly food leaves your stomach, and keeps that fullness signal on for hours. That's why appetite drops and food thoughts quiet down, and why nausea and constipation can show up too.",
+  },
+  {
+    query: 'Why did my food obsession just disappear?',
+    category: 'mechanism',
+    response:
+      "The medication acts on receptors in your brain, not just your gut. For many people the constant background hum of food thoughts was partly driven by how the brain's appetite and reward systems were calibrated. The medication recalibrates them, which can feel like freedom for some and strangely empty for others.",
+  },
+  {
+    query: 'Why did my food noise go away?',
+    category: 'mechanism',
+    response:
+      "The medication acts on receptors in your brain, not just your gut. For many people the constant background hum of food thoughts was partly driven by how the brain's appetite and reward systems were calibrated. The medication recalibrates them, which can feel like freedom for some and strangely empty for others.",
+  },
+
+  // ── Medication comparison ──────────────────────────────────────────────
+  {
+    query: 'How is Mounjaro different from Ozempic?',
+    category: 'comparison',
+    response:
+      'Different drugs, same class. Ozempic contains semaglutide and targets one receptor (GLP-1). Mounjaro contains tirzepatide and targets two: GLP-1 and GIP. That dual action is why Mounjaro tends to produce more weight loss on average, around 20-22% vs 14-15% for Ozempic. Side effects are similar on both.',
+  },
+  {
+    query: 'Mounjaro vs Ozempic?',
+    category: 'comparison',
+    response:
+      'Different drugs, same class. Ozempic contains semaglutide and targets one receptor (GLP-1). Mounjaro contains tirzepatide and targets two: GLP-1 and GIP. That dual action is why Mounjaro tends to produce more weight loss on average, around 20-22% vs 14-15% for Ozempic. Side effects are similar on both.',
+  },
+  {
+    query: "What's the difference between Wegovy and Zepbound?",
+    category: 'comparison',
+    response:
+      'Same active ingredients as their diabetes counterparts — Wegovy is semaglutide (like Ozempic), Zepbound is tirzepatide (like Mounjaro). The dose schedule and FDA approval differs but the medication action is identical. Tirzepatide tends to produce more weight loss on average than semaglutide.',
+  },
+
+  // ── Ozempic face / facial changes (mechanism, not concerning) ──────────
+  {
+    query: 'My face is looking saggy on Ozempic.',
+    category: 'ozempic_face',
+    response:
+      "It's not the medication directly, it's the rate of weight loss. Subcutaneous facial fat depletes when you lose weight fast, so faces look hollower or softer. Adequate protein, hydration, and slowing the loss rate help. Fillers and treatments are personal choice, not medical.",
+  },
+  {
+    query: 'Why is my face changing on Ozempic?',
+    category: 'ozempic_face',
+    response:
+      "It's not the medication directly, it's the rate of weight loss. Subcutaneous facial fat depletes when you lose weight fast, so faces look hollower or softer. Adequate protein, hydration, and slowing the loss rate help. Fillers and treatments are personal choice, not medical.",
+  },
+
+  // ── Drug interaction → warm clinical redirect (NOT preachy) ────────────
+  // Replaces the production failure: "These are absolutely critical questions
+  // that you MUST discuss" — that warning-label tone was wrong. Same situation,
+  // same tone as the gold-standard "Should I lower my dose?" response.
+  {
+    query: 'Can I take another medication with my injection?',
+    category: 'drug_interaction',
+    response:
+      'Drug interactions are something your doctor or pharmacist need to check specifically — please ask them before taking anything else alongside your injection.',
+  },
+  {
+    query: 'Is it safe to take Ozempic with other medications?',
+    category: 'drug_interaction',
+    response:
+      'Drug interactions are something your doctor or pharmacist need to check specifically — please ask them before taking anything else alongside your injection.',
+  },
+  {
+    query: 'Can I drink alcohol on Ozempic?',
+    category: 'drug_interaction',
+    response:
+      'Most people can have a drink or two, but it can intensify nausea and hit lower-blood-sugar harder, so go slow and eat with it. If you take other medications, it is worth asking your pharmacist whether alcohol changes how they work.',
+  },
+
+  // ── Dosing error → urgent but calm (matches production SUCCESS) ────────
+  {
+    query: 'I think I injected too much.',
+    category: 'dose_error',
+    response:
+      "That's something your doctor needs to hear about right away. Please reach out to them today to discuss what happened.",
+  },
+  {
+    query: 'I accidentally took a double dose.',
+    category: 'dose_error',
+    response:
+      "That's something your doctor needs to hear about right away. Please reach out to them today to discuss what happened.",
+  },
+  {
+    query: 'I missed my dose, what should I do?',
+    category: 'dose_error',
+    response:
+      "General guideline: if it's been less than 5 days since the missed dose, take it as soon as you remember and continue your normal weekly schedule. If it's been longer, wait for your next scheduled day. When in doubt, check with your prescriber.",
   },
 ];

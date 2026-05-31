@@ -252,8 +252,33 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     // needs the augmented text; memory needs the augmented text. None depend
     // on each other, so Promise.all saves ~600–1500ms per message.
     const intentClass = classifyIntent(augmentedText);
+    // Skip the planner LLM call when the classifier is already confident enough
+    // that the planner would just confirm "no tools needed, generate prose".
+    // RAG retrieval still happens in parallel (see retrieved below) — the
+    // knowledge / emotional / appointment_prep responses already have the
+    // RAG chunks injected by the orchestrator from input.retrieved, so the
+    // knowledge_search tool would just duplicate that work.
+    // Saves ~500-600ms per matching message at zero accuracy cost.
+    const CLASSIFIER_SKIP_PLANNER = new Set([
+      'greeting',
+      'gibberish',
+      // High-value adds (session-3 latency pass): the planner LLM call was
+      // ~600ms and added no value because:
+      //   - knowledge / appointment_prep / emotional → no tools needed, RAG
+      //     chunks are already injected from input.retrieved
+      //   - food_log / food_question / weight_log / mood_log → the FORCE
+      //     blocks downstream override the planner anyway, so its result is
+      //     discarded
+      'knowledge',
+      'appointment_prep',
+      'emotional',
+      'food_log',
+      'food_question',
+      'weight_log',
+      'mood_log',
+    ]);
     const skipPlanner =
-      intentClass.type === 'greeting' || intentClass.type === 'gibberish' || !flags.toolsEnabled;
+      CLASSIFIER_SKIP_PLANNER.has(intentClass.type) || !flags.toolsEnabled;
     const planner = new PlannerAgent(this.deps.llm);
 
     const [retrieved, userMemories, prePlannedDecisionRaw] = await Promise.all([
@@ -262,7 +287,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         ? this.deps.userMemory.retrieve(input.userId, augmentedText, 3)
         : Promise.resolve([] as string[]),
       skipPlanner
-        ? Promise.resolve<PlannerDecision>({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'classifier_fast_path' })
+        ? Promise.resolve<PlannerDecision>({ intent: 'chat', needsTools: false, toolCalls: [], rationale: `classifier_fast_path_${intentClass.type}` })
         : planner.plan(augmentedText).catch((): PlannerDecision => ({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'planner_error' })),
     ]);
 

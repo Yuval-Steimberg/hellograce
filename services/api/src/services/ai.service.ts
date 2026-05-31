@@ -2,7 +2,16 @@ import type { Logger } from 'pino';
 import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
 import type { ChatTurn, DietaryRestriction, InboundMessage, OrchestratorOutput } from '@grace/shared';
-import { AIOrchestrator, PlannerAgent, ToolRegistry, classifyMessage as classifyIntent, checkContent } from '@grace/ai-core';
+import {
+  AIOrchestrator,
+  PlannerAgent,
+  ToolRegistry,
+  classifyMessage as classifyIntent,
+  checkContent,
+  FOOD_HISTORY_QUESTION,
+  PROTEIN_TARGET_QUESTION,
+  FOOD_REMOVAL_QUESTION,
+} from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
 import type { LLMProvider, PlannerDecision } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
@@ -25,7 +34,7 @@ import { makeLogMoodTool } from '../tools/log-mood.js';
 import { makeKnowledgeSearchTool } from '../tools/knowledge-search.js';
 import { makeGetUserProfileTool } from '../tools/get-user-profile.js';
 import { makeGetWeightTrendTool } from '../tools/get-weight-trend.js';
-import { makeGetFoodSummaryTool } from '../tools/get-food-summary.js';
+import { makeGetFoodSummaryTool, makeGetProteinHistoryTool } from '../tools/get-food-summary.js';
 import { makeLogSideEffectTool } from '../tools/log-side-effect.js';
 import { makeSearchFoodIdeasTool } from '../tools/search-food-ideas.js';
 import { makeRemoveFoodTool } from '../tools/remove-food.js';
@@ -505,11 +514,76 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       );
     }
 
-    // FORCE get_food_summary when the user asks about today's totals (protein,
-    // calories, "how much left", "did I overeat") and the planner missed it.
-    // The classifier already detects these via FOOD_SUMMARY_QUESTION regex.
-    const isFoodSummaryQuery = intentClass.type === 'food_question' &&
-      /\b(protein|calorie|kcal|carb|eat|overeat|left|remaining)\b/i.test(input.text);
+    // FORCE the right protein-related tool based on the exact question shape.
+    // The classifier (FOOD_SUMMARY / FOOD_HISTORY / PROTEIN_TARGET / FOOD_REMOVAL)
+    // all map to `food_question` intent, but each subgroup needs a DIFFERENT
+    // tool to answer correctly. Without these force-calls, the planner LLM
+    // sometimes picks the wrong tool and Grace falls back to "I'm listening,
+    // tell me more" — exact production failure 2026-05-31.
+
+    // 1. Past-day queries → get_protein_history (covers "yesterday's protein",
+    //    "last 7 days", "this week's average")
+    const isFoodHistoryQuery = intentClass.type === 'food_question' &&
+      FOOD_HISTORY_QUESTION.some((re) => re.test(input.text));
+    if (
+      isFoodHistoryQuery &&
+      flags.toolsEnabled &&
+      !prePlannedDecision.toolCalls.some((c) => c.name === 'get_protein_history')
+    ) {
+      // Extract day count if user said "last 7 days" / "past 14 days" — else 7.
+      const dayMatch = input.text.match(/\b(last|past|previous)\s+(\d+)\s+days?\b/i);
+      const days = dayMatch ? Math.max(1, Math.min(30, parseInt(dayMatch[2]!, 10))) : 7;
+      prePlannedDecision = {
+        intent: 'get_protein_history',
+        needsTools: true,
+        toolCalls: [{ name: 'get_protein_history', args: { days } }],
+        rationale: 'classifier_forced_get_protein_history',
+      };
+    }
+    // 2. Target/goal explanation queries → get_user_profile (covers
+    //    "why is my target 60g", "is 80g enough")
+    const isTargetQuery = !isFoodHistoryQuery &&
+      intentClass.type === 'food_question' &&
+      PROTEIN_TARGET_QUESTION.some((re) => re.test(input.text));
+    if (
+      isTargetQuery &&
+      flags.toolsEnabled &&
+      !prePlannedDecision.toolCalls.some((c) => c.name === 'get_user_profile')
+    ) {
+      prePlannedDecision = {
+        intent: 'get_user_profile',
+        needsTools: true,
+        toolCalls: [{ name: 'get_user_profile', args: {} }],
+        rationale: 'classifier_forced_get_user_profile_for_target',
+      };
+    }
+    // 3. Removal / correction queries → remove_food (covers "remove the eggs",
+    //    "that's wrong", "I didn't eat that")
+    const isRemovalQuery = !isFoodHistoryQuery && !isTargetQuery &&
+      intentClass.type === 'food_question' &&
+      FOOD_REMOVAL_QUESTION.some((re) => re.test(input.text));
+    if (
+      isRemovalQuery &&
+      flags.toolsEnabled &&
+      !prePlannedDecision.toolCalls.some((c) => c.name === 'remove_food')
+    ) {
+      // Try to extract the food name from the user message (e.g. "remove
+      // the eggs" → "eggs"). Fall back to the raw text — the tool's own
+      // matcher handles ambiguity.
+      const foodMatch = input.text.match(/\b(?:remove|delete|undo|forget|cancel) (?:the |that |my |last )?(.+?)(?:\.|$|\?)/i);
+      const foodToRemove = foodMatch?.[1]?.trim() ?? input.text;
+      prePlannedDecision = {
+        intent: 'remove_food',
+        needsTools: true,
+        toolCalls: [{ name: 'remove_food', args: { food: foodToRemove } }],
+        rationale: 'classifier_forced_remove_food',
+      };
+    }
+    // 4. Today's totals — the original FORCE block (covers "how much left",
+    //    "did I overeat", "how did I reach X", "show me what I logged today").
+    const isFoodSummaryQuery = !isFoodHistoryQuery && !isTargetQuery && !isRemovalQuery &&
+      intentClass.type === 'food_question' &&
+      /\b(protein|calorie|kcal|carb|eat|overeat|left|remaining|reach|reached|breakdown|break ?down|show|list|coming from|what foods?|what meals?|what items?)\b/i.test(input.text);
     if (
       isFoodSummaryQuery &&
       flags.toolsEnabled &&
@@ -622,6 +696,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       }
       if (toolSettings['get_food_summary'] !== false) {
         tools.register(makeGetFoodSummaryTool({ users, userId: input.userId }));
+        // get_protein_history is gated on the same toolSetting flag — past-day
+        // queries are a different question shape but the same data source.
+        tools.register(makeGetProteinHistoryTool({ users, userId: input.userId }));
       }
       if (toolSettings['log_side_effect'] !== false) {
         tools.register(makeLogSideEffectTool({ users, userId: input.userId, phone: user?.phone ?? input.userId }));

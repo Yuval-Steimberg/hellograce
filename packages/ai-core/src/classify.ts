@@ -34,6 +34,11 @@ export interface ClassifyResult {
 // Question patterns — must check BEFORE food log patterns because
 // "how many proteins did i eat today" contains "ate" but is a question
 // about totals, not a logging event.
+// FOOD_SUMMARY_QUESTION matches anything that asks about TODAY'S logged
+// protein/calorie state, including totals, breakdowns, items, "left",
+// "did I", and "how am I doing on protein". These all share the same
+// downstream behaviour: force get_food_summary so Grace answers from the
+// actual food_logs rows instead of hallucinating or asking for clarification.
 const FOOD_SUMMARY_QUESTION: RegExp[] = [
   /\bhow (much|many)\s+(protein|calorie|carb|gram|kcal)/i,
   /\b(what'?s|whats) my (protein|calorie|total)/i,
@@ -45,17 +50,59 @@ const FOOD_SUMMARY_QUESTION: RegExp[] = [
   /\b(can|could) i (still|even) (eat|have|drink)\b.{0,40}(today|now|left)/i,
   /\bhow much (can|should) i (eat|have)\b.{0,40}(today|left|tonight|for dinner)/i,
   /\bam i over (my )?(calorie|budget|target|goal)/i,
-  // Production failure (2026-05-31): user asked "How did I reached 40 g of
-  // protein?" and the classifier put it in general → planner missed the tool
-  // call → Grace returned the safe fallback. These patterns ask Grace to
-  // EXPLAIN/BREAK DOWN today's totals — same intent as the above, just
-  // different phrasing.
+  // Production failure (2026-05-31): "How did I reached 40 g of protein?"
+  // fell into 'general' → no get_food_summary → safe fallback fired.
   /\bhow (did i|do i|have i) (reach|reached|get|got|hit|hit at|end up at|arrive at|end up with) (to |at |my )?(\d+|the|my)/i,
   /\b(what|which) (foods?|meals?|items?|things?) (did i|have i) (eat|log|consume|have)\b/i,
   /\b(what'?s|whats) (in|on) my (food|protein|calorie) (log|count|total)/i,
   /\b(show|list|tell) me (what|all|the foods) i('?ve| have)? (eaten|logged|consumed|had) (today|so far)/i,
   /\b(break ?down|breakdown) (of|my) (today'?s )?(protein|calorie|food)/i,
   /\bwhere (is|are) (the|my) (\d+|extra )?(protein|calorie|gram|kcal) (coming from|from)/i,
+  // Progress-style status checks ("how am I doing on protein", "protein update")
+  /\bhow am i doing (on|with) (my )?(protein|calorie)/i,
+  /\b(protein|calorie) (update|status|check)\b/i,
+  /\b(am i|are we) (close to|on track for|hitting|missing) (my )?(protein|calorie|target|goal)/i,
+  /\bwhere am i (at |on |with )(my )?(protein|calorie|target|goal)/i,
+  // Conditional "if I eat X" / "if I add Y" / "will eggs put me at"
+  /\bif i (eat|have|drink|add|skip) [^.?!]{1,40}(protein|calorie|target|goal|hit)/i,
+  /\bwill (eating|having|drinking) [^.?!]{1,40}(hit|reach|put me at|get me to) (my )?(protein|calorie|target|goal)/i,
+];
+
+// Target/goal explanation queries — ROUTE to food_question so Grace uses
+// get_user_profile + the protein-from-CURRENT-weight rule. Without these,
+// "Why is my target 60g?" went to general → planner → inconsistent answer.
+export const PROTEIN_TARGET_QUESTION: RegExp[] = [
+  // "why is my protein target 60g" / "how was my protein goal calculated"
+  /\b(why|how) (is|was|did|do you|are you) (my )?(protein|calorie) (target|goal) (\d+|so|calculated|computed|set)/i,
+  /\b(what'?s|whats|what is) my (protein|calorie) (target|goal)\b/i,
+  /\bhow (much|many) (protein|calorie|gram|kcal) (should|do) i (need|eat|consume|have) (per|a|each|every) (day|daily)?/i,
+  // "is 60g of protein enough" — my/the are optional since user may say "is 60g..."
+  /\b(is|are) (my |the )?(\d+ ?g|target|goal) (of )?(protein|calorie)? ?(right|enough|correct|too (much|low|high))/i,
+  /\bwhy (so much|so little|that much) (protein|calorie)/i,
+];
+
+// Past-day queries — ROUTE to food_question, but the AI service force-calls
+// get_protein_history instead of get_food_summary.
+export const FOOD_HISTORY_QUESTION: RegExp[] = [
+  /\b(yesterday'?s?|past day'?s?|previous day'?s?) (protein|calorie|food|log|meal)/i,
+  /\b(how much|how many) (protein|calorie) (did|have) i (eat|have|consume|log) (yesterday|last (week|night|day))/i,
+  /\b(this|last|past) (week|7 days|few days)['']?s? (protein|calorie|average|total)/i,
+  // "show me my protein history for the last 7 days" — connector words ("for",
+  // "over", "across") may appear between "history" and "last", so allow up to
+  // 15 non-terminal chars between them.
+  /\b(show|tell|give) me (my )?(protein|calorie) (history|trend|breakdown)\b[^.?!]{0,20}\b(last|past) (\d+\s+)?(days?|week)/i,
+  /\b(am i|have i been) (hitting|averaging|missing) (my )?(protein|calorie) (target|goal) (last|this|past|over) (week|few days)/i,
+  /\b(what'?s|what was) my (protein|calorie) (yesterday|last (week|night))/i,
+];
+
+// Food removal / correction queries — ROUTE to food_question, force remove_food
+export const FOOD_REMOVAL_QUESTION: RegExp[] = [
+  /\b(remove|delete|undo|forget|cancel) (the |that |my )?(last |the )?(food|log|entry|eggs?|chicken|shake|yogurt|protein|meal|snack|item)/i,
+  /\bi (didn'?t|did not) (eat|have|drink) (the|that|those)/i,
+  /\b(that'?s|that was|its) wrong\b/i,
+  /\bactually (it was|it'?s|i had|i ate)/i,
+  /\b(remove|delete|undo) (the|that) last/i,
+  /\bi (made a |was )?mistake/i,
 ];
 
 const FOOD_LOG: RegExp[] = [
@@ -198,6 +245,13 @@ export function classifyMessage(text: string): ClassifyResult {
   // Food summary questions MUST come before food_log — "how many proteins
   // i ate today" contains "ate" but is asking about totals, not logging.
   if (matches(text, FOOD_SUMMARY_QUESTION)) return { type: 'food_question', confidence: 0.95 };
+  // Past-day food history and target/goal explanation — both subclass of
+  // food_question so the downstream prompt rules + tool selection apply.
+  // The AI service inspects the verbatim regex match to decide which tool
+  // to force-call (get_protein_history vs get_food_summary vs get_user_profile).
+  if (matches(text, FOOD_HISTORY_QUESTION)) return { type: 'food_question', confidence: 0.95 };
+  if (matches(text, PROTEIN_TARGET_QUESTION)) return { type: 'food_question', confidence: 0.92 };
+  if (matches(text, FOOD_REMOVAL_QUESTION)) return { type: 'food_question', confidence: 0.92 };
   if (matches(text, WEIGHT_LOG)) return { type: 'weight_log', confidence: 0.9 };
   if (matches(text, FOOD_LOG)) return { type: 'food_log', confidence: 0.85 };
   if (matches(text, FOOD_QUESTION)) return { type: 'food_question', confidence: 0.85 };

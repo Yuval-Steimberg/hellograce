@@ -72,4 +72,90 @@ describe('classifyMessage — food_question patterns (2026-05-31 production fix)
     const result = classifyMessage('where is the extra protein coming from?');
     expect(result.type).toBe('food_question');
   });
+
+  it('matches "how am I doing on protein?"', () => {
+    expect(classifyMessage('how am I doing on protein?').type).toBe('food_question');
+  });
+
+  it('matches "protein update?"', () => {
+    expect(classifyMessage('protein update?').type).toBe('food_question');
+  });
+
+  it('matches "am I close to my protein target?"', () => {
+    expect(classifyMessage('am I close to my protein target?').type).toBe('food_question');
+  });
+
+  it('matches "if I eat eggs will I hit my protein goal?"', () => {
+    expect(classifyMessage('if I eat eggs will I hit my protein goal?').type).toBe('food_question');
+  });
+
+  it('matches "will eating a protein shake hit my target?"', () => {
+    expect(classifyMessage('will eating a protein shake hit my target?').type).toBe('food_question');
+  });
+});
+
+describe('classifyMessage — past-day / history queries (protein audit)', () => {
+  it('matches "what was my protein yesterday?"', () => {
+    expect(classifyMessage('what was my protein yesterday?').type).toBe('food_question');
+  });
+
+  it('matches "how much protein did I have yesterday?"', () => {
+    expect(classifyMessage('how much protein did I have yesterday?').type).toBe('food_question');
+  });
+
+  it('matches "show me my protein history for the last 7 days"', () => {
+    expect(classifyMessage('show me my protein history for the last 7 days').type).toBe('food_question');
+  });
+
+  it('matches "have I been hitting my protein goal this week?"', () => {
+    expect(classifyMessage('have I been hitting my protein goal this week?').type).toBe('food_question');
+  });
+
+  it('matches "this week\'s protein average?"', () => {
+    expect(classifyMessage("this week's protein average?").type).toBe('food_question');
+  });
+});
+
+describe('classifyMessage — target/goal explanation queries (protein audit)', () => {
+  it('matches "why is my protein target 60g?"', () => {
+    expect(classifyMessage('why is my protein target 60g?').type).toBe('food_question');
+  });
+
+  it('matches "how was my protein goal calculated?"', () => {
+    expect(classifyMessage('how was my protein goal calculated?').type).toBe('food_question');
+  });
+
+  it('matches "what\'s my protein target?"', () => {
+    expect(classifyMessage("what's my protein target?").type).toBe('food_question');
+  });
+
+  it('matches "is 60g of protein enough?"', () => {
+    expect(classifyMessage('is 60g of protein enough?').type).toBe('food_question');
+  });
+
+  it('matches "how much protein should I eat per day?"', () => {
+    expect(classifyMessage('how much protein should I eat per day?').type).toBe('food_question');
+  });
+});
+
+describe('classifyMessage — food removal / correction queries (protein audit)', () => {
+  it('matches "remove the eggs"', () => {
+    expect(classifyMessage('remove the eggs').type).toBe('food_question');
+  });
+
+  it('matches "delete my last food log"', () => {
+    expect(classifyMessage('delete my last food log').type).toBe('food_question');
+  });
+
+  it('matches "I didn\'t eat that"', () => {
+    expect(classifyMessage("I didn't eat that").type).toBe('food_question');
+  });
+
+  it('matches "actually it was 3 eggs"', () => {
+    expect(classifyMessage('actually it was 3 eggs').type).toBe('food_question');
+  });
+
+  it('matches "that\'s wrong"', () => {
+    expect(classifyMessage("that's wrong").type).toBe('food_question');
+  });
 });

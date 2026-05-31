@@ -242,16 +242,27 @@ export class UserService {
    * Get today's food logs summary in the USER'S calendar day (not UTC, not a
    * rolling 24h window). Boundary is computed from the user's timezone column,
    * so the total resets at the user's local midnight and never mixes days.
+   *
+   * `items_detailed` carries the per-item protein/calorie breakdown so Grace
+   * can answer "How did I reach 40g?" with item-level accuracy ("Eggs were
+   * 14g, your protein shake was 24g, yogurt was 2g") instead of only knowing
+   * the running total. Production failure 2026-05-31 — fixed here.
    */
-  async getTodaysFoodSummary(userId: string): Promise<{ protein_g: number; calories: number; items: string[] }> {
-    const { rows } = await this.pool.query<{ food: string; protein_g: number; calories: number }>(
+  async getTodaysFoodSummary(userId: string): Promise<{
+    protein_g: number;
+    calories: number;
+    items: string[];
+    items_detailed: Array<{ food: string; protein_g: number; calories: number; logged_at: string }>;
+  }> {
+    const { rows } = await this.pool.query<{ food: string; protein_g: number; calories: number; created_at: Date }>(
       `WITH user_tz AS (
          SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
          FROM users WHERE phone = $1
        )
        SELECT food,
               COALESCE(protein_g, 0) AS protein_g,
-              COALESCE(calories, 0) AS calories
+              COALESCE(calories, 0) AS calories,
+              created_at
        FROM food_logs, user_tz
        WHERE user_id = $1
          AND (created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
@@ -263,7 +274,52 @@ export class UserService {
       protein_g: rows.reduce((s, r) => s + r.protein_g, 0),
       calories: rows.reduce((s, r) => s + r.calories, 0),
       items: rows.map((r) => r.food),
+      items_detailed: rows.map((r) => ({
+        food: r.food,
+        protein_g: r.protein_g,
+        calories: r.calories,
+        logged_at: new Date(r.created_at).toISOString(),
+      })),
     };
+  }
+
+  /**
+   * Get per-day protein/calorie totals for the last N days, including TODAY
+   * as the rightmost entry. Each row is one calendar day in the user's local
+   * timezone (same 5am rollover as today's summary). Used to answer queries
+   * like "How much protein did I have yesterday?" or "Show me this week's
+   * protein" — without this, Grace would have to guess or refuse.
+   */
+  async getDailyProteinHistory(userId: string, days: number = 7): Promise<Array<{
+    day: string;
+    protein_g: number;
+    calories: number;
+    item_count: number;
+  }>> {
+    const safeDays = Math.max(1, Math.min(30, Math.floor(days)));
+    const { rows } = await this.pool.query<{ day: string; protein_g: number; calories: number; item_count: string }>(
+      `WITH user_tz AS (
+         SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
+         FROM users WHERE phone = $1
+       )
+       SELECT (created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date::text AS day,
+              COALESCE(SUM(protein_g), 0)::int AS protein_g,
+              COALESCE(SUM(calories), 0)::int AS calories,
+              COUNT(*)::int AS item_count
+       FROM food_logs, user_tz
+       WHERE user_id = $1
+         AND (created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
+             >= (now() AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date - ($2::int - 1)
+       GROUP BY day
+       ORDER BY day DESC`,
+      [userId, safeDays],
+    );
+    return rows.map((r) => ({
+      day: r.day,
+      protein_g: Number(r.protein_g),
+      calories: Number(r.calories),
+      item_count: Number(r.item_count),
+    }));
   }
 
   /**

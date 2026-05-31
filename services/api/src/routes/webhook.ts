@@ -9,6 +9,7 @@ import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { UnauthorizedError, UpstreamError } from '../errors.js';
 import { classifyScope } from '../safety/scope-guard.js';
+import { classifyMessage as classifySafety } from '../safety/guard.js';
 
 const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 
@@ -197,6 +198,24 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
               await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: ack });
               return;
             }
+          }
+
+          // ── SAFETY GUARD — MUST RUN BEFORE ANY SHORT-CIRCUIT ──────────
+          // Crisis / emergency keywords (suicide, self-harm, chest pain,
+          // breathing trouble) MUST short-circuit to the unified 988+911
+          // safety response BEFORE the pause / upgrade / paywall intercepts.
+          // Otherwise a message like "ending it all please pause messages"
+          // would land in the pause confirmation and skip the safety reply.
+          //
+          // This duplicates ai.service.ts's safety check at line 100, but
+          // running it here too guarantees the safety reply fires even when
+          // a short-circuit would otherwise prevent ai.service from being
+          // called at all.
+          const safety = classifySafety(normalized.text);
+          if (safety.class !== 'safe') {
+            req.log.warn({ phone: user?.phone, class: safety.class, matched: safety.matched }, 'webhook.safety.short_circuit');
+            await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: safety.response! });
+            return;
           }
 
           // ── In-chat pause intent (Phase 1 coverage expansion) ─────────

@@ -33,6 +33,7 @@ const ContentRulesPage = lazy(() => import("./pages/admin/ContentRulesPage.tsx")
 const AutoEvalPage = lazy(() => import("./pages/admin/AutoEvalPage.tsx"));
 const RegressionPage = lazy(() => import("./pages/admin/RegressionPage.tsx"));
 const ReplayPage = lazy(() => import("./pages/admin/ReplayPage.tsx"));
+const CoveragePage = lazy(() => import("./pages/admin/CoveragePage.tsx"));
 const SubscriptionMessagesPage = lazy(() => import("./pages/admin/SubscriptionMessagesPage.tsx"));
 const SystemHealthPage = lazy(() => import("./pages/admin/SystemHealthPage.tsx"));
 
@@ -73,6 +74,7 @@ const App = () => (
                 <Route path="auto-eval" element={<AutoEvalPage />} />
                 <Route path="regression" element={<RegressionPage />} />
                 <Route path="replay" element={<ReplayPage />} />
+                <Route path="coverage" element={<CoveragePage />} />
                 <Route path="subscription-messages" element={<SubscriptionMessagesPage />} />
                 <Route path="system-health" element={<SystemHealthPage />} />
               </Route>

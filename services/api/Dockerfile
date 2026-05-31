@@ -19,7 +19,8 @@ COPY services/api services/api
 RUN pnpm --filter @grace/shared build \
  && pnpm --filter @grace/ai-core build \
  && pnpm --filter @grace/api build \
- && cd services/api && npx tsc -p tsconfig.auto-eval.json
+ && cd services/api && npx tsc -p tsconfig.auto-eval.json \
+ && npx tsc -p tsconfig.coverage.json
 
 # ─── runtime ───────────────────────────────────────────────────────
 FROM node:20-alpine AS runtime
@@ -32,10 +33,16 @@ COPY --from=build /repo/services/api/package.json services/api/package.json
 COPY --from=build /repo/services/api/dist services/api/dist
 COPY --from=build /repo/services/api/dist-auto-eval/auto-eval services/api/auto-eval
 COPY --from=build /repo/services/api/dist-auto-eval/eval services/api/eval
+COPY --from=build /repo/services/api/dist-coverage/coverage services/api/coverage
+# Data assets (intents.json + safety-framework.json + journey-map.json) must
+# be present at runtime — they're not compiled, just read by the runner.
+COPY --from=build /repo/services/api/coverage/intents.json services/api/coverage/intents.json
+COPY --from=build /repo/services/api/coverage/safety-framework.json services/api/coverage/safety-framework.json
+COPY --from=build /repo/services/api/coverage/journey-map.json services/api/coverage/journey-map.json
 RUN pnpm install --prod --frozen-lockfile
 # auto-eval modules import from ../src/llm — symlink src→dist so paths resolve
 RUN ln -s dist services/api/src
-# Create results directory for auto-eval output
-RUN mkdir -p services/api/auto-eval/results
+# Create results directories for auto-eval + coverage output
+RUN mkdir -p services/api/auto-eval/results services/api/coverage/results
 EXPOSE 3001
 CMD ["node", "services/api/dist/server.js"]

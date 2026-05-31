@@ -57,6 +57,9 @@ services/api/eval/*.d.ts.map
 # auto-eval build output (created by Docker build, not needed in repo)
 services/api/dist-auto-eval
 
+# coverage build output (created by Docker build, not needed in repo)
+services/api/dist-coverage
+
 # misc
 *.tsbuildinfo
 *.bak

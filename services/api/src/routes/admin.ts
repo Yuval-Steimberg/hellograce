@@ -2290,4 +2290,161 @@ Banned phrases must be exact lowercase substrings from Grace's actual response. 
       })),
     };
   });
+
+  // ─── Coverage suite (Phase 3 — intent-library stress test) ─────────────────
+  // Loads services/api/coverage/intents.json + runs every variation through
+  // runSandboxReplay (full production pipeline with mocked tools). Each case
+  // is graded deterministically against expected intent, tool calls, must-
+  // include / must-not-include phrases. Reports include per-domain + per-
+  // safety-level pass rates, regression deltas vs the previous run.
+
+  app.get('/admin/coverage/intents', async (req, reply) => {
+    void reply;
+    void req;
+    try {
+      const suiteUrl = new URL('../../coverage/suite.js', import.meta.url).href;
+      const suiteMod = await import(suiteUrl) as { loadIntents: () => { version: number; intents: Array<{ id: string; domain: string; subtopic: string; expected_intent: string; safety_level: string; variations: string[]; source: string }> } };
+      const file = suiteMod.loadIntents();
+      return {
+        version: file.version,
+        total: file.intents.length,
+        by_domain: file.intents.reduce<Record<string, number>>((acc, i) => {
+          acc[i.domain] = (acc[i.domain] ?? 0) + 1;
+          return acc;
+        }, {}),
+        intents: file.intents.map((i) => ({
+          id: i.id,
+          domain: i.domain,
+          subtopic: i.subtopic,
+          expected_intent: i.expected_intent,
+          safety_level: i.safety_level,
+          variation_count: i.variations.length,
+          source: i.source,
+        })),
+      };
+    } catch (err) {
+      app.log.error({ err: err instanceof Error ? err.message : String(err) }, 'coverage.intents.load_failed');
+      reply.status(500).send({ error: 'LOAD_FAILED', message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+  });
+
+  app.post('/admin/coverage/run', async (req, reply) => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      reply.status(503).send({ error: 'NO_API_KEY', message: 'GEMINI_API_KEY not configured' });
+      return;
+    }
+    if (!deps.llm) {
+      reply.status(503).send({ error: 'NO_LLM', message: 'LLM provider not configured' });
+      return;
+    }
+    const body = (req.body ?? {}) as {
+      domains?: string[];
+      journey_stages?: string[];
+      safety_levels?: ('informational' | 'clinical_redirect' | 'emergency')[];
+      limit?: number;
+      concurrency?: number;
+    };
+
+    try {
+      // Coverage modules live outside src/ — use dynamic URL imports so
+      // TypeScript doesn't try to compile them under the main rootDir.
+      // Same pattern as the regression-runner / auto-eval imports above.
+      const suiteUrl = new URL('../../coverage/suite.js', import.meta.url).href;
+      const runnerUrl = new URL('../../coverage/runner.js', import.meta.url).href;
+      const reporterUrl = new URL('../../coverage/reporter.js', import.meta.url).href;
+      const suiteMod = await import(suiteUrl) as {
+        buildSuite: (opts: { domains?: string[]; journeyStages?: string[]; safetyLevels?: string[]; limit?: number }) => Array<unknown>;
+      };
+      const runnerMod = await import(runnerUrl) as {
+        runCoverage: (opts: { cases: unknown[]; llm: unknown; systemPrompt: string; concurrency?: number; filters?: unknown; systemPromptVersion?: number | null }) => Promise<{ run_id: string; stats: Record<string, unknown>; cases: unknown[] }>;
+      };
+      const reporterMod = await import(reporterUrl) as {
+        saveReport: (r: unknown) => string;
+        listReports: () => Array<{ run_id: string; started_at: string; pass_rate: number; total: number }>;
+        loadReport: (id: string) => unknown | null;
+        reportDelta: (prev: unknown, curr: unknown) => unknown;
+      };
+
+      const cases = suiteMod.buildSuite({
+        ...(body.domains ? { domains: body.domains } : {}),
+        ...(body.journey_stages ? { journeyStages: body.journey_stages } : {}),
+        ...(body.safety_levels ? { safetyLevels: body.safety_levels } : {}),
+        ...(body.limit ? { limit: body.limit } : {}),
+      });
+
+      // Pull active system prompt for the run.
+      let systemPrompt = 'You are Grace, a WhatsApp companion for GLP-1 users.';
+      let promptVersion: number | null = null;
+      try {
+        const { rows } = await deps.pool.query<{ content: string; version: number }>(
+          `SELECT content, version FROM prompts WHERE active = TRUE ORDER BY created_at DESC LIMIT 1`,
+        );
+        if (rows[0]) {
+          systemPrompt = rows[0].content;
+          promptVersion = rows[0].version;
+        }
+      } catch (err) {
+        app.log.warn({ err: err instanceof Error ? err.message : String(err) }, 'coverage.run.prompt_load_failed');
+      }
+
+      const report = await runnerMod.runCoverage({
+        cases,
+        llm: deps.llm,
+        systemPrompt,
+        concurrency: body.concurrency,
+        filters: {
+          ...(body.domains ? { domains: body.domains } : {}),
+          ...(body.journey_stages ? { journey_stages: body.journey_stages } : {}),
+          ...(body.safety_levels ? { safety_levels: body.safety_levels } : {}),
+          ...(body.limit != null ? { limit: body.limit } : {}),
+        },
+        systemPromptVersion: promptVersion,
+      });
+
+      const path = reporterMod.saveReport(report);
+      app.log.info(
+        { runId: report.run_id, total: report.stats.total, passed: report.stats.passed, passRate: report.stats.pass_rate },
+        'coverage.run.completed',
+      );
+
+      // Optionally compute delta vs the previous run.
+      const past = reporterMod.listReports();
+      const previous = past.find((p) => p.run_id !== report.run_id);
+      const prevReport = previous ? reporterMod.loadReport(previous.run_id) : null;
+      const delta = prevReport ? reporterMod.reportDelta(prevReport, report) : null;
+
+      return {
+        ok: true,
+        run_id: report.run_id,
+        stats: report.stats,
+        path,
+        delta,
+      };
+    } catch (err) {
+      app.log.error({ err }, 'coverage.run.failed');
+      reply.status(500).send({ error: 'RUN_FAILED', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.get('/admin/coverage/runs', async () => {
+    const reporterUrl = new URL('../../coverage/reporter.js', import.meta.url).href;
+    const reporterMod = await import(reporterUrl) as {
+      listReports: () => Array<{ run_id: string; started_at: string; pass_rate: number; total: number }>;
+    };
+    return { runs: reporterMod.listReports() };
+  });
+
+  app.get('/admin/coverage/runs/:runId', async (req, reply) => {
+    const { runId } = req.params as { runId: string };
+    const reporterUrl = new URL('../../coverage/reporter.js', import.meta.url).href;
+    const reporterMod = await import(reporterUrl) as { loadReport: (id: string) => unknown | null };
+    const report = reporterMod.loadReport(runId);
+    if (!report) {
+      reply.status(404).send({ error: 'NOT_FOUND', message: `No run with id ${runId}` });
+      return;
+    }
+    return report;
+  });
 }

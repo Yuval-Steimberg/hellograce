@@ -19,6 +19,12 @@ const SENTENCE_LIMITS: Record<MessageType, number> = {
   food_question: 5,
   knowledge: 6,
   appointment_prep: 8, // 4-6 questions + brief framing
+  // Phase 1 coverage expansion intents
+  exercise_log: 2,           // log acks are short
+  injection_log: 2,          // confirmation acks are short
+  medication_question: 4,    // dose / timing / storage answers
+  social_situation: 4,       // practical strategies + warmth
+  pause_request: 2,          // confirmation only
 };
 
 export interface QualityIssue {
@@ -104,6 +110,12 @@ export function checkResponseQuality(text: string, type: MessageType): QualityIs
     food_question: 450,
     knowledge: 600,
     appointment_prep: 800,
+    // Phase 1 coverage expansion intents
+    exercise_log: 200,
+    injection_log: 180,
+    medication_question: 400,
+    social_situation: 400,
+    pause_request: 180,
   };
   const maxChars = charLimit[type] ?? 350;
   if (clean.length > maxChars) {

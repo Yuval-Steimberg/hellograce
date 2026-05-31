@@ -96,6 +96,31 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "Tell me a bit more about what's going on so I can give you something useful.",
     "I'm here — share a bit more so I can help with the right thing.",
   ],
+  // Phase 1 coverage expansion intents — short, warm fallbacks per type.
+  exercise_log: [
+    "Nice — every session helps protect muscle on a GLP-1.",
+    "Got it, that's a solid one. How did it feel?",
+    "Logged. Protein within an hour or two will help with recovery.",
+  ],
+  injection_log: [
+    "Got it, that's done for the week.",
+    "Noted. Hydrate well today and protein first if nausea kicks in.",
+    "Logged. How are you feeling so far?",
+  ],
+  medication_question: [
+    "Same weekday each week is the rule, the specific hour matters less. Consistency is what keeps the medication steady.",
+    "Refrigerate the pen until first use, then it's fine at room temp for up to 28 days (or per your label).",
+    "That one's worth a quick call to your prescriber — they can adjust based on your full picture.",
+  ],
+  social_situation: [
+    "Eat protein first, pace yourself, and skip the bread basket if it's not your priority. Most people do best treating it like a regular meal, not a punishment.",
+    "Pick one or two foods you actually want, eat slowly, and stop when you're satisfied. The medication will make portions feel smaller than they used to.",
+    "Plan ahead lightly, eat protein before you go if it's a long event, and pick the dishes you most want. Skip the rest without guilt.",
+  ],
+  pause_request: [
+    "Got it, I'll pause check-ins. Text me anytime you want to resume.",
+    "Taking a break — I'm here when you're ready.",
+  ],
 };
 
 const _fallbackIdx: Record<string, number> = {};
@@ -242,6 +267,12 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssi
     appointment_prep: 'asking for help preparing for a doctor / endocrinologist / specialist appointment. Draft 4-6 SPECIFIC questions for them to bring, using their conversation context (current side effects, protein struggles, dose, journey stage). DO NOT respond with "What\'s on your mind?" — they told you what\'s on their mind: the appointment. Provide questions immediately. Write as flowing prose (no bullets / numbers / headers).',
     gibberish: 'sending an unclear message. Ask a brief clarifying question.',
     general: 'sending a new message. Answer ONLY what they just asked. Do NOT continue any previous topic. Do NOT repeat or paraphrase any previous Grace message.',
+    // Phase 1 coverage expansion intents
+    exercise_log: 'reporting a workout / walk / cardio session. Briefly acknowledge + tie to muscle preservation or protein within 1-2 hours. Do NOT continue any previous topic. Do NOT estimate calories burned.',
+    injection_log: 'confirming they took their weekly shot (or daily pill). Short warm acknowledgment + a single practical tip (hydration / protein first / nausea timing). Do NOT lecture. Do NOT continue any previous topic.',
+    medication_question: 'asking a medication-specific question: dose timing, storage, travel, refill, switching, injection site. Answer with facts. For dose-change asks, use the warm clinical-redirect template ("That one I\'d genuinely leave to your doctor..."). Do NOT use alarmist language.',
+    social_situation: 'asking about restaurants, parties, travel meals, weddings, holidays, or family pressure around eating. Be practical (1-2 actionable strategies) and warm — never shaming. No restrictive language. Acknowledge the social dimension.',
+    pause_request: 'asking to pause messages / take a break. Confirm in ONE warm sentence + tell them they can text you anytime to resume. Do NOT ask why. Do NOT try to keep them engaged.',
   };
 
   parts.push(`[CURRENT USER MESSAGE TYPE: ${intentDescription[type]}]`);

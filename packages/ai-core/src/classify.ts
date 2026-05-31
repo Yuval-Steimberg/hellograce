@@ -20,6 +20,12 @@ export type MessageType =
   | 'scheduling'     // wants more / fewer check-ins
   | 'knowledge'      // GLP-1 / medication / side-effect question
   | 'appointment_prep' // doctor / endocrinologist appointment — help draft questions
+  // Phase 1 (coverage expansion plan) — new intent types for gap topics
+  | 'exercise_log'   // "I did 30 min of resistance training", "walked 5k today"
+  | 'injection_log'  // "I took my shot", "just injected", "did my weekly"
+  | 'medication_question' // dose / timing / switching / refill — distinct from general knowledge
+  | 'social_situation' // restaurants, weddings, holidays, travel meals, family pressure
+  | 'pause_request'  // "pause messages", "stop texting for a week", "take a break"
   | 'gibberish'      // emoji-only, random chars, unparseable
   | 'general';       // catch-all — let the planner decide
 
@@ -212,6 +218,72 @@ const KNOWLEDGE: RegExp[] = [
   /\b(how does (it|this) work|mechanism|explain)\b/i,
 ];
 
+// ─── Phase 1 coverage expansion: new intent patterns ──────────────────────────
+
+// User reporting an exercise / workout. Distinct from food_log because we
+// need a different tone, no food estimation, and (later) a log_exercise tool.
+const EXERCISE_LOG: RegExp[] = [
+  // Past-tense workout verbs
+  /\b(just |i )?(worked out|did a workout|finished (my )?workout|went to the gym|hit the gym|lifted|did weights|did cardio|did legs|did chest|did arms|did back|did shoulders|trained|crushed (a )?workout)\b/i,
+  /\b(just )?(walked|ran|jogged|biked|cycled|swam|hiked|did pilates|did yoga|did spin) \d/i,
+  /\b\d+\s*(min|mins|minutes|miles?|km|kilometers?|reps?|sets?|steps?)\s*(of|on|at|walking|running|jogging|biking|cycling|swimming|cardio|lifting|strength|treadmill|elliptical)\b/i,
+  /\bran (a )?(\d+\s*(k|miles?|km)|5k|10k|half|marathon)\b/i,
+  /\b(stepped|got|hit) (\d+,?\d{3}|10k|5k|8k) steps\b/i,
+  // Present-tense workout in progress
+  /\bi'?m (at the gym|working out|doing (a )?(workout|cardio|legs|chest|run))\b/i,
+];
+
+// User confirming they took their medication. Need a dedicated handler so
+// Grace can advance the injection-day state machine without re-asking.
+const INJECTION_LOG: RegExp[] = [
+  /\b(just )?(took|did|got|finished|done with) (my|the) (shot|injection|jab|dose|pen|weekly|pill|rybelsus)\b/i,
+  /\b(just )?injected\b(?!\s+(into\s+(a|the|my\s+\w+\s+is)))/i, // "just injected" / "I injected" — exclude reverse "injected the X"
+  /\b(just )?(jabbed|pricked|stuck) (myself|my (thigh|belly|stomach|arm))\b/i,
+  /\b(shot|injection|jab) (is )?done\b/i,
+  /\b(took it|did it|done) (this morning|tonight|today)\b/i,
+  /\bweekly (shot|injection|jab|dose) (done|taken|complete)\b/i,
+];
+
+// Medication-specific questions: dose, timing, switching, refill, storage.
+// Distinct from generic 'knowledge' (which covers symptoms + mechanism). We
+// route these to a warm clinical-redirect template for the dose-change ones
+// and to FAQ cache for timing/storage.
+const MEDICATION_QUESTION: RegExp[] = [
+  /\b(when|what time) (should|do|can) i (take|inject|do|use) (my|the) (shot|injection|dose|pen|pill)\b/i,
+  /\bcan i (change|move|shift|switch) (my )?(injection|shot|dose) day\b/i,
+  /\b(how|where) (do|should) i (store|keep|refrigerate) (my )?(pen|injection|ozempic|wegovy|mounjaro|zepbound|rybelsus|medication)\b/i,
+  /\bcan i (travel|fly|take.{0,10}(plane|flight|trip)) with my (pen|injection|medication)\b/i,
+  /\b(switching|switch|change|move) (from )?(ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|rybelsus) to\b/i,
+  /\b(refill|prescription) (running out|empty|out|expired|due)\b/i,
+  /\b(can i|should i) (increase|decrease|lower|raise|bump|reduce) (my )?dose\b/i,
+  /\b(my )?pen (is )?(out|empty|done|expired|warm|left out|at room temperature)\b/i,
+  /\binject(ed)? (in|on|into) (my )?(thigh|belly|stomach|arm|leg)\b/i,
+];
+
+// Social situation / event eating. Currently routes to food_question or
+// general; gets a dedicated tone (practical strategies, no shame).
+const SOCIAL_SITUATION: RegExp[] = [
+  // Going out / planning an event: "going to a wedding" / "I have a wedding"
+  /\b(going|i'?m going|i'?ll be) (out|to (a |an )?(restaurant|wedding|party|dinner|brunch|barbecue|bbq|holiday|thanksgiving|christmas|easter|passover|ramadan|iftar|bar mitzvah|baby shower|birthday|gathering|family dinner|reunion))/i,
+  /\b(i have|got|attending|hosting) (a |an |my )?(restaurant|wedding|party|dinner|brunch|barbecue|bbq|holiday|thanksgiving|christmas|easter|passover|ramadan|iftar|bar mitzvah|baby shower|birthday|gathering|family dinner|reunion|event)\b/i,
+  /\b(eating|dining|meal) (out|at (a )?(restaurant|friend'?s|family'?s|in.?laws|parents'?))/i,
+  /\bgoing on (a )?(vacation|trip|cruise|holiday|road trip)\b/i,
+  /\b(family|friends|my (mom|dad|husband|wife|partner|sister|brother)) (don'?t|doesn'?t) know (about|i'?m on)/i,
+  /\b(can|how) (do|should) i (handle|navigate|manage|survive|deal with) (a |the )?(restaurant|wedding|party|dinner|holiday|vacation|buffet|cruise)/i,
+  /\b(judging|judged|pressure|pressuring|commenting|comments) (me|about (my|the) (eating|weight|food|portion))/i,
+  /\bbuffet\b/i,
+];
+
+// Pause / break request. Distinct from scheduling frequency changes.
+const PAUSE_REQUEST: RegExp[] = [
+  /^(pause|stop|hold|hold on|hold off|take a break|break)$/i,
+  /\b(pause|stop|hold off|take a break from|stop sending) (the )?(messages|texts|reminders|notifications|check.?ins|check ins)\b/i,
+  /\bi (need|want) (a |to take a |to )?(break|pause|breather)\b/i,
+  /\bgive me (a |some )?(space|break|time|quiet)\b/i,
+  /\bdon'?t text me (for|until|this) (a |the )?(week|few days|month|while)\b/i,
+  /\b(taking|on) (a )?break (from|with) (grace|you|texting|messages)\b/i,
+];
+
 // ─── Gibberish detection ───────────────────────────────────────────────────────
 
 function isGibberish(text: string): boolean {
@@ -252,9 +324,25 @@ export function classifyMessage(text: string): ClassifyResult {
   if (matches(text, FOOD_HISTORY_QUESTION)) return { type: 'food_question', confidence: 0.95 };
   if (matches(text, PROTEIN_TARGET_QUESTION)) return { type: 'food_question', confidence: 0.92 };
   if (matches(text, FOOD_REMOVAL_QUESTION)) return { type: 'food_question', confidence: 0.92 };
+  // Pause request — explicit + short. Must come BEFORE scheduling since
+  // "stop sending messages" overlaps with scheduling-frequency phrasing.
+  if (matches(text, PAUSE_REQUEST)) return { type: 'pause_request', confidence: 0.95 };
+  // Injection log — must come BEFORE food_log because "took my shot" doesn't
+  // overlap, but generic "did" patterns could match food_log otherwise.
+  if (matches(text, INJECTION_LOG)) return { type: 'injection_log', confidence: 0.95 };
+  // Exercise log — must come BEFORE food_log; "I ran 5k" contains "ran"
+  // which isn't a food verb but kept ordered for clarity.
+  if (matches(text, EXERCISE_LOG)) return { type: 'exercise_log', confidence: 0.9 };
   if (matches(text, WEIGHT_LOG)) return { type: 'weight_log', confidence: 0.9 };
+  // Medication-specific question — placed BEFORE food_log/knowledge so dose
+  // timing / storage / travel-with-pen questions land in the dedicated handler.
+  if (matches(text, MEDICATION_QUESTION)) return { type: 'medication_question', confidence: 0.9 };
   if (matches(text, FOOD_LOG)) return { type: 'food_log', confidence: 0.85 };
   if (matches(text, FOOD_QUESTION)) return { type: 'food_question', confidence: 0.85 };
+  // Social situation — placed AFTER food_log/food_question because eating-out
+  // questions can match food patterns; the more specific event/social signals
+  // here override into a dedicated tone.
+  if (matches(text, SOCIAL_SITUATION)) return { type: 'social_situation', confidence: 0.88 };
   if (matches(text, EMOTIONAL)) return { type: 'emotional', confidence: 0.85 };
   if (matches(text, SCHEDULING)) return { type: 'scheduling', confidence: 0.9 };
   if (matches(text, KNOWLEDGE)) return { type: 'knowledge', confidence: 0.75 };

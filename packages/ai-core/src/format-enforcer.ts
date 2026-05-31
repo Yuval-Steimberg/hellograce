@@ -23,7 +23,13 @@ export type MessageContext =
   | 'knowledge'
   | 'appointment_prep'
   | 'gibberish'
-  | 'general';
+  | 'general'
+  // Phase 1 coverage expansion — keep in sync with MessageType in classify.ts
+  | 'exercise_log'
+  | 'injection_log'
+  | 'medication_question'
+  | 'social_situation'
+  | 'pause_request';
 
 // ─── Runtime-context dump openers ──────────────────────────────────────────
 // Grace's system prompt has runtime context (today's protein, weight, mood).
@@ -72,6 +78,12 @@ const ALLOWED_OPENERS_BY_CONTEXT: Record<MessageContext, RegExp[][]> = {
   appointment_prep: [],
   gibberish: [],
   general: [],
+  // Phase 1 coverage expansion — none of these need runtime-data openers
+  exercise_log: [],
+  injection_log: [],
+  medication_question: [],
+  social_situation: [],
+  pause_request: [],
 };
 
 const ALL_CONTEXT_OPENERS: RegExp[] = [
@@ -402,6 +414,12 @@ export function enforceFormat(
     appointment_prep: 800,  // 4-6 specific questions for the doctor visit
     gibberish:        160,  // short clarifying question
     general:          500,  // default cap — enough for a real answer
+    // Phase 1 coverage expansion intents
+    exercise_log:        220,  // brief acknowledgment, no calorie burn math
+    injection_log:       200,  // confirmation + one tip max
+    medication_question: 420,  // dose/timing/storage answers, no lectures
+    social_situation:    420,  // practical strategies, brief
+    pause_request:       200,  // confirmation only
   };
   const MAX_CHARS = opts?.messageContext ? (CONTEXT_MAX[opts.messageContext] ?? 420) : 420;
   if (text.length > MAX_CHARS) {

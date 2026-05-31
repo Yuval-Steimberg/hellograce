@@ -36,7 +36,18 @@ export interface FaqSeed {
     | 'comparison'
     | 'ozempic_face'
     | 'drug_interaction'
-    | 'dose_error';
+    | 'dose_error'
+    // Phase 1 (coverage expansion plan): high-frequency gap topics
+    | 'travel'
+    | 'injection_site_rotation'
+    | 'dose_timing'
+    | 'exercise_during_nausea'
+    | 'sleep_quality'
+    | 'pregnancy_redirect'
+    | 'diarrhea'
+    | 'heartburn'
+    | 'alcohol_expanded'
+    | 'hangover_recovery';
 }
 
 export const FAQ_SEEDS: FaqSeed[] = [
@@ -273,5 +284,163 @@ export const FAQ_SEEDS: FaqSeed[] = [
     category: 'dose_error',
     response:
       "General guideline: if it's been less than 5 days since the missed dose, take it as soon as you remember and continue your normal weekly schedule. If it's been longer, wait for your next scheduled day. When in doubt, check with your prescriber.",
+  },
+
+  // ── Travel (Phase 1 coverage expansion — flights, time zones, storage) ──
+  {
+    query: 'Can I travel with my Ozempic?',
+    category: 'travel',
+    response:
+      "Yes, pens travel fine. Keep them in your carry-on (cargo holds can freeze), in their original box for ID, with a small insulated bag if the flight is long. TSA is used to seeing them, no prescription paperwork needed in the US. Once you're settled, refrigerate again.",
+  },
+  {
+    query: 'How do I carry my injection pen on a flight?',
+    category: 'travel',
+    response:
+      "Yes, pens travel fine. Keep them in your carry-on (cargo holds can freeze), in their original box for ID, with a small insulated bag if the flight is long. TSA is used to seeing them, no prescription paperwork needed in the US. Once you're settled, refrigerate again.",
+  },
+  {
+    query: "I'm traveling across time zones, when should I inject?",
+    category: 'travel',
+    response:
+      'For a 1-3 hour shift, take your weekly dose on the same calendar day you usually would, local time. For bigger shifts, your prescriber may suggest splitting the difference over one or two weeks. The medication has a long half-life, a few hours of drift is fine.',
+  },
+
+  // ── Injection site rotation ──────────────────────────────────────────────
+  {
+    query: 'Where should I inject my Ozempic?',
+    category: 'injection_site_rotation',
+    response:
+      "Thigh, belly (an inch away from the navel), or upper outer arm. Rotate sites week to week so the same spot doesn't get firm or develop lipohypertrophy. Most people pick one zone per side and alternate.",
+  },
+  {
+    query: 'Can I inject in the same spot every week?',
+    category: 'injection_site_rotation',
+    response:
+      "Better to rotate. Repeating the same exact spot can lead to firm bumps (lipohypertrophy) that slow absorption. Use thigh, belly, or upper outer arm and shift at least an inch each time.",
+  },
+  {
+    query: 'How do I rotate injection sites?',
+    category: 'injection_site_rotation',
+    response:
+      "Pick three zones, thigh, belly, upper outer arm, and rotate week to week. Within a zone shift at least an inch from your last spot. Some people keep a simple note on their phone so the rotation stays consistent.",
+  },
+
+  // ── Dose timing (separate from missed-dose) ──────────────────────────────
+  {
+    query: 'What time of day should I take my shot?',
+    category: 'dose_timing',
+    response:
+      "Whenever fits your routine, the medication works on a weekly cycle, not a daily one. Most people pick mornings or evenings on the same weekday each week. Consistency matters more than the specific hour.",
+  },
+  {
+    query: 'Can I change my injection day?',
+    category: 'dose_timing',
+    response:
+      "Yes. As long as the gap between doses is at least 48 hours, you can shift your weekly day. Pick the new day, take your dose, and stick with that day going forward.",
+  },
+
+  // ── Exercise during nausea (high-frequency cross-topic Q) ────────────────
+  {
+    query: 'Can I work out when I feel nauseous?',
+    category: 'exercise_during_nausea',
+    response:
+      "Light movement like walking usually helps, intense workouts often make nausea worse on injection day or the day after. Listen to your body, dial back when it's peaking, and ease back in once it settles. Hydration first, fuel second.",
+  },
+  {
+    query: 'Should I skip the gym on injection day?',
+    category: 'exercise_during_nausea',
+    response:
+      'If you usually feel rough that day, swap your hard session for a walk or mobility work. Save the heavier lifts for 2-3 days post-injection when side effects are usually mildest.',
+  },
+
+  // ── Sleep quality on GLP-1s ──────────────────────────────────────────────
+  {
+    query: 'Is it normal to sleep poorly on Ozempic?',
+    category: 'sleep_quality',
+    response:
+      "Some people do experience disrupted sleep, especially early on. Common triggers include nausea waking you up, low blood sugar in the night, or vivid dreams that the medication seems to amplify in some users. A small protein snack before bed and earlier injections can help.",
+  },
+  {
+    query: 'Why am I waking up at 3am on Ozempic?',
+    category: 'sleep_quality',
+    response:
+      "A few possibilities, the medication can shift blood sugar, cause mild nausea that breaks sleep, or amplify dream activity. A small protein snack (Greek yogurt, cottage cheese) an hour before bed often helps if it's blood sugar related.",
+  },
+
+  // ── Pregnancy / breastfeeding (HARD redirect, no medical detail) ─────────
+  {
+    query: 'Is Ozempic safe during pregnancy?',
+    category: 'pregnancy_redirect',
+    response:
+      "That one I'd genuinely leave to your doctor or OB. Pregnancy planning on a GLP-1 needs a personal conversation with someone who knows your full picture. Worth calling them this week.",
+  },
+  {
+    query: 'Can I take Ozempic while breastfeeding?',
+    category: 'pregnancy_redirect',
+    response:
+      "That's a call your doctor needs to make with you, breastfeeding decisions on GLP-1s are individual and depend on your specific situation. Please reach out to them before continuing.",
+  },
+  {
+    query: "I'm trying to get pregnant, should I stop Ozempic?",
+    category: 'pregnancy_redirect',
+    response:
+      "That one I'd genuinely leave to your doctor or OB. Most prescribers recommend stopping a couple of months before conception, but the exact timing needs to come from someone who knows your history. Worth calling them this week.",
+  },
+
+  // ── Diarrhea (parallel to constipation seed; common but under-covered) ───
+  {
+    query: 'I have diarrhea on Ozempic, what helps?',
+    category: 'diarrhea',
+    response:
+      "Common in the first few weeks and around dose increases. Stick with bland low-fat foods (rice, toast, banana, plain chicken), sip water with a pinch of salt to replace electrolytes, and avoid fatty or sugary foods which make it worse. If it lasts more than 2-3 days or you can't keep fluids down, call your doctor.",
+  },
+  {
+    query: 'Why do I have diarrhea on Mounjaro?',
+    category: 'diarrhea',
+    response:
+      "GLP-1s and GIP agonists speed digestion in some people while slowing it in others. It tends to settle as your body adjusts, usually within a few weeks. Bland low-fat foods, electrolytes, and avoiding fried/spicy food help in the meantime.",
+  },
+
+  // ── Heartburn / GERD / acid reflux ───────────────────────────────────────
+  {
+    query: "I'm getting heartburn on Ozempic, is that normal?",
+    category: 'heartburn',
+    response:
+      "Yes, slowed stomach emptying means food sits longer which can cause reflux. Smaller meals, eat slowly, stay upright for 30-60 min after eating, and avoid trigger foods (spicy, citrus, tomato, fried, caffeine close to meals). An OTC like Pepcid or omeprazole short-term is often fine, but check with your pharmacist on timing if you take other meds.",
+  },
+  {
+    query: 'Why do I have acid reflux on Mounjaro?',
+    category: 'heartburn',
+    response:
+      "The medication slows how fast your stomach empties, so food and acid can back up more easily. Smaller meals, eating slowly, staying upright for 30-60 min after meals, and avoiding common triggers (spicy, fried, citrus, caffeine near meals) help most.",
+  },
+
+  // ── Alcohol — expanded beyond the single existing entry ──────────────────
+  {
+    query: 'How does alcohol affect me on Ozempic?',
+    category: 'alcohol_expanded',
+    response:
+      "It hits harder. The medication slows digestion, so alcohol can absorb unevenly and intensify nausea or low blood sugar. Most people can have a drink with food and water alongside, but it's not the same as before, plan for a smaller amount and pace yourself.",
+  },
+  {
+    query: 'Can I drink wine at dinner on Ozempic?',
+    category: 'alcohol_expanded',
+    response:
+      "Usually yes, in moderation, with food. The medication can intensify the effects so one glass may feel like two. Eat protein with it, hydrate, and skip drinks on injection day if you tend to feel nauseous then.",
+  },
+
+  // ── Hangover recovery (related, distinct Q) ──────────────────────────────
+  {
+    query: 'I drank too much last night, will it affect my injection?',
+    category: 'hangover_recovery',
+    response:
+      "Your injection day itself is fine, but you may feel worse than usual because GLP-1s already slow digestion and alcohol amplifies that. Sip water with electrolytes, eat small bland meals, skip caffeine until you've rehydrated. The shot itself doesn't need to shift.",
+  },
+  {
+    query: "I have a bad hangover, what should I eat on Ozempic?",
+    category: 'hangover_recovery',
+    response:
+      "Small bland portions, eggs, plain toast, Greek yogurt, banana, broth. Hydrate steadily with water plus a pinch of salt or an electrolyte drink. The medication will keep you full longer than usual, so don't force a big meal.",
   },
 ];

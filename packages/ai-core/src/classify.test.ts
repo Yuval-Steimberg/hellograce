@@ -159,3 +159,105 @@ describe('classifyMessage — food removal / correction queries (protein audit)'
     expect(classifyMessage("that's wrong").type).toBe('food_question');
   });
 });
+
+describe('classifyMessage — exercise_log (Phase 1 coverage expansion)', () => {
+  it('matches "I just worked out"', () => {
+    expect(classifyMessage('I just worked out').type).toBe('exercise_log');
+  });
+
+  it('matches "did 30 mins of cardio"', () => {
+    expect(classifyMessage('did 30 mins of cardio').type).toBe('exercise_log');
+  });
+
+  it('matches "ran 5k this morning"', () => {
+    expect(classifyMessage('ran 5k this morning').type).toBe('exercise_log');
+  });
+
+  it('matches "hit the gym for legs day"', () => {
+    expect(classifyMessage('hit the gym for legs day').type).toBe('exercise_log');
+  });
+
+  it('matches "got 10k steps"', () => {
+    expect(classifyMessage('got 10k steps').type).toBe('exercise_log');
+  });
+});
+
+describe('classifyMessage — injection_log (Phase 1 coverage expansion)', () => {
+  it('matches "took my shot"', () => {
+    expect(classifyMessage('took my shot').type).toBe('injection_log');
+  });
+
+  it('matches "just injected"', () => {
+    expect(classifyMessage('just injected').type).toBe('injection_log');
+  });
+
+  it('matches "did my weekly injection"', () => {
+    expect(classifyMessage('did my weekly injection').type).toBe('injection_log');
+  });
+
+  it('matches "shot is done"', () => {
+    expect(classifyMessage('shot is done').type).toBe('injection_log');
+  });
+});
+
+describe('classifyMessage — medication_question (Phase 1 coverage expansion)', () => {
+  it('matches "when should I take my shot?"', () => {
+    expect(classifyMessage('when should I take my shot?').type).toBe('medication_question');
+  });
+
+  it('matches "can I change my injection day?"', () => {
+    expect(classifyMessage('can I change my injection day?').type).toBe('medication_question');
+  });
+
+  it('matches "how do I store my pen?"', () => {
+    expect(classifyMessage('how do I store my pen?').type).toBe('medication_question');
+  });
+
+  it('matches "can I travel with my injection?"', () => {
+    expect(classifyMessage('can I travel with my injection?').type).toBe('medication_question');
+  });
+
+  it('matches "switching from Ozempic to Mounjaro"', () => {
+    expect(classifyMessage('switching from Ozempic to Mounjaro').type).toBe('medication_question');
+  });
+});
+
+describe('classifyMessage — social_situation (Phase 1 coverage expansion)', () => {
+  it('matches "I have a wedding this weekend"', () => {
+    expect(classifyMessage('I have a wedding this weekend').type).toBe('social_situation');
+  });
+
+  it('matches "going out to a restaurant tonight"', () => {
+    expect(classifyMessage('going out to a restaurant tonight').type).toBe('social_situation');
+  });
+
+  it('matches "how do I handle a buffet?"', () => {
+    expect(classifyMessage('how do I handle a buffet?').type).toBe('social_situation');
+  });
+
+  it('matches "going on vacation next week"', () => {
+    expect(classifyMessage('going on vacation next week').type).toBe('social_situation');
+  });
+
+  it('matches "my family doesn\'t know I\'m on Ozempic"', () => {
+    expect(classifyMessage("my family doesn't know I'm on Ozempic").type).toBe('social_situation');
+  });
+});
+
+describe('classifyMessage — pause_request (Phase 1 coverage expansion)', () => {
+  it('matches "pause"', () => {
+    expect(classifyMessage('pause').type).toBe('pause_request');
+  });
+
+  it('matches "stop sending messages"', () => {
+    expect(classifyMessage('stop sending messages').type).toBe('pause_request');
+  });
+
+  it('matches "I need a break"', () => {
+    expect(classifyMessage('I need a break').type).toBe('pause_request');
+  });
+
+  it('matches "don\'t text me for a week"', () => {
+    expect(classifyMessage("don't text me for a week").type).toBe('pause_request');
+  });
+});

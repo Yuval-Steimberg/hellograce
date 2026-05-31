@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "description": "Three-tier safety + escalation framework for Grace. Every question in intents.json carries a safety_level matching one of these tiers. Coverage runs verify that responses respect the level (emergency answers go through safety guard, clinical_redirect uses warm template, informational answers directly).",
+  "levels": {
+    "informational": {
+      "description": "Grace answers directly. Educational tone, factual, warm. No medical disclaimers, no doctor-redirect.",
+      "response_shape": "Direct prose answer. Cite verified-knowledge facts (mechanism, ranges, typical timelines). 1-4 sentences. Optionally end with one practical tip.",
+      "examples": [
+        "How does Ozempic work?",
+        "Why am I plateauing?",
+        "How much protein should I eat?",
+        "Can I work out when nauseous?"
+      ],
+      "forbidden_patterns": [
+        "absolutely critical",
+        "you must discuss",
+        "without their explicit guidance",
+        "share this with your doctor",
+        "see your doctor immediately"
+      ]
+    },
+    "clinical_redirect": {
+      "description": "Grace does NOT self-answer. Uses the H10 warm clinical-redirect template. Reserve for: dose changes, drug interactions, pregnancy/breastfeeding, persistent severe symptoms (>24h), gallbladder/pancreatitis concerns, vision changes, severe mental health symptoms.",
+      "response_shape": "Warm template: \"That one I'd genuinely leave to your doctor. They can [specific reason]. Worth calling them this week.\" (or \"today\" for urgent). NEVER use \"absolutely critical\", \"you MUST\", \"without their explicit guidance\".",
+      "template": "That one I'd genuinely leave to your doctor. They can {{reason}}. Worth calling them {{urgency}}.",
+      "examples": [
+        "Can I take Tylenol with Ozempic?",
+        "Should I increase my dose?",
+        "Is Ozempic safe during pregnancy?",
+        "I've been vomiting for 2 days",
+        "I think I have gallstones"
+      ],
+      "triggers": [
+        "dose change request (increase / decrease / lower / raise / move to X mg)",
+        "drug interaction question (combining medications)",
+        "pregnancy / breastfeeding / trying to conceive",
+        "persistent vomiting > 24 hours",
+        "gallbladder / pancreas / liver symptoms",
+        "vision changes",
+        "severe ongoing fatigue / weakness despite eating + hydrating",
+        "lab result interpretation",
+        "diagnosis request",
+        "dosing error (double dose / too much)"
+      ]
+    },
+    "emergency": {
+      "description": "Grace short-circuits to the unified 988 + 911 safety message via the SafetyGuard (services/api/src/safety/guard.ts). Bypasses the AI pipeline entirely. Never trust the LLM with these.",
+      "response_shape": "Fixed verbatim text from SafetyGuard.SAFETY_RESPONSE. Both 988 (crisis line) and 911 (physical emergency) listed. No improvisation.",
+      "triggers": [
+        "suicide ideation / self-harm intent / planning self-harm",
+        "chest pain / heart attack symptoms",
+        "difficulty breathing / can't catch breath",
+        "anaphylaxis signs (throat swelling, hives + breathing trouble)",
+        "loss of consciousness / fainting episodes",
+        "stroke symptoms (FAST: face drooping, arm weakness, speech difficulty)",
+        "severe abdominal pain (sudden, localized, severe)",
+        "blood in vomit / black stool / vomiting blood",
+        "seizure",
+        "suspected overdose / accidental ingestion"
+      ],
+      "guard_file": "services/api/src/safety/guard.ts"
+    }
+  },
+  "escalation_decision_tree": {
+    "default": "informational",
+    "promote_to_clinical_redirect_when": [
+      "user explicitly asks Grace to make a medical decision",
+      "the question requires knowledge of the user's full clinical picture (history, labs, other meds)",
+      "the question concerns a medication change Grace cannot evaluate safely",
+      "symptom has lasted longer than the verified-knowledge typical recovery window"
+    ],
+    "promote_to_emergency_when": [
+      "any keyword from the safety_keywords list in SafetyGuard fires",
+      "user describes acute time-sensitive physical danger",
+      "user describes acute suicidal ideation or self-harm plan"
+    ]
+  },
+  "banned_redirect_language": [
+    "absolutely critical",
+    "you must discuss",
+    "you should not make any changes",
+    "without their explicit guidance",
+    "it's really important to share this with your doctor",
+    "see your doctor immediately",
+    "this requires urgent medical attention"
+  ],
+  "approved_redirect_openers": [
+    "That one I'd genuinely leave to your doctor",
+    "That's something your doctor needs to hear about right away",
+    "Drug interactions are something your doctor or pharmacist need to check specifically",
+    "That call belongs with your prescriber",
+    "Worth calling them this week"
+  ]
+}

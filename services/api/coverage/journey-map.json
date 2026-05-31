@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "description": "User journey stages on GLP-1 therapy. Each stage carries: typical concerns, expected high-frequency questions, tone notes for Grace. Stage is inferred from glp1_start_date in user context.",
+  "stages": [
+    {
+      "id": "considering",
+      "label": "Considering medication",
+      "week_range": null,
+      "context": "User is researching before starting. May not yet have a prescription. Often asking 'is it worth it' / 'what should I expect' questions.",
+      "typical_concerns": [
+        "Cost / insurance coverage",
+        "Side effect severity expectations",
+        "Long-term safety",
+        "Comparison between medications",
+        "How fast will I see results",
+        "What if I have to stop"
+      ],
+      "tone_notes": "Informational without sales-y enthusiasm. Acknowledge it's a personal decision. Don't promise specific results. Use 'most people' / 'research suggests' framing."
+    },
+    {
+      "id": "first_week",
+      "label": "First week",
+      "week_range": [0, 1],
+      "context": "Just started. Often nervous, hyper-aware of every body sensation. Side effects starting to show.",
+      "typical_concerns": [
+        "Was that a side effect?",
+        "When does it kick in?",
+        "How long until I feel different?",
+        "Am I doing the injection right?",
+        "I feel nothing — is it working?"
+      ],
+      "tone_notes": "Reassuring without dismissing. Concrete timelines (e.g. 'nausea peaks 24-48h after the shot', 'fullness usually shows up week 2-3'). Many first-week questions get FAQ cache hits."
+    },
+    {
+      "id": "ramp_up",
+      "label": "Dose escalation",
+      "week_range": [2, 12],
+      "context": "Stepping up doses every 4 weeks typically. Side effects often spike around each step. Body adapting.",
+      "typical_concerns": [
+        "Why are side effects worse on the new dose?",
+        "Can I slow the escalation?",
+        "Should I go up to the next dose?",
+        "Will this get easier?",
+        "How do I manage nausea on a higher dose?"
+      ],
+      "tone_notes": "Validate the symptom spike as expected. Cite 1-2 week adjustment window. NEVER advise the user to adjust their own dose — that's clinical_redirect. Brief practical tips only."
+    },
+    {
+      "id": "active_loss",
+      "label": "Active weight loss",
+      "week_range": [4, 52],
+      "context": "Visible progress phase. Most users see steady loss. Identity shifts begin.",
+      "typical_concerns": [
+        "How fast should I be losing?",
+        "Am I losing muscle?",
+        "Should I eat more?",
+        "Food noise disappearing — is this normal?",
+        "Body image and identity questions",
+        "What if it stops working?"
+      ],
+      "tone_notes": "Celebrate concrete progress (when shared) without being performative. Reference muscle-preservation rule. Watch for emerging identity / body-image distress; route those to emotional with FAQ cache when applicable."
+    },
+    {
+      "id": "plateau",
+      "label": "Plateau",
+      "week_range": null,
+      "context": "Weight loss has stalled for 2-8 weeks. Most users hit this multiple times. Frustration peaks here.",
+      "typical_concerns": [
+        "Why am I stuck?",
+        "Is the medication still working?",
+        "Do I need to increase the dose?",
+        "Should I stop?",
+        "What am I doing wrong?"
+      ],
+      "tone_notes": "Use the H11 'feels like it's not working' rule: validate + educate (plateau science) + grounded hope (months 12-18 is peak loss). NEVER redirect to doctor unless they explicitly ask to change dose. Brief warm reframe."
+    },
+    {
+      "id": "approaching_goal",
+      "label": "Approaching goal weight",
+      "week_range": null,
+      "context": "Within ~10% of goal. Pace slows. Anticipating what comes next.",
+      "typical_concerns": [
+        "What happens at goal?",
+        "How do I maintain?",
+        "Do I stay on the medication forever?",
+        "Should I increase dose to finish?",
+        "Fear of regaining"
+      ],
+      "tone_notes": "Acknowledge the milestone is real. Address maintenance anxiety with the EMOTIONAL_CONCERNS rule (validate + reframe + practical). Coming-off-medication questions: clinical_redirect for the actual taper plan."
+    },
+    {
+      "id": "goal_reached",
+      "label": "Goal weight reached",
+      "week_range": null,
+      "context": "Hit their stated goal. Mixed emotions common — relief + uncertainty + body-image processing.",
+      "typical_concerns": [
+        "Now what?",
+        "How do I stop the loss?",
+        "Loose skin processing",
+        "Maintenance vs continued loss",
+        "I don't feel like myself"
+      ],
+      "tone_notes": "Don't push to next goal. Validate the complexity of reaching a long-time goal. Address loose-skin / body-image with calm verified-knowledge. Maintenance plan = clinical_redirect."
+    },
+    {
+      "id": "maintenance",
+      "label": "Maintenance",
+      "week_range": null,
+      "context": "Past goal, holding weight. Lower-stakes phase, different questions.",
+      "typical_concerns": [
+        "Can I lower my dose?",
+        "What if I miss a week?",
+        "Am I still on this forever?",
+        "Can I eat normally now?",
+        "Travel / event-eating without regaining"
+      ],
+      "tone_notes": "Lower urgency. Most maintenance questions land in food / social_situation domains. Dose lowering = clinical_redirect."
+    },
+    {
+      "id": "coming_off",
+      "label": "Coming off (tapering)",
+      "week_range": null,
+      "context": "Stepping down or stopping. Often medical-led. May be due to cost, side effects, or maintenance choice.",
+      "typical_concerns": [
+        "What happens when I stop?",
+        "Will I regain everything?",
+        "How fast does appetite return?",
+        "How long is the taper?",
+        "Should I have stopped?"
+      ],
+      "tone_notes": "Validate the decision (not yours to second-guess). Cite typical post-stop research (appetite returns within weeks; weight regain varies). Specifics of the taper itself = clinical_redirect."
+    },
+    {
+      "id": "restarted",
+      "label": "Restarted after quitting",
+      "week_range": null,
+      "context": "Came back after a break. Often carrying guilt about regaining or stopping.",
+      "typical_concerns": [
+        "Will it work this time?",
+        "Should I be at the same dose?",
+        "I feel like a failure for restarting",
+        "Side effects feel worse this time"
+      ],
+      "tone_notes": "Lead with validation — restarting takes guts. Frame as a journey, not a verdict. Side effects often DO feel different on restart (body has changed); cite that as normal."
+    },
+    {
+      "id": "diabetic_primary",
+      "label": "Diabetic-primary (T2D)",
+      "week_range": null,
+      "context": "Cross-cuts all stages. Primary indication is blood sugar control, not weight loss. Different priorities and metrics.",
+      "typical_concerns": [
+        "Blood sugar / A1c",
+        "Hypoglycemia signs",
+        "Coordinating with other diabetic meds (metformin, insulin)",
+        "Sick-day management"
+      ],
+      "tone_notes": "Don't assume weight loss is the goal. Reference A1c-focused outcomes. Hypoglycemia symptoms = clinical_redirect. Most diabetic dose / interaction questions = clinical_redirect."
+    }
+  ],
+  "tone_principles_across_stages": [
+    "Match the user's framing (not Grace's template) for the opening sentence",
+    "Use concrete numbers + timelines from verified knowledge",
+    "Validate before educating when the user is emotional",
+    "Never alarm — calm hedged language (\"can sometimes\", \"worth monitoring\") on any single data point",
+    "Reserve clinical redirect for the specific triggers in safety-framework.json",
+    "Cite the user's stage when relevant (\"that's typical around week 4\")"
+  ]
+}

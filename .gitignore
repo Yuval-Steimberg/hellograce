@@ -6,6 +6,15 @@ coverage/
 .turbo/
 .cache/
 
+# Coverage expansion data assets (intents.json + taxonomy + journey-map +
+# safety-framework) ARE checked in — the broad `coverage/` rule above would
+# otherwise ignore the entire services/api/coverage/ directory.
+!services/api/coverage/
+!services/api/coverage/**
+# But the generator's draft output stays local (human review required first)
+services/api/coverage/intents-expanded.json
+services/api/coverage/results/
+
 # env
 .env
 .env.local

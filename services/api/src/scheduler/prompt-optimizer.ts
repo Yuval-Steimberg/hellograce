@@ -53,8 +53,10 @@ export type OptimizerRunStatus =
   | 'activated'
   | 'draft'
   | 'skipped_lock_held'
+  | 'skipped_already_ran_today'
   | 'skipped_no_active_prompt'
   | 'skipped_insufficient_data'
+  | 'skipped_no_new_patterns'
   | 'skipped_generation_failed'
   | 'error';
 
@@ -191,6 +193,34 @@ export class PromptOptimizer {
   }
 
   private async runWithLock(_client: import('pg').PoolClient): Promise<void> {
+    // Defence-in-depth idempotency: even if the advisory lock somehow lets a
+    // second run through (timing race between two Fly machines, manual trigger
+    // after the nightly cron, etc.), don't re-activate a prompt the same UTC
+    // day. This is what causes the "duplicate key" crash on prompts_active_unique
+    // — two runs both reach saveVersion → both INSERT active=TRUE.
+    const { rows: todayRows } = await this.pool.query<{ version: number; created_at: Date }>(
+      `SELECT version, created_at
+         FROM prompts
+        WHERE auto_generated = TRUE
+          AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
+        ORDER BY created_at DESC
+        LIMIT 1`,
+    );
+    if (todayRows[0]) {
+      this.logger.info(
+        { version: todayRows[0].version, createdAt: todayRows[0].created_at },
+        'prompt_optimizer.already_ran_today',
+      );
+      await this.emitReport({
+        status: 'skipped_already_ran_today',
+        activated: false,
+        version: todayRows[0].version,
+        analysis: `An auto-generated prompt (v${todayRows[0].version}) was already saved today — skipping this run to avoid duplicates. Next scheduled run: tomorrow 4am UTC.`,
+        stats: emptyStats(),
+      });
+      return;
+    }
+
     const currentPrompt = await this.getActivePrompt();
     if (!currentPrompt) {
       this.logger.warn('prompt_optimizer.no_active_prompt');
@@ -268,9 +298,37 @@ export class PromptOptimizer {
       return;
     }
 
-    // Strip any previous BEHAVIORAL ADJUSTMENTS block, then append fresh additions.
-    const basePrompt = currentPrompt.replace(new RegExp(`${ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*$`), '').trimEnd();
-    const newPrompt = `${basePrompt}${ADDITIONS_MARKER}${result.additions.trim()}`;
+    // ── Append-only rule merging ──────────────────────────────────────────
+    // Existing rules are LOCKED unless the incoming batch explicitly refines
+    // them (same first-line directive OR same verbatim ✗ quote). Truly-new
+    // rules append to the bottom. Eliminates the bug where each run silently
+    // dropped rules by replacing the entire BEHAVIORAL ADJUSTMENTS block.
+    const additionsMarkerEsc = ADDITIONS_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const existingMatch = currentPrompt.match(new RegExp(`${additionsMarkerEsc}([\\s\\S]*)$`));
+    const existingAdditions = existingMatch ? (existingMatch[1] ?? '').trim() : '';
+    const existingRules = parseAdditionsBlock(existingAdditions);
+    const incomingRules = parseAdditionsBlock(result.additions);
+    const mergeReport = mergeAdditionRules(existingRules, incomingRules);
+
+    // If nothing actually changed, skip activation entirely — no point bumping
+    // a prompt version when there are no new patterns to address.
+    if (mergeReport.newCount === 0 && mergeReport.refinedCount === 0 && existingRules.length > 0) {
+      this.logger.info(
+        { existingRuleCount: existingRules.length, incomingRuleCount: incomingRules.length },
+        'prompt_optimizer.no_new_patterns',
+      );
+      await this.emitReport({
+        status: 'skipped_no_new_patterns',
+        activated: false,
+        analysis: `No new behavioral patterns this period — all ${incomingRules.length} candidate rule(s) duplicate existing ones. Active prompt unchanged. (${existingRules.length} rule(s) preserved.)`,
+        stats,
+      });
+      return;
+    }
+
+    const mergedAdditions = mergeReport.merged.map((r) => r.raw).join('\n\n');
+    const basePrompt = currentPrompt.replace(new RegExp(`${additionsMarkerEsc}[\\s\\S]*$`), '').trimEnd();
+    const newPrompt = `${basePrompt}${ADDITIONS_MARKER}${mergedAdditions}`;
 
     let safe = this.isSafe(newPrompt);
 
@@ -280,10 +338,16 @@ export class PromptOptimizer {
       safe = await this.runEvalGate();
     }
 
-    const version = await this.saveVersion(newPrompt, result.analysis, safe);
+    const preservedCount = existingRules.length - mergeReport.refinedCount;
+    const mergeAnalysis = `${result.analysis} (${mergeReport.newCount} new, ${mergeReport.refinedCount} refined, ${preservedCount} preserved.)`;
+
+    const version = await this.saveVersion(newPrompt, mergeAnalysis, safe);
 
     if (safe) {
-      this.logger.info('prompt_optimizer.auto_activated_new_prompt');
+      this.logger.info(
+        { newCount: mergeReport.newCount, refinedCount: mergeReport.refinedCount, preservedCount },
+        'prompt_optimizer.auto_activated_new_prompt',
+      );
       if (this.hooks?.onPromptActivated) {
         try {
           await this.hooks.onPromptActivated(newPrompt);
@@ -292,14 +356,14 @@ export class PromptOptimizer {
         }
       }
     } else {
-      this.logger.warn({ reason: result.analysis }, 'prompt_optimizer.saved_as_draft_failed_safety_check');
+      this.logger.warn({ reason: mergeAnalysis }, 'prompt_optimizer.saved_as_draft_failed_safety_check');
     }
 
     await this.emitReport({
       status: safe ? 'activated' : 'draft',
       activated: safe,
       version,
-      analysis: result.analysis,
+      analysis: mergeAnalysis,
       stats,
       draftReason: safe ? undefined : 'Safety or eval gate failed. The prompt may have dropped required phrases or scored below the auto-eval baseline. Saved as draft for manual review.',
     });
@@ -440,7 +504,19 @@ export class PromptOptimizer {
       .slice(-3000); // Last 3000 chars of the base prompt gives context for what's already there
 
     const previousAdditionsBlock = previousAdditions
-      ? `\nBEHAVIORAL ADJUSTMENTS ALREADY IN PLACE (from previous optimizer runs):\n${previousAdditions}\n\nIMPORTANT: Do NOT repeat or restate rules already covered above. If the 👎 feedback shows those rules are not working, REFINE them with more specific guidance. Focus on patterns NOT already addressed.`
+      ? `\nBEHAVIORAL ADJUSTMENTS ALREADY IN PLACE — DO NOT RESTATE THESE (from previous optimizer runs):
+${previousAdditions}
+
+═══════════════════════════════════════════════════
+APPEND-ONLY POLICY (read carefully)
+═══════════════════════════════════════════════════
+Existing rules above are LOCKED. Your output is MERGED with them, not a replacement.
+
+YOUR OUTPUT MUST contain ONE of:
+  (A) NEW rules — patterns not already addressed by any existing rule. Use a fresh first-line directive.
+  (B) REFINEMENTS — only if THE SAME failure pattern still appears in the 👎 feedback below despite an existing rule covering it. To refine, output a rule whose FIRST LINE matches the existing rule's first line EXACTLY (so the merger replaces it). Refine ONLY when the old rule is demonstrably not working.
+
+Rules you do NOT mention are kept as-is — there is no need to repeat them. If every 👎 pattern is already covered by a rule above, output an empty additions array.`
       : '';
 
     const buildMessages = (negBlock: string, shortFormat: boolean): Parameters<typeof this.llm.generate>[0]['messages'] => [
@@ -686,18 +762,26 @@ Respond with ONLY the JSON object.`,
     const notes = `Auto-generated by PromptOptimizer v${nextVersion} — ${analysis}`;
 
     if (autoActivate) {
-      await this.pool.query('BEGIN');
+      // Real transaction on a single checked-out client. The previous
+      // pool.query('BEGIN') pattern was a no-op because each pool.query call
+      // grabs a different connection — UPDATE and INSERT were autocommitting
+      // independently, opening a race window where two parallel optimizer
+      // runs could both INSERT active=TRUE rows and violate prompts_active_unique.
+      const client = await this.pool.connect();
       try {
-        await this.pool.query(`UPDATE prompts SET active = FALSE WHERE active = TRUE`);
-        await this.pool.query(
+        await client.query('BEGIN');
+        await client.query(`UPDATE prompts SET active = FALSE WHERE active = TRUE`);
+        await client.query(
           `INSERT INTO prompts (version, content, active, notes, auto_generated)
            VALUES ($1, $2, TRUE, $3, TRUE)`,
           [nextVersion, content, notes],
         );
-        await this.pool.query('COMMIT');
+        await client.query('COMMIT');
       } catch (err) {
-        await this.pool.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(() => undefined);
         throw err;
+      } finally {
+        client.release();
       }
     } else {
       await this.pool.query(
@@ -733,6 +817,127 @@ function emptyStats(): OptimizerRunReport['stats'] {
  * "Never repeat: <verbatim quote>" — still better than the empty alert
  * users were seeing in production.
  */
+
+// ── Append-only rule merging ─────────────────────────────────────────────────
+// Existing behavioral rules are LOCKED by default. Each optimizer run can
+// either ADD a new rule (different first-line directive) or REFINE an
+// existing one (same first-line directive). Rules that the LLM doesn't
+// mention this run are preserved as-is — they don't silently disappear.
+//
+// Dedup signal: the first non-empty line of each rule block (normalized).
+// LLM rule format is `- DIRECTIVE NAME: description\n  ✗ "quote"\n  ✓ "fix"`,
+// so the first line uniquely identifies the pattern.
+
+export interface ParsedRule {
+  raw: string;
+  firstLine: string;
+  key: string;
+  forbiddenQuote: string | null;
+}
+
+function normalizeRuleKey(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/^[-*•\d.\s]+/, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
+function extractForbiddenQuote(block: string): string | null {
+  // Match the ✗ "..." pattern — the verbatim Grace-said-this-and-it-failed.
+  const m = block.match(/[✗×x]\s*(?:Never repeat:?\s*)?["“”']([^"“”']{4,200})["“”']/i);
+  return m && m[1] ? normalizeRuleKey(m[1]) : null;
+}
+
+export function parseAdditionsBlock(block: string): ParsedRule[] {
+  if (!block || block.trim().length === 0) return [];
+  return block
+    .split(/\n{2,}/)
+    .map((b) => b.trim())
+    .filter((b) => b.length > 0)
+    .map((b) => {
+      const firstLine = b.split('\n')[0]?.trim() ?? '';
+      return {
+        raw: b,
+        firstLine,
+        key: normalizeRuleKey(firstLine),
+        forbiddenQuote: extractForbiddenQuote(b),
+      };
+    });
+}
+
+export interface MergeReport {
+  merged: ParsedRule[];
+  newCount: number;
+  refinedCount: number;
+  /** Keys of existing rules that were refined this run. */
+  refinedKeys: string[];
+}
+
+function normalizeForCompare(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Append-only merger. Existing rules survive unless the new batch contains
+ * one with a matching first-line directive (refinement) OR a matching ✗ quote.
+ * If the incoming rule is byte-identical to the existing one (modulo whitespace
+ * + case), it's a NO-OP — not counted as a refinement.
+ * Order: existing rules stay in original order (refinements in place), new
+ * rules append to the bottom.
+ */
+export function mergeAdditionRules(existing: ParsedRule[], incoming: ParsedRule[]): MergeReport {
+  const byKey = new Map<string, ParsedRule>();
+  const byQuote = new Map<string, ParsedRule>();
+  for (const r of existing) {
+    if (r.key) byKey.set(r.key, r);
+    if (r.forbiddenQuote) byQuote.set(r.forbiddenQuote, r);
+  }
+
+  const refinedKeys = new Set<string>();
+  const trulyNew: ParsedRule[] = [];
+
+  for (const incomingRule of incoming) {
+    // Same first-line directive → potential refinement.
+    if (incomingRule.key && byKey.has(incomingRule.key)) {
+      const existingRule = byKey.get(incomingRule.key)!;
+      // Identical content → no-op, not a refinement.
+      if (normalizeForCompare(incomingRule.raw) === normalizeForCompare(existingRule.raw)) {
+        continue;
+      }
+      byKey.set(incomingRule.key, incomingRule);
+      refinedKeys.add(incomingRule.key);
+      continue;
+    }
+    // Same ✗ verbatim quote → refinement of a rule whose directive line changed.
+    if (incomingRule.forbiddenQuote && byQuote.has(incomingRule.forbiddenQuote)) {
+      const oldRule = byQuote.get(incomingRule.forbiddenQuote)!;
+      if (normalizeForCompare(incomingRule.raw) === normalizeForCompare(oldRule.raw)) {
+        continue;
+      }
+      byKey.set(oldRule.key, incomingRule);
+      refinedKeys.add(oldRule.key);
+      continue;
+    }
+    trulyNew.push(incomingRule);
+  }
+
+  const merged: ParsedRule[] = [];
+  for (const r of existing) {
+    merged.push(byKey.get(r.key) ?? r);
+  }
+  merged.push(...trulyNew);
+
+  return {
+    merged,
+    newCount: trulyNew.length,
+    refinedCount: refinedKeys.size,
+    refinedKeys: [...refinedKeys],
+  };
+}
+
 export function buildDeterministicAdditions(
   negativeSamples: Array<{ user_message: string | null; assistant_message: string | null; comment: string | null }>,
 ): { additions: string; analysis: string } | null {

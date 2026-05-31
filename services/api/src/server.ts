@@ -317,6 +317,22 @@ function buildOptimizerReport(r: OptimizerRunReport): string {
     case 'skipped_lock_held':
       return `🤖 Grace RLHF Report — skipped (lock held by other machine)`;
 
+    case 'skipped_already_ran_today':
+      return [
+        `🤖 Grace RLHF Report — skipped`,
+        ``,
+        `Already ran today (v${version}). ${analysis}`,
+      ].join('\n');
+
+    case 'skipped_no_new_patterns':
+      return [
+        `🤖 Grace RLHF Report — no changes`,
+        ``,
+        `📊 Last 14 days: ${statsLine}`,
+        ``,
+        `${analysis}`,
+      ].join('\n');
+
     case 'skipped_generation_failed':
       return [
         `🤖 Grace RLHF Report — failed`,

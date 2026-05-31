@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Logger } from 'pino';
 import type { LLMProvider, LLMRequest, LLMResponse } from '@grace/shared';
-import { PromptOptimizer, parseAdditionsResponse, buildDeterministicAdditions } from './prompt-optimizer.js';
+import {
+  PromptOptimizer,
+  parseAdditionsResponse,
+  buildDeterministicAdditions,
+  parseAdditionsBlock,
+  mergeAdditionRules,
+} from './prompt-optimizer.js';
 import type { OptimizerRunReport } from './prompt-optimizer.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -439,7 +445,7 @@ describe('PromptOptimizer — happy path', () => {
     expect(onActivated).toHaveBeenCalledWith(expect.stringContaining('BEHAVIORAL ADJUSTMENTS'));
   });
 
-  it('strips previous additions block before appending new one', async () => {
+  it('preserves existing rules and appends new ones (append-only merge)', async () => {
     const promptWithOldAdditions = `${BASE_PROMPT}\n\n---\n## BEHAVIORAL ADJUSTMENTS (auto-learned from user feedback)\n- Old rule from last run.`;
     const pool = buildPool([
       { pattern: 'FROM prompts WHERE active', rows: [{ content: promptWithOldAdditions }] },
@@ -454,20 +460,25 @@ describe('PromptOptimizer — happy path', () => {
       { pattern: 'COMMIT', rows: [] },
     ]);
     const newAdditions = JSON.stringify({
-      analysis: 'New improvement this cycle.',
-      additions: '- New rule replacing old one: be warmer on brief messages.',
+      analysis: 'New pattern this cycle.',
+      additions: '- New rule appended below: be warmer on brief messages.',
     });
 
     let activatedWith = '';
     const onActivated = vi.fn(async (content: string) => { activatedWith = content; });
     await runOptimizer(pool, new MockLLM(newAdditions), { onPromptActivated: onActivated });
 
-    // Old rule must be gone; new rule must be present.
-    expect(activatedWith).not.toContain('Old rule from last run.');
-    expect(activatedWith).toContain('New rule replacing old one');
+    // BOTH the old rule and the new rule must be present after merge.
+    expect(activatedWith).toContain('Old rule from last run.');
+    expect(activatedWith).toContain('New rule appended below');
     // Only ONE BEHAVIORAL ADJUSTMENTS block in the combined prompt.
     const count = (activatedWith.match(/## BEHAVIORAL ADJUSTMENTS/g) ?? []).length;
     expect(count).toBe(1);
+    // The new rule appears AFTER the old one.
+    const oldIdx = activatedWith.indexOf('Old rule from last run.');
+    const newIdx = activatedWith.indexOf('New rule appended below');
+    expect(oldIdx).toBeGreaterThan(0);
+    expect(newIdx).toBeGreaterThan(oldIdx);
   });
 
   it('passes previous BEHAVIORAL ADJUSTMENTS to the LLM so it does not repeat them', async () => {
@@ -512,8 +523,8 @@ describe('PromptOptimizer — happy path', () => {
     // The user message sent to Gemini must contain the previous additions.
     expect(capturedUserMessage).toContain('ALREADY IN PLACE');
     expect(capturedUserMessage).toContain('Old rule: never use the word "journey"');
-    // And it must warn the model not to repeat them.
-    expect(capturedUserMessage).toContain('Do NOT repeat or restate rules already covered');
+    // And it must warn the model not to restate them (append-only policy).
+    expect(capturedUserMessage).toMatch(/DO NOT RESTATE|APPEND-ONLY POLICY/);
   });
 
   it('commits activation in a DB transaction (BEGIN/UPDATE/INSERT/COMMIT)', async () => {
@@ -602,5 +613,105 @@ describe('PromptOptimizer — report hook', () => {
     await runOptimizer(pool, new MockLLM(), { onRunComplete });
     expect(onRunComplete).toHaveBeenCalledOnce();
     expect(onRunComplete.mock.calls[0]![0].status).toBe('error');
+  });
+
+  it('skips run when a prompt was already auto-generated today (idempotency guard)', async () => {
+    // Simulate a previous successful run earlier today by routing the
+    // auto_generated/date_trunc query to a non-empty row.
+    const pool = buildPool([
+      {
+        pattern: /auto_generated\s*=\s*TRUE\s+AND\s+created_at\s*>=\s*date_trunc/i,
+        rows: [{ version: 36, created_at: new Date() }],
+      },
+    ]);
+    const report = await runOptimizer(pool, new MockLLM());
+    expect(report.status).toBe('skipped_already_ran_today');
+    expect(report.version).toBe(36);
+    // Crucially, the LLM should NEVER be called when we bail early.
+    expect((pool.query as ReturnType<typeof vi.fn>).mock.calls.find((c) => /f\.rating = -1/.test(c[0] as string))).toBeUndefined();
+  });
+
+  it('skips activation when all incoming rules are duplicates of existing ones', async () => {
+    // Existing prompt already has a rule. LLM returns the same rule (key
+    // matches first-line directive). Merger sees 0 new + 0 refined → skip.
+    const existingRule = '- NEVER USE WORD "JOURNEY": replace with "what you\'re working toward"\n  ✗ "On your journey"\n  ✓ "What you\'re working toward"';
+    const promptWithRule = `${BASE_PROMPT}\n\n---\n## BEHAVIORAL ADJUSTMENTS (auto-learned from user feedback)\n${existingRule}`;
+    const pool = buildPool([
+      { pattern: 'FROM prompts WHERE active', rows: [{ content: promptWithRule }] },
+      { pattern: 'f.rating = -1', rows: [{ assistant_message: 'On your journey', user_message: 'how am i doing?', comment: null, rating: -1 }] },
+      { pattern: 'f.rating = 1', rows: [] },
+      { pattern: 'ILIKE', rows: [{ count: '0' }] },
+      { pattern: "role = 'user' AND created_at", rows: [{ count: '20' }] },
+    ]);
+    // LLM regurgitates the same rule.
+    const duplicateResponse = JSON.stringify({
+      analysis: 'Same pattern.',
+      additions: existingRule,
+    });
+
+    const report = await runOptimizer(pool, new MockLLM(duplicateResponse));
+    expect(report.status).toBe('skipped_no_new_patterns');
+    expect(report.activated).toBe(false);
+  });
+});
+
+describe('parseAdditionsBlock + mergeAdditionRules (append-only logic)', () => {
+  it('parses each blank-line-separated block as one rule', () => {
+    const block = `- RULE A: do X\n  ✗ "bad"\n  ✓ "good"\n\n- RULE B: do Y\n  ✗ "bad b"\n  ✓ "good b"`;
+    const rules = parseAdditionsBlock(block);
+    expect(rules).toHaveLength(2);
+    expect(rules[0]?.firstLine).toBe('- RULE A: do X');
+    expect(rules[1]?.firstLine).toBe('- RULE B: do Y');
+  });
+
+  it('extracts the ✗ verbatim quote for cross-key dedup', () => {
+    const block = `- RULE A: do X\n  ✗ "never say this"\n  ✓ "say this instead"`;
+    const rules = parseAdditionsBlock(block);
+    expect(rules[0]?.forbiddenQuote).toContain('never say this');
+  });
+
+  it('returns empty array for empty input', () => {
+    expect(parseAdditionsBlock('')).toEqual([]);
+    expect(parseAdditionsBlock('   \n\n  ')).toEqual([]);
+  });
+
+  it('mergeAdditionRules: keeps existing rules NOT mentioned by incoming', () => {
+    const existing = parseAdditionsBlock(`- RULE A: keep me\n\n- RULE B: keep me too`);
+    const incoming = parseAdditionsBlock(`- RULE C: brand new`);
+    const merged = mergeAdditionRules(existing, incoming);
+    expect(merged.newCount).toBe(1);
+    expect(merged.refinedCount).toBe(0);
+    expect(merged.merged.map((r) => r.firstLine)).toEqual([
+      '- RULE A: keep me',
+      '- RULE B: keep me too',
+      '- RULE C: brand new',
+    ]);
+  });
+
+  it('mergeAdditionRules: refines an existing rule when first-line directive matches', () => {
+    const existing = parseAdditionsBlock(`- RULE A: old description\n  ✗ "old"\n  ✓ "ok"`);
+    const incoming = parseAdditionsBlock(`- RULE A: old description\n  ✗ "still failing here"\n  ✓ "sharper"`);
+    const merged = mergeAdditionRules(existing, incoming);
+    expect(merged.refinedCount).toBe(1);
+    expect(merged.newCount).toBe(0);
+    expect(merged.merged[0]?.raw).toContain('still failing here');
+  });
+
+  it('mergeAdditionRules: refines via matching ✗ quote even if directive line changes', () => {
+    const existing = parseAdditionsBlock(`- RULE A: old wording\n  ✗ "exact failing quote here"\n  ✓ "fix"`);
+    const incoming = parseAdditionsBlock(`- RULE A REWRITTEN: new wording\n  ✗ "exact failing quote here"\n  ✓ "sharper fix"`);
+    const merged = mergeAdditionRules(existing, incoming);
+    expect(merged.refinedCount).toBe(1);
+    expect(merged.newCount).toBe(0);
+    expect(merged.merged).toHaveLength(1);
+    expect(merged.merged[0]?.raw).toContain('sharper fix');
+  });
+
+  it('mergeAdditionRules: 0 new + 0 refined when incoming is empty', () => {
+    const existing = parseAdditionsBlock(`- RULE A: keep me`);
+    const merged = mergeAdditionRules(existing, []);
+    expect(merged.newCount).toBe(0);
+    expect(merged.refinedCount).toBe(0);
+    expect(merged.merged).toHaveLength(1);
   });
 });

@@ -297,4 +297,40 @@ describe('enforceFormat', () => {
       expect(fixes).not.toContain('label_colon_flattened');
     });
   });
+
+  describe('truncation + orphaned enumeration markers (session 3 feedback)', () => {
+    it('strips dangling "1." at end of response (production failure: Ozempic breakdown)', () => {
+      // After listIntroRe strips "Here's a breakdown of how Ozempic actually works in the body: ",
+      // the remaining text was "Ozempic ... weight management. 1."
+      // Orphaned "1." at the end has to go.
+      const input = 'Ozempic is used for weight management. Here\'s a breakdown of how Ozempic actually works in the body: 1.';
+      const { text, fixes } = enforceFormat(input);
+      expect(fixes).toContain('list_intro_stripped');
+      expect(text).not.toMatch(/\b1\.\s*$/);
+    });
+
+    it('flags truncation_suspected when response ends without terminal punctuation', () => {
+      const input = 'Ozempic mimics a hormone called GLP-1, which slows digestion and reduces appetite, and it also helps with weight management because';
+      const { fixes } = enforceFormat(input);
+      expect(fixes).toContain('truncation_suspected');
+    });
+
+    it('does NOT flag truncation_suspected when response ends with a period', () => {
+      const input = 'Ozempic mimics a hormone called GLP-1, which slows digestion and reduces appetite. It also helps with weight management.';
+      const { fixes } = enforceFormat(input);
+      expect(fixes).not.toContain('truncation_suspected');
+    });
+
+    it('does NOT flag truncation_suspected when response ends with an emoji', () => {
+      const input = 'Two eggs and a salad — about 15g protein. You\'re at 40g today 👍';
+      const { fixes } = enforceFormat(input);
+      expect(fixes).not.toContain('truncation_suspected');
+    });
+
+    it('strips orphan numbered marker only when list-intro was also stripped', () => {
+      // "1." in regular prose stays put (ordinal usage)
+      const { fixes: lonelyFixes } = enforceFormat('Step 1. is the priority for muscle preservation.');
+      expect(lonelyFixes).not.toContain('orphaned_enumeration_stripped');
+    });
+  });
 });

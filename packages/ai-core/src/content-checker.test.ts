@@ -438,3 +438,81 @@ describe('checkUserMessageEcho (via checkContent)', () => {
     expect(violations.some((v) => v.code === 'user_message_echo')).toBe(false);
   });
 });
+
+describe('checkEmotionBeforeData (session 3 feedback)', () => {
+  it('flags response opening with food log on an emotional message (exact production case)', () => {
+    const violations = checkContent(
+      'Toast and orange juice logged. That\'s about 4g protein. You\'re at 4g of your 114g target today. It sounds like you\'re carrying a lot right now.',
+      { userMessage: "I'm trying and I still feel like I'm failing" },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(true);
+  });
+
+  it('does NOT flag emotional-first response', () => {
+    const violations = checkContent(
+      "That feeling can hit so hard, especially when you're putting in the effort. What's been making it feel like failing lately?",
+      { userMessage: "I'm trying and I still feel like I'm failing" },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(false);
+  });
+
+  it('does NOT flag data response on a non-emotional message', () => {
+    const violations = checkContent(
+      'Toast and OJ logged — about 4g protein. You\'re at 4g of your 114g target today.',
+      { userMessage: 'just had toast and orange juice' },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(false);
+  });
+
+  it('flags "you\'re now at X g" opener on emotional message', () => {
+    const violations = checkContent(
+      "You're now at 4g of your 114g protein target today.",
+      { userMessage: "I'm so exhausted and just want to give up" },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(true);
+  });
+});
+
+describe('checkPrivacyMisfire — strengthened variants (session 3 feedback)', () => {
+  it('flags the verbatim "I only know about you" on a self-referencing health Q', () => {
+    const violations = checkContent(
+      "I only know about you and your journey. I can't help with that.",
+      { userMessage: 'I feel so nauseous after my shot' },
+    );
+    expect(violations.some((v) => v.code === 'privacy_misfire')).toBe(true);
+  });
+
+  it('flags rewording "I only have access to your data" on health Q', () => {
+    const violations = checkContent(
+      "I only have access to your data, so I can't help with that.",
+      { userMessage: 'My face is looking saggy' },
+    );
+    expect(violations.some((v) => v.code === 'privacy_misfire')).toBe(true);
+  });
+
+  it('does NOT flag the privacy line on a third-party question', () => {
+    const violations = checkContent(
+      "I only know about you and your journey. I can't share details about other users.",
+      { userMessage: 'Is my friend Sarah a user too?' },
+    );
+    expect(violations.some((v) => v.code === 'privacy_misfire')).toBe(false);
+  });
+});
+
+describe('appointment_prep exemption from two-question check', () => {
+  it('does NOT flag multiple questions when intentType is appointment_prep', () => {
+    const violations = checkContent(
+      'Good idea to prep. Is my current dose right? Am I losing muscle? What should we monitor in bloodwork? Anything to add?',
+      { userMessage: 'Help me write my questions for my endo appointment', intentType: 'appointment_prep' },
+    );
+    expect(violations.some((v) => v.code === 'two_questions')).toBe(false);
+  });
+
+  it('still flags multiple questions for other intents', () => {
+    const violations = checkContent(
+      "How are you feeling? Is the nausea still bad?",
+      { userMessage: 'I had eggs for breakfast', intentType: 'food_log' },
+    );
+    expect(violations.some((v) => v.code === 'two_questions')).toBe(true);
+  });
+});

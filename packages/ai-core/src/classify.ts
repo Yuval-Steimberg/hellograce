@@ -125,10 +125,20 @@ const SCHEDULING: RegExp[] = [
 // override must fire on the FIRST message, not the second.
 const APPOINTMENT_PREP: RegExp[] = [
   // Explicit "help me prep / write questions" + doctor/appointment mention
+  // SAME SENTENCE (legacy patterns)
   /\b(help me (write|draft|prepare|prep)|prepare me (for|to)|prep me (for)?|what should i ask|questions (for|to ask)|write (down |out )?(my |some )?questions)\b[^.?!]{0,80}\b(doctor|endocrinologist|endo|specialist|appointment|visit|consult|consultation|gp|pcp|provider|prescriber)\b/i,
   /\b(doctor|endocrinologist|endo|specialist|gp|pcp|provider|prescriber)\b[^.?!]{0,80}\b(appointment|visit|consult|consultation)\b[^.?!]{0,80}\b(help|prepare|prep|questions|what should i ask|write)/i,
   /\b(i have (?:my |an? )?(?:appointment|visit|consult)|(?:my )?appointment (?:is |coming|next))\b[^.?!]{0,80}\b(help|prepare|prep|questions|what should i ask|write)/i,
   /\bprepare (?:me )?(?:for )?(?:the |my )?(?:appointment|visit|consult|doctor|endocrinologist)\b/i,
+  // CROSS-SENTENCE match — production failure (session 3):
+  //   "I have my endocrinologist appointment next week. Help me write my questions"
+  // The trigger phrase and the appointment word were in different sentences,
+  // so [^.?!]{0,80} couldn't bridge them. Use lookaheads so both can be
+  // anywhere in the message, independent of sentence boundaries.
+  /^(?=[\s\S]*\b(doctor|endocrinologist|endo|specialist|gp|pcp|provider|prescriber|appointment|visit|consult|consultation)\b)(?=[\s\S]*\b(help me? (write|draft|prepare|prep|preparing|drafting|writing)|prepare me|prep me|what should i ask|questions? (for|to ask)|(?:help )?(?:preparing|prepping|drafting|writing) (?:my |some |the |a |these |those )?questions?|write (down |out )?(my |some |the )?questions?))/i,
+  // Standalone unambiguous trigger — "help me write my questions" is always
+  // appointment prep even if the appointment context was set in prior turns.
+  /\b(help me? (write|draft|prepare|prep|preparing|drafting|writing)|prepare me|prep me|help (?:me )?(?:preparing|prepping|drafting|writing)) (?:my |some |the |a (?:list of |few )?)?questions?\b/i,
 ];
 
 const KNOWLEDGE: RegExp[] = [

@@ -400,6 +400,7 @@ export class AIOrchestrator {
       ...(input.responseMode ? { responseMode: input.responseMode } : {}),
       ...(input.dbRules && input.dbRules.length > 0 ? { dbRules: input.dbRules } : {}),
       userMessage: input.text,
+      intentType: classification.type,
     };
     const contentViolations: ContentViolation[] = checkContent(validated.text, contentCheckOpts);
 
@@ -425,6 +426,20 @@ export class AIOrchestrator {
           source: 'precheck',
         },
       };
+    }
+
+    // ── Truncation detection (session-3 feedback) ─────────────────────────
+    // Format-enforcer flags `truncation_suspected` when the response ends
+    // without sentence-final punctuation — typically a knowledge/medical
+    // answer that hit max_tokens mid-list. Inject as a regen violation so
+    // the retry path bumps the token budget + appends the truncation-recovery
+    // instruction.
+    if (formatted.fixes.includes('truncation_suspected')) {
+      contentViolations.push({
+        code: 'truncation_suspected',
+        message: 'Response appears to end mid-sentence (no terminal punctuation). REWRITE in 2-3 short sentences as continuous prose — no lists, no numbered breakdowns, no headers. Ensure a complete sentence ending.',
+        severity: 'regen',
+      });
     }
 
     // Only regen/undefined violations trigger regeneration; log violations are
@@ -483,9 +498,15 @@ export class AIOrchestrator {
 
     // Detect mid-word/mid-sentence truncation (e.g. "...easy-to-" cut off by
     // hitting maxOutputTokens). Forces the critic→regen path so the user
-    // never sees a half-sentence reply.
+    // never sees a half-sentence reply. Three signals — any one triggers:
+    //   1. finishReason === 'length' (Gemini ran out of budget)
+    //   2. endsMidWord (last token is mid-word — heuristic)
+    //   3. formatted.fixes includes 'truncation_suspected' (no terminal
+    //      punctuation after list-intro stripping — session-3 failure mode)
     const truncated =
-      llmResp.finishReason === 'length' || endsMidWord(validated.text);
+      llmResp.finishReason === 'length' ||
+      endsMidWord(validated.text) ||
+      formatted.fixes.includes('truncation_suspected');
 
     // ─── Final quality guard (deterministic, last check before send) ──────
     // Catches walls of text, nutrition-report formatting, numeric clutter,

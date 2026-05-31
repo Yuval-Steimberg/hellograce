@@ -41,6 +41,9 @@ export interface ContentCheckOpts {
   dbRules?: DbContentRule[];
   /** User's latest message — for context-aware checks like privacy misfire and double-question detection. */
   userMessage?: string;
+  /** Classified message intent. Used to skip the two-question check for
+   *  appointment_prep (where a list of questions IS the deliverable). */
+  intentType?: string;
 }
 
 export function checkContent(text: string, opts: ContentCheckOpts): ContentViolation[] {
@@ -63,9 +66,14 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   violations.push(...checkPrivacyLeak(text));
   if (opts.userMessage) {
     violations.push(...checkPrivacyMisfire(text, opts.userMessage));
-    violations.push(...checkTwoQuestions(text));
+    // Appointment_prep is exempt from the one-question ceiling — the whole
+    // point of the intent is to produce a list of 4-6 doctor questions.
+    if (opts.intentType !== 'appointment_prep') {
+      violations.push(...checkTwoQuestions(text));
+    }
     violations.push(...checkFoodLogPreambleLeak(text, opts.userMessage));
     violations.push(...checkUserMessageEcho(text, opts.userMessage));
+    violations.push(...checkEmotionBeforeData(text, opts.userMessage));
   }
   if (opts.dbRules && opts.dbRules.length > 0) {
     violations.push(...checkDbRules(text, opts.dbRules));
@@ -84,7 +92,12 @@ const HEALTH_ANCHOR_RE = /\b(nausea|nauseous|tired|exhaust\w+|fatigue|sick|pain|
 const OTHER_PERSON_RE = /\b(another user|other user|other users|do you have a user|is .{1,20} a user|my (friend|husband|wife|partner|mom|dad|sister|brother|daughter|son|coworker) (use|using|on grace|signed up)|can you (text|contact|message|call) (my |someone)|how many (users|people|women|men))\b/i;
 
 function checkPrivacyMisfire(response: string, userMessage: string): ContentViolation[] {
-  const privacyLine = /\bi only know about you (and your journey)?\b/i;
+  // Catch the "I only know about you and your journey" line AND its common
+  // rewordings ("I only have access to your data", "I don't have info on
+  // other users", "I can't share details about other users"). The previous
+  // pattern was too narrow — production showed Grace using paraphrases that
+  // bypassed the guard but still misfired on self-referencing health Qs.
+  const privacyLine = /\b(i only know about you|i only have (?:access to |info on |information about )?your|i (?:don'?t|do not) have (?:any )?(?:info|information|details|data) (?:on|about|regarding) (?:other|another)|i (?:can'?t|cannot) (?:share|give|provide|tell you) (?:about|details (?:on|about)) (?:another|other) (?:user|users|people))\b/i;
   if (!privacyLine.test(response)) return [];
   // The privacy line was used. Check the user's message: if it's about their
   // OWN health/feelings/body and not about another person, this is a misfire.
@@ -93,7 +106,7 @@ function checkPrivacyMisfire(response: string, userMessage: string): ContentViol
   if (userHasHealthAnchor && !userAsksAboutOther) {
     return [{
       code: 'privacy_misfire',
-      message: 'Privacy rule fired on a self-referencing health message — REWRITE without the "I only know about you and your journey" line. The user is asking about THEIR OWN health, not another person. Answer the question directly.',
+      message: 'Privacy rule fired on a self-referencing health message — REWRITE without any "I only know about you" / "I can\'t share about other users" line. The user is asking about THEIR OWN health, not another person. Answer the question directly without privacy disclaimers.',
       severity: 'regen',
     }];
   }
@@ -132,6 +145,31 @@ function checkFoodLogPreambleLeak(response: string, userMessage: string): Conten
     return [{
       code: 'food_log_preamble_leak',
       message: `Response to a food log MUST open with the food + protein number, NOT with a callback to a previous feeling/emotion topic. The user just said: "${userMessage.slice(0, 80)}". Rewrite so the FIRST WORDS are about the food they just logged. Example: "Protein shake logged — about 24g protein, you're at Xg today." Do NOT mention how they're feeling — that topic is closed.`,
+      severity: 'regen',
+    }];
+  }
+  return [];
+}
+
+// ── Emotion before data ──────────────────────────────────────────────────────
+// When the user expresses an emotional state — frustration, failure, sadness,
+// fear — the response MUST open with emotion acknowledgment, NOT food logging
+// / protein numbers / data callbacks. Production failure (session 3):
+//   User:  "I'm trying and I still feel like I'm failing"
+//   Grace: "Toast and orange juice logged. That's about 4g protein. You're at
+//          4g of your 114g target today. It sounds like you're carrying a lot..."
+// The emotional content WAS there, but buried under stale food-log data from
+// a message 2 hours earlier. EMOTION BEFORE DATA is non-negotiable.
+const EMOTIONAL_USER_RE = /\b(feel(?:ing)?\s+(?:like|so|really|kind\s+of)\s+(?:i'?m\s+)?(?:failing|broken|alone|lonely|sad|hopeless|defeated|exhausted|stuck|done|empty|lost|invisible|worthless|like\s+giving\s+up)|i'?m\s+(?:so\s+|really\s+|just\s+)?(?:failing|struggling|exhausted|broken|done|defeated|hopeless|stuck|lonely|sad|frustrated|overwhelmed|anxious|scared|terrified|crying|breaking down|losing it)|i\s+(?:want to|just want to|need to|feel like i should) (?:give up|quit|stop|cry|disappear)|i (?:can'?t do this|can'?t keep going|don'?t (?:want|know how) to keep)|this isn'?t working|nothing'?s working|why bother|what'?s the point)\b/i;
+const DATA_OPENER_RE = /^(?:[a-z][\w\s,()'-]{0,60}\s+(?:logged|noted|recorded|added)\b|that'?s about \d|that'?s roughly \d|logged\s*[—,.-]|got it,?\s+(?:that'?s|about|around)\s+\d|you'?re (?:at|now at) \d|that brings you|adding that)/i;
+
+function checkEmotionBeforeData(response: string, userMessage: string): ContentViolation[] {
+  if (!EMOTIONAL_USER_RE.test(userMessage)) return [];
+  const firstSentence = response.split(/[.!?]\s/)[0] ?? '';
+  if (DATA_OPENER_RE.test(firstSentence)) {
+    return [{
+      code: 'emotion_before_data',
+      message: `Response to an EMOTIONAL message MUST open with emotional acknowledgment — NOT food logging / protein numbers / data. The user said: "${userMessage.slice(0, 100)}". The first sentence currently starts with data ("${firstSentence.slice(0, 80)}..."). REWRITE: open with one warm sentence acknowledging the feeling. Food/data callbacks go LAST or get dropped entirely. Example: user says "I feel like I'm failing" → Grace opens "That feeling can hit so hard when you're putting in the effort. What's been making it feel like failing lately?" — NEVER opens with food.`,
       severity: 'regen',
     }];
   }

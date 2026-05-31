@@ -292,6 +292,45 @@ export function enforceFormat(
     fixes.push('section_header_stripped');
   }
 
+  // ─── Orphaned enumeration markers (only after list-intro was stripped) ──
+  // Production failure: after list_intro_stripped, the response was left with
+  // "1. Mechanism of Action (The Core Difference) Ozempic (Semaglutide):..."
+  // — a SINGLE "1." with no matching "2." anywhere. That's a broken list.
+  // Only run this strip when listIntroRe just fired (otherwise "1." in prose
+  // like "Step 1. is the priority" would be incorrectly stripped).
+  if (fixes.includes('list_intro_stripped')) {
+    const orphanedNumberedRe = /(^|\n)\s*(\d+)[.)]\s+/g;
+    const matches = [...text.matchAll(orphanedNumberedRe)];
+    // Only one marker → orphan, strip it.
+    if (matches.length === 1) {
+      text = text.replace(/(^|\n)\s*\d+[.)]\s+/, '$1');
+      fixes.push('orphaned_enumeration_stripped');
+    }
+  }
+
+  // ─── Truncation residue: dangling enumeration markers at the END ───────
+  // After list-intro stripping or natural mid-list cutoff, the response often
+  // ends with a dangling "1." / "1)" / "•" / "-" / colon. Production failure:
+  //   "...Here's a breakdown of how Ozempic actually works in the body: 1."
+  // After list_intro_stripped:
+  //   "...weight management. 1."
+  // The bare "1." reads as broken. Strip dangling markers from the end.
+  const trailingMarkerRe = /(?:\s+\d+[.)]|\s+[-*•]\s*|\s*:)\s*$/;
+  if (trailingMarkerRe.test(text)) {
+    text = text.replace(trailingMarkerRe, '').trimEnd();
+    fixes.push('trailing_list_marker_stripped');
+  }
+
+  // Mid-list cutoff: response ends WITHOUT punctuation (no `.`, `!`, `?`, emoji)
+  // after the trailing-marker strip. Common when LLM hit max_tokens mid-list.
+  // We can't recover the missing content here — flag it so the orchestrator
+  // can decide to regen with a higher token budget. The flag is emitted via
+  // fixes[] which orchestrator's caller reads.
+  const trimmed = text.trim();
+  if (trimmed.length > 80 && !/[.!?…]$|[\p{Emoji_Presentation}\p{Extended_Pictographic}]$/u.test(trimmed)) {
+    fixes.push('truncation_suspected');
+  }
+
   // ─── "[link]" placeholder → real settings URL ──────────────────────────
   // Cheap auto-fix saves a regen for the most common variants.
   if (/\[(link|settings link|url|here)\]/i.test(text)) {

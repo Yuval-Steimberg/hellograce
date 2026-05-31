@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { detectUpgradeIntent, buildUpgradeUrl, coalesceMessages } from './webhook.js';
+import { detectUpgradeIntent, buildUpgradeUrl, coalesceMessages, detectPauseIntent } from './webhook.js';
 
 // Minimal in-memory Redis mock for coalesceMessages tests.
 function makeMockRedis() {
@@ -123,5 +123,41 @@ describe('buildUpgradeUrl', () => {
     expect(buildUpgradeUrl('+15551234567', 'https://example.com/')).toBe(
       'https://example.com/upgrade?phone=%2B15551234567',
     );
+  });
+});
+
+describe('detectPauseIntent (Phase 1 coverage expansion)', () => {
+  it('matches single-word "pause"', () => {
+    expect(detectPauseIntent('pause')).toBe(true);
+    expect(detectPauseIntent('stop')).toBe(true);
+    expect(detectPauseIntent('break')).toBe(true);
+  });
+
+  it('matches "stop sending messages"', () => {
+    expect(detectPauseIntent('stop sending messages')).toBe(true);
+    expect(detectPauseIntent('pause the reminders')).toBe(true);
+    expect(detectPauseIntent('stop the check-ins for now')).toBe(true);
+  });
+
+  it('matches "I need a break"', () => {
+    expect(detectPauseIntent('I need a break')).toBe(true);
+    expect(detectPauseIntent('i want a pause')).toBe(true);
+  });
+
+  it("matches \"don't text me for a week\"", () => {
+    expect(detectPauseIntent("don't text me for a week")).toBe(true);
+    expect(detectPauseIntent("don't text me until next week")).toBe(true);
+  });
+
+  it('does NOT match conversational mentions of "pause"', () => {
+    // Long sentence — pause is being used conversationally, not as a command.
+    expect(detectPauseIntent('I want to pause my workouts for a month due to my shoulder')).toBe(false);
+    expect(detectPauseIntent("I'm thinking about stopping my Ozempic")).toBe(false);
+  });
+
+  it('does NOT match food-log or greeting messages', () => {
+    expect(detectPauseIntent('I just ate two eggs')).toBe(false);
+    expect(detectPauseIntent('hi grace')).toBe(false);
+    expect(detectPauseIntent('how are you')).toBe(false);
   });
 });

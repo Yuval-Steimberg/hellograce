@@ -199,6 +199,32 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             }
           }
 
+          // ── In-chat pause intent (Phase 1 coverage expansion) ─────────
+          // "pause", "stop sending messages", "I need a break". Flips
+          // users.paused = TRUE; scheduler's listActiveUsers() already
+          // excludes paused users so proactive messages stop immediately.
+          if (user && deps.users && detectPauseIntent(normalized.text)) {
+            const phone = user.phone;
+            await deps.users.setPaused(phone, true).catch((err: unknown) => {
+              req.log.warn({ err: err instanceof Error ? err.message : String(err), phone }, 'pause.set_paused.failed');
+            });
+            const reply = 'Got it, I\'ll pause the check-ins. Text me anytime you want to pick it back up 🧡';
+            await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: reply });
+            return;
+          }
+
+          // ── Auto-resume from pause ────────────────────────────────────
+          // If the user was paused and now sends a non-pause message, treat
+          // it as natural re-engagement and silently flip paused back to
+          // FALSE. No confirmation message — Grace just answers normally.
+          if (user?.paused && deps.users) {
+            const phone = user.phone;
+            await deps.users.setPaused(phone, false).catch((err: unknown) => {
+              req.log.warn({ err: err instanceof Error ? err.message : String(err), phone }, 'pause.auto_resume.failed');
+            });
+            req.log.info({ phone }, 'pause.auto_resumed');
+          }
+
           // ── In-chat upgrade / manage intent ("upgrade", "go pro", "manage
           // subscription", "pricing" …). The destination URL depends on the
           // user's current subscription state:
@@ -583,6 +609,27 @@ export function detectUpgradeIntent(text: string): boolean {
   // conversational, not subscription requests.
   if (trimmed.split(/\s+/).length > 8) return false;
   return UPGRADE_PHRASES.some((re) => re.test(trimmed));
+}
+
+// ── Pause intent (Phase 1 coverage expansion) ───────────────────────────────
+// Stops scheduler proactive messages by flipping users.paused = TRUE.
+// Auto-resumes when the user sends any non-pause message (handled in
+// handleInbound below). Mirrors the upgrade-intent short-circuit pattern.
+const PAUSE_PHRASES: RegExp[] = [
+  /^(pause|stop|hold|hold on|hold off|take a break|break)$/i,
+  /\b(pause|stop|hold off|take a break from|stop sending) (the )?(messages|texts|reminders|notifications|check.?ins|check ins)\b/i,
+  /\bi (need|want) (a |to take a |to )?(break|pause|breather)\b/i,
+  /\bgive me (a |some )?(space|break|time|quiet)\b/i,
+  /\bdon'?t text me (for|until|this) (a |the |next |this )?(week|few days|month|while)\b/i,
+  /\b(taking|on) (a )?break (from|with) (grace|you|texting|messages)\b/i,
+];
+
+export function detectPauseIntent(text: string): boolean {
+  const trimmed = text.trim();
+  // Cap at 12 words — long messages mentioning "pause" are usually
+  // conversational ("I want to pause my workouts"), not pause requests.
+  if (trimmed.split(/\s+/).length > 12) return false;
+  return PAUSE_PHRASES.some((re) => re.test(trimmed));
 }
 
 /**

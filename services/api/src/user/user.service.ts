@@ -403,6 +403,23 @@ export class UserService {
     }
   }
 
+  /**
+   * Flip the `paused` flag. Scheduler's listActiveUsers() already excludes
+   * paused users so proactive messages stop firing immediately.
+   *
+   * Inbound user messages auto-resume (handled in webhook.ts) so a paused
+   * user just texting Grace naturally un-pauses themselves.
+   */
+  async setPaused(phone: string, paused: boolean): Promise<void> {
+    await this.pool.query(
+      `UPDATE users
+       SET paused = $2, updated_at = now()
+       WHERE phone = $1
+         AND (paused IS DISTINCT FROM $2)`,
+      [phone, paused],
+    );
+  }
+
   /** List all active users (for scheduler). */
   async listActiveUsers(): Promise<GraceUser[]> {
     const { rows } = await this.pool.query<GraceUser>(

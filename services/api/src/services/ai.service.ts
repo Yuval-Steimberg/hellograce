@@ -283,11 +283,25 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       'appointment_prep',
       'emotional',
       'food_log',
+      // Phase 1 coverage expansion intents that also need no tools — adding
+      // them here saves ~500-600ms per matching message at zero accuracy cost.
+      // The planner would have made the same "no tools" decision anyway.
+      //   - exercise_log: just an acknowledgment ("Nice — that's a solid one")
+      //   - injection_log: just an acknowledgment ("Got it, that's done")
+      //   - social_situation: generation-only with the new SOCIAL SITUATIONS
+      //                       prompt section providing the strategies
+      'exercise_log',
+      'injection_log',
+      'social_situation',
       // INTENTIONALLY NOT INCLUDED (planner needed for correct tool call):
       //   - food_question: "what should I eat tonight?" needs search_food_ideas;
       //     only "protein left today" gets force-overridden to get_food_summary
       //   - weight_log: needs log_weight tool, no force block exists
       //   - mood_log: needs log_mood tool, no force block exists
+      //   - medication_question: storage/timing answers need knowledge_search;
+      //     no force block, so the planner picks the right tool
+      //   - pause_request: short-circuits at the webhook layer; never reaches
+      //     this code path anyway
       //   - general: planner picks the right tool based on full text analysis
     ]);
     const skipPlanner =

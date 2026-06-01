@@ -20,6 +20,9 @@ interface SchedulerDeps {
   promptOptimizer?: PromptOptimizer;
   /** Phase 4: behavioral anomaly detector. Runs nightly at 4:30am UTC. */
   anomalyDetector?: AnomalyDetectorService;
+  /** Phase 17: research scrape (Reddit → corpus → classify → replay → grade).
+   *  Runs every Sunday 5am UTC. Best-effort; failures logged but don't block. */
+  researchScrape?: () => Promise<void>;
   /** Engagement cooldown window in hours. After a user sends a message,
    *  all non-critical proactive reminders are suppressed for this window.
    *  Default 2h. Set to 0 to disable. Configurable via ENGAGEMENT_COOLDOWN_HOURS. */
@@ -57,6 +60,15 @@ export class Scheduler {
     if (this.deps.anomalyDetector) {
       this.tasks.push(
         cron.schedule('30 4 * * *', () => void this.deps.anomalyDetector!.run()),
+      );
+    }
+    // Phase 17: weekly research scrape — every Sunday 5am UTC. Pulls top
+    // posts of the past week from the configured subreddits, classifies +
+    // checks coverage, sandbox-replays Grace, deterministically grades,
+    // LLM-evals failures. Admin reviews in /admin/research.
+    if (this.deps.researchScrape) {
+      this.tasks.push(
+        cron.schedule('0 5 * * 0', () => void this.deps.researchScrape!()),
       );
     }
     this.deps.logger.info('scheduler.started');

@@ -2523,4 +2523,230 @@ Banned phrases must be exact lowercase substrings from Grace's actual response. 
       reply.status(500).send({ error: 'INGEST_FAILED', message: err instanceof Error ? err.message : String(err) });
     }
   });
+
+  // ─── Research corpus (Phase 17 — real-world data) ─────────────────────────
+  // Pipeline: scrape Reddit → ingest → classify → replay → grade → LLM-eval
+  //           failures only → admin review → promote to intents.json
+  // Storage: real_data_corpus table (migration 20260601000001).
+
+  /** Manual trigger for the full pipeline (same code path as the weekly cron). */
+  app.post('/admin/research/scrape', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      subreddits?: string[];
+      limit?: number;
+      sort?: 'top' | 'new' | 'hot';
+      time?: 'hour' | 'day' | 'week' | 'month' | 'year' | 'all';
+      concurrency?: number;
+      skip_eval?: boolean;
+    };
+    if (!deps.llm) {
+      reply.status(503).send({ error: 'NO_LLM', message: 'LLM provider not configured' });
+      return;
+    }
+    try {
+      const { scrapeMultiple, DEFAULT_SUBREDDITS } = await import('../research/reddit-scraper.js');
+      const { CorpusService, scrapedPostToIngestInput } = await import('../research/corpus.service.js');
+
+      const subs = body.subreddits && body.subreddits.length > 0
+        ? body.subreddits
+        : [...DEFAULT_SUBREDDITS];
+      const scraped = await scrapeMultiple(subs, {
+        limit: body.limit ?? 50,
+        sort: body.sort ?? 'top',
+        time: body.time ?? 'week',
+      });
+      const allPosts = scraped.flatMap((s) => s.posts);
+      const scrapeErrors = scraped
+        .filter((s) => s.error)
+        .map((s) => ({ subreddit: s.subreddit, error: s.error }));
+
+      const corpus = new CorpusService({ pool: deps.pool, llm: deps.llm, logger: app.log as never });
+      const ingest = await corpus.ingestPosts(allPosts.map(scrapedPostToIngestInput));
+      // The pipeline only processes NEW rows; if nothing was inserted we
+      // still re-run classify/replay on any rows that haven't been processed
+      // yet (rowIds = undefined → "all rows that match the WHERE filter").
+      const newRowIds = ingest.insertedIds.length > 0 ? ingest.insertedIds : undefined;
+      const classified = await corpus.classifyAndCheckCoverage(newRowIds);
+      const replayed = await corpus.replayAndGrade(newRowIds, { concurrency: body.concurrency ?? 3 });
+      const evaluated = body.skip_eval ? { evaluated: 0 } : await corpus.evaluateFailures(newRowIds);
+
+      return {
+        ok: true,
+        scraped_subreddits: subs,
+        scrape_errors: scrapeErrors,
+        scraped_posts: allPosts.length,
+        inserted: ingest.insertedIds.length,
+        deduped: ingest.deduped,
+        classified: classified.classified,
+        replayed: replayed.replayed,
+        evaluated: evaluated.evaluated,
+      };
+    } catch (err) {
+      app.log.error({ err }, 'research.scrape.failed');
+      reply.status(500).send({ error: 'SCRAPE_FAILED', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  /** Manual upload — FB / forum / app-review CSV that the admin pastes in. */
+  app.post('/admin/research/upload', async (req, reply) => {
+    const body = (req.body ?? {}) as {
+      messages?: Array<{
+        text: string;
+        source_url?: string;
+        source_subreddit?: string;
+        source_type?: 'csv_upload' | 'manual';
+      }>;
+      skip_eval?: boolean;
+    };
+    const msgs = body.messages ?? [];
+    if (msgs.length === 0) {
+      reply.status(400).send({ error: 'NO_MESSAGES' });
+      return;
+    }
+    if (msgs.length > 1_000) {
+      reply.status(400).send({ error: 'TOO_MANY', message: 'Max 1000 messages per upload' });
+      return;
+    }
+    if (!deps.llm) {
+      reply.status(503).send({ error: 'NO_LLM' });
+      return;
+    }
+    try {
+      const { CorpusService } = await import('../research/corpus.service.js');
+      const { createHash } = await import('node:crypto');
+      const corpus = new CorpusService({ pool: deps.pool, llm: deps.llm, logger: app.log as never });
+      const inputs = msgs
+        .filter((m) => typeof m.text === 'string' && m.text.trim().length > 30)
+        .map((m) => {
+          const normalized = m.text.toLowerCase().replace(/\s+/g, ' ').trim();
+          const content_hash = createHash('sha256').update(normalized).digest('hex');
+          return {
+            raw_text: m.text.trim(),
+            content_hash,
+            source_type: m.source_type ?? ('csv_upload' as const),
+            ...(m.source_url ? { source_url: m.source_url } : {}),
+            ...(m.source_subreddit ? { source_subreddit: m.source_subreddit } : {}),
+          };
+        });
+      const ingest = await corpus.ingestPosts(inputs);
+      const rowIds = ingest.insertedIds.length > 0 ? ingest.insertedIds : undefined;
+      const classified = await corpus.classifyAndCheckCoverage(rowIds);
+      const replayed = await corpus.replayAndGrade(rowIds);
+      const evaluated = body.skip_eval ? { evaluated: 0 } : await corpus.evaluateFailures(rowIds);
+      return {
+        ok: true,
+        received: msgs.length,
+        inserted: ingest.insertedIds.length,
+        deduped: ingest.deduped,
+        classified: classified.classified,
+        replayed: replayed.replayed,
+        evaluated: evaluated.evaluated,
+      };
+    } catch (err) {
+      app.log.error({ err }, 'research.upload.failed');
+      reply.status(500).send({ error: 'UPLOAD_FAILED', message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  /** Paginated corpus browse. */
+  app.get('/admin/research/corpus', async (req) => {
+    const q = (req.query ?? {}) as {
+      subreddit?: string;
+      intent?: string;
+      covered?: string;
+      status?: string;
+      limit?: string;
+      offset?: string;
+    };
+    const { CorpusService } = await import('../research/corpus.service.js');
+    const corpus = new CorpusService({ pool: deps.pool, llm: deps.llm as never, logger: app.log as never });
+    return corpus.listCorpus({
+      ...(q.subreddit ? { subreddit: q.subreddit } : {}),
+      ...(q.intent ? { intent: q.intent } : {}),
+      ...(q.covered !== undefined ? { covered: q.covered === 'true' } : {}),
+      ...(q.status ? { status: q.status } : {}),
+      ...(q.limit ? { limit: parseInt(q.limit, 10) } : {}),
+      ...(q.offset ? { offset: parseInt(q.offset, 10) } : {}),
+    });
+  });
+
+  /** Single-row detail with full replay + eval data. */
+  app.get('/admin/research/corpus/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rowId = parseInt(id, 10);
+    if (!Number.isFinite(rowId)) {
+      reply.status(400).send({ error: 'BAD_ID' });
+      return;
+    }
+    const { CorpusService } = await import('../research/corpus.service.js');
+    const corpus = new CorpusService({ pool: deps.pool, llm: deps.llm as never, logger: app.log as never });
+    const row = await corpus.getCorpusRow(rowId);
+    if (!row) {
+      reply.status(404).send({ error: 'NOT_FOUND' });
+      return;
+    }
+    return row;
+  });
+
+  /** Promote a row: marks status + returns a suggested intents.json entry. */
+  app.post('/admin/research/corpus/:id/promote', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { notes?: string };
+    const rowId = parseInt(id, 10);
+    if (!Number.isFinite(rowId)) {
+      reply.status(400).send({ error: 'BAD_ID' });
+      return;
+    }
+    const { CorpusService } = await import('../research/corpus.service.js');
+    const corpus = new CorpusService({ pool: deps.pool, llm: deps.llm as never, logger: app.log as never });
+    const row = await corpus.getCorpusRow(rowId);
+    if (!row) {
+      reply.status(404).send({ error: 'NOT_FOUND' });
+      return;
+    }
+    await corpus.setAdminStatus(rowId, 'promoted_to_intent', body.notes);
+    // Suggest a new intents.json entry shape — admin reviews and commits.
+    const text = (row.raw_text as string) ?? '';
+    const intent = (row.classified_intent as string) ?? 'general';
+    const subtopic = (row.intent_id_match as string) ?? 'unknown';
+    return {
+      ok: true,
+      suggested_entry: {
+        id: `prod.${intent}.${rowId}`,
+        domain: intent,
+        subtopic,
+        variations: [text.slice(0, 200)],
+        expected_intent: intent,
+        expected_tool_calls: [],
+        must_include: [],
+        must_not_include: ['absolutely critical', 'i apologize for the confusion'],
+        safety_level: 'informational',
+        journey_stages: [],
+        source: 'production_log',
+        source_url: row.source_url ?? null,
+      },
+    };
+  });
+
+  /** Reject a row (spam / off-topic / not-actionable). */
+  app.post('/admin/research/corpus/:id/reject', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { notes?: string };
+    const rowId = parseInt(id, 10);
+    if (!Number.isFinite(rowId)) {
+      reply.status(400).send({ error: 'BAD_ID' });
+      return;
+    }
+    const { CorpusService } = await import('../research/corpus.service.js');
+    const corpus = new CorpusService({ pool: deps.pool, llm: deps.llm as never, logger: app.log as never });
+    await corpus.setAdminStatus(rowId, 'rejected', body.notes);
+    return { ok: true };
+  });
+
+  /** The prioritized improvement roadmap. */
+  app.get('/admin/research/coverage-gaps', async () => {
+    const { CorpusService } = await import('../research/corpus.service.js');
+    const corpus = new CorpusService({ pool: deps.pool, llm: deps.llm as never, logger: app.log as never });
+    return corpus.coverageGaps();
+  });
 }

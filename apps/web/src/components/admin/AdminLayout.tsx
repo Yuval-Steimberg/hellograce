@@ -26,6 +26,7 @@ import {
   X,
   ChevronRight,
   Target,
+  Microscope,
 } from 'lucide-react';
 
 const NAV = [
@@ -42,6 +43,7 @@ const NAV = [
   { to: '/admin/regression', label: 'Regression Tests', icon: CheckSquare, end: false },
   { to: '/admin/replay', label: 'Replay & Diff', icon: GitCompare, end: false },
   { to: '/admin/coverage', label: 'Coverage Suite', icon: Target, end: false },
+  { to: '/admin/research', label: 'Research', icon: Microscope, end: false },
   { to: '/admin/content-rules', label: 'Content Rules', icon: Shield, end: false },
   { to: '/admin/subscription-messages', label: 'Subscription Messages', icon: CreditCard, end: false },
   { to: '/admin/system-health', label: 'System Health', icon: Activity, end: false },

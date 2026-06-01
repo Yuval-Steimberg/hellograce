@@ -228,6 +228,54 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   if (synthetic.length > 0) {
     promptOptimizer.injectSyntheticFeedback(synthetic);
   }
+  // Phase 17 weekly research scrape. Pulls top-of-week from default
+  // subreddits → ingest → classify → replay + grade → LLM-eval failures.
+  // Best-effort; each stage wrapped in try/catch. Sends admin WhatsApp
+  // summary when ADMIN_PHONE is set.
+  const researchScrape = async (): Promise<void> => {
+    try {
+      const { scrapeMultiple, DEFAULT_SUBREDDITS } = await import('./research/reddit-scraper.js');
+      const { CorpusService, scrapedPostToIngestInput } = await import('./research/corpus.service.js');
+
+      logger.info('research.weekly.start');
+      const scraped = await scrapeMultiple([...DEFAULT_SUBREDDITS], { limit: 50, sort: 'top', time: 'week' });
+      const posts = scraped.flatMap((s) => s.posts);
+      const corpus = new CorpusService({ pool, llm, logger });
+      const ingest = await corpus.ingestPosts(posts.map(scrapedPostToIngestInput));
+      const rowIds = ingest.insertedIds.length > 0 ? ingest.insertedIds : undefined;
+      const classified = await corpus.classifyAndCheckCoverage(rowIds);
+      const replayed = await corpus.replayAndGrade(rowIds, { concurrency: 3 });
+      const evaluated = await corpus.evaluateFailures(rowIds);
+      const gaps = await corpus.coverageGaps();
+      const uncoveredCount = Object.values(gaps.by_intent).reduce(
+        (s, b) => s + b.uncovered, 0,
+      );
+      const weakest = gaps.weakest_dims[0];
+      logger.info(
+        { inserted: ingest.insertedIds.length, deduped: ingest.deduped, classified: classified.classified, replayed: replayed.replayed, evaluated: evaluated.evaluated },
+        'research.weekly.done',
+      );
+
+      // Send admin WhatsApp summary
+      if (env.ADMIN_PHONE) {
+        const summary = [
+          '🔬 Research scrape — weekly',
+          ``,
+          `📥 Scraped: ${posts.length} posts from ${DEFAULT_SUBREDDITS.length} subs`,
+          `✨ New rows: ${ingest.insertedIds.length} (${ingest.deduped} dedup hits)`,
+          `🔎 Classified: ${classified.classified} | Uncovered intents: ${uncoveredCount}`,
+          `🤖 Sandbox replays: ${replayed.replayed} | LLM-evaluated failures: ${evaluated.evaluated}`,
+          weakest ? `📉 Weakest dim: ${weakest.dim} (avg ${weakest.avg}/5 over ${weakest.count} evals)` : '',
+          ``,
+          `Review at graceglp.com/admin/research`,
+        ].filter(Boolean).join('\n');
+        await sender.send({ to: env.ADMIN_PHONE, body: summary, channel: 'whatsapp', raw: true });
+      }
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'research.weekly.failed');
+    }
+  };
+
   const scheduler = new Scheduler({
     users,
     sender,
@@ -235,6 +283,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     logger,
     redis,
     promptOptimizer,
+    researchScrape,
     engagementCooldownHours: env.ENGAGEMENT_COOLDOWN_HOURS,
   });
 

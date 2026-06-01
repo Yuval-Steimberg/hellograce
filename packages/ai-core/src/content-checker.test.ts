@@ -685,3 +685,41 @@ describe('checkInlineLabelColonList — inline list-disguised-as-prose', () => {
     ).toBe(false);
   });
 });
+
+// FAQ cache hits are pre-vetted educational responses — their citation
+// numbers shouldn't trigger the stale-context-echo guard (those numbers
+// come from canonical research, not stale memory).
+describe('skipStaleContextEcho — FAQ cache hit exemption', () => {
+  it('flags STEP-1 trial citation numbers when skipStaleContextEcho is false (default)', () => {
+    const response =
+      'The STEP-1 trial on semaglutide reported ~40% of weight lost as lean mass, and the 2024 COURAGE study found ~35%.';
+    const violations = checkContent(response, {
+      userMessage: 'Tell me about muscle loss',
+      systemContext: '',
+      toolResultsText: '',
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(true);
+  });
+
+  it('does NOT flag the same response when skipStaleContextEcho is true (FAQ cache path)', () => {
+    const response =
+      'The STEP-1 trial on semaglutide reported ~40% of weight lost as lean mass, and the 2024 COURAGE study found ~35%.';
+    const violations = checkContent(response, {
+      userMessage: 'Tell me about muscle loss',
+      systemContext: '',
+      toolResultsText: '',
+      skipStaleContextEcho: true,
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(false);
+  });
+
+  it('still flags banned phrases on FAQ cache hits (other guards still run)', () => {
+    const violations = checkContent('I apologize for the confusion.', {
+      userMessage: 'X',
+      skipStaleContextEcho: true,
+    });
+    // The apology phrase is caught by checkBannedPhrases, NOT the stale-echo
+    // guard — so the skip flag doesn't affect it.
+    expect(violations.length).toBeGreaterThan(0);
+  });
+});

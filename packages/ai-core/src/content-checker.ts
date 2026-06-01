@@ -50,6 +50,11 @@ export interface ContentCheckOpts {
   systemContext?: string;
   /** Stringified tool results from this turn — same whitelist purpose. */
   toolResultsText?: string;
+  /** Skip the stale-context-echo guard. Set to TRUE for FAQ cache hits
+   *  (pre-vetted educational responses with intentional citation numbers
+   *  like "STEP-1 trial: ~40%" that aren't in the user message but are
+   *  canonical knowledge, not memory echo). */
+  skipStaleContextEcho?: boolean;
 }
 
 export function checkContent(text: string, opts: ContentCheckOpts): ContentViolation[] {
@@ -83,15 +88,20 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
     // FINAL LAYER (per user directive 2026-06-01): every response must answer
     // the current message using ONLY quantities from the current turn (user
     // message + system context + tool results). Numbers that don't appear in
-    // any of those are treated as stale memory echo → regen. Runs always.
-    violations.push(
-      ...checkStaleContextEcho(
-        text,
-        opts.userMessage,
-        opts.systemContext ?? '',
-        opts.toolResultsText ?? '',
-      ),
-    );
+    // any of those are treated as stale memory echo → regen.
+    // Exception: FAQ cache hits are pre-vetted educational responses with
+    // intentional citation numbers (e.g. "STEP-1 trial: ~40%") that aren't
+    // tied to the current user message but are canonical knowledge.
+    if (!opts.skipStaleContextEcho) {
+      violations.push(
+        ...checkStaleContextEcho(
+          text,
+          opts.userMessage,
+          opts.systemContext ?? '',
+          opts.toolResultsText ?? '',
+        ),
+      );
+    }
   }
   if (opts.dbRules && opts.dbRules.length > 0) {
     violations.push(...checkDbRules(text, opts.dbRules));

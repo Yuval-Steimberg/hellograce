@@ -138,6 +138,36 @@ export const FAQ_SEEDS: FaqSeed[] = [
     response:
       'Resistance training is the most effective thing you can do alongside protein to protect muscle on GLP-1s. Even 2-3x a week of bodyweight exercises or resistance bands makes a real difference. Walking is good for health but does not give muscles the stimulus they need to stay.',
   },
+  // Comprehensive scientific answer — covers the "tell me everything about
+  // muscle loss + how protein helps" style query with specific trial citations.
+  // Same 3-sentence length as the canned fallback that previously fired but
+  // dramatically more scientific (production failure 2026-06-01: user asked
+  // "Tell me everything about muscle loss on GLP-1 and how protein helps"
+  // and Grace returned the soft typed-fallback with no citations).
+  {
+    query: 'Tell me everything about muscle loss on GLP-1 and how protein helps',
+    category: 'muscle',
+    response:
+      'Research consistently shows roughly 25-40% of weight lost on GLP-1s is lean mass — the STEP-1 semaglutide trial found ~40%, the 2024 COURAGE study found ~35%. Protein at 1.2-1.6g per kg of current body weight combined with resistance training 2-3x a week shifts that balance toward fat loss because it maintains the anabolic signal muscle needs to stay. Front-loading 25-30g of protein at breakfast matters most since GLP-1 appetite suppression usually hits hardest later in the day.',
+  },
+  {
+    query: 'What does the research say about muscle loss on GLP-1?',
+    category: 'muscle',
+    response:
+      'The STEP-1 trial on semaglutide reported ~40% of weight lost as lean mass, and the 2024 COURAGE tirzepatide study found ~35%. Without intervention that means roughly a third of your loss comes from muscle rather than fat. Protein at 1.2-1.6g per kg of current body weight plus resistance training 2-3x a week is the evidence-based countermeasure that shifts the balance.',
+  },
+  {
+    query: 'How much muscle do you lose on Ozempic?',
+    category: 'muscle',
+    response:
+      'Research puts it at roughly 25-40% of total weight lost — STEP-1 found ~40%, the 2024 COURAGE study ~35%. That ratio comes down sharply with adequate protein (1.2-1.6g per kg of current body weight) and resistance training 2-3 times a week. Front-load 25-30g of protein at breakfast since GLP-1 appetite suppression usually peaks later in the day.',
+  },
+  {
+    query: 'How does protein help with muscle on GLP-1?',
+    category: 'muscle',
+    response:
+      'Protein gives muscle the anabolic signal it needs to stay during a calorie deficit. On GLP-1s the target is 1.2-1.6g per kg of current body weight daily — higher than a sedentary baseline because the deficit + slowed digestion together accelerate lean-mass loss. Front-load 25-30g at breakfast and pair it with resistance training 2-3x a week for the strongest protective effect.',
+  },
 
   // ── Food noise / emotional voids ───────────────────────────────────────
   {

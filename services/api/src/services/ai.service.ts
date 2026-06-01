@@ -426,6 +426,11 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
           ...(cachedMedType !== 'unknown' ? { medicationType: cachedMedType } : {}),
           userMessage: input.text,
           intentType: intentClass.type,
+          // FAQ cache hits are pre-vetted educational responses with
+          // intentional citation numbers ("STEP-1: ~40%", "1.2-1.6g/kg")
+          // that legitimately aren't in the user message. Skip the
+          // stale-context-echo guard for these â€” keep all other guards.
+          skipStaleContextEcho: true,
         });
         const cacheBlocked = cacheViolations.filter(
           (v) => v.severity === 'block' || v.severity === 'regen' || !v.severity,

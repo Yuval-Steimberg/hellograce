@@ -2749,4 +2749,26 @@ Banned phrases must be exact lowercase substrings from Grace's actual response. 
     const corpus = new CorpusService({ pool: deps.pool, llm: deps.llm as never, logger: app.log as never });
     return corpus.coverageGaps();
   });
+
+  /**
+   * POST /admin/research/auto-fix
+   * Manual trigger for the auto-fix pipeline.
+   * Same engine as the every-3-days cron — useful for on-demand runs.
+   * Body: { sample_size?: number, dry_run?: boolean }
+   */
+  app.post('/admin/research/auto-fix', async (req) => {
+    const body = (req.body ?? {}) as { sample_size?: number; dry_run?: boolean };
+    const sampleSize = Math.max(1, Math.min(200, body.sample_size ?? 60));
+    const dryRun = body.dry_run ?? false;
+    const { ResearchAutoFix } = await import('../research/auto-fix.js');
+    const autoFix = new ResearchAutoFix({
+      pool: deps.pool,
+      llm: deps.llm as never,
+      logger: app.log as never,
+      redis: deps.redis as never,
+      promptOptimizer: deps.promptOptimizer as never,
+    });
+    const report = await autoFix.run({ sampleSize, dryRun });
+    return report;
+  });
 }

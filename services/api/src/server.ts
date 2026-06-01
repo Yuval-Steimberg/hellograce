@@ -276,6 +276,47 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     }
   };
 
+  // Phase 18: research auto-fix — re-replay corpus failures, generate content
+  // rules, inject synthetic feedback into the prompt optimizer. Runs every 3
+  // days and on startup if overdue. Best-effort; any failure is logged only.
+  const { ResearchAutoFix } = await import('./research/auto-fix.js');
+  const autoFix = new ResearchAutoFix({ pool, llm, logger, redis, promptOptimizer });
+
+  const researchAutoFix = async (): Promise<void> => {
+    try {
+      logger.info('research.auto_fix.cron.start');
+      const report = await autoFix.run({ sampleSize: 60 });
+      logger.info(report, 'research.auto_fix.cron.done');
+      if (env.ADMIN_PHONE) {
+        const lines = [
+          '🔧 Grace auto-fix run',
+          ``,
+          `📋 Posts analyzed: ${report.postsAnalyzed}`,
+          `✅ Already fixed: ${report.alreadyFixed} | ⚠️ Still failing: ${report.stillFailing}`,
+          `📏 Content rules added: ${report.contentRulesGenerated}`,
+          `🧠 Synthetic feedback injected: ${report.syntheticFeedbackInjected}`,
+          report.topPatterns.length > 0
+            ? `🔍 Top patterns: ${report.topPatterns.slice(0, 3).map((p) => `${p.pattern} (${p.count}×)`).join(', ')}`
+            : '',
+          report.weakestDimensions.length > 0
+            ? `📉 Weakest dim: ${report.weakestDimensions[0]?.dim} (avg ${report.weakestDimensions[0]?.avgScore}/5)`
+            : '',
+          ``,
+          `Review at graceglp.com/admin/research`,
+        ].filter(Boolean).join('\n');
+        await sender.send({ to: env.ADMIN_PHONE, body: lines, channel: 'whatsapp', raw: true });
+      }
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'research.auto_fix.cron.failed');
+    }
+  };
+
+  // Run auto-fix on startup if it hasn't run recently (starts tonight if overdue).
+  // 90s delay so the app is fully warm (prompt optimizer, FAQ cache, etc.) first.
+  setTimeout(() => void autoFix.runIfMissedRecently().catch((err) =>
+    logger.error({ err }, 'research.auto_fix.startup_check_failed'),
+  ), 90_000);
+
   const scheduler = new Scheduler({
     users,
     sender,
@@ -284,6 +325,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     redis,
     promptOptimizer,
     researchScrape,
+    researchAutoFix,
     engagementCooldownHours: env.ENGAGEMENT_COOLDOWN_HOURS,
   });
 

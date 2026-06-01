@@ -23,6 +23,9 @@ interface SchedulerDeps {
   /** Phase 17: research scrape (Reddit → corpus → classify → replay → grade).
    *  Runs every Sunday 5am UTC. Best-effort; failures logged but don't block. */
   researchScrape?: () => Promise<void>;
+  /** Phase 18: research auto-fix (re-replay corpus failures → generate content
+   *  rules + inject synthetic feedback). Runs every 3 days at 1am UTC. */
+  researchAutoFix?: () => Promise<void>;
   /** Engagement cooldown window in hours. After a user sends a message,
    *  all non-critical proactive reminders are suppressed for this window.
    *  Default 2h. Set to 0 to disable. Configurable via ENGAGEMENT_COOLDOWN_HOURS. */
@@ -69,6 +72,14 @@ export class Scheduler {
     if (this.deps.researchScrape) {
       this.tasks.push(
         cron.schedule('0 5 * * 0', () => void this.deps.researchScrape!()),
+      );
+    }
+    // Phase 18: auto-fix — every 3 days at 1am UTC. Re-replays recent corpus
+    // failures through the current Grace, generates content rules for recurring
+    // patterns, and injects synthetic feedback into the nightly prompt optimizer.
+    if (this.deps.researchAutoFix) {
+      this.tasks.push(
+        cron.schedule('0 1 */3 * *', () => void this.deps.researchAutoFix!()),
       );
     }
     this.deps.logger.info('scheduler.started');

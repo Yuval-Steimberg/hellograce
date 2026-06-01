@@ -10,6 +10,7 @@ import {
   XCircle,
   AlertTriangle,
   Upload,
+  Wrench,
 } from 'lucide-react';
 
 interface CorpusRow {
@@ -57,6 +58,17 @@ interface CorpusRowDetail extends CorpusRow {
   notes: string | null;
 }
 
+interface AutoFixReport {
+  postsAnalyzed: number;
+  stillFailing: number;
+  alreadyFixed: number;
+  contentRulesGenerated: number;
+  syntheticFeedbackInjected: number;
+  topPatterns: Array<{ pattern: string; count: number; action: string }>;
+  weakestDimensions: Array<{ dim: string; avgScore: number }>;
+  runAt: string;
+}
+
 interface CoverageGaps {
   by_intent: Record<string, { covered: number; uncovered: number; total: number }>;
   by_subreddit: Record<string, { covered: number; uncovered: number; total: number }>;
@@ -92,6 +104,8 @@ export default function ResearchPage() {
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [scrapeLimit, setScrapeLimit] = useState(20);
   const [scrapeSubs, setScrapeSubs] = useState<string[]>(['Ozempic']);
+  const [autoFixing, setAutoFixing] = useState(false);
+  const [autoFixReport, setAutoFixReport] = useState<AutoFixReport | null>(null);
 
   const token = getToken();
 
@@ -173,6 +187,29 @@ export default function ResearchPage() {
       toast.error(`Scrape failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setScraping(false);
+    }
+  };
+
+  const runAutoFix = async (dryRun = false) => {
+    setAutoFixing(true);
+    setAutoFixReport(null);
+    try {
+      const r = await fetch(`${API}/admin/research/auto-fix`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sample_size: 60, dry_run: dryRun }),
+      });
+      if (!r.ok) throw new Error(await r.text() || `HTTP ${r.status}`);
+      const data = (await r.json()) as AutoFixReport;
+      setAutoFixReport(data);
+      toast.success(
+        `Auto-fix: ${data.alreadyFixed} fixed · ${data.stillFailing} still failing · ${data.contentRulesGenerated} new rules · ${data.syntheticFeedbackInjected} feedback injected`,
+      );
+      if (!dryRun) await loadCorpus();
+    } catch (err) {
+      toast.error(`Auto-fix failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setAutoFixing(false);
     }
   };
 
@@ -282,6 +319,70 @@ export default function ResearchPage() {
                 {scraping ? 'Scraping…' : 'Run scrape'}
               </button>
             </div>
+          </div>
+
+          {/* Auto-fix panel */}
+          <div className="rounded-lg border border-amber-700/40 bg-amber-950/20 p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Wrench className="h-4 w-4 text-amber-400" />
+              <h2 className="text-sm font-medium text-amber-300">Auto-fix (runs every 3 days automatically)</h2>
+            </div>
+            <p className="text-xs text-slate-400">
+              Re-replays failing corpus posts through the current Grace prompt. Generates content rules for
+              recurring bad patterns and injects synthetic feedback into the nightly prompt optimizer.
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => void runAutoFix(false)}
+                disabled={autoFixing}
+                className="inline-flex items-center gap-2 rounded bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-50"
+              >
+                {autoFixing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}
+                {autoFixing ? 'Running…' : 'Run auto-fix'}
+              </button>
+              <button
+                onClick={() => void runAutoFix(true)}
+                disabled={autoFixing}
+                className="inline-flex items-center gap-2 rounded border border-slate-600 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+              >
+                Dry-run (analyze only)
+              </button>
+            </div>
+            {autoFixReport && (
+              <div className="mt-3 rounded bg-slate-900 p-3 text-xs space-y-1.5">
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-slate-300">
+                  <span>Posts analyzed: <strong className="text-white">{autoFixReport.postsAnalyzed}</strong></span>
+                  <span>Already fixed: <strong className="text-green-400">{autoFixReport.alreadyFixed}</strong></span>
+                  <span>Still failing: <strong className="text-red-400">{autoFixReport.stillFailing}</strong></span>
+                  <span>Content rules added: <strong className="text-amber-400">{autoFixReport.contentRulesGenerated}</strong></span>
+                  <span>Synthetic feedback: <strong className="text-indigo-400">{autoFixReport.syntheticFeedbackInjected}</strong></span>
+                  {autoFixReport.weakestDimensions[0] && (
+                    <span>Weakest dim: <strong className="text-slate-200">{autoFixReport.weakestDimensions[0].dim} ({autoFixReport.weakestDimensions[0].avgScore}/5)</strong></span>
+                  )}
+                </div>
+                {autoFixReport.topPatterns.length > 0 && (
+                  <div className="pt-1.5 border-t border-slate-700">
+                    <span className="text-slate-400">Top patterns:</span>
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {autoFixReport.topPatterns.slice(0, 6).map((p) => (
+                        <span
+                          key={p.pattern}
+                          className={`rounded px-2 py-0.5 text-xs ${
+                            p.action === 'content_rule'
+                              ? 'bg-amber-900/50 text-amber-300'
+                              : p.action === 'synthetic_feedback'
+                              ? 'bg-indigo-900/50 text-indigo-300'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {p.pattern} ({p.count}×)
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Filters */}

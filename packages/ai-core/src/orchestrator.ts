@@ -424,6 +424,21 @@ export class AIOrchestrator {
     // ─── Step 5: Content-rule enforcement ──────────────────────────────
     // Three severity levels: block (never send, immediate safe fallback),
     // regen (LLM must rewrite), log (telemetry only, response still sent).
+    // Stale-context-echo whitelist (last layer per user directive 2026-06-01):
+    //   - systemContext: the full system prompt this turn was built with.
+    //     Includes the THIS USER'S DATA block with today's protein/calorie
+    //     totals, weight, etc. Any number Grace references should appear here
+    //     (or in the user message or tool results).
+    //   - toolResultsText: stringified tool outputs from this turn. Lets
+    //     Grace use fresh numbers from log_food / get_food_summary calls
+    //     without triggering the stale-echo guard.
+    const toolResultsText = toolResults
+      .map((r) => {
+        if (r.output === null || r.output === undefined) return '';
+        if (typeof r.output === 'string') return r.output;
+        try { return JSON.stringify(r.output); } catch { return ''; }
+      })
+      .join(' ');
     const contentCheckOpts = {
       ...(input.dietaryRestriction ? { dietaryRestriction: input.dietaryRestriction } : {}),
       ...(input.foodDislikes && input.foodDislikes.length > 0 ? { foodDislikes: input.foodDislikes } : {}),
@@ -432,6 +447,8 @@ export class AIOrchestrator {
       ...(input.dbRules && input.dbRules.length > 0 ? { dbRules: input.dbRules } : {}),
       userMessage: input.text,
       intentType: classification.type,
+      systemContext: baseSystem,
+      toolResultsText,
     };
     const contentViolations: ContentViolation[] = checkContent(validated.text, contentCheckOpts);
 

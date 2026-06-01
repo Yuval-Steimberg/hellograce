@@ -547,3 +547,103 @@ describe('appointment_prep exemption from two-question check', () => {
     expect(violations.some((v) => v.code === 'two_questions')).toBe(true);
   });
 });
+
+// ── checkStaleContextEcho (FINAL LAYER, 2026-06-01) ─────────────────────────
+// Verifies that Grace's response only references quantities that come from
+// THIS turn (current user message + system context + tool results). Numbers
+// that appear out of nowhere (memory echo) trigger regen.
+
+describe('checkStaleContextEcho — final-layer memory guard', () => {
+  it('flags the exact production failure (40g from prior day surfacing on a greeting)', () => {
+    // User said "Morning, felling good". Grace responds with stale "40g" from
+    // a previous day's protein discussion + asks for re-logging. NO 40g
+    // anywhere in current user msg, system context, or tool results.
+    const response =
+      "I apologize for the confusion. I incorrectly stated 40g earlier. Based on what I have logged, you're currently at 0g protein for today.";
+    const violations = checkContent(response, {
+      userMessage: 'Morning, felling good',
+      systemContext: '━━━ THIS USER — Personal daily protein target: 60g — use THIS number, not a generic 80g. ━━━',
+      toolResultsText: '',
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(true);
+  });
+
+  it('does NOT flag numbers that ARE in the system context (legitimate usage)', () => {
+    // Grace says "You're at 40g of your 60g target." The 40g comes from the
+    // get_food_summary tool, the 60g from the user's protein_goal_grams.
+    // Both should appear in scope → no violation.
+    const response = "Two eggs logged — about 14g. You're at 40g of your 60g target today.";
+    const violations = checkContent(response, {
+      userMessage: 'I just had two eggs',
+      systemContext: 'Total protein TODAY: 26g / 60g target (34g remaining)',
+      toolResultsText: '{"protein_g":14,"daily_protein_g":40}',
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(false);
+  });
+
+  it('does NOT flag tiny numbers in natural prose (1-9)', () => {
+    // Small numbers appear in normal speech ("a couple", "one or two", "3 days")
+    // and shouldn't trigger the guard.
+    const response = 'A couple of small meals every 3 or 4 hours often helps.';
+    const violations = checkContent(response, {
+      userMessage: 'How do I manage nausea?',
+      systemContext: '',
+      toolResultsText: '',
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(false);
+  });
+
+  it('flags a "Week 8" reference when GLP-1 week is NOT in current scope', () => {
+    // Grace shouldn't surface a specific journey week from memory if it's not
+    // anchored in this turn's context.
+    const response = "You're in Week 8 of your journey — appetite changes are common at this point.";
+    const violations = checkContent(response, {
+      userMessage: 'Why do I feel less hungry?',
+      systemContext: '',
+      toolResultsText: '',
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(true);
+  });
+
+  it('does NOT flag a "Week 12" reference when system context has GLP-1 week = 12', () => {
+    const response = "Week 12 is when many people start noticing food preferences shifting.";
+    const violations = checkContent(response, {
+      userMessage: 'Why do I want different foods now?',
+      systemContext: 'GLP-1 week: Week 12 (started Feb 14, 2026)',
+      toolResultsText: '',
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(false);
+  });
+
+  it('flags a fabricated calorie number when no tool result or context provides it', () => {
+    const response = "You've had about 1450 kcal today, which is right on track.";
+    const violations = checkContent(response, {
+      userMessage: 'How am I doing on calories?',
+      systemContext: 'Personal daily calorie target: 1800 kcal',
+      toolResultsText: '',
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(true);
+  });
+
+  it('does NOT flag the user\'s OWN number ("I weighed 175 lbs today")', () => {
+    // If the user says "I weighed 175 today", Grace replying "175 lbs is..."
+    // is fine — the number came from the user message itself.
+    const response = "175 lbs is a solid checkpoint — how are you feeling overall?";
+    const violations = checkContent(response, {
+      userMessage: 'I weighed 175 today',
+      systemContext: '',
+      toolResultsText: '',
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(false);
+  });
+
+  it('does NOT flag a response with no specific quantities at all', () => {
+    const response = 'So glad to hear that 🧡';
+    const violations = checkContent(response, {
+      userMessage: 'Morning, feeling good',
+      systemContext: 'Total protein TODAY: 0g / 60g target',
+      toolResultsText: '',
+    });
+    expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(false);
+  });
+});

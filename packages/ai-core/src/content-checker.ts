@@ -44,6 +44,12 @@ export interface ContentCheckOpts {
   /** Classified message intent. Used to skip the two-question check for
    *  appointment_prep (where a list of questions IS the deliverable). */
   intentType?: string;
+  /** System context block (today's protein/calorie totals, user profile,
+   *  weight, etc.) — used by checkStaleContextEcho to whitelist numbers
+   *  that are legitimately part of the current turn's context. */
+  systemContext?: string;
+  /** Stringified tool results from this turn — same whitelist purpose. */
+  toolResultsText?: string;
 }
 
 export function checkContent(text: string, opts: ContentCheckOpts): ContentViolation[] {
@@ -74,6 +80,18 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
     violations.push(...checkFoodLogPreambleLeak(text, opts.userMessage));
     violations.push(...checkUserMessageEcho(text, opts.userMessage));
     violations.push(...checkEmotionBeforeData(text, opts.userMessage));
+    // FINAL LAYER (per user directive 2026-06-01): every response must answer
+    // the current message using ONLY quantities from the current turn (user
+    // message + system context + tool results). Numbers that don't appear in
+    // any of those are treated as stale memory echo → regen. Runs always.
+    violations.push(
+      ...checkStaleContextEcho(
+        text,
+        opts.userMessage,
+        opts.systemContext ?? '',
+        opts.toolResultsText ?? '',
+      ),
+    );
   }
   if (opts.dbRules && opts.dbRules.length > 0) {
     violations.push(...checkDbRules(text, opts.dbRules));
@@ -205,6 +223,111 @@ function checkUserMessageEcho(response: string, userMessage: string): ContentVio
   return [{
     code: 'user_message_echo',
     message: `Response opens by echoing the user's own words back ("${userWords.slice(0, N).join(' ')}..."). Rewrite so the first words are Grace's own framing — never parrot the user's sentence as a prefix. Example: user says "Feeling good, just ate two eggs and salad" → Grace replies "Two eggs and a salad — about 15g protein. You're at Xg of your Yg target today." NOT "Feeling good, just ate two eggs and salad is about 15g..."`,
+    severity: 'regen',
+  }];
+}
+
+// ── Stale-context echo (FINAL LAYER — runs on EVERY response) ────────────────
+//
+// User directive 2026-06-01: "The context and memory issue cannot happen in
+// any case again. The last layer should be that if Grace answers the last
+// question without repeating any of the words [from prior turns]. This
+// layer should be for every response."
+//
+// Production failure: user said "Morning, felling good" and Grace replied
+// with "I apologize for the confusion. I incorrectly stated 40g earlier."
+// The "40g" was a number from a PRIOR day's conversation — neither in the
+// current user message nor in the current system context. This is the
+// canonical stale-context echo: Grace surfacing a specific quantity from
+// memory that has no anchor in the current turn.
+//
+// Detection: extract specific quantities (numbers with units) from Grace's
+// response and verify each one is present in the legitimate scope of this
+// turn — current user message OR system context OR current tool results.
+// Anything else is treated as a stale echo and triggers regen.
+//
+// Why numbers and not arbitrary words: words like "you", "today",
+// "protein", "feeling" recur naturally and aren't a memory leak. Specific
+// quantities like "40g" / "120 kcal" / "175 lbs" / "Week 8" only enter a
+// response when Grace is referencing concrete data — and that data must
+// come from the current turn, not memory.
+
+// Quantity patterns: matches "40g", "40 grams", "120 kcal", "175 lbs",
+// "2 eggs", "30 mins", "Week 8", etc. Capture group 1 is the bare number
+// so the whitelist check can match either "40g" verbatim or "40" near a
+// similar unit in the scope text.
+const RESPONSE_QUANTITY_RE = /\b(\d{1,4}(?:\.\d{1,2})?)\s*(g|grams?|kcal|kg|lbs?|pounds?|oz|ounces?|cal|calories|kj|mins?|minutes?|hours?|hrs?|days?|weeks?|months?|years?|eggs?|scoops?|cups?|tbsp|tsp|servings?|pieces?|slices?)\b/gi;
+// "Week 8" / "Month 3" — capture the inverted form too (label before number).
+const RESPONSE_INVERTED_QUANTITY_RE = /\b(week|month|year|day|stage|phase|month|level)\s+(\d{1,3})\b/gi;
+// Numbers without units that we still care about — only flag bare integers
+// 10+ that aren't already covered by a unit pattern. Smaller numbers
+// (1-9) appear in natural prose ("a few", "one or two") so we skip them.
+const RESPONSE_BARE_LARGE_NUMBER_RE = /\b(\d{2,4})\b(?!\s*(?:g|grams?|kcal|kg|lbs?|pounds?|oz|ounces?|cal|calories|mins?|minutes?|hours?|hrs?|days?|weeks?|months?|years?|eggs?|scoops?|cups?|am|pm|st|nd|rd|th))/gi;
+
+interface ExtractedQuantity {
+  /** The raw number captured (e.g. "40", "8"). */
+  number: string;
+  /** Whether the number is part of a labeled inverted pattern (e.g. "Week 8")
+   *  — those are always meaningful regardless of magnitude. The bare-number
+   *  and unit-suffixed patterns get the "skip if <= 9" small-number filter. */
+  alwaysMeaningful: boolean;
+}
+
+function extractQuantities(text: string): ExtractedQuantity[] {
+  const out: ExtractedQuantity[] = [];
+  for (const m of text.matchAll(RESPONSE_QUANTITY_RE)) {
+    if (m[1]) out.push({ number: m[1], alwaysMeaningful: false });
+  }
+  // Inverted patterns ("Week 8", "Month 3", "Day 12") — the LABEL makes the
+  // number significant even when small, so it must be in scope.
+  for (const m of text.matchAll(RESPONSE_INVERTED_QUANTITY_RE)) {
+    if (m[2]) out.push({ number: m[2], alwaysMeaningful: true });
+  }
+  for (const m of text.matchAll(RESPONSE_BARE_LARGE_NUMBER_RE)) {
+    if (m[1]) out.push({ number: m[1], alwaysMeaningful: false });
+  }
+  return out;
+}
+
+/**
+ * Check if Grace's response contains specific quantities that aren't in
+ * the legitimate scope of THIS turn (current user message, system context,
+ * or current tool results). Stale quantities → regen.
+ *
+ * IMPORTANT: keep this conservative — false positives here cause needless
+ * regen latency. The whitelist is generous (any appearance of the bare
+ * number anywhere in scope counts as a match) so common cases pass through.
+ */
+function checkStaleContextEcho(
+  response: string,
+  userMessage: string,
+  systemContext: string,
+  toolResultsText: string,
+): ContentViolation[] {
+  const quantities = extractQuantities(response);
+  if (quantities.length === 0) return [];
+
+  const scope = `${userMessage} ${systemContext} ${toolResultsText}`.toLowerCase();
+  // Treat numbers as legitimate when:
+  //   1. The bare number appears anywhere in scope (e.g. response says "40g",
+  //      system context shows "Total protein TODAY: 40g / 60g target").
+  //   2. For non-labeled numbers only: the number is too small (1-9) to be a
+  //      memory anchor — those appear naturally in prose ("a few", "3 days").
+  //      Labeled patterns like "Week 8" are always meaningful even when small.
+  const stale = quantities.filter((q) => {
+    const num = parseFloat(q.number);
+    if (Number.isNaN(num)) return false;
+    if (!q.alwaysMeaningful && num <= 9) return false;
+    return !scope.includes(q.number);
+  }).map((q) => q.number);
+
+  if (stale.length === 0) return [];
+
+  // Dedupe so the regen message stays readable.
+  const unique = Array.from(new Set(stale)).slice(0, 5);
+  return [{
+    code: 'stale_context_echo',
+    message: `Response contains specific quantities not in the current message or context: ${unique.join(', ')}. These appear to be carried over from a prior turn (stale memory echo). Rewrite the response to answer ONLY the current message: "${userMessage.slice(0, 100)}". If you don't have a number for the current turn, don't invent one or recall an old one — just answer the actual question or feeling.`,
     severity: 'regen',
   }];
 }

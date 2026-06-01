@@ -327,7 +327,11 @@ export function enforceFormat(
   // After list_intro_stripped:
   //   "...weight management. 1."
   // The bare "1." reads as broken. Strip dangling markers from the end.
-  const trailingMarkerRe = /(?:\s+\d+[.)]|\s+[-*•]\s*|\s*:)\s*$/;
+  // Only strip an orphan numbered marker ("1.", "2)") that follows another
+  // sentence ending — that's the truncated-list pattern. A trailing " 4." in
+  // "...by week 4." is a quantity, NOT a list marker, and must be kept.
+  // Bullet markers and dangling colons stay broadly matched.
+  const trailingMarkerRe = /(?:[.!?]\s+\d+[.)]|\s+[-*•]\s*|\s*:)\s*$/;
   if (trailingMarkerRe.test(text)) {
     text = text.replace(trailingMarkerRe, '').trimEnd();
     fixes.push('trailing_list_marker_stripped');
@@ -396,6 +400,67 @@ export function enforceFormat(
   if (/\n{2,}/.test(text)) {
     text = text.replace(/\n{2,}/g, ' ').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
     fixes.push('paragraphs_collapsed');
+  }
+
+  // ─── Missing space after sentence terminator ─────────────────────────────
+  // Production failure 2026-06-01: "I don't have any food logged for you
+  // today, so you're at 0g protein so far.You're at 0g protein for the day
+  // so far." — period directly followed by a capital letter with no space.
+  // Insert the missing space so the response reads cleanly.
+  if (/[.!?][A-Z]/.test(text)) {
+    text = text.replace(/([.!?])([A-Z])/g, '$1 $2');
+    fixes.push('missing_space_after_period');
+  }
+
+  // ─── Consecutive duplicate sentences ─────────────────────────────────────
+  // Production failure 2026-06-01: Grace emitted near-identical sentences
+  // back to back ("...so you're at 0g protein so far." then "You're at 0g
+  // protein for the day so far."). Two detectors:
+  //
+  //   (a) EXACT-DUPLICATE sentences (case-insensitive, terminal-punct
+  //       agnostic) — always safe to dedupe.
+  //   (b) Same SPECIFIC QUANTITY (like "0g protein", "40g", "150 kcal")
+  //       repeated in two different sentences within the response. That's
+  //       the production pattern even when wording differs.
+  {
+    const sentenceSplit = text.split(/(?<=[.!?])\s+/);
+    if (sentenceSplit.length >= 2) {
+      // (a) Exact-duplicate dedupe — first occurrence wins.
+      const seenExact = new Set<string>();
+      const kept: string[] = [];
+      for (const s of sentenceSplit) {
+        const norm = s.toLowerCase().replace(/[.!?]+$/, '').replace(/\s+/g, ' ').trim();
+        if (norm.length === 0) continue;
+        if (seenExact.has(norm)) continue;
+        seenExact.add(norm);
+        kept.push(s);
+      }
+      // (b) Same-quantity dedupe — if two sentences both reference the
+      // same `\d+g X` / `\d+ kcal` / `\d+ lbs` pattern, keep only the
+      // first. This catches the production case where wording differs
+      // but both sentences convey the same protein/calorie/weight number.
+      const QUANTITY_KEY_RE = /\b(\d{1,4}(?:\.\d{1,2})?\s*(?:g|grams?|kcal|kg|lbs?|pounds?|cal|calories))\s+(protein|carb|carbs|fat|fiber|sugar|kcal|calories)/gi;
+      const sentenceQuantities = kept.map((s) => {
+        const out: string[] = [];
+        for (const m of s.toLowerCase().matchAll(QUANTITY_KEY_RE)) {
+          if (m[1] && m[2]) out.push(`${m[1].replace(/\s+/g, '')}_${m[2]}`);
+        }
+        return out;
+      });
+      const seenQty = new Set<string>();
+      const finalKept: string[] = [];
+      for (let i = 0; i < kept.length; i++) {
+        const qtys = sentenceQuantities[i] ?? [];
+        const isQtyDupe = qtys.length > 0 && qtys.every((q) => seenQty.has(q));
+        if (isQtyDupe) continue;
+        for (const q of qtys) seenQty.add(q);
+        finalKept.push(kept[i]!);
+      }
+      if (finalKept.length < sentenceSplit.length) {
+        text = finalKept.join(' ').trim();
+        fixes.push('duplicate_sentence_stripped');
+      }
+    }
   }
 
   // ─── Hard length cap (WhatsApp readability) ─────────────────────────

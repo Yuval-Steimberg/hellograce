@@ -333,4 +333,43 @@ describe('enforceFormat', () => {
       expect(lonelyFixes).not.toContain('orphaned_enumeration_stripped');
     });
   });
+
+  describe('missing space after period + duplicate sentence (2026-06-01 production fix)', () => {
+    it('inserts the missing space after a period before a capital letter', () => {
+      const { text, fixes } = enforceFormat(
+        "I don't have any food logged for you today.You're at 0g protein so far.",
+      );
+      expect(fixes).toContain('missing_space_after_period');
+      expect(text).toContain('today. You');
+      expect(text).not.toContain('today.You');
+    });
+
+    it('collapses two near-identical sentences to the first one only', () => {
+      const input =
+        "I don't have any food logged for you today, so you're at 0g protein so far. You're at 0g protein for the day so far.";
+      const { text, fixes } = enforceFormat(input);
+      expect(fixes).toContain('duplicate_sentence_stripped');
+      // The second "You're at 0g protein..." sentence should be gone.
+      const occurrences = (text.match(/you'?re at 0g/gi) ?? []).length;
+      expect(occurrences).toBeLessThanOrEqual(1);
+    });
+
+    it('also handles the combined production failure (no space + duplicate)', () => {
+      const input =
+        "I don't have any food logged for you today, so you're at 0g protein so far.You're at 0g protein for the day so far.";
+      const { text } = enforceFormat(input);
+      // After both fixes, the response should read as one cohesive sentence.
+      expect(text).toContain("today, so you're at 0g protein so far.");
+      const occurrences = (text.match(/you'?re at 0g/gi) ?? []).length;
+      expect(occurrences).toBeLessThanOrEqual(1);
+    });
+
+    it('does NOT collapse two distinct sentences that just happen to start with the same word', () => {
+      const input = "You're feeling rough — that's normal early on. You'll see it ease by week 4.";
+      const { text, fixes } = enforceFormat(input);
+      // Different content past the first 30 chars → both kept
+      expect(fixes).not.toContain('duplicate_sentence_stripped');
+      expect(text).toContain("week 4");
+    });
+  });
 });

@@ -293,9 +293,20 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       'exercise_log',
       'injection_log',
       'social_situation',
+      // Phase 2 latency pass (2026-06-01): food_question is now safe to skip
+      // because EVERY subtype either hits a force-call block downstream OR
+      // needs no tool at all:
+      //   - FOOD_SUMMARY_QUESTION  → force get_food_summary
+      //   - FOOD_HISTORY_QUESTION  → force get_protein_history
+      //   - PROTEIN_TARGET_QUESTION → force get_user_profile
+      //   - FOOD_REMOVAL_QUESTION  → force remove_food
+      //   - FOOD_RECOMMENDATION    → force no-tool path (handled by prompt)
+      //   - leftover (e.g. "how much protein in eggs?") → LLM knowledge,
+      //     no tool needed; RAG chunks already injected from parallel fetch
+      // The planner LLM (~600ms) was pure overhead on every protein follow-
+      // up question. Skipping it saves ~500-600ms with zero accuracy cost.
+      'food_question',
       // INTENTIONALLY NOT INCLUDED (planner needed for correct tool call):
-      //   - food_question: "what should I eat tonight?" needs search_food_ideas;
-      //     only "protein left today" gets force-overridden to get_food_summary
       //   - weight_log: needs log_weight tool, no force block exists
       //   - mood_log: needs log_mood tool, no force block exists
       //   - medication_question: storage/timing answers need knowledge_search;
@@ -489,14 +500,26 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       (intentClass.type === 'food_log' || obviousFoodMention);
 
     if (shouldForceLogFood) {
+      // Multi-meal split (production failure 2026-06-01): user sent
+      //   "Hey\nFor breakfast i ate 2 eggs.\nFor lunch chicken breast with cup of rice"
+      // The whole text was passed to a SINGLE log_food call which couldn't
+      // parse it as multiple meals and logged 0g. We now detect multi-meal
+      // input and schedule a separate log_food call per meal so each gets
+      // its own macro estimate.
+      const meals = splitMultiMealText(input.text);
+      const toolCalls = meals.length >= 2
+        ? meals.map((m) => ({ name: 'log_food', args: { food: m } }))
+        : [{ name: 'log_food', args: { food: input.text } }];
       prePlannedDecision = {
         intent: 'log_food',
         needsTools: true,
-        toolCalls: [{ name: 'log_food', args: { food: input.text } }],
-        rationale: intentClass.type === 'food_log' ? 'classifier_forced_log_food' : 'food_words_detected',
+        toolCalls,
+        rationale: meals.length >= 2
+          ? 'classifier_forced_log_food_multi_meal'
+          : (intentClass.type === 'food_log' ? 'classifier_forced_log_food' : 'food_words_detected'),
       };
       this.deps.logger.info(
-        { userId: input.userId, classifierType: intentClass.type, obviousFoodMention, textPreview: input.text.slice(0, 100) },
+        { userId: input.userId, classifierType: intentClass.type, obviousFoodMention, mealCount: meals.length || 1, textPreview: input.text.slice(0, 100) },
         'ai.handle.forced_log_food',
       );
     }
@@ -1275,6 +1298,35 @@ function buildFoodLogArg(analysis: string): string {
   if (total) return total;
   if (items) return items;
   return analysis.replace(/IMAGE_TYPE: food\n?/i, '').trim().slice(0, 400);
+}
+
+/**
+ * Detect a multi-meal food-log message and split it into separate meal
+ * segments so each gets its own log_food call. Returns [] when the input
+ * isn't multi-meal (single log_food call is fine).
+ *
+ * Production failure 2026-06-01: "Hey\nFor breakfast i ate 2 eggs.\nFor
+ * lunch chicken breast with cup of rice" → single log_food got the whole
+ * blob (including the "Hey" greeting) and logged 0g protein.
+ *
+ * Strategy: a meal segment is anchored by a meal label (breakfast / lunch /
+ * dinner / snack / brunch). We split on those labels and keep each segment
+ * with its food description.
+ */
+export function splitMultiMealText(text: string): string[] {
+  const cleaned = text.replace(/\s+/g, ' ').trim();
+  // Split on meal-label boundaries: keep the meal label with its segment.
+  // Pattern: optional "for " + meal label + everything up to the next meal
+  // label or the end of input.
+  const mealLabelRe = /\b(?:for\s+)?(breakfast|lunch|dinner|snack|brunch)\b[^.!?]*?(?=\.|!|\?|\bfor\s+(?:breakfast|lunch|dinner|snack|brunch)\b|$)/gi;
+  const matches = cleaned.match(mealLabelRe);
+  if (!matches || matches.length < 2) return [];
+  // Each segment is one meal. Trim, dedupe, drop empties.
+  const segments = matches
+    .map((s) => s.trim().replace(/[.!?]+$/, '').trim())
+    .filter((s) => s.length > 0)
+    .filter((s, i, arr) => arr.indexOf(s) === i);
+  return segments.length >= 2 ? segments : [];
 }
 
 // Render durable facts as a compact, grouped, scannable block.

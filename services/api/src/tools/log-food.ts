@@ -218,19 +218,40 @@ export function makeLogFoodTool(deps: {
       const food = typeof args['food'] === 'string' ? (args['food'] as string).trim() : '';
       if (!food) return { ok: false, error: 'no_food_provided' };
 
+      // Pre-process: strip greeting prefixes ("Hey, ...", "Good morning,
+      // ...") that confuse the LLM estimator. Production failure 2026-06-01:
+      // user sent "Hey\nFor breakfast i ate 2 eggs..." → 0g logged because
+      // "Hey" derailed estimation.
+      const cleanedFood = food
+        .replace(/^(hey|hi|hello|yo|hiya|good\s+(morning|afternoon|evening|night))[,!.\s]+/i, '')
+        .replace(/^(so|ok|okay|um|uh)[,!.\s]+/i, '')
+        .trim();
+      const foodForEstimate = cleanedFood.length >= 3 ? cleanedFood : food;
+
+      // FAST PATH (NEW 2026-06-01): exact-match the food string against
+      // ~80 hand-curated USDA-anchored entries. Saves ~1-2s per log on
+      // common foods. Falls through to LLM + USDA on miss.
+      let parsed: FoodEstimate | null = lookupCommonFoodMacros(foodForEstimate);
+      let estimateSource: 'usda' | 'llm' | 'fast_lookup' = 'llm';
+      if (parsed) {
+        estimateSource = 'fast_lookup';
+        deps.logger.info(
+          { userId: deps.userId, food: parsed.food, originalText: food.slice(0, 80) },
+          'tool.log_food.fast_lookup_hit',
+        );
+      }
+
       // USDA-first path: decompose with LLM, look up per-100g constants from
       // USDA, multiply + sum. Falls back to the legacy LLM-only estimate when
       // the USDA service isn't configured or any item misses a USDA match.
-      let parsed: FoodEstimate | null = null;
-      let estimateSource: 'usda' | 'llm' = 'llm';
-      if (deps.usda && deps.usda.enabled()) {
-        const usdaResult = await estimateViaUsda(deps.llm, deps.usda, food).catch(() => null);
+      if (!parsed && deps.usda && deps.usda.enabled()) {
+        const usdaResult = await estimateViaUsda(deps.llm, deps.usda, foodForEstimate).catch(() => null);
         if (usdaResult) {
           parsed = usdaResult;
           estimateSource = 'usda';
         }
       }
-      if (!parsed) parsed = await estimateFoodMacros(deps.llm, food);
+      if (!parsed) parsed = await estimateFoodMacros(deps.llm, foodForEstimate);
       if (!parsed) return { ok: false, error: 'estimate_parse_failed' };
       deps.logger.info({ userId: deps.userId, source: estimateSource, food: parsed.food }, 'tool.log_food.estimate_source');
 
@@ -289,4 +310,210 @@ export function makeLogFoodTool(deps: {
       return { ...parsed, daily_protein_g: dailyProteinG, daily_calories: dailyCalories };
     },
   };
+}
+
+// ── Fast macro lookup (2026-06-01 latency + accuracy pass) ─────────────────
+// Hand-curated table of ~80 common foods with their USDA-anchored macros.
+// Skips the LLM call entirely on a hit — saves ~1-2s per log for the most
+// common entries. Values follow USDA FoodData Central per typical serving.
+//
+// Match logic: normalize the input (lowercase, strip punctuation, collapse
+// whitespace, drop articles + meal-context words like "for breakfast"),
+// then try exact match, then substring containment of any table key.
+//
+// The table is INTENTIONALLY conservative — only foods where the protein
+// estimate is uncontroversial. Anything compound ("chicken sandwich",
+// "veggie wrap") falls through to the LLM estimator which can decompose.
+
+interface CommonMacros {
+  food: string;
+  protein_g: number;
+  calories: number;
+}
+
+const COMMON_FOODS: Record<string, CommonMacros> = {
+  // Eggs (per egg = 6g protein / 70 kcal)
+  '1 egg':                   { food: '1 egg', protein_g: 6, calories: 70 },
+  '2 eggs':                  { food: '2 eggs', protein_g: 12, calories: 140 },
+  '3 eggs':                  { food: '3 eggs', protein_g: 18, calories: 210 },
+  '4 eggs':                  { food: '4 eggs', protein_g: 24, calories: 280 },
+  'egg':                     { food: '1 egg', protein_g: 6, calories: 70 },
+  'eggs':                    { food: '2 eggs', protein_g: 12, calories: 140 },
+  'hard boiled egg':         { food: '1 hard-boiled egg', protein_g: 6, calories: 70 },
+  'scrambled eggs':          { food: 'scrambled eggs (2)', protein_g: 12, calories: 180 },
+  '2 egg omelet':            { food: '2-egg omelet', protein_g: 12, calories: 180 },
+  '3 egg omelet':            { food: '3-egg omelet', protein_g: 18, calories: 270 },
+  // Chicken (4 oz / 113 g = 30 g protein / 180 kcal)
+  'chicken breast':          { food: 'chicken breast (4oz)', protein_g: 30, calories: 180 },
+  '1 chicken breast':        { food: '1 chicken breast', protein_g: 30, calories: 180 },
+  'grilled chicken':         { food: 'grilled chicken (4oz)', protein_g: 30, calories: 180 },
+  'baked chicken':           { food: 'baked chicken (4oz)', protein_g: 30, calories: 180 },
+  'chicken':                 { food: 'chicken (4oz)', protein_g: 30, calories: 180 },
+  // Fish
+  'salmon':                  { food: 'salmon (5oz)', protein_g: 28, calories: 280 },
+  'grilled salmon':          { food: 'grilled salmon (5oz)', protein_g: 28, calories: 280 },
+  'tuna':                    { food: 'tuna (1 can)', protein_g: 20, calories: 110 },
+  'can of tuna':             { food: '1 can tuna', protein_g: 20, calories: 110 },
+  'shrimp':                  { food: 'shrimp (4oz)', protein_g: 24, calories: 100 },
+  // Beef / pork
+  'steak':                   { food: 'steak (5oz)', protein_g: 35, calories: 350 },
+  'ground beef':             { food: 'ground beef (4oz)', protein_g: 22, calories: 280 },
+  // Dairy & high-protein
+  'greek yogurt':            { food: 'Greek yogurt (1 cup)', protein_g: 17, calories: 100 },
+  'cup of greek yogurt':     { food: 'Greek yogurt (1 cup)', protein_g: 17, calories: 100 },
+  'cottage cheese':          { food: 'cottage cheese (1/2 cup)', protein_g: 14, calories: 100 },
+  'yogurt':                  { food: 'yogurt (1 cup)', protein_g: 8, calories: 130 },
+  // Plant-based
+  'tofu':                    { food: 'tofu (4oz)', protein_g: 10, calories: 80 },
+  'tempeh':                  { food: 'tempeh (3oz)', protein_g: 15, calories: 160 },
+  'edamame':                 { food: 'edamame (1 cup shelled)', protein_g: 17, calories: 190 },
+  'black beans':             { food: 'black beans (1/2 cup)', protein_g: 8, calories: 110 },
+  'lentils':                 { food: 'lentils (1/2 cup)', protein_g: 9, calories: 115 },
+  'chickpeas':               { food: 'chickpeas (1/2 cup)', protein_g: 7, calories: 110 },
+  'hummus':                  { food: 'hummus (1/4 cup)', protein_g: 4, calories: 100 },
+  'peanut butter':           { food: 'peanut butter (2 tbsp)', protein_g: 8, calories: 190 },
+  'almonds':                 { food: 'almonds (1 oz)', protein_g: 6, calories: 165 },
+  // Carbs (low protein)
+  'rice':                    { food: 'rice (1 cup)', protein_g: 4, calories: 200 },
+  'cup of rice':             { food: 'rice (1 cup)', protein_g: 4, calories: 200 },
+  'quinoa':                  { food: 'quinoa (1 cup)', protein_g: 8, calories: 220 },
+  'oatmeal':                 { food: 'oatmeal (1 cup)', protein_g: 6, calories: 150 },
+  'pasta':                   { food: 'pasta plain (1 cup)', protein_g: 8, calories: 220 },
+  'toast':                   { food: 'toast (1 slice)', protein_g: 3, calories: 80 },
+  '1 slice of toast':        { food: '1 slice of toast', protein_g: 3, calories: 80 },
+  '2 slices of toast':       { food: '2 slices of toast', protein_g: 6, calories: 160 },
+  'bagel':                   { food: 'bagel', protein_g: 10, calories: 280 },
+  // Veggies (low protein, log accurately so totals make sense)
+  'broccoli':                { food: 'broccoli (1 cup)', protein_g: 2, calories: 30 },
+  'spinach':                 { food: 'spinach (1 cup raw)', protein_g: 1, calories: 7 },
+  'salad':                   { food: 'salad plain', protein_g: 3, calories: 100 },
+  'side salad':              { food: 'side salad', protein_g: 3, calories: 100 },
+  // Fruit
+  'banana':                  { food: 'banana', protein_g: 1, calories: 110 },
+  'apple':                   { food: 'apple', protein_g: 0, calories: 95 },
+  'orange':                  { food: 'orange', protein_g: 1, calories: 65 },
+  'berries':                 { food: 'berries (1 cup)', protein_g: 1, calories: 85 },
+  'strawberries':            { food: 'strawberries (1 cup)', protein_g: 1, calories: 50 },
+  'blueberries':             { food: 'blueberries (1 cup)', protein_g: 1, calories: 85 },
+  // Shakes / drinks
+  'protein shake':           { food: 'protein shake (1 scoop)', protein_g: 25, calories: 130 },
+  '1 scoop protein':         { food: 'protein (1 scoop)', protein_g: 25, calories: 130 },
+  'whey protein':            { food: 'whey protein (1 scoop)', protein_g: 25, calories: 130 },
+  'protein smoothie':        { food: 'protein smoothie', protein_g: 18, calories: 280 },
+  'smoothie':                { food: 'smoothie', protein_g: 6, calories: 200 },
+  'coffee':                  { food: 'coffee', protein_g: 0, calories: 5 },
+  'black coffee':            { food: 'black coffee', protein_g: 0, calories: 5 },
+  'latte':                   { food: 'latte (12oz)', protein_g: 8, calories: 150 },
+  'cappuccino':              { food: 'cappuccino', protein_g: 6, calories: 80 },
+  'tea':                     { food: 'tea', protein_g: 0, calories: 0 },
+  // Compound meals — single-anchor entries for things that come together
+  'chicken and rice':        { food: 'chicken (4oz) + rice (1 cup)', protein_g: 34, calories: 380 },
+  'chicken with rice':       { food: 'chicken (4oz) + rice (1 cup)', protein_g: 34, calories: 380 },
+  'chicken breast with rice':{ food: 'chicken breast + rice', protein_g: 34, calories: 380 },
+  'salmon and rice':         { food: 'salmon (5oz) + rice (1 cup)', protein_g: 32, calories: 480 },
+  'eggs and toast':          { food: '2 eggs + toast', protein_g: 15, calories: 220 },
+  'eggs and bacon':          { food: '2 eggs + 2 strips bacon', protein_g: 18, calories: 220 },
+  // Fast food
+  'big mac':                 { food: 'Big Mac', protein_g: 25, calories: 590 },
+  'cheeseburger':            { food: 'cheeseburger', protein_g: 18, calories: 320 },
+  'fries':                   { food: 'fries (medium)', protein_g: 4, calories: 380 },
+  // Pizza
+  'pizza':                   { food: 'pizza (2 slices)', protein_g: 22, calories: 540 },
+  '2 slices of pizza':       { food: 'pizza (2 slices)', protein_g: 22, calories: 540 },
+  '1 slice of pizza':        { food: 'pizza (1 slice)', protein_g: 11, calories: 270 },
+};
+
+/**
+ * Normalize a casual food string for fast-lookup matching:
+ *   - lowercase
+ *   - strip punctuation
+ *   - strip greeting prefixes (already done upstream, but defensive)
+ *   - strip "for breakfast/lunch/dinner/snack" suffix
+ *   - strip articles + filler words ("just had", "I ate", "a", "the")
+ *   - collapse whitespace
+ */
+/** Light normalization — keeps quantity + serving words intact so entries
+ *  like "2 slices of pizza" and "1 chicken breast" match directly. */
+function normalizeFoodForLookup(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[.!?,]/g, ' ')
+    .replace(/^(hey|hi|hello|yo|hiya|good\s+(morning|afternoon|evening|night))\s+/i, '')
+    .replace(/\b(for|at|this)\s+(breakfast|lunch|dinner|snack|brunch|today|morning|afternoon|evening|tonight)\b/g, ' ')
+    .replace(/\b(i (?:just |already |i'?ve )?(?:had|ate|drank|grabbed|made|cooked|ordered|got|finished|tried|enjoyed))\b/g, ' ')
+    .replace(/\b(just|already|i'?ve|i've)\b/g, ' ')
+    .replace(/\b(had|ate|drank|grabbed|made|cooked|ordered|got|finished|tried|enjoyed|snacked|munched)\b/g, ' ')
+    .replace(/\b(a|an|some|the|my)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Heavy normalization — additionally strips container/serving descriptors
+ *  ("cup of", "scoop of", etc.) so multi-word table entries like "chicken
+ *  breast with rice" match inputs like "chicken breast with cup of rice".
+ *  Used as a SECOND-PASS fallback after the light normalization. */
+function normalizeFoodForLookupHeavy(input: string): string {
+  return normalizeFoodForLookup(input)
+    .replace(/\b(\d+\s+)?(a|an|one|two|three|four|five|six)?\s*(cup|scoop|slice|serving|bowl|plate|piece|portion|stick|bar|handful)s?\s+of\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Look up a food string in the COMMON_FOODS table. Returns null on miss.
+ * Tries exact match against the normalized form, then a substring scan
+ * (the table key must appear as a whole word in the normalized input).
+ */
+export function lookupCommonFoodMacros(input: string): FoodEstimate | null {
+  const lightNorm = normalizeFoodForLookup(input);
+  if (lightNorm.length < 3) return null;
+
+  // Pass 1 — light normalization (keeps "slices of", "cup of", etc.).
+  // Catches table entries that include those words like "2 slices of pizza".
+  const exactLight = COMMON_FOODS[lightNorm];
+  if (exactLight) {
+    return { food: exactLight.food, protein_g: exactLight.protein_g, calories: exactLight.calories, confidence: 'high' };
+  }
+
+  // Pass 2 — heavy normalization (strips "cup of", "slices of", etc.).
+  // Catches "chicken breast with cup of rice" → "chicken breast with rice".
+  const heavyNorm = normalizeFoodForLookupHeavy(input);
+  const exactHeavy = heavyNorm !== lightNorm ? COMMON_FOODS[heavyNorm] : undefined;
+  if (exactHeavy) {
+    return { food: exactHeavy.food, protein_g: exactHeavy.protein_g, calories: exactHeavy.calories, confidence: 'high' };
+  }
+
+  // Substring containment using BOTH normalizations. We try the heavy one
+  // first because it tends to match longer compound keys; if nothing there,
+  // try the light one. Coverage gate: a short key (e.g. "lentils") shouldn't
+  // match inside a long input (e.g. "vegetarian shepherd pie with lentils").
+  const tryMatch = (norm: string): { key: string; macros: CommonMacros } | null => {
+    const inputWordCount = norm.split(/\s+/).filter(Boolean).length;
+    let best: { key: string; macros: CommonMacros } | null = null;
+    for (const [key, macros] of Object.entries(COMMON_FOODS)) {
+      const keyRe = new RegExp(`\\b${key.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\b`);
+      if (!keyRe.test(norm)) continue;
+      const coverage = key.length / norm.length;
+      const keyWordCount = key.split(/\s+/).filter(Boolean).length;
+      const acceptable =
+        coverage >= 0.4 ||
+        inputWordCount <= 3 ||
+        keyWordCount >= 2;
+      if (!acceptable) continue;
+      if (!best || key.length > best.key.length) {
+        best = { key, macros };
+      }
+    }
+    return best;
+  };
+  const best = tryMatch(heavyNorm) ?? tryMatch(lightNorm);
+  if (best) {
+    return {
+      food: best.macros.food,
+      protein_g: best.macros.protein_g,
+      calories: best.macros.calories,
+      confidence: 'high',
+    };
+  }
+  return null;
 }

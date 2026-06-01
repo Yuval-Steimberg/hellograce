@@ -113,25 +113,39 @@ export const FOOD_REMOVAL_QUESTION: RegExp[] = [
 
 const FOOD_LOG: RegExp[] = [
   // Direct past-tense verbs at start of message
-  /^(i )?(just |already |i'?ve |i've )?(had|ate|eaten|finished|grabbed|made|cooked|ordered|got|drank|consumed|tried|enjoyed) (a |an |some |the |my |2 |3 |4 )?\w/i,
+  /^(i )?(just |already |i'?ve |i've )?(had|ate|eaten|finished|grabbed|made|cooked|ordered|got|drank|consumed|tried|enjoyed|polished off|crushed|nibbled|munched|snacked) (a |an |some |the |my |2 |3 |4 )?\w/i,
   // "I'm eating", "I'm having" (present tense)
-  /^i'?m (eating|having|drinking|finishing|munching)\b/i,
+  /^i'?m (eating|having|drinking|finishing|munching|snacking|sipping)\b/i,
+  // "Snacked on X" / "Snacking on X" — common casual log
+  /\b(snacked|snacking|nibbling|munching) (on |upon )?(a |an |some |the )?\w/i,
   // Meal context phrases
-  /\b(breakfast|lunch|dinner|snack|meal|brunch)\s*(was|had|:\s*|today|consist)/i,
+  /\b(breakfast|lunch|dinner|snack|meal|brunch)\s*(was|had|:\s*|today|consist|started with|consisted of|included)/i,
   /\bfor (breakfast|lunch|dinner|snack|brunch)[,: ]/i,
-  // Quantities
-  /\b\d+\s*(eggs?|slices?|cups?|grams?|oz|ounces?|servings?|pieces?|bites?|tablespoons?|tbsp|tsp|portions?)\b/i,
+  // Standalone meal labels at start: "Breakfast: 2 eggs" / "Lunch — chicken"
+  // Also "Late breakfast", "Quick snack", "Light dinner"
+  /^(late |early |quick |light |big |huge |small )?(breakfast|lunch|dinner|snack|brunch|meal)\s*[:—\-]\s*\w/i,
+  // Time-of-day prefixes: "This morning I had", "Earlier I ate"
+  /^(this morning|this afternoon|tonight|earlier|just now|a (?:bit|while) ago|few (?:hours|mins?) ago|today) (i )?(had|ate|grabbed|drank|made|cooked|ordered|got|finished|snacked|tried)\b/i,
+  // Quantities — expanded with more units + fractional quantities
+  /\b\d+\s*(eggs?|slices?|cups?|grams?|g\b|oz|ounces?|servings?|pieces?|bites?|tablespoons?|tbsp|tsp|teaspoons?|portions?|scoops?|handful?s?|pcs?|bowls?|plates?|cans?|bottles?|cookies?|chips?)\b/i,
+  /\b(half|quarter|third|1\/2|1\/4|1\/3|2\/3|3\/4|a couple|a few)\s+(?:of\s+)?(?:a\s+|an\s+)?(cup|serving|slice|portion|piece|bowl|plate|scoop|tbsp|tsp|can|bottle|cookie|chip|stick|bar|donut|muffin)/i,
+  // "About X" / "Around X" estimates
+  /\b(about|around|roughly|approximately|maybe|like) (a |an |some |\d+)/i,
   // Drinks
-  /\b(drank|drinking|had) (a |some )?(water|coffee|tea|shake|smoothie|juice|coke|soda|beer|wine)/i,
-  /\b(protein shake|whey|smoothie) (with|had|drank|made|after)/i,
+  /\b(drank|drinking|had|having|sipping) (a |an |some )?(water|coffee|tea|shake|smoothie|juice|coke|soda|beer|wine|latte|cappuccino|americano|espresso|cocoa|matcha|kombucha|kefir)\b/i,
+  /\b(protein shake|whey|smoothie|latte|cappuccino|americano|matcha) (with|had|drank|made|after|in|this)/i,
+  /^(protein shake|smoothie|latte|cappuccino|americano|matcha|kombucha)\s*[.!?]?\s*$/i,
   // Common foods at the start of message (no verb, just a food list)
-  /^(a |an |some |the |my )?(salad|chicken|fish|beef|pork|tofu|eggs?|yogurt|oatmeal|rice|pasta|pizza|sushi|sandwich|burger|burrito|taco|wrap|soup|steak|salmon|tuna|turkey|bagel|toast|cereal|pancakes?|waffles?|fruit|banana|apple|orange|berries|smoothie)/i,
+  /^(a |an |some |the |my )?(salad|chicken|fish|beef|pork|tofu|tempeh|seitan|eggs?|yogurt|oatmeal|rice|pasta|pizza|sushi|sandwich|burger|burrito|taco|wrap|soup|steak|salmon|tuna|turkey|bagel|toast|cereal|pancakes?|waffles?|fruit|banana|apple|orange|berries|smoothie|protein bar|kind bar|rxbar|quest bar|cliff bar)\b/i,
   // "I had X" / "I ate X" — broader food terms
-  /\b(had|ate|eating) (salad|chicken|fish|beef|pork|tofu|eggs?|yogurt|oatmeal|rice|pasta|pizza|sushi|sandwich|burger|burrito|taco|wrap|soup|steak|salmon|tuna|turkey|bagel|toast|cereal|pancakes?|waffles?|fruit|banana|apple|orange|berries|big mac|fries|coke)/i,
+  /\b(had|ate|eating) (salad|chicken|fish|beef|pork|tofu|tempeh|seitan|eggs?|yogurt|oatmeal|rice|pasta|pizza|sushi|sandwich|burger|burrito|taco|wrap|soup|steak|salmon|tuna|turkey|bagel|toast|cereal|pancakes?|waffles?|fruit|banana|apple|orange|berries|big mac|fries|coke|protein bar)/i,
   // Comma-separated food list (multi-item meal: "banana, eggs, coffee")
   /^[A-Za-z][a-z]+(\s+[a-z]+)?,\s*[A-Za-z][a-z]+/i,
-  // "and" joiner with food words anywhere
-  /\b(banana|egg|chicken|rice|salad|fries|burger|pizza|yogurt|toast|oatmeal|sandwich|pasta|salmon|tuna|steak|tofu) (and|with) (a |an |some |the )?(banana|egg|chicken|rice|salad|fries|burger|pizza|yogurt|toast|oatmeal|sandwich|pasta|salmon|tuna|steak|tofu|coffee|water|coke|soda|juice)/i,
+  // "and" / "with" joiner with food words anywhere
+  /\b(banana|egg|chicken|rice|salad|fries|burger|pizza|yogurt|toast|oatmeal|sandwich|pasta|salmon|tuna|steak|tofu|tempeh|edamame|broccoli|spinach|potato|sweet potato|quinoa) (and|with) (a |an |some |the )?(banana|egg|chicken|rice|salad|fries|burger|pizza|yogurt|toast|oatmeal|sandwich|pasta|salmon|tuna|steak|tofu|tempeh|edamame|broccoli|spinach|potato|sweet potato|quinoa|coffee|water|coke|soda|juice)/i,
+  // Restaurant / brand prefixes — "Chipotle bowl", "Starbucks latte", etc.
+  /\b(from|at|got from) (chipotle|starbucks|panera|sweetgreen|chick.?fil.?a|mcdonald'?s|wendy'?s|burger king|taco bell|subway|panda express|five guys|in.?n.?out|whole foods|trader joe'?s|costco)\b/i,
+  /\b(chipotle|starbucks|panera|sweetgreen|chick.?fil.?a|mcdonald'?s|wendy'?s|burger king|taco bell|subway|panda express) (bowl|burrito|sandwich|salad|wrap|smoothie|shake|coffee|latte|burger|nuggets|fries|tacos?|enchilada)/i,
 ];
 
 const FOOD_QUESTION: RegExp[] = [

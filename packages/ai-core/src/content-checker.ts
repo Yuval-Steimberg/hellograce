@@ -391,6 +391,17 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bmy (apologies|response|algorithm|system|processing)\b/i, reason: 'meta-AI self-reference, banned' },
   { pattern: /\bthere was (a|an) (internal|processing|system) (error|issue|glitch)\b/i, reason: 'meta-AI error acknowledgment, banned' },
   { pattern: /\b(as an AI|as a language model|as a chatbot|as an assistant)\b/i, reason: 'AI self-identification, banned' },
+  // Unprompted self-apology for previous turns. Production failure 2026-06-01:
+  // user said "Morning, felling good" and Grace replied "I apologize for the
+  // confusion. It looks like there was a mix-up in my tracking, and I
+  // incorrectly stated 40g earlier. My apologies for that." Grace must never
+  // bring up her own past errors when the user didn't ask about them.
+  { pattern: /\bi apologize for (the )?(confusion|mix.?up|misunderstanding|error|mistake|inaccuracy)\b/i, reason: '"I apologize for the confusion" — unprompted self-correction; do not surface past mistakes' },
+  { pattern: /\bi (incorrectly|wrongly|mistakenly) (stated|said|reported|claimed|mentioned)\b/i, reason: '"I incorrectly stated X earlier" — referencing past Grace mistakes without being asked, banned' },
+  { pattern: /\bthere was (a|an)?\s*mix.?up (in|with) my (tracking|records|log|notes|memory)\b/i, reason: '"There was a mix-up in my tracking" — developer voice about Grace\'s internal state, banned' },
+  { pattern: /\b(let me )?(get it logged correctly|correct (the|my) (log|tracking|records?))\b/i, reason: 'Self-correction framing after a brief greeting — banned (don\'t volunteer cleanup)' },
+  { pattern: /\bbased on what i have logged\b/i, reason: 'Developer-voice phrasing about Grace\'s state. Use "your log shows" or just answer.' },
+  { pattern: /\b(could|can) you (tell me|let me know) what you'?ve eaten (so far )?today\b/i, reason: 'Asking the user to re-state today\'s meals in response to a brief greeting is wrong — banned' },
 
   // Model-identity leak — Grace must NEVER reveal her underlying model, vendor,
   // or training. Production bug (2026-05-29): "hoe many users you have" →

@@ -167,6 +167,37 @@ describe('checkBannedPhrases', () => {
     expect(checkBannedPhrases("I'm Grace, here to support your GLP-1 journey.")).toHaveLength(0);
     expect(checkBannedPhrases("I'm your companion for the medication journey.")).toHaveLength(0);
   });
+
+  // Production failure 2026-06-01 — user said "Morning, felling good" and Grace
+  // dredged up stale "40g" context to apologize for. Each pattern below is
+  // a literal substring from that exact bad response.
+  it('flags unprompted "I apologize for the confusion"', () => {
+    expect(checkBannedPhrases('I apologize for the confusion. It looks like there was a mix-up.').length).toBeGreaterThan(0);
+  });
+  it('flags "I incorrectly stated X earlier"', () => {
+    expect(checkBannedPhrases('I incorrectly stated 40g earlier.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('I mistakenly said 40g.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('I wrongly reported your protein.').length).toBeGreaterThan(0);
+  });
+  it('flags "There was a mix-up in my tracking"', () => {
+    expect(checkBannedPhrases('It looks like there was a mix-up in my tracking.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('there was a mix up with my records').length).toBeGreaterThan(0);
+  });
+  it('flags "Let me get it logged correctly"', () => {
+    expect(checkBannedPhrases('Let me get it logged correctly for you.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('Let me correct the log.').length).toBeGreaterThan(0);
+  });
+  it('flags developer-voice "Based on what I have logged"', () => {
+    expect(checkBannedPhrases('Based on what I have logged, you are at 0g protein.').length).toBeGreaterThan(0);
+  });
+  it('flags asking "Could you tell me what you\'ve eaten today" after a brief greeting', () => {
+    expect(checkBannedPhrases("Could you tell me what you've eaten so far today?").length).toBeGreaterThan(0);
+    expect(checkBannedPhrases("Can you let me know what you've eaten today?").length).toBeGreaterThan(0);
+  });
+  it('does NOT flag normal warm greeting reply', () => {
+    expect(checkBannedPhrases('So glad to hear that 🧡')).toHaveLength(0);
+    expect(checkBannedPhrases('Love that for you.')).toHaveLength(0);
+  });
 });
 
 describe('checkLinkPlaceholder', () => {

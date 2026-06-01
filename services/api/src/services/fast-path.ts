@@ -34,9 +34,37 @@ export interface FastPathResult {
 const GREETING_RE = /^(hi|hey|hello|hii+|heyy+|helloo+|good\s+morning|good\s+afternoon|good\s+evening|morning|evening|hey\s+grace|hi\s+grace|hello\s+grace|sup|yo|howdy|whats?\s+up|whats?up|hiya)\s*[.!?]?\s*$/i;
 
 // Brief positive feeling — e.g. "I'm feeling strong", "I'm good", "feeling great"
+// Brief positive feeling — short emotional states that get a one-sentence
+// warm acknowledgment per the prompt's BRIEF REPLY RULE. EXCLUDES "good X"
+// where X is something specific (so "good night" goes through GOODNIGHT_RE).
 // Must not contain a question mark, must be short. Negative feelings are
 // excluded — they need real empathy, not a canned reply.
+//
+// Greeting prefix support: "morning, X" / "good morning, X" / "evening, X"
+// optionally prefix the brief positive (production failure 2026-06-01: user
+// said "Morning, felling good" → no fast-path match → full LLM pipeline
+// generated a 6-sentence response that dredged up old context). We strip
+// common greeting prefixes before matching the positive word.
+//
+// Typo tolerance: "felling" (instead of "feeling") and a few other common
+// typos are accepted so the fast-path holds for noisy real messages.
+const GREETING_PREFIX_RE = /^(good\s+)?(morning|afternoon|evening|night)\s*[,.\-]?\s+/i;
+const FEELING_TYPO_RE = /\b(felling|feelign|feelin)\b/gi;
+
 const BRIEF_POSITIVE_RE = /^(i'?m\s+)?(feeling\s+|doing\s+)?(strong|great|good|amazing|wonderful|fantastic|awesome|excellent|fine|okay|ok|alright|well|happy|grateful|blessed|energized|motivated|focused|positive|chill|calm|peaceful|content|relaxed|refreshed|hopeful|optimistic|proud)\s*[.!]?\s*$/i;
+
+/** Normalize a brief message so the BRIEF_POSITIVE_RE can match common variants:
+ *  - strip "morning," / "good morning," / "evening," prefixes
+ *  - fix the "felling" / "feelign" typos for "feeling"
+ *  - trim whitespace and trailing punctuation */
+function normalizeBriefText(text: string): string {
+  let t = text.trim();
+  // Strip greeting prefix once
+  t = t.replace(GREETING_PREFIX_RE, '');
+  // Fix common feeling typos
+  t = t.replace(FEELING_TYPO_RE, 'feeling');
+  return t;
+}
 
 // Brief negative feeling — short emotional states that get a one-sentence
 // warm acknowledgment per the prompt's BRIEF REPLY RULE. EXCLUDES medical
@@ -276,10 +304,17 @@ export function tryFastPath(text: string, userId: string): FastPathResult | null
   if (LOVE_IT_RE.test(trimmed)) {
     return { text: pickFromPool(LOVE_IT_REPLIES, seed), category: 'love_it' };
   }
-  if (BRIEF_POSITIVE_RE.test(trimmed)) {
+  // Normalize before matching brief feeling patterns: strip greeting
+  // prefixes ("morning, X" / "good morning, X") and fix common typos
+  // ("felling" / "feelign" → "feeling"). Production failure 2026-06-01:
+  // "Morning, felling good" missed the fast-path → full LLM pipeline → 6-
+  // sentence response that surfaced stale context. Normalization makes
+  // brief check-ins much more reliable to catch.
+  const normalized = normalizeBriefText(trimmed);
+  if (BRIEF_POSITIVE_RE.test(normalized)) {
     return { text: pickFromPool(BRIEF_POSITIVE_REPLIES, seed), category: 'brief_positive' };
   }
-  if (BRIEF_NEGATIVE_RE.test(trimmed)) {
+  if (BRIEF_NEGATIVE_RE.test(normalized)) {
     return { text: pickFromPool(BRIEF_NEGATIVE_REPLIES, seed), category: 'brief_negative' };
   }
   if (REACTION_RE.test(trimmed)) {

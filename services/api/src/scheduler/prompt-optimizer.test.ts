@@ -715,3 +715,95 @@ describe('parseAdditionsBlock + mergeAdditionRules (append-only logic)', () => {
     expect(merged.merged).toHaveLength(1);
   });
 });
+
+describe('PromptOptimizer — unique-constraint fallback (Phase 16 fix)', () => {
+  // Production bug: two concurrent optimizer runs both passed the advisory
+  // lock + day-level idempotency check and both reached saveVersion → one
+  // succeeded, the other crashed on prompts_active_unique. The fallback now
+  // catches the duplicate-key error and saves the loser as an inactive
+  // DRAFT so the WhatsApp report shows "saved as draft" not "crashed".
+  it('falls back to inactive draft when prompts_active_unique fires', async () => {
+    // Build a pool where the INSERT inside saveVersion throws a 23505 error.
+    const insertError = Object.assign(new Error('duplicate key value violates unique constraint "prompts_active_unique"'), {
+      code: '23505',
+      constraint: 'prompts_active_unique',
+    });
+    let insertAttempts = 0;
+    let fallbackInsertHappened = false;
+    const pool = buildPool([
+      { pattern: 'FROM prompts WHERE active', rows: [{ content: BASE_PROMPT }] },
+      { pattern: 'f.rating = -1', rows: [{ assistant_message: 'meh', user_message: 'q', comment: null, rating: -1 }] },
+      { pattern: 'f.rating = 1', rows: [] },
+      { pattern: 'ILIKE', rows: [{ count: '0' }] },
+      { pattern: "role = 'user' AND created_at", rows: [{ count: '20' }] },
+      { pattern: 'MAX(version)', rows: [{ max: 37 }] },
+      { pattern: 'BEGIN', rows: [] },
+      { pattern: 'SELECT id FROM prompts WHERE active = TRUE FOR UPDATE', rows: [{ id: 'old' }] },
+      { pattern: 'UPDATE prompts SET active = FALSE', rows: [] },
+      { pattern: 'COMMIT', rows: [] },
+      { pattern: 'ROLLBACK', rows: [] },
+    ]);
+    // Override the client query to throw on the first INSERT (the active one
+    // inside the transaction), but succeed on the second one (the fallback
+    // inactive draft).
+    const originalQuery = pool.client.query;
+    pool.client.query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (/INSERT INTO prompts/i.test(sql)) {
+        insertAttempts++;
+        if (insertAttempts === 1) throw insertError;
+      }
+      return originalQuery(sql, params);
+    }) as typeof originalQuery;
+    // Pool.query is used for the FALLBACK draft INSERT (not in a transaction)
+    // and for the second MAX(version) re-query. Track that the fallback ran.
+    const originalPoolQuery = pool.query;
+    pool.query = vi.fn(async (sql: string, params?: unknown[]) => {
+      if (/INSERT INTO prompts.*VALUES.*FALSE/is.test(sql)) {
+        fallbackInsertHappened = true;
+      }
+      return originalPoolQuery(sql, params);
+    }) as typeof originalPoolQuery;
+
+    const additionsResp = JSON.stringify({
+      analysis: 'New behavioral pattern detected.',
+      additions: '- BRAND NEW RULE: never use the phrase "great question".',
+    });
+
+    let reportEmitted: OptimizerRunReport | undefined;
+    await runOptimizer(pool, new MockLLM(additionsResp), {
+      onRunComplete: async (r) => { reportEmitted = r; },
+    });
+
+    expect(insertAttempts).toBeGreaterThanOrEqual(1);
+    expect(fallbackInsertHappened).toBe(true);
+    expect(reportEmitted?.status).toBe('draft');
+    expect(reportEmitted?.activated).toBe(false);
+    expect(reportEmitted?.draftReason).toContain('Concurrent optimizer run');
+  });
+
+  it('still activates normally when no duplicate-key fires (happy path unchanged)', async () => {
+    const pool = buildPool([
+      { pattern: 'FROM prompts WHERE active', rows: [{ content: BASE_PROMPT }] },
+      { pattern: 'f.rating = -1', rows: [{ assistant_message: 'meh', user_message: 'q', comment: null, rating: -1 }] },
+      { pattern: 'f.rating = 1', rows: [] },
+      { pattern: 'ILIKE', rows: [{ count: '0' }] },
+      { pattern: "role = 'user' AND created_at", rows: [{ count: '20' }] },
+      { pattern: 'MAX(version)', rows: [{ max: 37 }] },
+      { pattern: 'BEGIN', rows: [] },
+      { pattern: 'SELECT id FROM prompts WHERE active = TRUE FOR UPDATE', rows: [{ id: 'old' }] },
+      { pattern: 'UPDATE prompts SET active = FALSE', rows: [] },
+      { pattern: 'INSERT INTO prompts', rows: [] },
+      { pattern: 'COMMIT', rows: [] },
+    ]);
+    const additionsResp = JSON.stringify({
+      analysis: 'New behavioral pattern detected.',
+      additions: '- BRAND NEW RULE: never use the phrase "great question".',
+    });
+    let reportEmitted: OptimizerRunReport | undefined;
+    await runOptimizer(pool, new MockLLM(additionsResp), {
+      onRunComplete: async (r) => { reportEmitted = r; },
+    });
+    expect(reportEmitted?.status).toBe('activated');
+    expect(reportEmitted?.activated).toBe(true);
+  });
+});

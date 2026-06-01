@@ -96,8 +96,38 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   if (opts.dbRules && opts.dbRules.length > 0) {
     violations.push(...checkDbRules(text, opts.dbRules));
   }
+  // Always check: inline label-colon list (production failure 2026-06-01).
+  // The format-enforcer's existing labelColonRe only matches when each
+  // "Label: description" is bounded by sentence terminators, missing the
+  // comma-joined inline variant ("Lentil soup: ... , Tofu stir-fry: ... ,
+  // Greek yogurt: ...") that the lunch-recommendation response produced.
+  violations.push(...checkInlineLabelColonList(text));
 
   return violations;
+}
+
+// ── Inline label-colon list ──────────────────────────────────────────────────
+// Matches the food-recommendation list-disguised-as-prose pattern:
+//   "Lentil soup: This is great. Tofu stir-fry: Toss some... Cheddar
+//    chickpea slice: This is a high-protein... Greek yogurt power bowl: Mix..."
+// All separated by commas or periods, all on one line, but structurally a
+// 4-item list with label-colon items. H3 PROSE ONLY explicitly bans this
+// but the LLM still emits it on food-recommendation responses. We catch
+// any response with 3+ short "Capitalized Phrase:" markers followed by a
+// description and force regen.
+const INLINE_LABEL_COLON_RE = /\b([A-Z][a-z]+(?:[\s-]+[a-z]+){0,4}):\s+[A-Za-z][a-z]/g;
+
+function checkInlineLabelColonList(response: string): ContentViolation[] {
+  // Skip very short responses (no room for a list anyway).
+  if (response.length < 80) return [];
+  const matches = [...response.matchAll(INLINE_LABEL_COLON_RE)];
+  if (matches.length < 3) return [];
+  const labels = matches.slice(0, 5).map((m) => m[1]).filter(Boolean);
+  return [{
+    code: 'inline_label_colon_list',
+    message: `Response contains ${matches.length} "Label: description" patterns (${labels.map((l) => `"${l}"`).join(', ')}) — that's a list disguised as prose. H3 PROSE ONLY bans this. Rewrite as flowing prose without "Label: description" structures. Example: instead of "Lentil soup: it's hydrating. Tofu stir-fry: toss with edamame." write "Lentil soup is hydrating, tofu stir-fry with edamame is filling, and a Greek yogurt bowl is quick."`,
+    severity: 'regen',
+  }];
 }
 
 // ── Privacy rule misfire ─────────────────────────────────────────────────────

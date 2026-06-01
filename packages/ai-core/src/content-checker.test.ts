@@ -647,3 +647,41 @@ describe('checkStaleContextEcho — final-layer memory guard', () => {
     expect(violations.some((v) => v.code === 'stale_context_echo')).toBe(false);
   });
 });
+
+// ── checkInlineLabelColonList (2026-06-01 lunch-recommendation fix) ─────────
+// The format-enforcer's existing label-colon flattener requires sentence
+// terminators around each label; this catches the inline comma-joined
+// variant the LLM uses on food-recommendation responses.
+describe('checkInlineLabelColonList — inline list-disguised-as-prose', () => {
+  it('flags the exact lunch-recommendation production failure (4 label-colons)', () => {
+    const response = `Since you're vegetarian and aiming for 60g of protein today, here are a few GLP-1 friendly lunch ideas. Lentil soup: This is a great option, as it's hydrating and nutrient-packed. Tofu stir-fry: You could toss some seasoned tofu with edamame and your favorite vegetables. Cheddar chickpea slice: This is a high-protein vegetarian recipe. Greek yogurt power bowl: Mix a cup of Greek yogurt with a scoop of protein powder and some berries.`;
+    const violations = checkContent(response, { userMessage: 'What should I eat for lunch' });
+    expect(violations.some((v) => v.code === 'inline_label_colon_list')).toBe(true);
+  });
+
+  it('does NOT flag a normal prose response with 0 label-colons', () => {
+    const response = "Lentil soup is hydrating and nutrient-packed, tofu stir-fry with edamame is filling, and a Greek yogurt bowl with berries is quick and high-protein.";
+    const violations = checkContent(response, { userMessage: 'What should I eat for lunch' });
+    expect(violations.some((v) => v.code === 'inline_label_colon_list')).toBe(false);
+  });
+
+  it('does NOT flag a single legitimate label:description (definition)', () => {
+    // "Telogen effluvium: temporary hair shedding" — definition, not a list.
+    const response = 'Telogen effluvium: temporary shedding from the metabolic stress of rapid loss. Usually resolves in 6 to 9 months.';
+    const violations = checkContent(response, { userMessage: 'Why is my hair falling out?' });
+    expect(violations.some((v) => v.code === 'inline_label_colon_list')).toBe(false);
+  });
+
+  it('flags 3 label-colons even when separated by periods (not commas)', () => {
+    const response = 'Greek yogurt: high protein. Cottage cheese: also high protein. Eggs: classic option. All easy on a GLP-1 stomach.';
+    const violations = checkContent(response, { userMessage: 'What can I eat?' });
+    expect(violations.some((v) => v.code === 'inline_label_colon_list')).toBe(true);
+  });
+
+  it('does NOT flag very short responses with one colon', () => {
+    expect(
+      checkContent('You can have eggs: about 6g protein each.', { userMessage: 'X' })
+        .some((v) => v.code === 'inline_label_colon_list')
+    ).toBe(false);
+  });
+});

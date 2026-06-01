@@ -610,6 +610,28 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
         rationale: 'classifier_forced_get_food_summary',
       };
     }
+    // 5. Pure food-recommendation requests ("what should I eat for lunch?",
+    //    "give me dinner ideas", "what's a good high-protein breakfast?") â€”
+    //    the LLM has the full food-recommendation prompt section + user
+    //    dietary context + RAG chunks; no tool call needed for an adequate
+    //    answer, and skipping the planner saves ~500-600ms per message.
+    //    The classifier's FOOD_QUESTION patterns match these, but they
+    //    don't overlap with the FOOD_SUMMARY_QUESTION above (no "protein",
+    //    "left", "calorie", etc.) so they fall through to here.
+    //    Production failure 2026-06-01: "What should I eat for lunch" took
+    //    several seconds because the planner LLM ran even though no tool
+    //    fired.
+    const isFoodRecommendation = intentClass.type === 'food_question' &&
+      !isFoodSummaryQuery && !isFoodHistoryQuery && !isTargetQuery && !isRemovalQuery &&
+      /\b(what (should|can|could) i (eat|have|make|cook|order)|(recommend|suggest)(ion)?(s)? for|good (protein|snack|meal|food)|(meal|snack|dinner|lunch|breakfast|brunch) (ideas?|suggestions?|recommendations?)|hungry|what'?s (a |for )?(good|healthy|filling)|what to (eat|have|make))\b/i.test(input.text);
+    if (isFoodRecommendation) {
+      prePlannedDecision = {
+        intent: 'food_recommendation',
+        needsTools: false,
+        toolCalls: [],
+        rationale: 'classifier_forced_no_tool_food_recommendation',
+      };
+    }
 
     // Detect side effects in the user's message and update their flow.
     if (user) await this.detectAndSetSideEffectFlow(user.phone, augmentedText, user.side_effect_flow);

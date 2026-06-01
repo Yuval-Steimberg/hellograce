@@ -194,6 +194,8 @@ psql "$DATABASE_URL" -f supabase/migrations/20260513000003_glp1_start_date.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260516000005_content_rules.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260527000001_enable_rls_all_tables.sql
 psql "$DATABASE_URL" -f supabase/migrations/20260528000001_calorie_goal.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260601000001_real_data_corpus.sql
+psql "$DATABASE_URL" -f supabase/migrations/20260601000002_content_rules_auto_fix_type.sql
 ```
 
 **`20260516000005_content_rules.sql`** — IMPORTANT: run in Supabase SQL Editor with "No limit" toggle OFF (not in Neon). Creates `content_rules` table + 48 seed rules. Verify with: `SELECT severity, COUNT(*) FROM content_rules GROUP BY severity;` → should show `block: 4, regen: 44`.

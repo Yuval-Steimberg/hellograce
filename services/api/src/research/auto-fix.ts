@@ -260,19 +260,52 @@ export class ResearchAutoFix {
     let contentRulesGenerated = 0;
     const reportPatterns: AutoFixReport['topPatterns'] = [];
 
-    // Separate "content-rule-able" patterns from "prompt-fix" patterns
-    const contentRulePatterns = topPatternEntries.filter(([p]) => !p.startsWith('low_'));
+    // Structural patterns can't be fixed by regex content rules — they need
+    // prompt + format enforcer changes. They still flow into the optimizer
+    // via synthetic feedback, so the action is 'prompt_fix' not 'logged'.
+    const STRUCTURAL_PATTERNS = new Set([
+      'multiple_questions',
+      'too_long',
+      'empty_response',
+    ]);
+
+    // Phrase-based patterns Gemini CAN convert into specific content rules.
+    const contentRulePatterns = topPatternEntries.filter(
+      ([p]) => !p.startsWith('low_') && !STRUCTURAL_PATTERNS.has(p),
+    );
+
+    // Track structural patterns separately so the report shows the right action.
+    const structuralPatterns = topPatternEntries.filter(([p]) => STRUCTURAL_PATTERNS.has(p));
 
     if (contentRulePatterns.length > 0) {
-      const examplesForLlm = stillFailing.slice(0, 12).map(({ post, freshResponse, failTypes }) => ({
-        user: post.raw_text.slice(0, 300),
-        grace: freshResponse.slice(0, 300),
-        failTypes,
-      }));
-      const generatedRules = await this.generateContentRules(
-        contentRulePatterns.map(([p]) => p),
-        examplesForLlm,
+      // Filter the examples down to ones that actually triggered the phrase-based
+      // patterns — gives Gemini focused signal instead of a mixed bag.
+      const phrasePatternSet = new Set(contentRulePatterns.map(([p]) => p));
+      const phraseExamples = stillFailing
+        .filter((f) => f.failTypes.some((t) => phrasePatternSet.has(t)))
+        .slice(0, 12)
+        .map(({ post, freshResponse, failTypes }) => ({
+          user: post.raw_text.slice(0, 300),
+          grace: freshResponse.slice(0, 300),
+          failTypes: failTypes.filter((t) => phrasePatternSet.has(t)),
+        }));
+
+      const generatedRules = phraseExamples.length > 0
+        ? await this.generateContentRules(
+            contentRulePatterns.map(([p]) => p),
+            phraseExamples,
+          )
+        : [];
+
+      this.deps.logger.info(
+        {
+          patterns: contentRulePatterns.map(([p, c]) => `${p}:${c}`),
+          examples: phraseExamples.length,
+          rules_returned_by_gemini: generatedRules.length,
+        },
+        'research.auto_fix.rule_generation_result',
       );
+
       for (const rule of generatedRules) {
         if (!dryRun) {
           const inserted = await this.insertContentRuleIfNew(rule);
@@ -283,6 +316,11 @@ export class ResearchAutoFix {
         const hasRule = generatedRules.some((r) => r.reason.toLowerCase().includes(pattern.replace(/_/g, ' ')));
         reportPatterns.push({ pattern, count, action: hasRule ? 'content_rule' : 'logged' });
       }
+    }
+
+    // Structural patterns: synthetic feedback drives the prompt optimizer.
+    for (const [pattern, count] of structuralPatterns) {
+      reportPatterns.push({ pattern, count, action: 'prompt_fix' });
     }
 
     // Add low-eval dimension entries to report
@@ -677,17 +715,49 @@ Example format:
       const text = (resp.text ?? '').trim();
       // Strip markdown fences if Gemini adds them anyway
       const json = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-      const parsed = JSON.parse(json) as GeneratedRule[];
-      if (!Array.isArray(parsed)) return [];
-      // Validate each rule
-      return parsed.filter(
-        (r) =>
-          r.pattern &&
-          typeof r.pattern === 'string' &&
-          r.pattern.length >= 5 &&
-          r.severity === 'regen' &&
-          ['ai', 'scheduler', 'all'].includes(r.applies_to),
-      ).slice(0, 5);
+      this.deps.logger.info(
+        { raw_length: text.length, parsed_preview: json.slice(0, 400) },
+        'research.auto_fix.gemini_rule_response',
+      );
+      const parsed = JSON.parse(json) as Array<Partial<GeneratedRule>>;
+      if (!Array.isArray(parsed)) {
+        this.deps.logger.warn(
+          { json_preview: json.slice(0, 200) },
+          'research.auto_fix.rule_generation_not_array',
+        );
+        return [];
+      }
+      // Validate + apply sensible defaults so a partial-but-valid rule isn't dropped.
+      const normalized: GeneratedRule[] = [];
+      const rejected: Array<{ rule: Partial<GeneratedRule>; why: string }> = [];
+      for (const r of parsed) {
+        if (!r || typeof r !== 'object') {
+          rejected.push({ rule: r, why: 'not_object' });
+          continue;
+        }
+        if (!r.pattern || typeof r.pattern !== 'string' || r.pattern.trim().length < 5) {
+          rejected.push({ rule: r, why: 'pattern_missing_or_too_short' });
+          continue;
+        }
+        const severity: 'regen' | 'log' = r.severity === 'log' ? 'log' : 'regen';
+        const applies_to: 'ai' | 'scheduler' | 'all' =
+          r.applies_to === 'scheduler' || r.applies_to === 'all' ? r.applies_to : 'ai';
+        normalized.push({
+          pattern: r.pattern.trim(),
+          is_regex: r.is_regex === true,
+          ...(r.flags ? { flags: r.flags } : {}),
+          reason: typeof r.reason === 'string' && r.reason.trim().length > 0 ? r.reason.trim() : `Auto-detected pattern`,
+          severity,
+          applies_to,
+        });
+      }
+      if (rejected.length > 0) {
+        this.deps.logger.info(
+          { rejected_count: rejected.length, sample_reasons: rejected.slice(0, 3).map((r) => r.why) },
+          'research.auto_fix.rule_validation_rejections',
+        );
+      }
+      return normalized.slice(0, 5);
     } catch (err) {
       this.deps.logger.warn(
         { err: (err as Error).message },

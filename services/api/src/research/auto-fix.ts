@@ -306,15 +306,36 @@ export class ResearchAutoFix {
         'research.auto_fix.rule_generation_result',
       );
 
+      let insertedCount = 0;
+      let duplicateCount = 0;
       for (const rule of generatedRules) {
         if (!dryRun) {
           const inserted = await this.insertContentRuleIfNew(rule);
-          if (inserted) contentRulesGenerated++;
+          if (inserted) {
+            contentRulesGenerated++;
+            insertedCount++;
+          } else {
+            duplicateCount++;
+          }
         }
       }
+
+      // Action label semantics — be honest about what happened so admins
+      // don't think "logged" means a silent failure:
+      //   content_rule      → Gemini returned ≥1 rule AND ≥1 was newly inserted
+      //   content_rule_dup  → Gemini returned rules but all are already in the DB
+      //   gemini_empty      → Gemini chose not to generate a rule (usually
+      //                       because the sample was too sparse to be confident)
+      const sharedAction: string =
+        generatedRules.length === 0
+          ? 'gemini_empty'
+          : insertedCount > 0
+            ? 'content_rule'
+            : duplicateCount > 0
+              ? 'content_rule_dup'
+              : 'logged';
       for (const [pattern, count] of contentRulePatterns) {
-        const hasRule = generatedRules.some((r) => r.reason.toLowerCase().includes(pattern.replace(/_/g, ' ')));
-        reportPatterns.push({ pattern, count, action: hasRule ? 'content_rule' : 'logged' });
+        reportPatterns.push({ pattern, count, action: sharedAction });
       }
     }
 

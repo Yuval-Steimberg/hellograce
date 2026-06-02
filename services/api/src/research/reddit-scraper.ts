@@ -48,11 +48,15 @@ export interface ScrapeOpts {
   fetcher?: typeof fetch;
 }
 
-const REDDIT_BASE = 'https://old.reddit.com';
-// Reddit returns 403 if you don't send a real-looking UA. Grace-Research/1.0
-// is the canonical identifier per Reddit's bot-policy guidance.
-const USER_AGENT = 'Grace-Research/1.0 (by GraceGLP)';
-const FETCH_TIMEOUT_MS = 8_000;
+// Try both bases — old.reddit.com is sometimes blocked when www.reddit.com
+// (which now serves the JSON behind a CDN) still works. We attempt www first.
+const REDDIT_BASES = ['https://www.reddit.com', 'https://old.reddit.com'] as const;
+// Reddit started returning 403 to anything that LOOKS like a bot in mid-2023,
+// especially from datacenter IPs (Fly.io, AWS, GCP). A plain Chrome UA gets
+// through far more reliably than a custom bot identifier.
+const USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const FETCH_TIMEOUT_MS = 12_000;
 // Drop posts with raw_text shorter than this — usually link-only posts that
 // don't carry analytical signal.
 const MIN_TEXT_LENGTH = 50;
@@ -92,7 +96,9 @@ function normalizeForHash(text: string): string {
 
 /**
  * Fetch with timeout. Native fetch + AbortController.
- * Throws on network error or non-2xx status.
+ * Throws on network error or non-2xx status. Reads a small body snippet on
+ * non-2xx so the caller can see WHAT Reddit returned (HTML block page, JSON
+ * error, etc.) — silent 0-row results were impossible to diagnose otherwise.
  */
 async function fetchWithTimeout(
   url: string,
@@ -103,11 +109,30 @@ async function fetchWithTimeout(
   const fn = opts.fetcher ?? fetch;
   try {
     const res = await fn(url, {
-      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+      headers: {
+        'User-Agent': USER_AGENT,
+        Accept: 'application/json,text/html;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
       signal: ac.signal,
+      redirect: 'follow',
     });
     if (!res.ok) {
-      throw new Error(`Reddit returned HTTP ${res.status} for ${url}`);
+      let snippet = '';
+      if (typeof res.text === 'function') {
+        snippet = await res.text().then((t) => t.slice(0, 160)).catch(() => '');
+      }
+      throw new Error(`HTTP ${res.status} ${res.statusText ?? ''} — ${snippet}`.trim());
+    }
+    // Prefer text() so we can detect HTML "blocked" pages (200 + non-JSON body),
+    // but tests stub only json() so fall back when text() isn't on the response.
+    if (typeof res.text === 'function') {
+      const text = await res.text();
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        throw new Error(`non-JSON response (${text.length} bytes): ${text.slice(0, 120)}`);
+      }
     }
     return (await res.json()) as unknown;
   } finally {
@@ -131,9 +156,23 @@ export async function scrapeSubreddit(
 
   const params = new URLSearchParams({ limit: String(limit) });
   if (sort === 'top') params.set('t', time);
-  const url = `${REDDIT_BASE}/r/${encodeURIComponent(cleanSub)}/${sort}.json?${params.toString()}`;
+  const path = `/r/${encodeURIComponent(cleanSub)}/${sort}.json?${params.toString()}`;
 
-  const raw = await fetchWithTimeout(url, { fetcher: opts.fetcher });
+  // Try www.reddit.com first, fall back to old.reddit.com. Some IPs are
+  // blocked on one but not the other.
+  let raw: unknown = null;
+  const errors: string[] = [];
+  for (const base of REDDIT_BASES) {
+    try {
+      raw = await fetchWithTimeout(base + path, { fetcher: opts.fetcher });
+      break;
+    } catch (err) {
+      errors.push(`${base}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (raw === null) {
+    throw new Error(`all Reddit endpoints failed: ${errors.join(' | ')}`);
+  }
   const listing = raw as RedditApiListing;
   const children = listing.data?.children ?? [];
 

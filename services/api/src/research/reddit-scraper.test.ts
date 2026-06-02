@@ -158,10 +158,10 @@ describe('scrapeMultiple', () => {
   });
 
   it('captures per-subreddit errors without failing the whole batch', async () => {
-    let call = 0;
-    const fetcher = (async (_url: string) => {
-      call++;
-      if (call === 1) {
+    // The scraper tries both www.reddit.com and old.reddit.com per subreddit.
+    // Fail both for Ozempic, succeed on the first call for Mounjaro.
+    const fetcher = (async (url: string) => {
+      if (url.includes('Ozempic')) {
         return { ok: false, status: 503, json: async () => ({}) } as Response;
       }
       return { ok: true, status: 200, json: async () => ({ data: { children: [VALID_POST] } }) } as Response;

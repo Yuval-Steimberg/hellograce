@@ -110,8 +110,18 @@ export class ResearchAutoFix {
 
     this.deps.logger.info({ sampleSize, dryRun }, 'research.auto_fix.start');
 
-    // ── 1. Fetch recent failing posts ──────────────────────────────────────
-    const posts = await this.fetchFailingPosts(sampleSize);
+    // ── 1. Fetch failure samples from BOTH sources ────────────────────────
+    // Corpus (Reddit-scraped) + real 👎 RLHF feedback. The feedback table
+    // is the ground-truth source — real users tagging Grace's response as bad.
+    // Pulling from both means the auto-fix works even when Reddit blocks the
+    // scrape entirely, AND it sees real production failures every run.
+    const corpusPosts = await this.fetchFailingPosts(Math.ceil(sampleSize / 2));
+    const feedbackPosts = await this.fetchNegativeFeedback(sampleSize - corpusPosts.length);
+    const posts = [...corpusPosts, ...feedbackPosts];
+    this.deps.logger.info(
+      { corpus: corpusPosts.length, feedback: feedbackPosts.length, total: posts.length },
+      'research.auto_fix.sample_loaded',
+    );
     if (posts.length === 0) {
       this.deps.logger.info('research.auto_fix.no_failing_posts');
       if (!dryRun) await this.recordRun();
@@ -286,6 +296,65 @@ export class ResearchAutoFix {
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
+
+  /**
+   * Pull recent 👎-rated turns from the feedback table. These are real
+   * production failures — the gold-standard signal. We reshape each into a
+   * FailingPost so the rest of the pipeline doesn't care where it came from.
+   *
+   * The `grade_failures` is synthesized from the user's comment when present;
+   * eval scores stay null (no LLM eval was run on these in production).
+   */
+  private async fetchNegativeFeedback(limit: number): Promise<FailingPost[]> {
+    if (limit <= 0) return [];
+    try {
+      const since = new Date(Date.now() - 30 * 24 * 3_600_000); // last 30 days
+      const { rows } = await this.deps.pool.query<{
+        id: string;
+        user_message: string | null;
+        comment: string | null;
+      }>(
+        `SELECT
+           f.id::text AS id,
+           u.content AS user_message,
+           f.comment
+         FROM feedback f
+         JOIN messages a ON a.id = f.message_id
+         LEFT JOIN LATERAL (
+           SELECT content FROM messages
+           WHERE conversation_id = a.conversation_id
+             AND role = 'user'
+             AND created_at < a.created_at
+           ORDER BY created_at DESC LIMIT 1
+         ) u ON TRUE
+         WHERE f.rating = -1
+           AND f.created_at > $1
+           AND u.content IS NOT NULL
+           AND length(u.content) >= 10
+         ORDER BY f.created_at DESC
+         LIMIT $2`,
+        [since, limit],
+      );
+      return rows.map((r, i) => ({
+        // Use a negative pseudo-id so it can't collide with real_data_corpus rows.
+        id: -(i + 1),
+        raw_text: r.user_message ?? '',
+        classified_intent: null,
+        grade_failures: r.comment
+          ? [{ type: 'user_thumbs_down', detail: r.comment.slice(0, 200) }]
+          : [{ type: 'user_thumbs_down', detail: 'No comment — rated 👎' }],
+        eval_scores: null,
+        eval_overall: 1.5, // Low score so the pipeline treats it as a real failure
+        is_covered: null,
+      }));
+    } catch (err) {
+      this.deps.logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        'research.auto_fix.feedback_fetch_failed',
+      );
+      return [];
+    }
+  }
 
   private async fetchFailingPosts(limit: number): Promise<FailingPost[]> {
     const half = Math.floor(limit / 2);

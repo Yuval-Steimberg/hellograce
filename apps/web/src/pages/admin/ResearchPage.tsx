@@ -179,9 +179,22 @@ export default function ResearchPage() {
         throw new Error(text || `HTTP ${r.status}`);
       }
       const data = (await r.json()) as ScrapeResponse;
-      toast.success(
-        `Scraped ${data.scraped_posts ?? 0} posts · ${data.inserted ?? 0} new · ${data.classified ?? 0} classified · ${data.evaluated ?? 0} LLM-evaluated`,
-      );
+      const errs = data.scrape_errors ?? [];
+      if ((data.scraped_posts ?? 0) === 0 && errs.length > 0) {
+        toast.error(
+          `Scrape blocked: ${errs[0]?.subreddit} → ${(errs[0]?.error ?? 'unknown').slice(0, 140)}`,
+          { duration: 10_000 },
+        );
+      } else if (errs.length > 0) {
+        toast.warning(
+          `Scraped ${data.scraped_posts ?? 0} posts · ${data.inserted ?? 0} new · ${errs.length} subreddit error${errs.length === 1 ? '' : 's'}`,
+          { duration: 8_000 },
+        );
+      } else {
+        toast.success(
+          `Scraped ${data.scraped_posts ?? 0} posts · ${data.inserted ?? 0} new · ${data.classified ?? 0} classified · ${data.evaluated ?? 0} LLM-evaluated`,
+        );
+      }
       await loadCorpus();
     } catch (err) {
       toast.error(`Scrape failed: ${err instanceof Error ? err.message : String(err)}`);

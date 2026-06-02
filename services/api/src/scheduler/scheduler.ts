@@ -74,12 +74,14 @@ export class Scheduler {
         cron.schedule('0 5 * * 0', () => void this.deps.researchScrape!()),
       );
     }
-    // Phase 18: auto-fix — every 3 days at 1am UTC. Re-replays recent corpus
-    // failures through the current Grace, generates content rules for recurring
-    // patterns, and injects synthetic feedback into the nightly prompt optimizer.
+    // Phase 18: auto-fix — DAILY at 1am UTC, 3 hours BEFORE the prompt optimizer's
+    // 4am UTC run. This ordering matters: auto-fix injects synthetic feedback into
+    // the optimizer's in-memory buffer, then the 4am cron picks it up alongside
+    // real RLHF signals. Daily cadence (was every 3 days) so the autonomous loop
+    // produces visible improvements every day, not every third day.
     if (this.deps.researchAutoFix) {
       this.tasks.push(
-        cron.schedule('0 1 */3 * *', () => void this.deps.researchAutoFix!()),
+        cron.schedule('0 1 * * *', () => void this.deps.researchAutoFix!()),
       );
     }
     this.deps.logger.info('scheduler.started');

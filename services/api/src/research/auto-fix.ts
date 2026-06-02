@@ -48,8 +48,10 @@ const REPLAY_PERSONA: ReplayPersona = {
   glp1WeekNumber: 16,
 };
 
-/** Minimum run gap in days before runIfMissedRecently triggers. */
-const MIN_RUN_INTERVAL_DAYS = 2.5;
+/** Minimum run gap in hours before runIfMissedRecently triggers. Daily-ish
+ *  cadence — if we haven't run in the last 20 hours, catch up on startup.
+ *  Matches the once-per-UTC-day cron schedule. */
+const MIN_RUN_INTERVAL_HOURS = 20;
 
 /** Minimum pattern frequency to generate a content rule. Dropped to 1 — any
  *  detected failure pattern is worth asking Gemini for a content rule, with
@@ -413,17 +415,18 @@ export class ResearchAutoFix {
   }
 
   /**
-   * Run the auto-fix if it hasn't run in the last MIN_RUN_INTERVAL_DAYS days.
-   * Called on startup (with a delay) so the first run happens tonight if overdue.
+   * Run the auto-fix if it hasn't run in the last MIN_RUN_INTERVAL_HOURS hours.
+   * Called on startup (with a delay) so a missed cron run is caught up when
+   * the machine wakes back up (Fly auto-stops idle machines after 5 min).
    */
   async runIfMissedRecently(): Promise<void> {
     try {
       const lastRunMs = await this.deps.redis.get(LAST_RUN_KEY).catch(() => null);
       if (lastRunMs) {
-        const daysSince = (Date.now() - parseInt(lastRunMs, 10)) / (24 * 3_600_000);
-        if (daysSince < MIN_RUN_INTERVAL_DAYS) {
+        const hoursSince = (Date.now() - parseInt(lastRunMs, 10)) / 3_600_000;
+        if (hoursSince < MIN_RUN_INTERVAL_HOURS) {
           this.deps.logger.info(
-            { daysSince: Math.round(daysSince * 10) / 10 },
+            { hoursSince: Math.round(hoursSince * 10) / 10 },
             'research.auto_fix.already_ran_recently',
           );
           return;

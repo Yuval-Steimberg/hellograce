@@ -228,8 +228,8 @@ describe('ResearchAutoFix.buildSyntheticFeedback', () => {
 });
 
 describe('ResearchAutoFix.runIfMissedRecently', () => {
-  it('skips when last run was less than 2.5 days ago', async () => {
-    const recentMs = (Date.now() - 1 * 24 * 3_600_000).toString(); // 1 day ago
+  it('skips when last run was less than 20 hours ago', async () => {
+    const recentMs = (Date.now() - 4 * 3_600_000).toString(); // 4 hours ago
     const redis = {
       get: vi.fn().mockResolvedValue(recentMs),
       set: vi.fn().mockResolvedValue('OK'),
@@ -238,6 +238,29 @@ describe('ResearchAutoFix.runIfMissedRecently', () => {
     const runSpy = vi.spyOn(fix, 'run');
     await fix.runIfMissedRecently();
     expect(runSpy).not.toHaveBeenCalled();
+    runSpy.mockRestore();
+  });
+
+  it('triggers run when last run was more than 20 hours ago', async () => {
+    const recentMs = (Date.now() - 22 * 3_600_000).toString(); // 22 hours ago
+    const redis = {
+      get: vi.fn().mockResolvedValue(recentMs),
+      set: vi.fn().mockResolvedValue('OK'),
+    } as unknown as Redis;
+    const fix = makeFix({ redis });
+    const runSpy = vi.spyOn(fix, 'run').mockResolvedValue({
+      postsAnalyzed: 0,
+      stillFailing: 0,
+      alreadyFixed: 0,
+      contentRulesGenerated: 0,
+      syntheticFeedbackInjected: 0,
+      topPatterns: [],
+      weakestDimensions: [],
+      promptOptimizerKicked: false,
+      runAt: new Date().toISOString(),
+    });
+    await fix.runIfMissedRecently();
+    expect(runSpy).toHaveBeenCalledTimes(1);
     runSpy.mockRestore();
   });
 
@@ -255,24 +278,7 @@ describe('ResearchAutoFix.runIfMissedRecently', () => {
       syntheticFeedbackInjected: 0,
       topPatterns: [],
       weakestDimensions: [],
-      runAt: new Date().toISOString(),
-    });
-    await fix.runIfMissedRecently();
-    expect(runSpy).toHaveBeenCalledTimes(1);
-    runSpy.mockRestore();
-  });
-
-  it('triggers run when last run was more than 2.5 days ago', async () => {
-    const oldMs = (Date.now() - 3 * 24 * 3_600_000).toString(); // 3 days ago
-    const redis = {
-      get: vi.fn().mockResolvedValue(oldMs),
-      set: vi.fn().mockResolvedValue('OK'),
-    } as unknown as Redis;
-    const fix = makeFix({ redis });
-    const runSpy = vi.spyOn(fix, 'run').mockResolvedValue({
-      postsAnalyzed: 0, stillFailing: 0, alreadyFixed: 0,
-      contentRulesGenerated: 0, syntheticFeedbackInjected: 0,
-      topPatterns: [], weakestDimensions: [],
+      promptOptimizerKicked: false,
       runAt: new Date().toISOString(),
     });
     await fix.runIfMissedRecently();

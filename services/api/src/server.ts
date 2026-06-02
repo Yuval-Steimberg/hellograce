@@ -491,11 +491,11 @@ function buildOptimizerReport(r: OptimizerRunReport, webUrl: string): string {
     case 'skipped_lock_held':
       return `🤖 Grace RLHF Report — skipped (lock held by other machine)`;
 
-    case 'skipped_already_ran_today':
+    case 'skipped_rate_limit':
       return [
-        `🤖 Grace RLHF Report — skipped`,
+        `🤖 Grace RLHF Report — rate-limited`,
         ``,
-        `Already ran today (v${version}). ${analysis}`,
+        `Another optimizer run produced v${version} less than 15 min ago. ${analysis}`,
       ].join('\n');
 
     case 'skipped_no_new_patterns':

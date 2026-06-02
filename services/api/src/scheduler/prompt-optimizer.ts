@@ -53,7 +53,7 @@ export type OptimizerRunStatus =
   | 'activated'
   | 'draft'
   | 'skipped_lock_held'
-  | 'skipped_already_ran_today'
+  | 'skipped_rate_limit'
   | 'skipped_no_active_prompt'
   | 'skipped_insufficient_data'
   | 'skipped_no_new_patterns'
@@ -193,29 +193,40 @@ export class PromptOptimizer {
   }
 
   private async runWithLock(_client: import('pg').PoolClient): Promise<void> {
-    // Defence-in-depth idempotency: even if the advisory lock somehow lets a
-    // second run through (timing race between two Fly machines, manual trigger
-    // after the nightly cron, etc.), don't re-activate a prompt the same UTC
-    // day. This is what causes the "duplicate key" crash on prompts_active_unique
-    // — two runs both reach saveVersion → both INSERT active=TRUE.
-    const { rows: todayRows } = await this.pool.query<{ version: number; created_at: Date }>(
+    // Rate limiter (NOT a daily cap): the optimizer is allowed to run multiple
+    // times per UTC day so each independent trigger (1am auto-fix, 4am cron,
+    // manual admin run, fresh synthetic feedback injection) can produce a new
+    // prompt version IF the signal has actually changed. We only block back-to-
+    // back runs within the same 15-minute window — that's enough to prevent
+    // racing manual triggers without wasting Gemini calls.
+    //
+    // The duplicate-active-prompt risk is handled at saveVersion() via
+    // SELECT FOR UPDATE + the prompts_active_unique constraint, so we no
+    // longer need a defensive daily cap here. Identical-signal runs are still
+    // a no-op because gatherSignals + mergeAdditionRules will detect that no
+    // new behavioral patterns are present and emit skipped_no_new_patterns.
+    const MIN_INTERVAL_MIN = 15;
+    const { rows: recentRows } = await this.pool.query<{ version: number; created_at: Date }>(
       `SELECT version, created_at
          FROM prompts
         WHERE auto_generated = TRUE
-          AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
+          AND created_at > (now() - interval '${MIN_INTERVAL_MIN} minutes')
         ORDER BY created_at DESC
         LIMIT 1`,
     );
-    if (todayRows[0]) {
+    if (recentRows[0]) {
+      const minutesSince = Math.round(
+        (Date.now() - new Date(recentRows[0].created_at).getTime()) / 60_000,
+      );
       this.logger.info(
-        { version: todayRows[0].version, createdAt: todayRows[0].created_at },
-        'prompt_optimizer.already_ran_today',
+        { version: recentRows[0].version, minutesSince },
+        'prompt_optimizer.skipped_rate_limit',
       );
       await this.emitReport({
-        status: 'skipped_already_ran_today',
+        status: 'skipped_rate_limit',
         activated: false,
-        version: todayRows[0].version,
-        analysis: `An auto-generated prompt (v${todayRows[0].version}) was already saved today — skipping this run to avoid duplicates. Next scheduled run: tomorrow 4am UTC.`,
+        version: recentRows[0].version,
+        analysis: `Another auto-generated prompt (v${recentRows[0].version}) was saved ${minutesSince} min ago — skipping to avoid back-to-back runs within ${MIN_INTERVAL_MIN} min. The optimizer can run multiple times per day; this is just rate-limiting concurrent triggers.`,
         stats: emptyStats(),
       });
       return;

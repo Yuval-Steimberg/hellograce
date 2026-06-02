@@ -615,19 +615,19 @@ describe('PromptOptimizer — report hook', () => {
     expect(onRunComplete.mock.calls[0]![0].status).toBe('error');
   });
 
-  it('skips run when a prompt was already auto-generated today (idempotency guard)', async () => {
-    // Simulate a previous successful run earlier today by routing the
-    // auto_generated/date_trunc query to a non-empty row.
+  it('skips run when another optimizer run completed within the 15-min rate-limit window', async () => {
+    // Simulate a recent run by routing the rate-limit query (auto_generated +
+    // created_at > now() - interval '15 minutes') to a non-empty row.
     const pool = buildPool([
       {
-        pattern: /auto_generated\s*=\s*TRUE\s+AND\s+created_at\s*>=\s*date_trunc/i,
+        pattern: /auto_generated\s*=\s*TRUE\s+AND\s+created_at\s*>\s*\(now\(\)\s*-\s*interval/i,
         rows: [{ version: 36, created_at: new Date() }],
       },
     ]);
     const report = await runOptimizer(pool, new MockLLM());
-    expect(report.status).toBe('skipped_already_ran_today');
+    expect(report.status).toBe('skipped_rate_limit');
     expect(report.version).toBe(36);
-    // Crucially, the LLM should NEVER be called when we bail early.
+    // Crucially, the LLM should NEVER be called when we bail early on rate limit.
     expect((pool.query as ReturnType<typeof vi.fn>).mock.calls.find((c) => /f\.rating = -1/.test(c[0] as string))).toBeUndefined();
   });
 

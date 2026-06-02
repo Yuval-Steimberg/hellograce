@@ -51,10 +51,12 @@ const REPLAY_PERSONA: ReplayPersona = {
 /** Minimum run gap in days before runIfMissedRecently triggers. */
 const MIN_RUN_INTERVAL_DAYS = 2.5;
 
-/** Minimum pattern frequency to generate a content rule. Lowered from 3 to 2
- *  so the loop produces rules even on small samples (e.g. when only 9 feedback
- *  items exist and Reddit is blocked). */
-const PATTERN_CLUSTER_THRESHOLD = 2;
+/** Minimum pattern frequency to generate a content rule. Dropped to 1 — any
+ *  detected failure pattern is worth asking Gemini for a content rule, with
+ *  insertContentRuleIfNew deduping against the existing rule set. Previously
+ *  3 (and briefly 2), but small samples never clustered enough to trigger
+ *  rule generation. */
+const PATTERN_CLUSTER_THRESHOLD = 1;
 
 /** When the live sample (corpus + feedback) is below this size, top up with
  *  synthetic questions from intents.json + Gemini generation. Guarantees
@@ -77,6 +79,11 @@ export interface AutoFixReport {
   syntheticFeedbackInjected: number;
   topPatterns: Array<{ pattern: string; count: number; action: string }>;
   weakestDimensions: Array<{ dim: string; avgScore: number }>;
+  /** Whether the prompt optimizer was kicked off in the background to consume
+   *  the newly injected synthetic feedback. The optimizer runs async — its
+   *  outcome (new prompt version, eval gate, activation) appears in the
+   *  prompts table within ~1-2 minutes of the auto-fix completing. */
+  promptOptimizerKicked: boolean;
   runAt: string;
 }
 
@@ -223,21 +230,27 @@ export class ResearchAutoFix {
     }
 
     // ── 3. Cluster failure patterns ────────────────────────────────────────
+    // Bug fix: the previous version had `stillFailing[0]?.post.eval_scores`
+    // hardcoded inside the loop — it always read the FIRST post's scores
+    // instead of the current iteration's. Fixed below to use the iteration's
+    // own post.eval_scores.
     const patternCounts = new Map<string, number>();
-    for (const { failTypes } of stillFailing) {
+    for (const { post, failTypes } of stillFailing) {
       for (const t of failTypes) {
         patternCounts.set(t, (patternCounts.get(t) ?? 0) + 1);
       }
-      // Also bucket low-eval dimensions
-      const scores = stillFailing[0]?.post.eval_scores;
-      if (scores) {
-        for (const [dim, score] of Object.entries(scores)) {
+      // Also bucket low-eval dimensions (per-post, not from stillFailing[0])
+      if (post.eval_scores) {
+        for (const [dim, score] of Object.entries(post.eval_scores)) {
           if (score < 3) {
             patternCounts.set(`low_${dim}`, (patternCounts.get(`low_${dim}`) ?? 0) + 1);
           }
         }
       }
     }
+    // Take ALL detected patterns (threshold 1) — even single-occurrence
+    // patterns are worth a Gemini-generated rule when the sample is small.
+    // Gemini's own dedup + the insertContentRuleIfNew check prevent noise.
     const topPatternEntries = [...patternCounts.entries()]
       .sort(([, a], [, b]) => b - a)
       .filter(([, c]) => c >= PATTERN_CLUSTER_THRESHOLD)
@@ -279,6 +292,7 @@ export class ResearchAutoFix {
 
     // ── 5. Inject synthetic feedback → drives nightly prompt optimizer ────
     let syntheticFeedbackInjected = 0;
+    let promptOptimizerKicked = false;
     if (this.deps.promptOptimizer && !dryRun) {
       const synthetic = this.buildSyntheticFeedback(stillFailing);
       if (synthetic.length > 0) {
@@ -288,6 +302,24 @@ export class ResearchAutoFix {
           { count: synthetic.length },
           'research.auto_fix.synthetic_feedback_injected',
         );
+
+        // Fire the prompt optimizer immediately in the background. This makes
+        // the auto-fix loop fully autonomous — within 1-2 minutes of this
+        // endpoint returning, a new prompt version is generated, eval-gated,
+        // and (if it passes the baseline) activated. No 4am UTC wait, no
+        // admin click. Run is fire-and-forget so the HTTP response stays fast.
+        const optimizer = this.deps.promptOptimizer;
+        const logger = this.deps.logger;
+        setImmediate(() => {
+          optimizer.run().catch((err: Error) => {
+            logger.warn(
+              { err: err.message },
+              'research.auto_fix.optimizer_background_run_failed',
+            );
+          });
+        });
+        promptOptimizerKicked = true;
+        this.deps.logger.info('research.auto_fix.optimizer_kicked_background');
       }
     }
 
@@ -316,6 +348,7 @@ export class ResearchAutoFix {
       syntheticFeedbackInjected,
       topPatterns: reportPatterns,
       weakestDimensions,
+      promptOptimizerKicked,
       runAt,
     };
   }
@@ -781,6 +814,7 @@ Example format:
       syntheticFeedbackInjected: 0,
       topPatterns: [],
       weakestDimensions: [],
+      promptOptimizerKicked: false,
       runAt,
     };
   }

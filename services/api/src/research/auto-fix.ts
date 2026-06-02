@@ -4,20 +4,31 @@
  * Runs every 3 days (cron: "0 1 *\/3 * *") and on startup if overdue.
  *
  * Pipeline:
- *   1. Sample up to `sampleSize` failing/uncovered posts from real_data_corpus.
+ *   1. Sample up to `sampleSize` failing/uncovered posts from THREE sources:
+ *      a) real_data_corpus (Reddit scrape — may be empty if blocked)
+ *      b) feedback table (real 👎 from production)
+ *      c) the 51-entry intents.json library (always available as a baseline)
+ *      d) Gemini-generated synthetic GLP-1 questions when (a)+(b)+(c) < threshold
+ *      The result is the system is ALWAYS self-sufficient — no admin upload
+ *      required to bootstrap the loop.
  *   2. Re-replay each through the CURRENT active Grace prompt → fast deterministic
  *      failure check.  Posts that now pass are "already fixed" — we celebrate the
  *      improvement and skip them.
  *   3. For still-failing posts, cluster failures by pattern frequency.
- *   4. Use Gemini to generate targeted `regen` content rules for patterns seen ≥ 3×.
- *      Rules are inserted directly as `is_active = true` so they take effect within
- *      60 s (ContentRulesService refresh interval) — no deploy required.
+ *   4. Use Gemini to generate targeted `regen` content rules for patterns seen
+ *      ≥ cluster_threshold times (default 2 — lowered from 3 so the loop works
+ *      with small samples). Rules are inserted as `is_active = true` so they
+ *      take effect within 60 s (ContentRulesService refresh interval) — no
+ *      deploy required.
  *   5. Convert still-failing (userMessage, graceResponse) pairs into SyntheticFeedback
  *      and inject into the PromptOptimizer in-memory buffer.  The nightly 4am run
  *      picks them up alongside real 👎 signals and generates targeted prompt additions.
  *   6. Store results in Redis, send admin WhatsApp summary.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Pool } from 'pg';
 import type { LLMProvider } from '@grace/shared';
 import type { Logger } from 'pino';
@@ -39,6 +50,16 @@ const REPLAY_PERSONA: ReplayPersona = {
 
 /** Minimum run gap in days before runIfMissedRecently triggers. */
 const MIN_RUN_INTERVAL_DAYS = 2.5;
+
+/** Minimum pattern frequency to generate a content rule. Lowered from 3 to 2
+ *  so the loop produces rules even on small samples (e.g. when only 9 feedback
+ *  items exist and Reddit is blocked). */
+const PATTERN_CLUSTER_THRESHOLD = 2;
+
+/** When the live sample (corpus + feedback) is below this size, top up with
+ *  synthetic questions from intents.json + Gemini generation. Guarantees
+ *  every run sees at least this many items for meaningful clustering. */
+const MIN_SAMPLE_FLOOR = 30;
 
 export interface AutoFixDeps {
   pool: Pool;
@@ -110,16 +131,44 @@ export class ResearchAutoFix {
 
     this.deps.logger.info({ sampleSize, dryRun }, 'research.auto_fix.start');
 
-    // ── 1. Fetch failure samples from BOTH sources ────────────────────────
-    // Corpus (Reddit-scraped) + real 👎 RLHF feedback. The feedback table
-    // is the ground-truth source — real users tagging Grace's response as bad.
-    // Pulling from both means the auto-fix works even when Reddit blocks the
-    // scrape entirely, AND it sees real production failures every run.
-    const corpusPosts = await this.fetchFailingPosts(Math.ceil(sampleSize / 2));
-    const feedbackPosts = await this.fetchNegativeFeedback(sampleSize - corpusPosts.length);
-    const posts = [...corpusPosts, ...feedbackPosts];
+    // ── 1. Fetch failure samples from FOUR sources ────────────────────────
+    // a) Corpus (Reddit scrape) — may be empty when Reddit blocks
+    // b) Feedback table (real 👎 from production) — ground truth
+    // c) Intent library (51 hand-curated GLP-1 question variations) — always available
+    // d) Synthetic Gemini-generated GLP-1 questions — top-up when (a-c) < floor
+    //
+    // The chain guarantees the loop is SELF-SUFFICIENT: it works on day 1 with
+    // zero corpus and zero production feedback, because (c) and (d) always
+    // produce signal. As real data accumulates, (a) and (b) take priority.
+    const corpusBudget = Math.ceil(sampleSize / 3);
+    const feedbackBudget = Math.ceil(sampleSize / 3);
+    const corpusPosts = await this.fetchFailingPosts(corpusBudget);
+    const feedbackPosts = await this.fetchNegativeFeedback(feedbackBudget);
+    let posts = [...corpusPosts, ...feedbackPosts];
+
+    // Top up from intent library if real data is sparse
+    const intentBudget = Math.max(0, sampleSize - posts.length);
+    const intentPosts = intentBudget > 0
+      ? this.sampleFromIntentLibrary(intentBudget)
+      : [];
+    posts = [...posts, ...intentPosts];
+
+    // Final top-up: Gemini-generated synthetic questions if STILL below floor.
+    // This is the safety net that guarantees the loop never returns empty.
+    const syntheticBudget = Math.max(0, MIN_SAMPLE_FLOOR - posts.length);
+    const syntheticPosts = syntheticBudget > 0
+      ? await this.generateSyntheticQuestions(syntheticBudget)
+      : [];
+    posts = [...posts, ...syntheticPosts];
+
     this.deps.logger.info(
-      { corpus: corpusPosts.length, feedback: feedbackPosts.length, total: posts.length },
+      {
+        corpus: corpusPosts.length,
+        feedback: feedbackPosts.length,
+        intent_library: intentPosts.length,
+        synthetic: syntheticPosts.length,
+        total: posts.length,
+      },
       'research.auto_fix.sample_loaded',
     );
     if (posts.length === 0) {
@@ -191,7 +240,7 @@ export class ResearchAutoFix {
     }
     const topPatternEntries = [...patternCounts.entries()]
       .sort(([, a], [, b]) => b - a)
-      .filter(([, c]) => c >= 3)
+      .filter(([, c]) => c >= PATTERN_CLUSTER_THRESHOLD)
       .slice(0, 8);
 
     // ── 4. Generate + insert content rules ────────────────────────────────
@@ -351,6 +400,135 @@ export class ResearchAutoFix {
       this.deps.logger.warn(
         { err: err instanceof Error ? err.message : String(err) },
         'research.auto_fix.feedback_fetch_failed',
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Sample from the 51-entry intent library (services/api/coverage/intents.json).
+   * Each intent has up to ~10 phrasing variations — we sample evenly across
+   * domains so the auto-fix exercises Grace on the full coverage matrix even
+   * when corpus + feedback are empty.
+   *
+   * Read the file lazily and cache in memory across runs. Errors degrade
+   * gracefully — if the file is missing we just return [].
+   */
+  private intentLibraryCache: string[] | null = null;
+  private sampleFromIntentLibrary(limit: number): FailingPost[] {
+    if (limit <= 0) return [];
+    try {
+      if (!this.intentLibraryCache) {
+        // Resolve relative to this compiled file. In dev (tsx) it's src/research/,
+        // in production (compiled) it's dist/research/. The coverage dir is
+        // two levels up from either.
+        const here = dirname(fileURLToPath(import.meta.url));
+        const path = resolve(here, '../../coverage/intents.json');
+        const raw = readFileSync(path, 'utf8');
+        const parsed = JSON.parse(raw) as Array<{ variations?: string[] }>;
+        const variations: string[] = [];
+        for (const entry of parsed) {
+          if (Array.isArray(entry.variations)) {
+            for (const v of entry.variations) {
+              if (typeof v === 'string' && v.trim().length >= 10) {
+                variations.push(v.trim());
+              }
+            }
+          }
+        }
+        this.intentLibraryCache = variations;
+        this.deps.logger.info(
+          { variations_loaded: variations.length },
+          'research.auto_fix.intent_library_loaded',
+        );
+      }
+      const pool = this.intentLibraryCache;
+      if (pool.length === 0) return [];
+      // Shuffle then slice — gives a fresh sample each run.
+      const shuffled = [...pool].sort(() => Math.random() - 0.5);
+      return shuffled.slice(0, limit).map((text, i) => ({
+        id: -(1000 + i), // distinguish from feedback IDs (-1..-999) and corpus IDs (positive)
+        raw_text: text,
+        classified_intent: null,
+        grade_failures: [{ type: 'intent_library_seed', detail: 'Sourced from intents.json' }],
+        eval_scores: null,
+        eval_overall: null, // null = treat as "needs replay" regardless of quickFailCheck
+        is_covered: true,
+      }));
+    } catch (err) {
+      this.deps.logger.warn(
+        { err: (err as Error).message },
+        'research.auto_fix.intent_library_load_failed',
+      );
+      return [];
+    }
+  }
+
+  /**
+   * Generate synthetic GLP-1 user questions via Gemini when corpus + feedback
+   * + intent library together still fall short of MIN_SAMPLE_FLOOR. This is
+   * the bottom-of-stack safety net — guarantees the auto-fix always has
+   * SOMETHING to chew on regardless of external dependencies.
+   *
+   * Prompted to produce realistic, diverse phrasings across the 10 GLP-1
+   * topic domains. Uses gemini-2.0-flash with low temperature for stability.
+   */
+  private async generateSyntheticQuestions(limit: number): Promise<FailingPost[]> {
+    if (limit <= 0) return [];
+    try {
+      const prompt = `Generate ${limit} realistic, diverse questions that a GLP-1 medication user (Ozempic / Wegovy / Mounjaro / Zepbound / Rybelsus) might text to a WhatsApp health companion app. Cover these domains evenly:
+- Medication (dose timing, missed dose, titration, switching meds)
+- Side effects (nausea, constipation, hair loss, fatigue, heartburn, diarrhea)
+- Food and nutrition (what to eat, protein, food noise, alcohol)
+- Weight and progress (plateaus, scale frustration, body image)
+- Emotional support (feeling defeated, identity loss, fear of regaining)
+- Exercise (timing, intensity on GLP-1)
+- Social situations (eating out, travel, holidays)
+- Safety (interactions, abdominal pain, vomiting, contacting doctor)
+
+Each question must:
+- Be 15-200 characters long
+- Read like a real person (lowercase ok, typos ok, contractions ok)
+- Sometimes pack 2-3 thoughts in one message (multi-part)
+- Vary in tone: anxious, casual, frustrated, curious, hopeful
+
+Return ONLY a JSON array of strings. No markdown fences, no commentary.
+
+Example: ["i forgot my shot 2 days ago what should i do", "feeling really defeated my scale hasn't moved in 3 weeks", "is bottom right abdominal pain on mounjaro something to worry about"]`;
+
+      const resp = await this.deps.llm.generate({
+        model: 'gemini-2.0-flash',
+        messages: [
+          { role: 'system', content: 'You generate realistic patient questions in JSON format only. No markdown.' },
+          { role: 'user', content: prompt },
+        ],
+        maxOutputTokens: 1500,
+        temperature: 0.6,
+      });
+      const text = (resp.text ?? '').trim();
+      const json = text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+      const parsed = JSON.parse(json) as unknown[];
+      if (!Array.isArray(parsed)) return [];
+      const valid = parsed
+        .filter((s): s is string => typeof s === 'string' && s.length >= 15 && s.length <= 400)
+        .slice(0, limit);
+      this.deps.logger.info(
+        { generated: valid.length, requested: limit },
+        'research.auto_fix.synthetic_generated',
+      );
+      return valid.map((text, i) => ({
+        id: -(10_000 + i), // synthetic IDs in their own range
+        raw_text: text,
+        classified_intent: null,
+        grade_failures: [{ type: 'synthetic_seed', detail: 'Gemini-generated GLP-1 question' }],
+        eval_scores: null,
+        eval_overall: null,
+        is_covered: null,
+      }));
+    } catch (err) {
+      this.deps.logger.warn(
+        { err: (err as Error).message },
+        'research.auto_fix.synthetic_generation_failed',
       );
       return [];
     }

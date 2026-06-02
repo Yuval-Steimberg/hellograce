@@ -748,7 +748,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     return { ok: true };
   });
 
-  /** Manually trigger the RLHF prompt optimizer (normally runs at 4am UTC). */
+  /** Manually trigger the RLHF prompt optimizer (normally runs at 05:30 UTC daily). */
   app.post('/admin/run-optimizer', async () => {
     if (!deps.promptOptimizer) return { ok: false, message: 'Prompt optimizer not available' };
     // Run in background so the HTTP response returns immediately

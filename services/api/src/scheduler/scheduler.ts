@@ -46,14 +46,15 @@ export class Scheduler {
     this.tasks.push(
       cron.schedule('0 3 * * *', () => void this.runPersonalizationEngine()),
     );
-    // Prompt optimizer runs DAILY at 4am UTC so every signal that lands in
-    // the feedback table gets analyzed within 24h. Strict isSafe() gates
-    // auto-activation; failures save as inactive drafts for admin review.
-    // Prompt optimizer — catch up on startup if the 4am UTC window was missed
+    // Prompt optimizer runs DAILY at 05:30 UTC — shifted from 4am so it fires
+    // ~12 hours offset from the typical mid-day operator/admin activity
+    // window. Strict isSafe() gates auto-activation; failures save as inactive
+    // drafts for admin review.
+    // Prompt optimizer — catch up on startup if the 05:30 UTC window was missed
     // (common when Fly machines auto-stop overnight due to no payment method).
     if (this.deps.promptOptimizer) {
       this.tasks.push(
-        cron.schedule('0 4 * * *', () => void this.deps.promptOptimizer!.run()),
+        cron.schedule('30 5 * * *', () => void this.deps.promptOptimizer!.run()),
       );
       setTimeout(() => void this.deps.promptOptimizer!.runIfMissedToday(), 30_000);
     }
@@ -74,11 +75,12 @@ export class Scheduler {
         cron.schedule('0 5 * * 0', () => void this.deps.researchScrape!()),
       );
     }
-    // Phase 18: auto-fix — DAILY at 1am UTC, 3 hours BEFORE the prompt optimizer's
-    // 4am UTC run. This ordering matters: auto-fix injects synthetic feedback into
-    // the optimizer's in-memory buffer, then the 4am cron picks it up alongside
-    // real RLHF signals. Daily cadence (was every 3 days) so the autonomous loop
-    // produces visible improvements every day, not every third day.
+    // Phase 18: auto-fix — DAILY at 1am UTC, 4.5 hours BEFORE the prompt
+    // optimizer's 05:30 UTC run. This ordering matters: auto-fix injects
+    // synthetic feedback into the optimizer's in-memory buffer, then the
+    // 05:30 cron picks it up alongside real RLHF signals. Daily cadence
+    // (was every 3 days) so the autonomous loop produces visible
+    // improvements every day, not every third day.
     if (this.deps.researchAutoFix) {
       this.tasks.push(
         cron.schedule('0 1 * * *', () => void this.deps.researchAutoFix!()),

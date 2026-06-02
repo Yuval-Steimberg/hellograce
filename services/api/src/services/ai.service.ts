@@ -769,6 +769,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       checkinsToday,
       knownFacts,
       dietaryRestriction,
+      currentUserText: input.text,
       ...(conversationSummary ? { conversationSummary: conversationSummary.summary } : {}),
       ...(activeTopic ? { activeTopic } : {}),
     });
@@ -1051,6 +1052,10 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       conversationSummary?: string;
       /** Phase 4: current active topic + age. Null when stale or absent. */
       activeTopic?: { topic: string; ageMinutes: number };
+      /** The user's latest message — used to inject turn-specific directives
+       *  (e.g. suppress food/protein context dump when the message is about
+       *  physical pain or acute symptoms). */
+      currentUserText?: string;
     },
   ): string {
     const base = this.systemPrompt ?? undefined;
@@ -1305,10 +1310,21 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       ? buildDietaryBanner(runtime.dietaryRestriction) + '\n\n'
       : '';
 
-    if (lines.length === 0 && !factsBlock) return `${dietBanner}${base ?? ''}`;
+    // TURN-SPECIFIC DIRECTIVE — detect physical-pain / acute-symptom messages
+    // and explicitly suppress the food/protein context dump. Production
+    // failure 2026-06-02: user said "Thanks. I slept well, but my stomach is
+    // killing me" and Grace opened "You haven't logged any food today, so
+    // you're at 0g protein so far…" because the LLM saw the protein totals
+    // in context and defaulted to surfacing them. This directive forces the
+    // LLM to ignore them this turn.
+    const turnDirective = runtime?.currentUserText
+      ? buildTurnDirective(runtime.currentUserText)
+      : '';
+
+    if (lines.length === 0 && !factsBlock && !turnDirective) return `${dietBanner}${base ?? ''}`;
     const userCtx = lines.length > 0 ? `\n\n--- User context ---\n${lines.join('\n')}` : '';
     const factsCtx = factsBlock ? `\n\n--- What Grace has naturally learned about this user ---\n${factsBlock}\nUse these subtly. Never read them back mechanically. Never say "according to your profile."` : '';
-    return `${dietBanner}${base ?? ''}${userCtx}${factsCtx}`;
+    return `${dietBanner}${base ?? ''}${userCtx}${factsCtx}${turnDirective}`;
   }
 
   private async loadToolSettings(): Promise<Record<string, boolean>> {
@@ -1410,6 +1426,47 @@ function renderKnownFactsBlock(
     out.push(`${FACT_LABELS[cat]}: ${items.join('; ')}`);
   }
   return out.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Turn-specific directive — physical-pain / acute-symptom suppression
+//
+// When the user's CURRENT message reports physical pain or an acute symptom
+// (stomach/head/back hurts, killing me, feel sick, throwing up, etc.), the
+// LLM tends to default to surfacing prior turns' food/protein data because
+// it's prominently in the system context. The fix is a per-turn directive
+// appended AFTER the user-context block that explicitly tells Grace to
+// suppress the data dump and respond to the pain only.
+//
+// We keep the trigger conservative — only the clearest pain anchors. Food
+// questions, weight questions, and emotional venting are handled by the
+// base prompt rules and other content checks.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TURN_DIRECTIVE_PAIN_RE = /\b(?:(?:my\s+|the\s+)?(?:stomach|belly|head|back|chest|side|leg|arm|neck|shoulder|throat|tooth|tummy|gut|jaw)\s+(?:is|are|'?s|feels?)\s+(?:killing|hurting|aching|throbbing|so\s+sore|really\s+sore|on\s+fire)|(?:my\s+)?(?:stomach|head|back|tooth|throat|jaw|side|leg|arm|chest)\s+hurts?|in\s+(?:so\s+much\s+|a\s+lot\s+of\s+|real\s+|bad\s+)?pain|feel\s+(?:so\s+|really\s+|kind\s+of\s+|sort\s+of\s+|pretty\s+)?(?:sick|nauseous|nauseated|awful|terrible|horrible)|throwing\s+up|vomit(?:ing|ed)|cramping\s+(?:so\s+bad|really\s+bad|hard)?)\b/i;
+
+export function buildTurnDirective(userText: string): string {
+  if (!userText) return '';
+  const trimmed = userText.trim();
+  if (trimmed.length === 0) return '';
+  if (TURN_DIRECTIVE_PAIN_RE.test(trimmed)) {
+    return [
+      '',
+      '',
+      '--- TURN-SPECIFIC DIRECTIVE (highest priority) ---',
+      'The user\'s LATEST message reports PHYSICAL PAIN / ACUTE SYMPTOM.',
+      'For THIS response only:',
+      '  1. DO NOT reference today\'s protein/calorie totals, foods logged today, yesterday\'s data, or any food-tracking status. NEVER open with "you haven\'t logged any food today" or "you\'re at Xg protein".',
+      '  2. DO NOT surface memory ("you\'ve mentioned this before", "you said earlier", "last time").',
+      '  3. DO NOT reference closed sub-topics from the same message ("glad to hear you slept well") or earlier turns.',
+      '  4. DO NOT ask a multi-item clinical-intake question ("are you experiencing fever, nausea, vomiting, or…?").',
+      '  5. DO NOT chain two questions.',
+      '  6. DO open with one warm sentence acknowledging the pain. Then EITHER one focused question (e.g. "where exactly is it sitting?") OR one actionable next step (e.g. "lower-left abdominal pain on a GLP-1 deserves a quick call to your prescriber today"). Pick whichever fits — never both.',
+      '  7. Lower-left or right-side abdominal pain, sharp/worsening pain, or pain plus vomiting/fever ⇒ recommend they call their prescriber TODAY (calm, not alarmist).',
+      '',
+    ].join('\n');
+  }
+  return '';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

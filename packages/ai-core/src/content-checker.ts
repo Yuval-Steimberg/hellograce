@@ -209,25 +209,46 @@ function checkFoodLogPreambleLeak(response: string, userMessage: string): Conten
   return [];
 }
 
-// ── Emotion before data ──────────────────────────────────────────────────────
-// When the user expresses an emotional state — frustration, failure, sadness,
-// fear — the response MUST open with emotion acknowledgment, NOT food logging
-// / protein numbers / data callbacks. Production failure (session 3):
+// ── Emotion (or physical pain) before data ───────────────────────────────────
+// When the user expresses an emotional state OR a current physical symptom —
+// frustration, failure, sadness, fear, pain, nausea, sickness — the response
+// MUST open with empathic acknowledgment, NOT food logging / protein numbers
+// / data callbacks.
+//
+// Production failure A (session 3):
 //   User:  "I'm trying and I still feel like I'm failing"
 //   Grace: "Toast and orange juice logged. That's about 4g protein. You're at
 //          4g of your 114g target today. It sounds like you're carrying a lot..."
-// The emotional content WAS there, but buried under stale food-log data from
-// a message 2 hours earlier. EMOTION BEFORE DATA is non-negotiable.
+//
+// Production failure B (2026-06-02 screenshot):
+//   User:  "Thanks. I slept well, but my stomach is killing me"
+//   Grace: "You haven't logged any food today, so you're at 0g protein so far.
+//          Ugh, stomach pain is really rough..."
+//
+// Both are the same bug: stale food/protein data opens a response that the
+// user needs empathy + targeted attention for. The fix is to expand the
+// trigger to physical-pain expressions too.
 const EMOTIONAL_USER_RE = /\b(feel(?:ing)?\s+(?:like|so|really|kind\s+of)\s+(?:i'?m\s+)?(?:failing|broken|alone|lonely|sad|hopeless|defeated|exhausted|stuck|done|empty|lost|invisible|worthless|like\s+giving\s+up)|i'?m\s+(?:so\s+|really\s+|just\s+)?(?:failing|struggling|exhausted|broken|done|defeated|hopeless|stuck|lonely|sad|frustrated|overwhelmed|anxious|scared|terrified|crying|breaking down|losing it)|i\s+(?:want to|just want to|need to|feel like i should) (?:give up|quit|stop|cry|disappear)|i (?:can'?t do this|can'?t keep going|don'?t (?:want|know how) to keep)|this isn'?t working|nothing'?s working|why bother|what'?s the point)\b/i;
-const DATA_OPENER_RE = /^(?:[a-z][\w\s,()'-]{0,60}\s+(?:logged|noted|recorded|added)\b|that'?s about \d|that'?s roughly \d|logged\s*[—,.-]|got it,?\s+(?:that'?s|about|around)\s+\d|you'?re (?:at|now at) \d|that brings you|adding that)/i;
+// Physical-pain / acute-symptom expressions. Matches "stomach is killing me",
+// "head hurts", "my back is so sore", "feel sick", "throwing up", etc.
+// Includes the user's body-part + "killing me" / "hurts" / "in pain" pattern
+// plus the bare "feel(ing) X" symptom verbs.
+const PHYSICAL_PAIN_USER_RE = /\b(?:(?:my\s+|the\s+)?(?:stomach|belly|head|back|chest|side|leg|arm|neck|shoulder|throat|tooth|tummy|gut|jaw)\s+(?:is|are|'?s|feels?)\s+(?:killing|hurting|aching|throbbing|so\s+sore|really\s+sore|on\s+fire)|(?:my\s+)?(?:stomach|head|back|tooth|throat|jaw|side|leg|arm|chest)\s+hurts?|in\s+(?:so\s+much\s+|a\s+lot\s+of\s+|real\s+|bad\s+)?pain|feel\s+(?:so\s+|really\s+|kind\s+of\s+|sort\s+of\s+|pretty\s+)?(?:sick|nauseous|nauseated|awful|terrible|horrible|like\s+(?:crap|garbage|hell))|throwing\s+up|vomit(?:ing|ed)|can'?t\s+stop\s+(?:throwing\s+up|vomiting)|killing\s+me|hurts?\s+(?:so\s+|really\s+)?(?:bad|much)|cramping\s+(?:so\s+bad|really\s+bad|hard)?)\b/i;
+const DATA_OPENER_RE = /^(?:[a-z][\w\s,()'-]{0,60}\s+(?:logged|noted|recorded|added)\b|that'?s about \d|that'?s roughly \d|logged\s*[—,.-]|got it,?\s+(?:that'?s|about|around)\s+\d|you'?re (?:at|now at) \d|that brings you|adding that|you\s+haven'?t\s+logged|you\s+have\s+not\s+logged|so\s+you'?re\s+at\s+\d|so\s+far\s+(?:you'?re|you\s+have))/i;
 
 function checkEmotionBeforeData(response: string, userMessage: string): ContentViolation[] {
-  if (!EMOTIONAL_USER_RE.test(userMessage)) return [];
+  const isEmotional = EMOTIONAL_USER_RE.test(userMessage);
+  const isPhysicalPain = PHYSICAL_PAIN_USER_RE.test(userMessage);
+  if (!isEmotional && !isPhysicalPain) return [];
   const firstSentence = response.split(/[.!?]\s/)[0] ?? '';
   if (DATA_OPENER_RE.test(firstSentence)) {
+    const kind = isPhysicalPain ? 'PHYSICAL-PAIN / SYMPTOM' : 'EMOTIONAL';
+    const example = isPhysicalPain
+      ? 'user says "my stomach is killing me" → Grace opens "Ugh, stomach pain like that is rough. Where exactly is it sitting?" — NEVER opens with food log status or daily protein totals.'
+      : 'user says "I feel like I\'m failing" → Grace opens "That feeling can hit so hard when you\'re putting in the effort. What\'s been making it feel like failing lately?" — NEVER opens with food.';
     return [{
       code: 'emotion_before_data',
-      message: `Response to an EMOTIONAL message MUST open with emotional acknowledgment — NOT food logging / protein numbers / data. The user said: "${userMessage.slice(0, 100)}". The first sentence currently starts with data ("${firstSentence.slice(0, 80)}..."). REWRITE: open with one warm sentence acknowledging the feeling. Food/data callbacks go LAST or get dropped entirely. Example: user says "I feel like I'm failing" → Grace opens "That feeling can hit so hard when you're putting in the effort. What's been making it feel like failing lately?" — NEVER opens with food.`,
+      message: `Response to a ${kind} message MUST open with empathic acknowledgment — NOT food logging / protein numbers / data ("you haven't logged anything", "you're at 0g", etc.). The user said: "${userMessage.slice(0, 100)}". The first sentence currently starts with data ("${firstSentence.slice(0, 80)}..."). REWRITE: open with one warm sentence acknowledging the feeling or pain. Food / protein totals are IRRELEVANT to a pain message — drop them entirely. Example: ${example}`,
       severity: 'regen',
     }];
   }
@@ -628,6 +649,39 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\blayers? of complexity\b/i, reason: '"layers of complexity" — vague filler, give specific information' },
   { pattern: /\bholistic approach\b/i, reason: '"holistic approach" — wellness jargon, be specific instead' },
   { pattern: /\bmore careful monitoring\b/i, reason: '"more careful monitoring" — vague, name what to monitor specifically' },
+
+  // ── 2026-06-02 production screenshot bans ────────────────────────────────
+  // Failure shown: user said "Thanks. I slept well, but my stomach is killing
+  // me" and Grace opened "You haven't logged any food today, so you're at 0g
+  // protein so far. Ugh, stomach pain is really rough. You've mentioned this
+  // before. Is it a sharp pain, or more of a dull ache? And where are you
+  // feeling it?" — multiple violations:
+  //  1) opened with food/protein data when message was about pain
+  //  2) "You've mentioned this before" patronizing memory callback
+  //  3) two questions chained
+  // Follow-up failure: user answered "Im feeling it on the bottom left side"
+  // and Grace opened "Anytime. Glad to hear you slept well, but ugh, that
+  // stomach pain... Are you experiencing any other symptoms like fever,
+  // nausea, vomiting, or changes in bowel movements?" — more violations:
+  //  4) "Anytime" opener (user wasn't thanking her)
+  //  5) "Glad to hear you slept well" surfaces a DEAD topic
+  //  6) Multi-item clinical intake question (fever, nausea, vomiting, OR…)
+  { pattern: /\byou(?:'?ve)?\s+(?:mentioned|talked about|brought (?:this|that|it) up|said|told me|noted)\s+(?:this|that|it)\s+(?:before|earlier|previously|in the past|last (?:time|week))\b/i, reason: '"You\'ve mentioned this before" — patronizing memory callback. Never surface that the user repeated themselves; just answer the current message.' },
+  { pattern: /\byou (?:said|mentioned|told me)\s+(?:earlier|previously|before|last (?:time|week))\s+(?:that\s+)?you\b/i, reason: 'Surfacing past statements ("you said earlier that you...") is patronizing. Drop the callback, answer the current message.' },
+  { pattern: /\blast time you (?:mentioned|said|told me|brought up)\b/i, reason: '"Last time you mentioned X" — irrelevant memory callback, banned' },
+  { pattern: /^anytime[!.,\s]/im, reason: '"Anytime" opener — assumes the user thanked Grace; almost always wrong, banned' },
+  { pattern: /^anytime[!.]?\s*$/im, reason: '"Anytime" as standalone — generic chatbot opener, banned' },
+  { pattern: /\bglad to hear (?:you|that you)\s+(?:slept|ate|had|did|went|got|finished|completed|enjoyed|managed|made it|are doing|are feeling|felt|got through)\b/i, reason: '"Glad to hear you slept well / ate well / are doing X" — surfaces a prior topic the user has already moved past. Drop the callback; address the current message only.' },
+  // Multi-item clinical intake question — "Are you experiencing X, Y, Z, or W?"
+  // This is intake-form behavior, not a friend. Match 3+ comma-separated items
+  // followed by "or" inside an "are you / do you have / any other symptoms" question.
+  { pattern: /\b(?:are you (?:experiencing|having|noticing|getting)|do you have|any other (?:symptoms?|signs?))\b[^.?!]*\b(?:\w+,\s+){2,}\w+(?:,?\s+or\s+\w+)?[^.?!]*\?/i, reason: 'Multi-item clinical-intake question (e.g. "Are you experiencing fever, nausea, vomiting, or X?") — sounds like an ER triage form. Pick ONE focused question or none.' },
+  // "How long has it been hurting this time?" + "Are you experiencing..." —
+  // even when the items list is short, asking BOTH a time question AND a
+  // symptom-screening question in one response = clinical intake. The
+  // generic two-question check catches the `?`/`?` pattern but we want a
+  // dedicated rule with a clearer message for this specific pattern.
+  { pattern: /\bhow long (?:has|have|did|does)\b[^.?!]*\?[^?]*\b(?:are you (?:experiencing|having|noticing|getting)|do you have|any (?:other )?symptoms?)\b[^.?!]*\?/i, reason: 'Asking "how long has this been happening?" AND "are you experiencing other symptoms?" in the same response — that\'s a clinical intake form. Pick ONE.' },
 
   // ── Protein-from-goal-weight factual error ───────────────────────────────
   // The feedback flagged Grace saying "per kilogram of your goal body weight"

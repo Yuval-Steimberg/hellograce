@@ -504,6 +504,204 @@ describe('checkEmotionBeforeData (session 3 feedback)', () => {
   });
 });
 
+describe('checkEmotionBeforeData — physical pain trigger (2026-06-02 production)', () => {
+  it('flags response opening with food-log status on a stomach-pain message (exact production case)', () => {
+    const violations = checkContent(
+      "You haven't logged any food today, so you're at 0g protein so far. Ugh, stomach pain is really rough.",
+      { userMessage: 'Thanks. I slept well, but my stomach is killing me' },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(true);
+  });
+
+  it('flags "you\'re at 0g protein" on a stomach pain message', () => {
+    const violations = checkContent(
+      "You're at 0g protein today. Stomach pain on GLP-1s is common.",
+      { userMessage: 'my stomach is killing me' },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(true);
+  });
+
+  it('flags food-log opener on "my head hurts"', () => {
+    const violations = checkContent(
+      "Logged — about 30g protein. Headaches on GLP-1s can happen.",
+      { userMessage: 'my head hurts so bad' },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(true);
+  });
+
+  it('flags data opener on "I feel sick"', () => {
+    const violations = checkContent(
+      "You're at 45g protein today. Feeling sick is rough.",
+      { userMessage: 'I feel really sick today' },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(true);
+  });
+
+  it('flags data opener on "throwing up"', () => {
+    const violations = checkContent(
+      "You're at 12g protein. Throwing up is hard on the body.",
+      { userMessage: "I can't stop throwing up" },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(true);
+  });
+
+  it('does NOT flag empathy-first response to pain', () => {
+    const violations = checkContent(
+      "Ugh, stomach pain like that is rough. Where exactly is it sitting?",
+      { userMessage: 'my stomach is killing me' },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(false);
+  });
+
+  it('does NOT flag food-data response on a food question (no pain trigger)', () => {
+    const violations = checkContent(
+      "You're at 45g protein today, you've got 35g to go.",
+      { userMessage: 'how much protein have I had today?' },
+    );
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(false);
+  });
+});
+
+describe('memory callback bans (2026-06-02 production)', () => {
+  it('flags "You\'ve mentioned this before"', () => {
+    const violations = checkContent(
+      "Stomach pain is rough. You've mentioned this before. Where is it?",
+      { userMessage: 'my stomach hurts' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase')).toBe(true);
+  });
+
+  it('flags "you mentioned this before"', () => {
+    const violations = checkContent(
+      "Got it. You mentioned this before.",
+      { userMessage: 'my back hurts again' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase')).toBe(true);
+  });
+
+  it('flags "you said earlier that you"', () => {
+    const violations = checkContent(
+      "You said earlier that you were tired. So this might be related.",
+      { userMessage: 'I have a headache' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase')).toBe(true);
+  });
+
+  it('flags "last time you mentioned"', () => {
+    const violations = checkContent(
+      "Last time you mentioned nausea was last week.",
+      { userMessage: 'I feel nauseous' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase')).toBe(true);
+  });
+
+  it('does NOT flag a forward-looking "mention" phrasing', () => {
+    const violations = checkContent(
+      "Worth mentioning that protein early helps with nausea.",
+      { userMessage: 'I feel nauseous' },
+    );
+    const hits = violations.filter((v) => v.code === 'banned_phrase' && /mentioned this before|you said earlier|last time/.test(v.message));
+    expect(hits).toHaveLength(0);
+  });
+});
+
+describe('"Anytime" opener ban (2026-06-02 production)', () => {
+  it('flags "Anytime." as opener', () => {
+    const violations = checkContent(
+      "Anytime. Glad you're feeling better.",
+      { userMessage: 'thanks for the help' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase' && /Anytime/i.test(v.message))).toBe(true);
+  });
+
+  it('flags "Anytime!" as opener', () => {
+    const violations = checkContent(
+      "Anytime! Let me know if you need anything.",
+      { userMessage: 'thanks' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase' && /Anytime/i.test(v.message))).toBe(true);
+  });
+
+  it('flags "Anytime " as opener (with trailing space)', () => {
+    const violations = checkContent(
+      "Anytime — happy to help.",
+      { userMessage: 'thanks' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase' && /Anytime/i.test(v.message))).toBe(true);
+  });
+
+  it('does NOT flag "anytime" mid-sentence', () => {
+    const violations = checkContent(
+      "Feel free to text me anytime you need to.",
+      { userMessage: 'thanks' },
+    );
+    const hits = violations.filter((v) => v.code === 'banned_phrase' && /^"Anytime/.test(v.message));
+    expect(hits).toHaveLength(0);
+  });
+});
+
+describe('"Glad to hear" stale-topic callback ban (2026-06-02 production)', () => {
+  it('flags "Glad to hear you slept well" on a new-topic message', () => {
+    const violations = checkContent(
+      "Glad to hear you slept well. Stomach pain is rough.",
+      { userMessage: 'my stomach hurts' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase' && /Glad to hear/i.test(v.message))).toBe(true);
+  });
+
+  it('flags "Glad to hear you ate well"', () => {
+    const violations = checkContent(
+      "Glad to hear you ate well today.",
+      { userMessage: 'how about exercise?' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase' && /Glad to hear/i.test(v.message))).toBe(true);
+  });
+
+  it('flags "Glad to hear you are doing"', () => {
+    const violations = checkContent(
+      "Glad to hear you are doing well overall.",
+      { userMessage: 'what should I eat?' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase' && /Glad to hear/i.test(v.message))).toBe(true);
+  });
+});
+
+describe('multi-item clinical intake question ban (2026-06-02 production)', () => {
+  it('flags "Are you experiencing fever, nausea, vomiting, or bowel changes?"', () => {
+    const violations = checkContent(
+      "Stomach pain is rough. Are you experiencing any other symptoms like fever, nausea, vomiting, or changes in bowel movements?",
+      { userMessage: 'my stomach hurts on the bottom left' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase' && /clinical-intake/i.test(v.message))).toBe(true);
+  });
+
+  it('flags "Do you have headache, dizziness, or blurry vision?"', () => {
+    const violations = checkContent(
+      "Do you have any headache, dizziness, or blurry vision?",
+      { userMessage: 'I feel off' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase' && /clinical-intake/i.test(v.message))).toBe(true);
+  });
+
+  it('flags the "how long + are you experiencing symptoms" combo', () => {
+    const violations = checkContent(
+      "How long has it been hurting this time? Are you experiencing any other symptoms?",
+      { userMessage: 'my back hurts' },
+    );
+    // EITHER the time+symptom combo OR the broader two-question ban — at least one should fire.
+    expect(violations.some((v) => v.code === 'banned_phrase')).toBe(true);
+  });
+
+  it('does NOT flag a single focused question', () => {
+    const violations = checkContent(
+      "Where exactly is the pain sitting?",
+      { userMessage: 'my stomach hurts' },
+    );
+    const intakeHits = violations.filter((v) => v.code === 'banned_phrase' && /clinical-intake/i.test(v.message));
+    expect(intakeHits).toHaveLength(0);
+  });
+});
+
 describe('checkPrivacyMisfire — strengthened variants (session 3 feedback)', () => {
   it('flags the verbatim "I only know about you" on a self-referencing health Q', () => {
     const violations = checkContent(

@@ -217,7 +217,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
         }
       }
 
-      const msg = buildOptimizerReport(report) + coverageSnippet;
+      const msg = buildOptimizerReport(report, env.PUBLIC_WEB_URL) + coverageSnippet;
       await sender.send({ to: adminPhone, body: msg, channel: 'whatsapp', raw: true });
       logger.info({ adminPhone, version: report.version, hasCoverage: coverageSnippet.length > 0 }, 'prompt_optimizer.report_sent');
     },
@@ -267,7 +267,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
           `🤖 Sandbox replays: ${replayed.replayed} | LLM-evaluated failures: ${evaluated.evaluated}`,
           weakest ? `📉 Weakest dim: ${weakest.dim} (avg ${weakest.avg}/5 over ${weakest.count} evals)` : '',
           ``,
-          `Review at graceglp.com/admin/research`,
+          `Review at ${env.PUBLIC_WEB_URL.replace(/\/$/, '')}/admin/research`,
         ].filter(Boolean).join('\n');
         await sender.send({ to: env.ADMIN_PHONE, body: summary, channel: 'whatsapp', raw: true });
       }
@@ -302,7 +302,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
             ? `📉 Weakest dim: ${report.weakestDimensions[0]?.dim} (avg ${report.weakestDimensions[0]?.avgScore}/5)`
             : '',
           ``,
-          `Review at graceglp.com/admin/research`,
+          `Review at ${env.PUBLIC_WEB_URL.replace(/\/$/, '')}/admin/research`,
         ].filter(Boolean).join('\n');
         await sender.send({ to: env.ADMIN_PHONE, body: lines, channel: 'whatsapp', raw: true });
       }
@@ -312,10 +312,16 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   };
 
   // Run auto-fix on startup if it hasn't run recently (starts tonight if overdue).
-  // 90s delay so the app is fully warm (prompt optimizer, FAQ cache, etc.) first.
-  setTimeout(() => void autoFix.runIfMissedRecently().catch((err) =>
-    logger.error({ err }, 'research.auto_fix.startup_check_failed'),
-  ), 90_000);
+  // 45s delay — short enough that Fly's idle auto-stop (5 min) almost certainly
+  // doesn't interrupt, long enough that the prompt optimizer's own 30s catch-up
+  // finishes first so we share the warm Gemini connection.
+  logger.info({ wiredAt: new Date().toISOString() }, 'research.auto_fix.wired');
+  setTimeout(() => {
+    logger.info('research.auto_fix.startup_timer_fired');
+    void autoFix.runIfMissedRecently().catch((err) =>
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'research.auto_fix.startup_check_failed'),
+    );
+  }, 45_000);
 
   const scheduler = new Scheduler({
     users,
@@ -439,10 +445,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-function buildOptimizerReport(r: OptimizerRunReport): string {
+function buildOptimizerReport(r: OptimizerRunReport, webUrl: string): string {
   const { status, stats, version, analysis, draftReason } = r;
   const pct = stats.satisfactionPct !== null ? `${stats.satisfactionPct}% positive` : 'no ratings';
   const statsLine = `${stats.totalMessages} msgs · ${stats.positiveCount}👍 ${stats.negativeCount}👎 · ${pct} · ${stats.fallbackCount} fallbacks`;
+  const promptsUrl = `${webUrl.replace(/\/$/, '')}/admin/prompts`;
 
   switch (status) {
     case 'activated':
@@ -453,7 +460,7 @@ function buildOptimizerReport(r: OptimizerRunReport): string {
         ``,
         `What changed: ${analysis}`,
         ``,
-        `Review at graceglp.com/admin/prompts`,
+        `Review at ${promptsUrl}`,
       ].join('\n');
 
     case 'draft':
@@ -466,7 +473,7 @@ function buildOptimizerReport(r: OptimizerRunReport): string {
         ``,
         `What the optimizer found: ${analysis}`,
         ``,
-        `Action needed: review and manually activate at graceglp.com/admin/prompts`,
+        `Action needed: review and manually activate at ${promptsUrl}`,
       ].join('\n');
 
     case 'skipped_insufficient_data':

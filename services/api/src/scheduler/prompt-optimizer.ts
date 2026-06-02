@@ -120,8 +120,16 @@ export class PromptOptimizer {
   }
 
   /**
-   * Run the optimizer if it hasn't run today. Called on startup 30s after boot
-   * to catch up when the 4am cron was missed (Fly machine was asleep).
+   * Startup catch-up: run the optimizer if no auto-generated prompt has been
+   * created in the last 20 hours. Called on startup 30s after boot so a
+   * missed cron (e.g. Fly machine asleep overnight) gets handled when the
+   * machine wakes back up.
+   *
+   * NOTE: this is the STARTUP path only. The runtime path (cron, manual
+   * trigger, kicks from auto-fix) goes through `run()` which has a separate
+   * 15-minute rate limiter — multiple in-day runs ARE allowed when fresh
+   * signal arrives. This 20h check is just to prevent every machine restart
+   * from firing a redundant optimizer run.
    */
   async runIfMissedToday(): Promise<void> {
     try {
@@ -132,11 +140,14 @@ export class PromptOptimizer {
       if (last) {
         const hoursSince = (Date.now() - new Date(last).getTime()) / 3_600_000;
         if (hoursSince < 20) {
-          this.logger.info({ hoursSince: Math.round(hoursSince) }, 'prompt_optimizer.already_ran_today');
+          this.logger.info(
+            { hoursSince: Math.round(hoursSince) },
+            'prompt_optimizer.startup_catchup_skipped',
+          );
           return;
         }
       }
-      this.logger.info('prompt_optimizer.catching_up_missed_run');
+      this.logger.info('prompt_optimizer.startup_catching_up');
       await this.run();
     } catch (err) {
       this.logger.error({ err }, 'prompt_optimizer.catch_up_check_failed');

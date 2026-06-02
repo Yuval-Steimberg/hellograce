@@ -297,7 +297,7 @@ describe('ResearchAutoFix.runIfMissedRecently', () => {
 });
 
 describe('ResearchAutoFix.run — empty corpus + empty feedback', () => {
-  it('returns an empty report and records the run timestamp', async () => {
+  it('still produces samples from static GLP-1 FAQ + intent library (self-sufficient loop)', async () => {
     const pool = {
       query: vi.fn().mockResolvedValue({ rows: [] }),
     } as unknown as Pool;
@@ -307,9 +307,10 @@ describe('ResearchAutoFix.run — empty corpus + empty feedback', () => {
     } as unknown as Redis;
     const fix = makeFix({ pool, redis });
     const report = await fix.run({ sampleSize: 10 });
-    expect(report.postsAnalyzed).toBe(0);
-    expect(report.stillFailing).toBe(0);
-    expect(report.contentRulesGenerated).toBe(0);
+    // The autonomous loop now falls back to FAQ_SEEDS (60 clinically-verified
+    // GLP-1 questions) + intents.json so it always has signal even with an
+    // empty DB. postsAnalyzed should be > 0.
+    expect(report.postsAnalyzed).toBeGreaterThan(0);
     // recordRun() should fire — set called for last_run key
     expect((redis as unknown as { set: ReturnType<typeof vi.fn> }).set).toHaveBeenCalled();
   });

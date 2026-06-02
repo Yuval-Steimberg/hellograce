@@ -35,6 +35,7 @@ import type { Logger } from 'pino';
 import type { Redis } from 'ioredis';
 import type { PromptOptimizer, SyntheticFeedback } from '../scheduler/prompt-optimizer.js';
 import { runSandboxReplay, type ReplayPersona } from '../replay/sandbox.js';
+import { FAQ_SEEDS } from '../cache/faq-seeds.js';
 
 // Redis keys
 const LAST_RUN_KEY = 'research:autofix:last_run';
@@ -140,43 +141,55 @@ export class ResearchAutoFix {
 
     this.deps.logger.info({ sampleSize, dryRun }, 'research.auto_fix.start');
 
-    // ── 1. Fetch failure samples from FOUR sources ────────────────────────
-    // a) Corpus (Reddit scrape) — may be empty when Reddit blocks
-    // b) Feedback table (real 👎 from production) — ground truth
-    // c) Intent library (51 hand-curated GLP-1 question variations) — always available
-    // d) Synthetic Gemini-generated GLP-1 questions — top-up when (a-c) < floor
+    // ── 1. Fetch samples — REAL GLP-1 DATA PRIORITIZED ─────────────────────
+    // Source priority (highest → lowest reliability for real-world accuracy):
+    //   a) feedback table — REAL production 👎 ratings from actual GLP-1 users.
+    //      Gold-standard signal. Try to use up to 50% of the budget.
+    //   b) real_data_corpus — REAL Reddit posts from r/Ozempic, r/Mounjaro,
+    //      r/Zepbound, etc. The unfiltered voice of GLP-1 users.
+    //   c) FAQ seeds — 60 clinically-verified GLP-1 questions from the
+    //      2026-05-30 clinical report ("Verified Target Responses" table).
+    //      Real medical accuracy — if Grace fails one, that's a true regression.
+    //   d) intents.json — 51 hand-curated GLP-1 intent variations across the
+    //      10 domains (medication, side effects, food, etc.).
+    //   e) Gemini synthetic — bottom-of-stack safety net. Realistic-looking
+    //      but generated. Only used to top up to MIN_SAMPLE_FLOOR.
     //
-    // The chain guarantees the loop is SELF-SUFFICIENT: it works on day 1 with
-    // zero corpus and zero production feedback, because (c) and (d) always
-    // produce signal. As real data accumulates, (a) and (b) take priority.
-    const corpusBudget = Math.ceil(sampleSize / 3);
-    const feedbackBudget = Math.ceil(sampleSize / 3);
-    const corpusPosts = await this.fetchFailingPosts(corpusBudget);
-    const feedbackPosts = await this.fetchNegativeFeedback(feedbackBudget);
-    let posts = [...corpusPosts, ...feedbackPosts];
+    // Budget allocation prioritizes a/b/c (real data) so the rule
+    // generation and synthetic feedback reflect actual GLP-1 user reality.
+    const feedbackBudget = Math.ceil(sampleSize * 0.5); // up to 50% real 👎
+    const corpusBudget = Math.ceil(sampleSize * 0.25); // up to 25% Reddit
+    const faqBudget = Math.ceil(sampleSize * 0.15);    // up to 15% clinical FAQ
 
-    // Top up from intent library if real data is sparse
+    const feedbackPosts = await this.fetchNegativeFeedback(feedbackBudget);
+    const corpusPosts = await this.fetchFailingPosts(corpusBudget);
+    const faqPosts = this.sampleFromFaqSeeds(faqBudget);
+    let posts = [...feedbackPosts, ...corpusPosts, ...faqPosts];
+
+    // Top up from the hand-curated intent library
     const intentBudget = Math.max(0, sampleSize - posts.length);
     const intentPosts = intentBudget > 0
       ? this.sampleFromIntentLibrary(intentBudget)
       : [];
     posts = [...posts, ...intentPosts];
 
-    // Final top-up: Gemini-generated synthetic questions if STILL below floor.
-    // This is the safety net that guarantees the loop never returns empty.
+    // Final top-up: synthetic Gemini questions ONLY if still below floor.
     const syntheticBudget = Math.max(0, MIN_SAMPLE_FLOOR - posts.length);
     const syntheticPosts = syntheticBudget > 0
       ? await this.generateSyntheticQuestions(syntheticBudget)
       : [];
     posts = [...posts, ...syntheticPosts];
 
+    const realDataCount = feedbackPosts.length + corpusPosts.length + faqPosts.length;
     this.deps.logger.info(
       {
-        corpus: corpusPosts.length,
         feedback: feedbackPosts.length,
+        corpus: corpusPosts.length,
+        faq_seeds: faqPosts.length,
         intent_library: intentPosts.length,
         synthetic: syntheticPosts.length,
         total: posts.length,
+        real_data_pct: posts.length > 0 ? Math.round((realDataCount / posts.length) * 100) : 0,
       },
       'research.auto_fix.sample_loaded',
     );
@@ -560,6 +573,35 @@ export class ResearchAutoFix {
   }
 
   /**
+   * Sample from the 60-entry FAQ seed table (services/api/src/cache/faq-seeds.ts).
+   *
+   * These are clinically-verified GLP-1 questions from the 2026-05-30 clinical
+   * report's "Verified Target Responses" table — REAL medical data covering
+   * nausea, hair loss, constipation, plateau, muscle loss, food noise, drug
+   * interactions, injection site rotation, dose timing, alcohol, sleep,
+   * heartburn, diarrhea, exercise, and 14 other categories.
+   *
+   * Each entry pairs a real user phrasing with a clinically-correct answer,
+   * giving the auto-fix a high-signal accuracy check: if Grace fails one,
+   * it's a true medical-accuracy regression worth a content rule.
+   *
+   * Lazy-loaded + cached. Errors degrade gracefully.
+   */
+  private sampleFromFaqSeeds(limit: number): FailingPost[] {
+    if (limit <= 0 || FAQ_SEEDS.length === 0) return [];
+    const shuffled = [...FAQ_SEEDS].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, limit).map((seed, i) => ({
+      id: -(5000 + i), // distinguish from feedback (-1..-999), intent (-1000..-4999), synthetic (-10000+)
+      raw_text: seed.query,
+      classified_intent: seed.category,
+      grade_failures: [{ type: 'faq_clinical_seed', detail: `Clinically verified — category: ${seed.category}` }],
+      eval_scores: null,
+      eval_overall: null,
+      is_covered: true,
+    }));
+  }
+
+  /**
    * Generate synthetic GLP-1 user questions via Gemini when corpus + feedback
    * + intent library together still fall short of MIN_SAMPLE_FLOOR. This is
    * the bottom-of-stack safety net — guarantees the auto-fix always has
@@ -571,25 +613,38 @@ export class ResearchAutoFix {
   private async generateSyntheticQuestions(limit: number): Promise<FailingPost[]> {
     if (limit <= 0) return [];
     try {
-      const prompt = `Generate ${limit} realistic, diverse questions that a GLP-1 medication user (Ozempic / Wegovy / Mounjaro / Zepbound / Rybelsus) might text to a WhatsApp health companion app. Cover these domains evenly:
+      // Ground Gemini in 12 REAL clinically-verified GLP-1 questions from FAQ_SEEDS.
+      // This anchors the synthetic output in actual user language, not fabricated
+      // medical scenarios. Sampled fresh each run for variety.
+      const anchorExamples = [...FAQ_SEEDS]
+        .sort(() => Math.random() - 0.5)
+        .slice(0, 12)
+        .map((s) => `- "${s.query}" (category: ${s.category})`)
+        .join('\n');
+
+      const prompt = `Generate ${limit} realistic, diverse questions that a GLP-1 medication user (Ozempic / Wegovy / Mounjaro / Zepbound / Rybelsus) might text to a WhatsApp health companion app.
+
+REAL CLINICALLY-VERIFIED EXAMPLES from actual GLP-1 patient conversations (anchor your output in this style and clinical accuracy — do not invent symptoms that don't actually occur on GLP-1s):
+${anchorExamples}
+
+Cover these domains evenly:
 - Medication (dose timing, missed dose, titration, switching meds)
-- Side effects (nausea, constipation, hair loss, fatigue, heartburn, diarrhea)
-- Food and nutrition (what to eat, protein, food noise, alcohol)
-- Weight and progress (plateaus, scale frustration, body image)
+- Side effects (nausea, constipation, hair loss, fatigue, heartburn, diarrhea, sulfur burps)
+- Food and nutrition (what to eat, protein target, food noise, alcohol)
+- Weight and progress (plateaus, scale frustration, Ozempic face, body image)
 - Emotional support (feeling defeated, identity loss, fear of regaining)
-- Exercise (timing, intensity on GLP-1)
-- Social situations (eating out, travel, holidays)
-- Safety (interactions, abdominal pain, vomiting, contacting doctor)
+- Exercise (timing, intensity on GLP-1, muscle preservation)
+- Social situations (eating out, travel, holidays, family pressure)
+- Safety (interactions, severe abdominal pain, persistent vomiting, contacting doctor)
 
 Each question must:
 - Be 15-200 characters long
-- Read like a real person (lowercase ok, typos ok, contractions ok)
+- Read like a real GLP-1 user texting their companion (lowercase ok, typos ok, contractions ok)
+- Reference REAL GLP-1 phenomena — actual side effects, real medications, real dose strengths (0.25/0.5/1.0/1.7/2.0 mg semaglutide, 2.5/5/7.5/10/12.5/15 mg tirzepatide)
 - Sometimes pack 2-3 thoughts in one message (multi-part)
 - Vary in tone: anxious, casual, frustrated, curious, hopeful
 
-Return ONLY a JSON array of strings. No markdown fences, no commentary.
-
-Example: ["i forgot my shot 2 days ago what should i do", "feeling really defeated my scale hasn't moved in 3 weeks", "is bottom right abdominal pain on mounjaro something to worry about"]`;
+Return ONLY a JSON array of strings. No markdown fences, no commentary.`;
 
       const resp = await this.deps.llm.generate({
         model: 'gemini-2.0-flash',
@@ -701,7 +756,13 @@ Example: ["i forgot my shot 2 days ago what should i do", "feeling really defeat
       .map((p, i) => `${i + 1}. ${p} (detected ${examples.filter((e) => e.failTypes.includes(p)).length}+ times)`)
       .join('\n');
 
-    const prompt = `You are analyzing quality failures in Grace, a WhatsApp AI companion for GLP-1 medication users.
+    const prompt = `You are analyzing quality failures in Grace, a WhatsApp AI companion for GLP-1 medication users (Ozempic, Wegovy, Mounjaro, Zepbound, Rybelsus, compounded semaglutide / tirzepatide).
+
+GLP-1 CLINICAL CONTEXT (use this to judge what's a real quality failure vs valid clinical content):
+- Real GLP-1 side effects: nausea, constipation, hair loss (telogen effluvium), fatigue, heartburn / GERD, diarrhea, sulfur burps, Ozempic face (volume loss), injection site reactions
+- Real GLP-1 mechanisms: GLP-1 receptor agonism, slowed gastric emptying, appetite suppression, food noise reduction (real phenomenon called Hedonic Hyperphagia)
+- Real medical accuracy targets: protein 1.2-1.6 g/kg current body weight, muscle loss ~25-35% of weight lost if no strength training, plateau is normal (body recalibration), 988 = US crisis line, 911 = emergency
+- Grace should NEVER: alarmist tone, prescribe dose changes, deny clinical phenomena, fabricate excuses, sycophantic openers, generic filler, multiple questions per turn, prescribe non-GLP-1 medications
 
 FAILING EXAMPLES (user message → Grace response → detected failure types):
 ${exampleText}

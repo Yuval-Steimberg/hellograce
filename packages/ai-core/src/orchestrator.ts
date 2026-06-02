@@ -442,6 +442,14 @@ export class AIOrchestrator {
         try { return JSON.stringify(r.output); } catch { return ''; }
       })
       .join(' ');
+    // Extract the prior user message (one before the current) for the
+    // re-litigation check. Used to detect when Grace's response addresses
+    // sub-topics from the PRIOR user message instead of the current one
+    // (e.g. "Anytime" / "Glad to hear you slept well" after the user has
+    // moved on to a different topic).
+    const priorUserMessage = [...input.history]
+      .reverse()
+      .find((m) => m.role === 'user')?.content;
     const contentCheckOpts = {
       ...(input.dietaryRestriction ? { dietaryRestriction: input.dietaryRestriction } : {}),
       ...(input.foodDislikes && input.foodDislikes.length > 0 ? { foodDislikes: input.foodDislikes } : {}),
@@ -449,6 +457,7 @@ export class AIOrchestrator {
       ...(input.responseMode ? { responseMode: input.responseMode } : {}),
       ...(input.dbRules && input.dbRules.length > 0 ? { dbRules: input.dbRules } : {}),
       userMessage: input.text,
+      ...(priorUserMessage ? { previousUserMessage: priorUserMessage } : {}),
       intentType: classification.type,
       systemContext: baseSystem,
       toolResultsText,

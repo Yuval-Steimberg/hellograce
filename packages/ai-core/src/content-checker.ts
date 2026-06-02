@@ -55,6 +55,15 @@ export interface ContentCheckOpts {
    *  like "STEP-1 trial: ~40%" that aren't in the user message but are
    *  canonical knowledge, not memory echo). */
   skipStaleContextEcho?: boolean;
+  /** The previous user message (one turn before the current). Used to detect
+   *  when Grace's current response is re-litigating sub-topics from the
+   *  PRIOR user turn instead of answering the latest one. Production failure
+   *  2026-06-02: prior user message was "Thanks. I slept well, but my
+   *  stomach is killing me"; current user message was "Im feeling it on the
+   *  bottom left side"; Grace opened "Anytime. Glad to hear you slept well…"
+   *  — re-addressing things from the PRIOR message instead of the location
+   *  the user just gave. */
+  previousUserMessage?: string;
 }
 
 export function checkContent(text: string, opts: ContentCheckOpts): ContentViolation[] {
@@ -85,6 +94,11 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
     violations.push(...checkFoodLogPreambleLeak(text, opts.userMessage));
     violations.push(...checkUserMessageEcho(text, opts.userMessage));
     violations.push(...checkEmotionBeforeData(text, opts.userMessage));
+    if (opts.previousUserMessage) {
+      violations.push(
+        ...checkPriorMessageRelitigation(text, opts.userMessage, opts.previousUserMessage),
+      );
+    }
     // FINAL LAYER (per user directive 2026-06-01): every response must answer
     // the current message using ONLY quantities from the current turn (user
     // message + system context + tool results). Numbers that don't appear in
@@ -253,6 +267,86 @@ function checkEmotionBeforeData(response: string, userMessage: string): ContentV
     }];
   }
   return [];
+}
+
+// ── Prior-message re-litigation ──────────────────────────────────────────────
+// When the user sends a message answering Grace's previous question (e.g.,
+// "Im feeling it on the bottom left side" after Grace asked "where is it?"),
+// Grace must respond to the LATEST message — not re-address sub-topics from
+// the PRIOR user message (e.g., "Thanks" / "I slept well") that her own
+// prior response already covered.
+//
+// Production failure 2026-06-02:
+//   Previous user: "Thanks. I slept well, but my stomach is killing me"
+//   Current user:  "Im feeling it on the bottom left side"
+//   Grace's reply: "Anytime. Glad to hear you slept well, but ugh, that
+//                   stomach pain sounds really rough, especially on the
+//                   bottom left side. How long has it been hurting this
+//                   time? Are you experiencing any other symptoms..."
+//
+// "Anytime" addresses "Thanks" from the prior message. "Glad to hear you
+// slept well" addresses "I slept well" from the prior message. Both were
+// already implicitly addressed by Grace's first response and have ZERO
+// relevance to the current location answer.
+//
+// Detection: extract the closed sub-topics from the prior user message
+// (thanks acknowledgments, sleep/eating updates, greeting tokens) and
+// check if Grace's response references them — IF the current user message
+// is on a different/continuing topic (i.e. not itself a "thanks" or sleep
+// message).
+
+const PRIOR_THANKS_RE = /\b(?:thanks|thank you|ty|appreciate (?:it|that))\b/i;
+const PRIOR_SLEEP_UPDATE_RE = /\bi\s+(?:slept|woke up)\s+(?:well|good|great|fine|ok|okay|badly|rough|terribly)/i;
+const PRIOR_ATE_UPDATE_RE = /\bi\s+(?:ate|had a (?:good|great|nice|big|small))\s+(?:breakfast|lunch|dinner|meal)/i;
+
+const RESP_ANYTIME_OPENER_RE = /^anytime[\s!.,]/i;
+const RESP_SLEEP_CALLBACK_RE = /\bglad to hear (?:you|that you)\s+(?:slept|woke up)\b/i;
+const RESP_ATE_CALLBACK_RE = /\bglad to hear (?:you|that you)\s+(?:ate|had|enjoyed)\b/i;
+
+function checkPriorMessageRelitigation(
+  response: string,
+  currentUserMessage: string,
+  previousUserMessage: string,
+): ContentViolation[] {
+  // If the CURRENT user message is itself a "thanks" or sleep update,
+  // those callbacks ARE relevant — skip this check.
+  if (PRIOR_THANKS_RE.test(currentUserMessage)) return [];
+  if (PRIOR_SLEEP_UPDATE_RE.test(currentUserMessage)) return [];
+
+  const violations: ContentViolation[] = [];
+
+  // 1) "Anytime" opener triggered by a "thanks" in the PRIOR user message
+  //    (not the current one). The current message is a different topic, so
+  //    "Anytime" is misplaced.
+  if (PRIOR_THANKS_RE.test(previousUserMessage) && RESP_ANYTIME_OPENER_RE.test(response.trimStart())) {
+    violations.push({
+      code: 'prior_message_relitigation',
+      message: `Response opens with "Anytime" — but the user's CURRENT message is "${currentUserMessage.slice(0, 80)}", not a thank-you. The "thanks" was in their PRIOR message and you already responded to that turn. Drop "Anytime" — answer ONLY the current message.`,
+      severity: 'regen',
+    });
+  }
+
+  // 2) "Glad to hear you slept well" referencing a sleep update from the
+  //    PRIOR user message when the current message is about a different topic.
+  if (PRIOR_SLEEP_UPDATE_RE.test(previousUserMessage) && RESP_SLEEP_CALLBACK_RE.test(response)) {
+    violations.push({
+      code: 'prior_message_relitigation',
+      message: `Response includes "Glad to hear you slept well" — but the user's CURRENT message is "${currentUserMessage.slice(0, 80)}", not a sleep update. The sleep update was in their PRIOR message and is a CLOSED sub-topic. Drop the sleep callback — answer ONLY the current message.`,
+      severity: 'regen',
+    });
+  }
+
+  // 3) "Glad to hear you ate well" referencing an eating update from the
+  //    PRIOR user message when the current message is about a different topic.
+  if (PRIOR_ATE_UPDATE_RE.test(previousUserMessage) && RESP_ATE_CALLBACK_RE.test(response)) {
+    violations.push({
+      code: 'prior_message_relitigation',
+      message: `Response includes "Glad to hear you ate/had X" — but the user's CURRENT message is "${currentUserMessage.slice(0, 80)}", not a meal update. The meal update was in their PRIOR message and is a CLOSED sub-topic. Drop the callback — answer ONLY the current message.`,
+      severity: 'regen',
+    });
+  }
+
+  return violations;
 }
 
 // ── User-message echo ────────────────────────────────────────────────────────

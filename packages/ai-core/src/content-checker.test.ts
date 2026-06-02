@@ -702,6 +702,84 @@ describe('multi-item clinical intake question ban (2026-06-02 production)', () =
   });
 });
 
+describe('checkPriorMessageRelitigation (2026-06-02 cross-turn bug)', () => {
+  it('flags "Anytime" opener when "thanks" was in prior message, not current', () => {
+    const violations = checkContent(
+      "Anytime. Glad to hear you slept well, but stomach pain is rough.",
+      {
+        userMessage: 'Im feeling it on the bottom left side',
+        previousUserMessage: 'Thanks. I slept well, but my stomach is killing me',
+      },
+    );
+    expect(violations.some((v) => v.code === 'prior_message_relitigation' && /Anytime/.test(v.message))).toBe(true);
+  });
+
+  it('flags "Glad to hear you slept well" when sleep was in prior message', () => {
+    const violations = checkContent(
+      "Glad to hear you slept well — that stomach pain on the bottom left needs attention.",
+      {
+        userMessage: 'Im feeling it on the bottom left side',
+        previousUserMessage: 'Thanks. I slept well, but my stomach is killing me',
+      },
+    );
+    expect(violations.some((v) => v.code === 'prior_message_relitigation' && /slept well/.test(v.message))).toBe(true);
+  });
+
+  it('flags "Glad to hear you ate" when meal update was in prior message', () => {
+    const violations = checkContent(
+      "Glad to hear you ate breakfast. Bottom-left pain deserves a call to your prescriber.",
+      {
+        userMessage: 'the pain is on the bottom left',
+        previousUserMessage: 'I had a good breakfast but my stomach is hurting now',
+      },
+    );
+    expect(violations.some((v) => v.code === 'prior_message_relitigation' && /ate/.test(v.message))).toBe(true);
+  });
+
+  it('does NOT flag "Anytime" when the CURRENT message is a thanks', () => {
+    const violations = checkContent(
+      "Anytime — happy to help.",
+      {
+        userMessage: 'thanks',
+        previousUserMessage: 'how much protein in eggs?',
+      },
+    );
+    expect(violations.some((v) => v.code === 'prior_message_relitigation')).toBe(false);
+  });
+
+  it('does NOT flag sleep callback when CURRENT message is about sleep', () => {
+    const violations = checkContent(
+      "Glad to hear you slept well — that consistent rest helps with appetite.",
+      {
+        userMessage: 'I slept well last night',
+        previousUserMessage: 'I had eggs for breakfast',
+      },
+    );
+    expect(violations.some((v) => v.code === 'prior_message_relitigation')).toBe(false);
+  });
+
+  it('does NOT fire when previousUserMessage is missing', () => {
+    const violations = checkContent(
+      "Anytime. Glad to hear you slept well.",
+      { userMessage: 'bottom left side' },
+    );
+    expect(violations.some((v) => v.code === 'prior_message_relitigation')).toBe(false);
+  });
+
+  it('flags the FULL production failure (Anytime + sleep + pain)', () => {
+    const violations = checkContent(
+      "Anytime. Glad to hear you slept well, but ugh, that stomach pain sounds really rough, especially on the bottom left side.",
+      {
+        userMessage: 'Im feeling it on the bottom left side',
+        previousUserMessage: 'Thanks. I slept well, but my stomach is killing me',
+      },
+    );
+    const hits = violations.filter((v) => v.code === 'prior_message_relitigation');
+    // Should fire BOTH the "Anytime" rule AND the "Glad to hear you slept" rule
+    expect(hits.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe('checkPrivacyMisfire — strengthened variants (session 3 feedback)', () => {
   it('flags the verbatim "I only know about you" on a self-referencing health Q', () => {
     const violations = checkContent(

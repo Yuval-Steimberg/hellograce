@@ -595,6 +595,23 @@ describe('memory callback bans (2026-06-02 production)', () => {
     expect(violations.some((v) => v.code === 'banned_phrase')).toBe(true);
   });
 
+  it('flags "how long has it been hurting this time"', () => {
+    const violations = checkContent(
+      "Where is it? How long has it been hurting this time?",
+      { userMessage: 'my stomach hurts' },
+    );
+    expect(violations.some((v) => v.code === 'banned_phrase' && /this time/i.test(v.message))).toBe(true);
+  });
+
+  it('does NOT flag plain "how long has it been hurting" (no "this time")', () => {
+    const violations = checkContent(
+      "Where is the pain, and how long has it been hurting?",
+      { userMessage: 'my stomach hurts' },
+    );
+    const hits = violations.filter((v) => v.code === 'banned_phrase' && /this time/i.test(v.message));
+    expect(hits).toHaveLength(0);
+  });
+
   it('does NOT flag a forward-looking "mention" phrasing', () => {
     const violations = checkContent(
       "Worth mentioning that protein early helps with nausea.",
@@ -605,100 +622,52 @@ describe('memory callback bans (2026-06-02 production)', () => {
   });
 });
 
-describe('"Anytime" opener ban (2026-06-02 production)', () => {
-  it('flags "Anytime." as opener', () => {
+describe('multi-part message composition (2026-06-02 spec)', () => {
+  // Per the multi-part composition spec, when the user's CURRENT message
+  // contains sub-parts like "I slept well, but my stomach is killing me",
+  // Grace MUST address BOTH parts. The phrases "Glad to hear you slept well",
+  // "Anytime", and multi-item symptom-screening questions ARE correct in
+  // this case. The unconditional bans on those patterns were the bug.
+  it('does NOT flag "Glad to hear you slept well" when CURRENT message contains the sleep update', () => {
     const violations = checkContent(
-      "Anytime. Glad you're feeling better.",
-      { userMessage: 'thanks for the help' },
+      "Glad to hear you slept well. I'm sorry your stomach is hurting — where exactly is it sitting?",
+      { userMessage: 'Thanks. I slept well, but my stomach is killing me' },
     );
-    expect(violations.some((v) => v.code === 'banned_phrase' && /Anytime/i.test(v.message))).toBe(true);
+    expect(violations.some((v) => v.code === 'banned_phrase' && /Glad to hear/i.test(v.message))).toBe(false);
+    expect(violations.some((v) => v.code === 'prior_message_relitigation')).toBe(false);
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(false);
   });
 
-  it('flags "Anytime!" as opener', () => {
+  it('does NOT flag a multi-item symptom-screening question on a pain message', () => {
     const violations = checkContent(
-      "Anytime! Let me know if you need anything.",
-      { userMessage: 'thanks' },
-    );
-    expect(violations.some((v) => v.code === 'banned_phrase' && /Anytime/i.test(v.message))).toBe(true);
-  });
-
-  it('flags "Anytime " as opener (with trailing space)', () => {
-    const violations = checkContent(
-      "Anytime — happy to help.",
-      { userMessage: 'thanks' },
-    );
-    expect(violations.some((v) => v.code === 'banned_phrase' && /Anytime/i.test(v.message))).toBe(true);
-  });
-
-  it('does NOT flag "anytime" mid-sentence', () => {
-    const violations = checkContent(
-      "Feel free to text me anytime you need to.",
-      { userMessage: 'thanks' },
-    );
-    const hits = violations.filter((v) => v.code === 'banned_phrase' && /^"Anytime/.test(v.message));
-    expect(hits).toHaveLength(0);
-  });
-});
-
-describe('"Glad to hear" stale-topic callback ban (2026-06-02 production)', () => {
-  it('flags "Glad to hear you slept well" on a new-topic message', () => {
-    const violations = checkContent(
-      "Glad to hear you slept well. Stomach pain is rough.",
-      { userMessage: 'my stomach hurts' },
-    );
-    expect(violations.some((v) => v.code === 'banned_phrase' && /Glad to hear/i.test(v.message))).toBe(true);
-  });
-
-  it('flags "Glad to hear you ate well"', () => {
-    const violations = checkContent(
-      "Glad to hear you ate well today.",
-      { userMessage: 'how about exercise?' },
-    );
-    expect(violations.some((v) => v.code === 'banned_phrase' && /Glad to hear/i.test(v.message))).toBe(true);
-  });
-
-  it('flags "Glad to hear you are doing"', () => {
-    const violations = checkContent(
-      "Glad to hear you are doing well overall.",
-      { userMessage: 'what should I eat?' },
-    );
-    expect(violations.some((v) => v.code === 'banned_phrase' && /Glad to hear/i.test(v.message))).toBe(true);
-  });
-});
-
-describe('multi-item clinical intake question ban (2026-06-02 production)', () => {
-  it('flags "Are you experiencing fever, nausea, vomiting, or bowel changes?"', () => {
-    const violations = checkContent(
-      "Stomach pain is rough. Are you experiencing any other symptoms like fever, nausea, vomiting, or changes in bowel movements?",
-      { userMessage: 'my stomach hurts on the bottom left' },
-    );
-    expect(violations.some((v) => v.code === 'banned_phrase' && /clinical-intake/i.test(v.message))).toBe(true);
-  });
-
-  it('flags "Do you have headache, dizziness, or blurry vision?"', () => {
-    const violations = checkContent(
-      "Do you have any headache, dizziness, or blurry vision?",
-      { userMessage: 'I feel off' },
-    );
-    expect(violations.some((v) => v.code === 'banned_phrase' && /clinical-intake/i.test(v.message))).toBe(true);
-  });
-
-  it('flags the "how long + are you experiencing symptoms" combo', () => {
-    const violations = checkContent(
-      "How long has it been hurting this time? Are you experiencing any other symptoms?",
-      { userMessage: 'my back hurts' },
-    );
-    // EITHER the time+symptom combo OR the broader two-question ban — at least one should fire.
-    expect(violations.some((v) => v.code === 'banned_phrase')).toBe(true);
-  });
-
-  it('does NOT flag a single focused question', () => {
-    const violations = checkContent(
-      "Where exactly is the pain sitting?",
-      { userMessage: 'my stomach hurts' },
+      "Sorry about the stomach pain. Where exactly is it, and have you noticed any nausea, vomiting, constipation, or diarrhea along with it?",
+      { userMessage: 'my stomach is killing me' },
     );
     const intakeHits = violations.filter((v) => v.code === 'banned_phrase' && /clinical-intake/i.test(v.message));
     expect(intakeHits).toHaveLength(0);
+  });
+
+  it('does NOT flag "Anytime" reply when the CURRENT message contains thanks', () => {
+    const violations = checkContent(
+      "Anytime — happy to help with that.",
+      { userMessage: 'Thanks for that' },
+    );
+    const hits = violations.filter((v) => v.code === 'banned_phrase' && /Anytime/i.test(v.message));
+    expect(hits).toHaveLength(0);
+  });
+
+  it('does NOT flag the spec\'s ideal Grace response to the screenshot scenario', () => {
+    const ideal = "Glad to hear you slept well. I'm sorry your stomach is hurting today. When you say it's killing you, does it feel like cramping, sharp pain, or more of an ache? And where are you feeling it?";
+    const violations = checkContent(
+      ideal,
+      { userMessage: 'Thanks. I slept well, but my stomach is killing me' },
+    );
+    // The spec's example response should be acceptable — only the cross-turn
+    // re-litigation, memory-callback, and emotion-before-data rules should
+    // matter, and none of them apply here.
+    expect(violations.some((v) => v.code === 'prior_message_relitigation')).toBe(false);
+    expect(violations.some((v) => v.code === 'emotion_before_data')).toBe(false);
+    expect(violations.some((v) => v.code === 'banned_phrase' && /this time|mentioned this before/i.test(v.message))).toBe(false);
   });
 });
 

@@ -745,37 +745,23 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bmore careful monitoring\b/i, reason: '"more careful monitoring" — vague, name what to monitor specifically' },
 
   // ── 2026-06-02 production screenshot bans ────────────────────────────────
-  // Failure shown: user said "Thanks. I slept well, but my stomach is killing
-  // me" and Grace opened "You haven't logged any food today, so you're at 0g
-  // protein so far. Ugh, stomach pain is really rough. You've mentioned this
-  // before. Is it a sharp pain, or more of a dull ache? And where are you
-  // feeling it?" — multiple violations:
-  //  1) opened with food/protein data when message was about pain
-  //  2) "You've mentioned this before" patronizing memory callback
-  //  3) two questions chained
-  // Follow-up failure: user answered "Im feeling it on the bottom left side"
-  // and Grace opened "Anytime. Glad to hear you slept well, but ugh, that
-  // stomach pain... Are you experiencing any other symptoms like fever,
-  // nausea, vomiting, or changes in bowel movements?" — more violations:
-  //  4) "Anytime" opener (user wasn't thanking her)
-  //  5) "Glad to hear you slept well" surfaces a DEAD topic
-  //  6) Multi-item clinical intake question (fever, nausea, vomiting, OR…)
+  // Production failures from the stomach-pain screenshots produced two
+  // clusters of bugs. The CROSS-TURN re-litigation cluster (where Grace's
+  // response addresses sub-topics from the PRIOR user turn instead of the
+  // current one) is handled by checkPriorMessageRelitigation — those bans
+  // are CONTEXT-AWARE, not unconditional, because the same phrases ARE
+  // correct when the current message contains the matching content
+  // (e.g. "Glad to hear you slept well" IS the right opener when the user's
+  // current message contains "I slept well").
+  //
+  // The bans below are the ALWAYS-wrong cluster:
+  //   1) patronizing memory callbacks ("you've mentioned this before")
+  //   2) "this time" memory recall sneaking into questions
+  // Both are wrong regardless of conversation state.
   { pattern: /\byou(?:'?ve)?\s+(?:mentioned|talked about|brought (?:this|that|it) up|said|told me|noted)\s+(?:this|that|it)\s+(?:before|earlier|previously|in the past|last (?:time|week))\b/i, reason: '"You\'ve mentioned this before" — patronizing memory callback. Never surface that the user repeated themselves; just answer the current message.' },
   { pattern: /\byou (?:said|mentioned|told me)\s+(?:earlier|previously|before|last (?:time|week))\s+(?:that\s+)?you\b/i, reason: 'Surfacing past statements ("you said earlier that you...") is patronizing. Drop the callback, answer the current message.' },
   { pattern: /\blast time you (?:mentioned|said|told me|brought up)\b/i, reason: '"Last time you mentioned X" — irrelevant memory callback, banned' },
-  { pattern: /^anytime[!.,\s]/im, reason: '"Anytime" opener — assumes the user thanked Grace; almost always wrong, banned' },
-  { pattern: /^anytime[!.]?\s*$/im, reason: '"Anytime" as standalone — generic chatbot opener, banned' },
-  { pattern: /\bglad to hear (?:you|that you)\s+(?:slept|ate|had|did|went|got|finished|completed|enjoyed|managed|made it|are doing|are feeling|felt|got through)\b/i, reason: '"Glad to hear you slept well / ate well / are doing X" — surfaces a prior topic the user has already moved past. Drop the callback; address the current message only.' },
-  // Multi-item clinical intake question — "Are you experiencing X, Y, Z, or W?"
-  // This is intake-form behavior, not a friend. Match 3+ comma-separated items
-  // followed by "or" inside an "are you / do you have / any other symptoms" question.
-  { pattern: /\b(?:are you (?:experiencing|having|noticing|getting)|do you have|any other (?:symptoms?|signs?))\b[^.?!]*\b(?:\w+,\s+){2,}\w+(?:,?\s+or\s+\w+)?[^.?!]*\?/i, reason: 'Multi-item clinical-intake question (e.g. "Are you experiencing fever, nausea, vomiting, or X?") — sounds like an ER triage form. Pick ONE focused question or none.' },
-  // "How long has it been hurting this time?" + "Are you experiencing..." —
-  // even when the items list is short, asking BOTH a time question AND a
-  // symptom-screening question in one response = clinical intake. The
-  // generic two-question check catches the `?`/`?` pattern but we want a
-  // dedicated rule with a clearer message for this specific pattern.
-  { pattern: /\bhow long (?:has|have|did|does)\b[^.?!]*\?[^?]*\b(?:are you (?:experiencing|having|noticing|getting)|do you have|any (?:other )?symptoms?)\b[^.?!]*\?/i, reason: 'Asking "how long has this been happening?" AND "are you experiencing other symptoms?" in the same response — that\'s a clinical intake form. Pick ONE.' },
+  { pattern: /\bhow long has (?:it|this) been\s+(?:hurting|happening|going on|like this|bothering you)\s+(?:this time|again)\b/i, reason: '"How long has it been hurting THIS TIME / AGAIN" — "this time"/"again" sneaks in patronizing memory recall, banned. Use "how long has it been hurting?" instead.' },
 
   // ── Protein-from-goal-weight factual error ───────────────────────────────
   // The feedback flagged Grace saying "per kilogram of your goal body weight"

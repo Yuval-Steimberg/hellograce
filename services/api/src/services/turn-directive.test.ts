@@ -5,10 +5,11 @@ describe('buildTurnDirective — pain/symptom suppression of food context', () =
   it('emits the suppression directive on "my stomach is killing me"', () => {
     const out = buildTurnDirective('Thanks. I slept well, but my stomach is killing me');
     expect(out).toContain('PHYSICAL PAIN');
+    expect(out).toContain('PARSE the user');
     expect(out).toContain('DO NOT reference today');
     expect(out).toContain('DO NOT surface memory');
-    expect(out).toContain('DO NOT ask a multi-item clinical-intake');
-    expect(out).toContain('DO NOT chain two questions');
+    expect(out).toContain('DO NOT reach back into the PRIOR user message');
+    expect(out).toContain('Multi-item symptom screening is ALLOWED');
   });
 
   it('emits directive on "my head hurts so bad"', () => {
@@ -65,9 +66,9 @@ describe('buildTurnDirective — pain/symptom suppression of food context', () =
     expect(out).toContain('call their prescriber TODAY');
   });
 
-  it('includes the "one focused question OR one actionable next step" rule', () => {
+  it('includes the "targeted follow-up OR actionable next step" rule', () => {
     const out = buildTurnDirective('my stomach hurts');
-    expect(out).toContain('one focused question');
+    expect(out).toContain('targeted follow-up');
     expect(out).toContain('actionable next step');
   });
 
@@ -76,5 +77,16 @@ describe('buildTurnDirective — pain/symptom suppression of food context', () =
     expect(out).toContain("you haven't logged any food today");
     expect(out).toContain('protein');
     expect(out).toContain("you've mentioned this before");
+  });
+
+  it('explicitly allows multi-item symptom screening on pain (per spec)', () => {
+    const out = buildTurnDirective('my stomach is killing me');
+    expect(out).toContain('Multi-item symptom screening is ALLOWED');
+    expect(out).toContain('nausea');
+  });
+
+  it('explicitly forbids reaching into PRIOR user message', () => {
+    const out = buildTurnDirective('my stomach is killing me');
+    expect(out).toContain('DO NOT reach back into the PRIOR user message');
   });
 });

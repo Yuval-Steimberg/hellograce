@@ -13,6 +13,7 @@ import {
   FOOD_REMOVAL_QUESTION,
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
+import { tryFoodLogFastResponse } from './food-log-fast.js';
 import type { LLMProvider, PlannerDecision } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { UserMemoryService } from '../memory/user-memory.service.js';
@@ -130,6 +131,55 @@ export class AIService {
           usedRetrieval: false,
           latencyMs: Date.now() - t0,
         };
+      }
+
+      // Food-log fast-response: when the message is a clear food log AND the
+      // fast-lookup table can resolve the macros, skip the orchestrator entirely
+      // and respond with a deterministic template. ~2-4s → ~150ms.
+      const intentClass = classifyIntent(input.text);
+      if (intentClass.type === 'food_log') {
+        try {
+          const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+          const fastFood = await tryFoodLogFastResponse(input.text, {
+            pool: this.deps.pool,
+            logger: this.deps.logger,
+            userId: input.userId,
+            intentType: intentClass.type,
+            proteinGoalGrams: user?.protein_goal_grams ?? null,
+          });
+          if (fastFood) {
+            this.deps.logger.info(
+              { userId: input.userId, food: fastFood.macros.food, latencyMs: Date.now() - t0 },
+              'ai.food_log_fast.served',
+            );
+            return {
+              text: fastFood.text,
+              confidence: 'high',
+              intent: 'food_log_fast',
+              toolResults: [
+                {
+                  name: 'log_food',
+                  args: { food: input.text },
+                  output: {
+                    ...fastFood.macros,
+                    daily_protein_g: fastFood.dailyProteinG,
+                    daily_calories: fastFood.dailyCalories,
+                  },
+                  latencyMs: 0,
+                  ok: true,
+                },
+              ],
+              usedRetrieval: false,
+              latencyMs: Date.now() - t0,
+            };
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.food_log_fast.error',
+          );
+          // Fall through to the regular orchestrator
+        }
       }
     }
 

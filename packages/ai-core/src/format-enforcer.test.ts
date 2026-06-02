@@ -372,4 +372,69 @@ describe('enforceFormat', () => {
       expect(text).toContain("week 4");
     });
   });
+
+  describe('user message echo strip', () => {
+    it('strips verbatim parroting of the user message at the start of food-log response', () => {
+      // Exact production failure from screenshot 2026-06-02
+      const input = "I ate two eggs is about 12g protein. You're at 35g of your 60g target today.";
+      const { text, fixes } = enforceFormat(input, { userMessage: 'I ate two eggs' });
+      expect(fixes).toContain('user_message_echo_stripped');
+      expect(text).not.toMatch(/^I ate two eggs/i);
+      // Remaining content should still be meaningful
+      expect(text).toMatch(/12g protein/);
+      expect(text).toMatch(/35g/);
+    });
+
+    it('strips echoed prefix and the linking verb "is"', () => {
+      const input = "Big Mac and fries is about 30g protein. You're at 30/60g today.";
+      const { text } = enforceFormat(input, { userMessage: 'Big Mac and fries' });
+      expect(text).not.toMatch(/^Big Mac and fries is/i);
+      expect(text).toMatch(/30g protein/);
+    });
+
+    it('handles "Just had X" echo patterns', () => {
+      const input = "Just had a protein shake — that's about 25g protein. You're at 25g today.";
+      const { text } = enforceFormat(input, { userMessage: 'Just had a protein shake' });
+      expect(text).not.toMatch(/^Just had/i);
+      expect(text).toMatch(/25g protein/);
+    });
+
+    it('does NOT strip when response does not echo the user', () => {
+      // Note: em-dash gets converted to "," by a separate pass; we only check
+      // the echo-strip didn't fire.
+      const input = "Two eggs, about 12g protein. You are at 35g today.";
+      const { text, fixes } = enforceFormat(input, { userMessage: 'I ate two eggs' });
+      expect(fixes).not.toContain('user_message_echo_stripped');
+      expect(text).toMatch(/^Two eggs/);
+    });
+
+    it('skips short user messages to avoid false positives', () => {
+      const input = "Eggs are great. You should keep going.";
+      const { text, fixes } = enforceFormat(input, { userMessage: 'hi' });
+      expect(fixes).not.toContain('user_message_echo_stripped');
+      expect(text).toBe(input);
+    });
+
+    it('only strips when remainder is substantial (>=10 chars)', () => {
+      // If stripping leaves almost nothing, the strip is rejected
+      const input = "Two eggs ok.";
+      const { text } = enforceFormat(input, { userMessage: 'Two eggs' });
+      // Remainder "ok." is too short → no strip
+      expect(text).toBe(input);
+    });
+
+    it('strips with trailing punctuation between echo and content', () => {
+      const input = "Chicken and rice: roughly 34g protein. You're at 40g today.";
+      const { text } = enforceFormat(input, { userMessage: 'chicken and rice' });
+      expect(text).not.toMatch(/^Chicken and rice:/i);
+      expect(text).toMatch(/34g protein/);
+    });
+
+    it('capitalizes the new first letter after stripping a word-leading remainder', () => {
+      const input = "I had eggs that gives you about 12g protein. You're at 12g today.";
+      const { text } = enforceFormat(input, { userMessage: 'I had eggs' });
+      // After stripping "I had eggs " → "that gives you..." → "That gives..."
+      expect(text.charAt(0)).toMatch(/[A-Z]/);
+    });
+  });
 });

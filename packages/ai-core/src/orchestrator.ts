@@ -413,6 +413,9 @@ export class AIOrchestrator {
       // Gemini Flash sometimes copy-pastes the previous response before appending
       // new content. The deduplication check catches this silently.
       ...(lastAssistantMessage ? { lastAssistantMessage } : {}),
+      // Pass user's message so enforceFormat can strip verbatim parroting.
+      // E.g. "I ate two eggs" → Grace must NOT open with "I ate two eggs is about..."
+      ...(input.text ? { userMessage: input.text } : {}),
     };
     const formatted = enforceFormat(llmResp.text, enforceOpts);
     let validated = validateResponse(formatted.text);

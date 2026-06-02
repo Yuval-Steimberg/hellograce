@@ -94,10 +94,50 @@ const ALL_CONTEXT_OPENERS: RegExp[] = [
 
 export function enforceFormat(
   input: string,
-  opts?: { stripFirstName?: string; messageContext?: MessageContext; lastAssistantMessage?: string },
+  opts?: { stripFirstName?: string; messageContext?: MessageContext; lastAssistantMessage?: string; userMessage?: string },
 ): FormatEnforcementResult {
   let text = input;
   const fixes: string[] = [];
+
+  // ─── User-message echo strip ────────────────────────────────────────────
+  // The LLM sometimes opens a food-log response by parroting the user's
+  // exact message back as a noun phrase. Example:
+  //   user: "I ate two eggs"
+  //   Grace: "I ate two eggs is about 12g protein. You're at 35g of your 60g target."
+  // The opening "I ate two eggs " is dead weight that breaks the conversational
+  // tone. Detect any verbatim copy of the user's leading 3+ words and strip.
+  if (opts?.userMessage && opts.userMessage.trim().length >= 6) {
+    const uTrim = opts.userMessage.trim();
+    // Normalize both sides for comparison: lowercase, collapse whitespace.
+    // We require an exact case-insensitive prefix match of the user's first
+    // 3-12 words to avoid false positives on partial substring overlap.
+    const uWords = uTrim.split(/\s+/).slice(0, 12);
+    for (let take = Math.min(uWords.length, 12); take >= 3; take--) {
+      const prefix = uWords.slice(0, take).join(' ');
+      // Build a regex that matches the prefix at start of text, allowing
+      // small punctuation/case variation. The user prefix is treated literally.
+      const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`^["']?${escaped}[\\s,.:!?-]*`, 'i');
+      if (re.test(text)) {
+        const stripped = text.replace(re, '').trim();
+        // Only accept the strip if (a) something substantial remains and
+        // (b) the leftover doesn't start with a connector ("and", "is", "was")
+        // unless we capitalize / inject a natural transition.
+        if (stripped.length >= 10) {
+          let next = stripped;
+          // If the remainder begins with "is/are/was/were [something]", drop
+          // that linking verb too — those are leftovers from the LLM treating
+          // the echoed prefix as the subject of the sentence.
+          next = next.replace(/^(is|are|was|were|has|have|had)\s+(?:about\s+|roughly\s+|approximately\s+)?/i, '');
+          // Capitalize first letter.
+          next = next.charAt(0).toUpperCase() + next.slice(1);
+          text = next;
+          fixes.push('user_message_echo_stripped');
+          break;
+        }
+      }
+    }
+  }
 
   // ─── Duplicate previous-message prefix strip ────────────────────────────
   // Gemini Flash sometimes "continues" the previous assistant turn instead of

@@ -108,7 +108,35 @@ const QUALIFIED_CATEGORY_RE =
 const SIZED_PORTION_RE =
   /\b(small|medium|large|big|tiny|huge|half|quarter|whole|full|footlong|six[\s-]inch|6[\s-]inch|12[\s-]inch|personal|individual|family[\s-]size|kid'?s?|kids|junior|regular)\b(?:\s+\S+){0,3}\s+(?:pizza|burger|sandwich|sub|wrap|salad|burrito|taco|bowl|fries|drink|coffee|soda|shake|coke|sprite|frappuccino|latte|meal|combo|order|pie|portion)\b/i;
 
+// ── Uber-vague quantity overrides (QA report 2026-06-03, Step 3) ─────────
+// Some "sized" portions are SO variable they should never count as specific.
+// "A whole pizza" could be a 6-inch personal (40g protein) or a 16-inch
+// family (160g) — four-fold uncertainty. Same for whole cakes, full loaves,
+// entire boxes, and informal "tons of X" / "way too much" / "a ton of"
+// phrasing. The QA report specifically called out the "whole pizza → 88g"
+// hallucination; this regex forces those into the clarification path.
+const UBER_VAGUE_QUANTITY_RE =
+  /\b(?:a\s+(?:whole|full|entire|ton\s+of|tonne\s+of|loaf\s+of|loaves\s+of|bag\s+of|box\s+of|carton\s+of|tray\s+of|pan\s+of|sheet\s+of|jar\s+of)\b|(?:tons|loads|lots|heaps|piles|tonnes)\s+of\b|way\s+too\s+(?:much|many)\b|so\s+much\s+(?:pizza|pasta|bread|cake|cookies?|chips?|ice\s+cream|food)\b|(?:huge|massive|giant|enormous)\s+(?:pizza|burger|sandwich|burrito|bowl|portion|amount|plate)\b)/i;
+
+// Common binge foods that wouldn't otherwise match VAGUE_CATEGORIES — when
+// combined with the uber-vague phrasing above, route to clarification.
+const COMMON_BINGE_FOODS_RE =
+  /\b(pizza|burger|sandwich|pasta|burrito|taco|sub|wrap|cake|cookies?|brownies?|donuts?|muffins?|cupcakes?|pastr(?:y|ies)|croissants?|bagels?|pie|ice\s+cream|chips|crisps|crackers?|popcorn|cereal|bread|pancakes?|waffles?|fries|chocolate|candy|sweets|nuggets?|tenders?|wings?|ribs)\b/i;
+
+function hasUberVagueQuantity(text: string): boolean {
+  return UBER_VAGUE_QUANTITY_RE.test(text);
+}
+
+function matchUberVagueBinge(text: string): string | null {
+  if (!UBER_VAGUE_QUANTITY_RE.test(text)) return null;
+  const m = text.match(COMMON_BINGE_FOODS_RE);
+  return m ? m[0].toLowerCase() : null;
+}
+
 function hasSpecificity(text: string): boolean {
+  // Uber-vague phrasing trumps any apparent specificity. "A whole pizza"
+  // matches SIZED_PORTION_RE ("whole" + "pizza") but is functionally unknown.
+  if (hasUberVagueQuantity(text)) return false;
   return NUMBER_UNIT_RE.test(text)
     || PORTION_OF_RE.test(text)
     || SPECIFIC_ITEM_RE.test(text)
@@ -182,6 +210,16 @@ export function detectVagueFood(text: string, lastGraceMessage?: string): VagueF
         break;
       }
     }
+  }
+
+  // QA report 2026-06-03 Step 3: uber-vague phrasing on a binge-food noun
+  // ("ate a whole cake", "tons of cookies", "way too much ice cream") still
+  // counts as vague even when the food isn't in VAGUE_CATEGORIES. These
+  // ALWAYS need a clarifying ask — the macro estimate is too uncertain
+  // to volunteer without context.
+  if (!matched) {
+    const uberMatch = matchUberVagueBinge(text);
+    if (uberMatch) matched = uberMatch;
   }
 
   if (!matched) return { vague: false };

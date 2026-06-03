@@ -545,7 +545,29 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       }
     }
 
+    // ── EMOTIONAL DISTRESS TRIAGE FILTER (QA report 2026-06-03, Step 2) ──
+    // When a food message is paired with shame / guilt / self-loathing words,
+    // FORCE-CALLING log_food makes Grace lead with "Got it, about 88g protein
+    // for that" — the exact production failure flagged in the QA audit.
+    // Suppress the force-call so the orchestrator answers the FEELING first.
+    // A prompt rule alone is not enough — the log_food tool result anchors
+    // Grace's reply even when the prompt says "address emotion first."
+    //
+    // Pattern source: 2026-06-03 production screenshots + EMOTION BEFORE DATA
+    // section of prompts.ts. Conservative on shame/binge language; deliberately
+    // ignores neutral negatives like "I felt tired" — those don't override
+    // the macro acknowledgment.
+    const EMOTIONAL_DISTRESS_FOOD_RE = /\b(disgusting|gross\b|awful|ashamed|embarrassed|hate (myself|this body|my body)|feel like (a |such a )?(failure|loser|pig|whale|cow)|feel huge|feel fat\b|can'?t believe (i|myself)|binged|binge\b|blew it|so guilty|i feel guilty|feel terrible (about|after)|i'?m the worst|feeling fat|out of control|spiraled|spiraling|fell off|gave up|ruined (it|today|everything)|messed up (so )?bad)\b/i;
+    const hasFoodDistress = EMOTIONAL_DISTRESS_FOOD_RE.test(input.text);
+    if (hasFoodDistress) {
+      this.deps.logger.info(
+        { userId: input.userId, textPreview: input.text.slice(0, 120) },
+        'ai.handle.emotional_distress_food_skip_force_log',
+      );
+    }
+
     const shouldForceLogFood =
+      !hasFoodDistress &&
       flags.toolsEnabled &&
       !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food') &&
       (intentClass.type === 'food_log' || obviousFoodMention);

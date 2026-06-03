@@ -139,3 +139,40 @@ describe('detectVagueFood — response style', () => {
     expect(r1.response).toBe(r2.response);
   });
 });
+
+describe('detectVagueFood — uber-vague quantity guard (QA report 2026-06-03)', () => {
+  it('flags "I ate a whole pizza" as vague (the screenshot failure)', () => {
+    const r = detectVagueFood('I ate a whole pizza last night');
+    expect(r.vague).toBe(true);
+  });
+
+  it('flags "I ate a whole cake" as vague even though cake is not in VAGUE_CATEGORIES', () => {
+    const r = detectVagueFood('I ate a whole cake');
+    expect(r.vague).toBe(true);
+  });
+
+  it('flags "tons of cookies" as vague', () => {
+    const r = detectVagueFood('I had tons of cookies after dinner');
+    expect(r.vague).toBe(true);
+  });
+
+  it('flags "way too much ice cream" as vague', () => {
+    const r = detectVagueFood('I had way too much ice cream');
+    expect(r.vague).toBe(true);
+  });
+
+  it('flags "a loaf of bread" as vague', () => {
+    const r = detectVagueFood('I ate a loaf of bread');
+    expect(r.vague).toBe(true);
+  });
+
+  it('still passes specific portions ("3 slices of pizza")', () => {
+    const r = detectVagueFood('I had 3 slices of pizza');
+    expect(r.vague).toBe(false);
+  });
+
+  it('still passes "a medium pizza" (reasonable estimate possible)', () => {
+    const r = detectVagueFood('I had a medium pizza');
+    expect(r.vague).toBe(false);
+  });
+});

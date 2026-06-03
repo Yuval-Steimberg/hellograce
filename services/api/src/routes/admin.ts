@@ -125,7 +125,14 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
   app.get('/admin/latency', async (req) => {
     const q = req.query as { window?: string };
     const windowMap: Record<string, string> = {
+      '5m': "interval '5 minutes'",
+      '10m': "interval '10 minutes'",
+      '15m': "interval '15 minutes'",
+      '30m': "interval '30 minutes'",
       '1h': "interval '1 hour'",
+      '3h': "interval '3 hours'",
+      '6h': "interval '6 hours'",
+      '12h': "interval '12 hours'",
       '24h': "interval '24 hours'",
       '7d': "interval '7 days'",
       '30d': "interval '30 days'",

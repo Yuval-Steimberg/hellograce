@@ -637,8 +637,20 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     timezone: z.string().max(100).optional(),
     age: z.number().int().min(13).max(120).nullable().optional(),
     protein_goal_grams: z.number().int().min(1).max(500).nullable().optional(),
+    calorie_goal_kcal: z.number().int().min(800).max(5000).nullable().optional(),
     glp1_start_date: z.string().nullable().optional(),
     checkin_count_per_day: z.number().int().min(1).max(4).optional(),
+    // Dietary fields — required for admin to set vegetarian/vegan/pescatarian
+    // when a user hasn't told Grace directly. Without these, PUT silently
+    // strips the field (Zod default) and returns null. Production failure
+    // 2026-06-03: vegetarian user kept getting chicken/fish recommendations
+    // because their dietary_pattern stayed null after multiple PUT attempts.
+    dietary_pattern: z.enum(['vegan', 'vegetarian', 'pescatarian']).nullable().optional(),
+    dietary_restriction: z.string().max(120).nullable().optional(),
+    primary_goal: z.string().max(120).nullable().optional(),
+    activity_level: z.string().max(40).nullable().optional(),
+    height_cm: z.number().int().min(80).max(250).nullable().optional(),
+    sex: z.enum(['male', 'female', 'other']).nullable().optional(),
     active: z.boolean().optional(),
     paused: z.boolean().optional(),
     blocked: z.boolean().optional(),

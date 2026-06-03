@@ -35,7 +35,6 @@ const OnboardSchema = z.object({
   }, 'Invalid timezone').optional().default('America/New_York'),
   checkinCountPerDay: z.number().int().min(1).max(5).optional().default(1),
   checkinDaysInterval: z.number().int().min(1).max(14).optional().default(1),
-  rlhfEnabled: z.boolean().optional().default(false),
   glp1StartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   doseMg: z.number().finite().positive().max(100).optional().nullable(),
   dietaryRestriction: z.string().max(50).optional().nullable(),
@@ -126,7 +125,6 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       timezone: b.timezone,
       checkin_count_per_day: b.checkinCountPerDay,
       checkin_days_interval: b.checkinDaysInterval,
-      rlhf_enabled: b.rlhfEnabled,
       active: true,
       trial_start: new Date(),
     });

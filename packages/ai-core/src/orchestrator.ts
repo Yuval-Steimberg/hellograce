@@ -896,7 +896,16 @@ export class AIOrchestrator {
           retryRelevanceFail = !retryVerdict.relevant;
         }
 
-        if (retryCritic.pass && retryRegenViolations.length === 0 && retryBlockViolations.length === 0 && !retryRelevanceFail) {
+        // Re-check truncation on the RETRY response. Without this, a
+        // retry that ALSO ends mid-sentence (Gemini bumped against the
+        // 8192 cap again) would ship as-is — exactly the "partial
+        // answer" failure the hard rule (2026-06-03) forbids.
+        const retryTruncated =
+          retryResp.finishReason === 'length' ||
+          endsMidWord(retryValidated.text) ||
+          retryFormatted.fixes.includes('truncation_suspected');
+
+        if (retryCritic.pass && retryRegenViolations.length === 0 && retryBlockViolations.length === 0 && !retryRelevanceFail && !retryTruncated) {
           validated = retryValidated;
           critic = retryCritic;
         } else {
@@ -927,8 +936,27 @@ export class AIOrchestrator {
       }
     }
 
+    // ── Final completeness safety net (2026-06-03 hard rule) ─────────────
+    // Last line of defense before send: even after regen + web-search
+    // fallback, if the response STILL ends mid-sentence (e.g. retry was
+    // also truncated, web search returned a fragment), trim back to the
+    // last complete sentence boundary. If trimming leaves nothing usable
+    // (<40 chars or no terminal punctuation anywhere), fall back to the
+    // canned safe response — better to say "give me a bit more detail"
+    // than to ship a half-thought.
+    let finalText = validated.text;
+    if (!usedSafeFallback && endsMidWord(finalText)) {
+      const { trimmed, wasTrimmed } = trimToLastCompleteSentence(finalText);
+      if (wasTrimmed && trimmed.length >= 40) {
+        finalText = trimmed;
+      } else {
+        finalText = getToolAwareFallback(classification.type, toolResults);
+        usedSafeFallback = true;
+      }
+    }
+
     return {
-      text: validated.text,
+      text: finalText,
       confidence: validated.confidence,
       intent: plan.intent,
       toolResults,
@@ -1070,18 +1098,55 @@ function buildCriticAddendum(c: CriticReport): string {
  * Heuristic for mid-word/mid-sentence truncation.
  * Returns true when the response clearly ends in the middle of something —
  * a trailing dash/hyphen, a single letter, an article ("the", "a"), a
- * preposition ("of", "on", "for"), or no terminal punctuation/emoji at all.
+ * preposition ("of", "on", "for"), a stranded conjunction, a trailing
+ * comma/colon/semicolon, an open paren, or no terminal punctuation/emoji.
+ *
+ * Production-critical: a partial answer is worse than no answer. The hard
+ * rule (2026-06-03) is "never end mid-sentence" — this is the gate.
  */
-function endsMidWord(text: string): boolean {
+export function endsMidWord(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length === 0) return false;
   // Ends in a dash/hyphen → mid-word
   if (/[-–—]$/.test(trimmed)) return true;
+  // Ends with a trailing comma / colon / semicolon → mid-clause
+  if (/[,:;]$/.test(trimmed)) return true;
+  // Ends with an open paren/bracket/quote → mid-quote
+  if (/[(\[{"'`]$/.test(trimmed)) return true;
   const lastTok = trimmed.split(/\s+/).pop() ?? "";
-  // Ends with a stranded preposition/article (no terminal punctuation)
-  const stranded = /^(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be|easy|dense)$/i;
+  // Ends with a stranded preposition / article / conjunction / linking verb
+  const stranded = /^(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be|easy|dense|because|since|while|though|although|when|if|then|than|that|this|these|those|some|any|every|each|its|their|your|our|my|his|her|like|about|over|under|into|onto|upon|via|including|such)$/i;
   if (stranded.test(lastTok)) return true;
   // No terminal punctuation or emoji at all
   if (!/[.!?…]$|[\p{Extended_Pictographic}]$/u.test(trimmed)) return true;
   return false;
+}
+
+/**
+ * Final safety net: trim a (possibly truncated) response back to its last
+ * COMPLETE sentence ending. Returns the trimmed text + whether trimming
+ * happened. If no complete sentence boundary exists, returns the original
+ * unchanged so the caller can fall back to the safe canned reply.
+ *
+ * Examples:
+ *   "Good. The protein math works out to about 25g for that, and"
+ *     → "Good. The protein math works out to about 25g for that," ← still
+ *        truncated by endsMidWord; we trim BEFORE the partial clause:
+ *     → "Good." (first complete sentence)
+ *   "Got it, about 25g. You're at 60g today." → unchanged (already complete)
+ */
+export function trimToLastCompleteSentence(text: string): { trimmed: string; wasTrimmed: boolean } {
+  const original = text.trim();
+  if (original.length === 0) return { trimmed: '', wasTrimmed: false };
+  // Match a sentence terminator (. ! ? …) optionally followed by a closing
+  // quote/paren, then either a space, newline, or end-of-string.
+  const sentenceEnd = /[.!?…][")\]]?(?=\s|$)/g;
+  let lastIdx = -1;
+  let match: RegExpExecArray | null;
+  while ((match = sentenceEnd.exec(original)) !== null) {
+    lastIdx = match.index + match[0].length;
+  }
+  if (lastIdx === -1) return { trimmed: original, wasTrimmed: false };
+  const trimmed = original.slice(0, lastIdx).trim();
+  return { trimmed, wasTrimmed: trimmed.length < original.length };
 }

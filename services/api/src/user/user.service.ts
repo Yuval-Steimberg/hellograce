@@ -77,7 +77,38 @@ export interface GraceUser {
 }
 
 export class UserService {
+  // ── In-memory user cache (Phase 16 latency, 2026-06-03) ──────────────────
+  // Inbound webhook calls ensureUser → handleMessage → getById. Both hit the
+  // same row but go through separate SELECTs. Caching the decrypted user for
+  // a few seconds removes one DB round-trip per turn (~30-80ms saved). Writes
+  // (ensureUser / update) invalidate the cache key so freshness is bounded.
+  // Per-user only — never shared across users.
+  private userCache = new Map<string, { user: GraceUser; expiresAt: number }>();
+  private readonly USER_CACHE_TTL_MS = 30_000;
+
   constructor(private pool: Pool) {}
+
+  private invalidateUserCache(keys: Array<string | null | undefined>): void {
+    for (const k of keys) {
+      if (typeof k === 'string' && k.length > 0) this.userCache.delete(k);
+    }
+  }
+
+  private cacheUser(user: GraceUser): void {
+    const expiresAt = Date.now() + this.USER_CACHE_TTL_MS;
+    if (user.id) this.userCache.set(String(user.id), { user, expiresAt });
+    if (user.phone) this.userCache.set(user.phone, { user, expiresAt });
+  }
+
+  private getCachedUser(key: string): GraceUser | null {
+    const hit = this.userCache.get(key);
+    if (!hit) return null;
+    if (hit.expiresAt < Date.now()) {
+      this.userCache.delete(key);
+      return null;
+    }
+    return hit.user;
+  }
 
   private decryptUser(row: GraceUser): GraceUser {
     if (!isEncryptionEnabled()) return row;
@@ -89,31 +120,47 @@ export class UserService {
 
   /** Fetch user by phone. Tries phone_hash first, falls back to plaintext. */
   async getByPhone(phone: string): Promise<GraceUser | null> {
+    const cached = this.getCachedUser(phone);
+    if (cached) return cached;
     if (isEncryptionEnabled()) {
       const hash = hashField(phone);
       const { rows } = await this.pool.query<GraceUser>(
         `SELECT * FROM users WHERE phone_hash = $1 LIMIT 1`,
         [hash],
       );
-      if (rows[0]) return this.decryptUser(rows[0]);
+      if (rows[0]) {
+        const u = this.decryptUser(rows[0]);
+        this.cacheUser(u);
+        return u;
+      }
     }
     const { rows } = await this.pool.query<GraceUser>(
       `SELECT * FROM users WHERE phone = $1 LIMIT 1`,
       [phone],
     );
-    return rows[0] ? this.decryptUser(rows[0]) : null;
+    if (!rows[0]) return null;
+    const u = this.decryptUser(rows[0]);
+    this.cacheUser(u);
+    return u;
   }
 
   /** Fetch user by userId (text). */
   async getById(userId: string): Promise<GraceUser | null> {
+    const cached = this.getCachedUser(userId);
+    if (cached) return cached;
     const { rows } = await this.pool.query<GraceUser>(
       `SELECT * FROM users WHERE id::text = $1 OR phone = $1 LIMIT 1`,
       [userId],
     );
-    return rows[0] ? this.decryptUser(rows[0]) : null;
+    if (!rows[0]) return null;
+    const u = this.decryptUser(rows[0]);
+    this.cacheUser(u);
+    return u;
   }
 
-  /** Upsert user — creates if new, updates last_reply_at + updated_at. */
+  /** Upsert user — creates if new, updates last_reply_at + updated_at.
+   *  Writes the fresh decrypted user into the in-memory cache so the
+   *  immediately-following getById() in the AI pipeline hits cache. */
   async ensureUser(phone: string): Promise<GraceUser> {
     const hash = isEncryptionEnabled() ? hashField(phone) : null;
 
@@ -127,7 +174,9 @@ export class UserService {
          RETURNING *`,
         [phone, hash],
       );
-      return this.decryptUser(rows[0]!);
+      const u = this.decryptUser(rows[0]!);
+      this.cacheUser(u);
+      return u;
     }
 
     const { rows } = await this.pool.query<GraceUser>(
@@ -138,7 +187,9 @@ export class UserService {
        RETURNING *`,
       [phone],
     );
-    return this.decryptUser(rows[0]!);
+    const u = this.decryptUser(rows[0]!);
+    this.cacheUser(u);
+    return u;
   }
 
   /**
@@ -181,6 +232,8 @@ export class UserService {
       `UPDATE users SET ${sets}, updated_at = now() WHERE phone = $1`,
       [phone, ...values],
     );
+    // Invalidate the user cache so the very next read picks up the change.
+    this.invalidateUserCache([phone]);
   }
 
   /** Update injection flow stage. */

@@ -600,7 +600,33 @@ function sanitizeProactiveOutput(raw: string, firstName: string | null): string 
   if (text.length < 15) return null;
 
   // Reject if it doesn't end cleanly — most likely truncated by token budget.
-  if (!COMPLETE_ENDING.test(text)) return null;
+  // Before rejecting, try trimming back to the last complete sentence — a
+  // proactive message can salvage a partial generation. If the trim leaves
+  // ≥15 chars and ends cleanly, ship the trimmed version; otherwise fall
+  // back to the canned message at the caller.
+  if (!COMPLETE_ENDING.test(text)) {
+    const trimmed = trimToLastCompleteSentenceLocal(text);
+    if (trimmed.length >= 15 && COMPLETE_ENDING.test(trimmed)) {
+      return trimmed;
+    }
+    return null;
+  }
 
   return text;
+}
+
+// Local copy of the orchestrator's trim helper — kept inline so the proactive
+// pipeline doesn't take a dependency on @grace/ai-core's orchestrator module
+// (which pulls in heavy deps not needed at scheduler time).
+function trimToLastCompleteSentenceLocal(text: string): string {
+  const original = text.trim();
+  if (original.length === 0) return '';
+  const sentenceEnd = /[.!?…][")\]]?(?=\s|$)/g;
+  let lastIdx = -1;
+  let match: RegExpExecArray | null;
+  while ((match = sentenceEnd.exec(original)) !== null) {
+    lastIdx = match.index + match[0].length;
+  }
+  if (lastIdx === -1) return original;
+  return original.slice(0, lastIdx).trim();
 }

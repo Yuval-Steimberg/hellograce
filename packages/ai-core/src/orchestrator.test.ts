@@ -460,3 +460,73 @@ describe('stripLastAssistantTurn', () => {
     expect(result).toEqual(onlyUsers);
   });
 });
+
+describe('endsMidWord — completeness gate (2026-06-03 hard rule)', () => {
+  it('flags trailing comma as mid-clause', async () => {
+    const { endsMidWord } = await import('./orchestrator.js');
+    expect(endsMidWord('Good. Aim for protein, water,')).toBe(true);
+  });
+
+  it('flags trailing colon as mid-introduction', async () => {
+    const { endsMidWord } = await import('./orchestrator.js');
+    expect(endsMidWord("Here's why it matters:")).toBe(true);
+  });
+
+  it('flags stranded conjunctions / linkers', async () => {
+    const { endsMidWord } = await import('./orchestrator.js');
+    expect(endsMidWord('That works, and')).toBe(true);
+    expect(endsMidWord('Protein helps because')).toBe(true);
+    expect(endsMidWord("This is common when")).toBe(true);
+    expect(endsMidWord('You can try things like')).toBe(true);
+  });
+
+  it('passes a clean complete sentence', async () => {
+    const { endsMidWord } = await import('./orchestrator.js');
+    expect(endsMidWord('Got it, about 25g protein. Solid lunch.')).toBe(false);
+    expect(endsMidWord('You should aim for 1.2 g/kg.')).toBe(false);
+    expect(endsMidWord('That sounds rough — want to talk about it?')).toBe(false);
+  });
+
+  it('accepts emoji endings', async () => {
+    const { endsMidWord } = await import('./orchestrator.js');
+    expect(endsMidWord("Anytime 🤍")).toBe(false);
+    expect(endsMidWord("Solid lunch 💪")).toBe(false);
+  });
+});
+
+describe('trimToLastCompleteSentence — final safety net', () => {
+  it('trims a truncated trailing clause back to the prior sentence end', async () => {
+    const { trimToLastCompleteSentence } = await import('./orchestrator.js');
+    const r = trimToLastCompleteSentence("Got it, about 25g. You're at 60g today. Aim for more protein and");
+    expect(r.wasTrimmed).toBe(true);
+    expect(r.trimmed).toBe("Got it, about 25g. You're at 60g today.");
+  });
+
+  it('returns the original when it already ends cleanly', async () => {
+    const { trimToLastCompleteSentence } = await import('./orchestrator.js');
+    const r = trimToLastCompleteSentence("That sounds rough. Want to share more?");
+    expect(r.wasTrimmed).toBe(false);
+    expect(r.trimmed).toBe("That sounds rough. Want to share more?");
+  });
+
+  it('returns the original when no terminal punctuation exists anywhere', async () => {
+    const { trimToLastCompleteSentence } = await import('./orchestrator.js');
+    const r = trimToLastCompleteSentence("just a fragment with no end");
+    expect(r.wasTrimmed).toBe(false);
+    expect(r.trimmed).toBe("just a fragment with no end");
+  });
+
+  it('handles question-mark endings', async () => {
+    const { trimToLastCompleteSentence } = await import('./orchestrator.js');
+    const r = trimToLastCompleteSentence("How are you feeling? Anything specific bothering");
+    expect(r.wasTrimmed).toBe(true);
+    expect(r.trimmed).toBe("How are you feeling?");
+  });
+
+  it('handles ellipsis endings', async () => {
+    const { trimToLastCompleteSentence } = await import('./orchestrator.js');
+    const r = trimToLastCompleteSentence("Take your time… and");
+    expect(r.wasTrimmed).toBe(true);
+    expect(r.trimmed).toBe("Take your time…");
+  });
+});

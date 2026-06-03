@@ -701,8 +701,14 @@ export class AIOrchestrator {
     let generationTokenBudget: number;
     if (classification.type === 'greeting' || classification.type === 'gibberish') {
       generationTokenBudget = 256; // one-sentence reply, thinking off
-    } else if (classification.type === 'food_log' || classification.type === 'weight_log' || classification.type === 'mood_log') {
+    } else if (classification.type === 'food_log' || classification.type === 'mood_log') {
       generationTokenBudget = 512; // log ack + macro number, thinking off
+    } else if (classification.type === 'weight_log') {
+      // Bumped 512 → 1024 (2026-06-03): compound weight-log messages
+      // ("I weigh 184 and what should I eat?") were truncating at 512 and
+      // forcing a 5s regen. 1024 covers the ack + a brief food suggestion
+      // without truncation, eliminating the regen entirely.
+      generationTokenBudget = 1024;
     } else if (classification.type === 'emotional') {
       generationTokenBudget = 1024; // 2-sentence empathic reply, thinking off
     } else if (classification.type === 'appointment_prep') {
@@ -839,8 +845,27 @@ export class AIOrchestrator {
     // Three layers: (a) keyword overlap ratio detects obvious topic drift,
     // (b) Jaccard similarity detects copy-paste duplication of last response,
     // (c) LLM relevance check catches semantic mismatches keywords miss.
+    //
+    // 2026-06-03 latency cut: the keyword-based heuristic (a) was a FALSE
+    // POSITIVE machine for intents that naturally reference prior context.
+    // Production telemetry:
+    //   user: "what should I eat for dinner?"
+    //   resp: "You've already hit your 60g protein target today, so dinner..."
+    //   keyword check: response matches "protein"/"target"/"today" from the
+    //   previous Grace message → drift detected → 2s regen → SAME content.
+    // The LLM relevance check (layer c) catches the genuinely-bad cases the
+    // keyword check is trying to catch, without the false positives.
+    const KEYWORD_DRIFT_SKIP_INTENTS = new Set([
+      'food_question',  // references today's protein/calorie context
+      'food_log',       // ack uses prior food/macro context
+      'weight_log',     // ack references previous weight
+      'mood_log',
+      'general',        // catch-all; LLM relevance handles it
+    ]);
+    const skipKeywordDrift = KEYWORD_DRIFT_SKIP_INTENTS.has(classification.type);
+
     let topicDrift = false;
-    if (lastAssistantMessage && lastAssistantMessage.trim().length > 40 && classification.type !== 'greeting') {
+    if (!skipKeywordDrift && lastAssistantMessage && lastAssistantMessage.trim().length > 40 && classification.type !== 'greeting') {
       const userKws = extractTopicKeywords(input.text);
       const prevKws = extractTopicKeywords(lastAssistantMessage);
       const respKws = extractTopicKeywords(validated.text);

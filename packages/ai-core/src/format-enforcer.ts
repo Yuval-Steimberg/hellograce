@@ -67,6 +67,14 @@ const FILLER_OPENERS: RegExp[] = [
   // against the case where regen also produces one.
   /^ugh[,.!\s—-]+/i,
   /^sigh[,.!\s—-]+/i,
+  // 2026-06-03 production: "That's a great question!" + variants slipped past
+  // the content checker via gemini-2.0-flash's higher filler rate. Strip
+  // deterministically so the user NEVER sees them. Banned content rules
+  // still log the violation for telemetry.
+  /^(that'?s |what )?a great question[!.,]?\s*/i,
+  /^(oh,?\s*)?(that'?s |what )?(such )?(a |an )?(great|excellent|fantastic|wonderful|amazing|brilliant|terrific|awesome|fabulous|insightful) (question|point|observation|thought)[!.,]?\s*/i,
+  /^(absolutely|definitely|of course)[!.,]?\s+(yes|sure|i can|happy to)[,.!]?\s*/i,
+  /^happy to (help|chat|share|talk about that)[,.!]?\s*/i,
 ];
 
 // Map: each context type allows these specific runtime-data openers.

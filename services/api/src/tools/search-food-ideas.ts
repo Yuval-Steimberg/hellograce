@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import type { Logger } from 'pino';
+import type { Redis } from 'ioredis';
 import type { Tool } from '@grace/ai-core';
-import type { LLMProvider } from '@grace/shared';
+import type { LLMProvider, DietaryRestriction } from '@grace/shared';
 
 export interface FoodIdea {
   name: string;
@@ -8,7 +10,58 @@ export interface FoodIdea {
   why: string;
 }
 
-export function makeSearchFoodIdeasTool(deps: { llm: LLMProvider; logger: Logger; userId: string }): Tool {
+export interface SearchFoodIdeasDeps {
+  llm: LLMProvider;
+  logger: Logger;
+  userId: string;
+  /** Optional Redis client used to cache results by dietary profile + meal
+   *  type. Cache hits skip the ~2–4 s Google-Search grounding call entirely. */
+  redis?: Redis;
+  /** User's dietary restriction (vegan / vegetarian / etc.) — part of the
+   *  cache key so a vegan and a meat-eater don't share suggestions. */
+  dietaryRestriction?: DietaryRestriction | null;
+  /** Sorted-joined food dislikes — part of the cache key. */
+  foodDislikes?: string[];
+}
+
+/** Meal-type bucket pulled out of the query so "what should I eat for lunch?"
+ *  and "any lunch ideas?" share a cache entry. */
+function extractMealType(query: string): string {
+  const lower = query.toLowerCase();
+  if (/\b(breakfast|morning meal|first meal)\b/.test(lower)) return 'breakfast';
+  if (/\b(lunch|midday meal)\b/.test(lower)) return 'lunch';
+  if (/\b(dinner|supper|evening meal)\b/.test(lower)) return 'dinner';
+  if (/\b(snack|snacks|nibble)\b/.test(lower)) return 'snack';
+  if (/\b(dessert|sweet)\b/.test(lower)) return 'dessert';
+  return 'general';
+}
+
+/** 6-hour bucket so suggestions feel time-relevant without churning the cache
+ *  every minute. Buckets: 0=overnight, 1=morning, 2=midday, 3=evening. */
+function hourBucket(now = new Date()): number {
+  return Math.floor(now.getHours() / 6);
+}
+
+function buildCacheKey(
+  query: string,
+  dietaryRestriction: DietaryRestriction | null | undefined,
+  foodDislikes: string[] | undefined,
+): string {
+  const dietLabel = dietaryRestriction?.label?.toLowerCase() ?? 'none';
+  const dislikes = [...(foodDislikes ?? [])].map((d) => d.toLowerCase()).sort().join(',');
+  const meal = extractMealType(query);
+  const bucket = hourBucket();
+  const raw = `${dietLabel}|${dislikes}|${meal}|${bucket}`;
+  const hash = createHash('sha256').update(raw).digest('hex').slice(0, 32);
+  return `tool:search_food_ideas:${hash}`;
+}
+
+// 30-minute TTL — enough to absorb several "what should I eat" turns from
+// the same user within a session, short enough that suggestions stay fresh
+// across the day.
+const CACHE_TTL_SECONDS = 30 * 60;
+
+export function makeSearchFoodIdeasTool(deps: SearchFoodIdeasDeps): Tool {
   return {
     name: 'search_food_ideas',
     description:
@@ -16,6 +69,33 @@ export function makeSearchFoodIdeasTool(deps: { llm: LLMProvider; logger: Logger
     async execute(args) {
       const query = typeof args['query'] === 'string' ? args['query'].trim() : '';
       if (!query) return { ok: false, error: 'empty_query' };
+
+      const cacheKey = deps.redis
+        ? buildCacheKey(query, deps.dietaryRestriction ?? null, deps.foodDislikes)
+        : null;
+
+      // Cache hit → return immediately, skip the Google-Search grounding call.
+      if (deps.redis && cacheKey) {
+        try {
+          const cached = await deps.redis.get(cacheKey);
+          if (cached) {
+            const parsed = JSON.parse(cached) as FoodIdea[];
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              deps.logger.info(
+                { userId: deps.userId, query, count: parsed.length },
+                'tool.search_food_ideas.cache_hit',
+              );
+              return { ok: true, ideas: parsed };
+            }
+          }
+        } catch (err) {
+          // Cache read failure is non-fatal — fall through to the live call.
+          deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err), userId: deps.userId },
+            'tool.search_food_ideas.cache_read_failed',
+          );
+        }
+      }
 
       try {
         const resp = await deps.llm.generate({
@@ -69,6 +149,19 @@ RULES:
           return { ok: false, error: 'parse_failed' };
         }
 
+        // Write-through cache. Best-effort — a Redis hiccup never blocks the
+        // user-facing response.
+        if (deps.redis && cacheKey) {
+          deps.redis
+            .set(cacheKey, JSON.stringify(ideas), 'EX', CACHE_TTL_SECONDS)
+            .catch((err: Error) => {
+              deps.logger.warn(
+                { err: err.message, userId: deps.userId },
+                'tool.search_food_ideas.cache_write_failed',
+              );
+            });
+        }
+
         deps.logger.info({ userId: deps.userId, query, count: ideas.length }, 'tool.search_food_ideas.ok');
         return { ok: true, ideas };
       } catch (err) {
@@ -78,3 +171,7 @@ RULES:
     },
   };
 }
+
+// Test exports — internal helpers exposed for unit tests without widening
+// the runtime surface.
+export const __testing = { buildCacheKey, extractMealType, hourBucket };

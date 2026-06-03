@@ -526,13 +526,29 @@ const COALESCE_SKIP_RE = /^(?:hi|hey|hello|hii+|heyy+|good\s+morning|good\s+afte
 // window in case the user is about to send a follow-up.
 const FOOD_LOG_SKIP_RE = /^(?:(?:i|just)\s+(?:ate|had|drank|made)|ate|had|drank|just\s+(?:ate|had|drank|made)|made|grabbed|finished|enjoyed)\s+[a-z0-9].{0,28}$/i;
 
-function shouldSkipCoalesce(text: string): boolean {
+// Clear knowledge / recommendation questions — single-turn, self-contained,
+// no continuation expected. "What causes hair loss on Ozempic?" / "How much
+// protein per day?" / "What should I eat for lunch?" These are 95% of the
+// knowledge-question and food-recommendation traffic, and they shouldn't
+// pay the 2-second coalesce tax. Multi-message bursts ("I'm tired" / "and
+// hungry too") don't match this shape (they don't end with '?'), so they
+// still get the coalesce buffer.
+//
+// Guard rails:
+//   • length ≤ 120 chars (real follow-up questions are short)
+//   • must end with '?' (the question-mark IS the no-continuation signal)
+//   • must start with a question word OR a known GLP-1 query pattern
+const COALESCE_SKIP_KNOWLEDGE_RE = /^(?:what|how|why|is|are|can|could|do|does|did|when|where|should|will|would|any\b)\b[^?]{4,118}\?$/i;
+
+export function shouldSkipCoalesce(text: string): boolean {
   const t = text.trim();
   if (t.length === 0) return false;
   // Greetings / acks / thanks / etc. — original short list
   if (t.length <= 40 && COALESCE_SKIP_RE.test(t)) return true;
   // Short food logs (also skips coalesce — "I ate two eggs" needs no buffer)
   if (FOOD_LOG_SKIP_RE.test(t)) return true;
+  // Clear knowledge / recommendation questions — single-turn, ends with '?'
+  if (t.length <= 120 && COALESCE_SKIP_KNOWLEDGE_RE.test(t)) return true;
   return false;
 }
 

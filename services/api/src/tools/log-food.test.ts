@@ -83,3 +83,50 @@ describe('lookupCommonFoodMacros — fast-path macro table (2026-06-01)', () => 
     expect(r?.protein_g).toBe(12);
   });
 });
+
+describe('lookupCommonFoodMacros — Phase 16 expansion (2026-06-03)', () => {
+  it('hits Greek yogurt brands', () => {
+    expect(lookupCommonFoodMacros('Fage')?.protein_g).toBe(18);
+    expect(lookupCommonFoodMacros('I had chobani')?.protein_g).toBe(14);
+    expect(lookupCommonFoodMacros('oikos')?.protein_g).toBe(15);
+  });
+
+  it('hits cottage cheese full-cup portion', () => {
+    expect(lookupCommonFoodMacros('1 cup cottage cheese')?.protein_g).toBe(28);
+  });
+
+  it('hits branded protein bars', () => {
+    expect(lookupCommonFoodMacros('quest bar')?.protein_g).toBe(20);
+    expect(lookupCommonFoodMacros('I had a rxbar')?.protein_g).toBe(12);
+    expect(lookupCommonFoodMacros('built bar')?.protein_g).toBe(18);
+    expect(lookupCommonFoodMacros('clif bar')?.protein_g).toBe(9);
+  });
+
+  it('hits branded shakes', () => {
+    expect(lookupCommonFoodMacros('fairlife')?.protein_g).toBe(26);
+    expect(lookupCommonFoodMacros('premier protein')?.protein_g).toBe(30);
+  });
+
+  it('hits common breakfasts', () => {
+    expect(lookupCommonFoodMacros('overnight oats')?.protein_g).toBe(10);
+    expect(lookupCommonFoodMacros('avocado toast')?.protein_g).toBe(5);
+    expect(lookupCommonFoodMacros('yogurt with berries')?.protein_g).toBe(18);
+  });
+
+  it('hits common lunch / dinner items', () => {
+    expect(lookupCommonFoodMacros('burrito bowl')?.protein_g).toBe(30);
+    expect(lookupCommonFoodMacros('turkey sandwich')?.protein_g).toBe(22);
+    expect(lookupCommonFoodMacros('caesar salad with chicken')?.protein_g).toBe(35);
+  });
+
+  it('hits asian takeout staples', () => {
+    expect(lookupCommonFoodMacros('chicken stir fry')?.protein_g).toBe(30);
+    expect(lookupCommonFoodMacros('pad thai')?.protein_g).toBe(16);
+    expect(lookupCommonFoodMacros('pho')?.protein_g).toBe(25);
+  });
+
+  it('hits packaged tuna / jerky', () => {
+    expect(lookupCommonFoodMacros('tuna packet')?.protein_g).toBe(17);
+    expect(lookupCommonFoodMacros('I had a turkey jerky')?.protein_g).toBe(12);
+  });
+});

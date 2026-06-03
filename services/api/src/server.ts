@@ -100,6 +100,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     contentRulesService,
     userMemory,
     faqCache,
+    redis,
   });
 
   const sender = new TwilioSender(

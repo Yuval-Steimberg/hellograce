@@ -108,24 +108,25 @@ async function estimateViaUsda(
   const items = await decomposeFood(llm, food);
   if (!items || items.length === 0) return null;
 
+  // Parallel per-item USDA lookups — each lookup is independent so we fan
+  // them out via Promise.all instead of awaiting in a serial for-loop.
+  // Saves ~150–300ms per multi-item meal (a 4-item meal goes from
+  // 4 × 80ms serial → ~100ms concurrent). If ANY item misses USDA we
+  // still fall through to the LLM-only estimate, same as before.
+  const lookups = await Promise.all(items.map((item) => usda.lookup(item.name)));
+  if (lookups.some((l) => !l)) return null;
+
   let totalProtein = 0;
   let totalCalories = 0;
-  let allMatched = true;
   const matchedNames: string[] = [];
-
-  for (const item of items) {
-    const lookup = await usda.lookup(item.name);
-    if (!lookup) {
-      allMatched = false;
-      break;
-    }
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!;
+    const lookup = lookups[i]!;
     const factor = item.grams / 100;
     totalProtein += lookup.proteinPer100g * factor;
     totalCalories += lookup.caloriesPer100g * factor;
     matchedNames.push(lookup.display);
   }
-
-  if (!allMatched) return null;
 
   return {
     food: matchedNames.join(' + '),
@@ -421,6 +422,151 @@ const COMMON_FOODS: Record<string, CommonMacros> = {
   'pizza':                   { food: 'pizza (2 slices)', protein_g: 22, calories: 540 },
   '2 slices of pizza':       { food: 'pizza (2 slices)', protein_g: 22, calories: 540 },
   '1 slice of pizza':        { food: 'pizza (1 slice)', protein_g: 11, calories: 270 },
+
+  // ── Phase-16 latency expansion (2026-06-03) ─────────────────────────────
+  // Hand-curated, USDA-anchored. Bumps fast-path hit rate from ~40% → ~60–70%.
+  // Each entry skips the ~1.5–3.5 s log_food LLM macro chain entirely.
+
+  // High-protein snacks / dairy / packaged
+  'plain greek yogurt':      { food: 'plain Greek yogurt (1 cup)', protein_g: 17, calories: 100 },
+  'fage':                    { food: 'Fage Greek yogurt (1 cup)', protein_g: 18, calories: 120 },
+  'chobani':                 { food: 'Chobani Greek yogurt (1 cup)', protein_g: 14, calories: 140 },
+  'oikos':                   { food: 'Oikos Triple Zero (1 cup)', protein_g: 15, calories: 120 },
+  'two good':                { food: 'Two Good Greek yogurt (1 cup)', protein_g: 12, calories: 80 },
+  'skyr':                    { food: 'skyr (1 cup)', protein_g: 17, calories: 110 },
+  'cottage cheese 1 cup':    { food: 'cottage cheese (1 cup)', protein_g: 28, calories: 200 },
+  '1 cup cottage cheese':    { food: 'cottage cheese (1 cup)', protein_g: 28, calories: 200 },
+  'string cheese':           { food: 'string cheese (1 stick)', protein_g: 7, calories: 80 },
+  'cheese stick':            { food: 'cheese stick', protein_g: 7, calories: 80 },
+  'babybel':                 { food: 'Babybel cheese', protein_g: 5, calories: 70 },
+  // Note: bare "cheddar" / "feta" intentionally excluded — they appear as
+  // ingredients in many compound foods (e.g. "cheddar chickpea bake") and
+  // would cause the substring matcher to over-trigger. Users say
+  // "cheddar cheese" or "1 oz cheddar" if they want to log it standalone,
+  // and those still flow to the LLM macro estimator for an accurate number.
+  'milk':                    { food: 'milk (1 cup)', protein_g: 8, calories: 130 },
+  'glass of milk':           { food: 'milk (1 cup)', protein_g: 8, calories: 130 },
+  'almond milk':             { food: 'almond milk (1 cup)', protein_g: 1, calories: 40 },
+  'oat milk':                { food: 'oat milk (1 cup)', protein_g: 3, calories: 120 },
+  'soy milk':                { food: 'soy milk (1 cup)', protein_g: 7, calories: 100 },
+  'kefir':                   { food: 'kefir (1 cup)', protein_g: 11, calories: 110 },
+
+  // Branded protein bars
+  'quest bar':               { food: 'Quest bar', protein_g: 20, calories: 200 },
+  'rxbar':                   { food: 'RXBAR', protein_g: 12, calories: 210 },
+  'rx bar':                  { food: 'RXBAR', protein_g: 12, calories: 210 },
+  'built bar':               { food: 'Built Bar', protein_g: 18, calories: 130 },
+  'one bar':                 { food: 'ONE Bar', protein_g: 20, calories: 210 },
+  'cliff bar':               { food: 'Clif Bar', protein_g: 9, calories: 240 },
+  'clif bar':                { food: 'Clif Bar', protein_g: 9, calories: 240 },
+  'kind bar':                { food: 'KIND bar', protein_g: 6, calories: 200 },
+  'pure protein bar':        { food: 'Pure Protein bar', protein_g: 20, calories: 200 },
+  'think bar':               { food: 'Think! protein bar', protein_g: 20, calories: 240 },
+  'protein bar':             { food: 'protein bar', protein_g: 20, calories: 210 },
+
+  // Branded shakes / RTD protein drinks
+  'fairlife':                { food: 'Fairlife Core Power (14oz)', protein_g: 26, calories: 170 },
+  'core power':              { food: 'Core Power shake', protein_g: 26, calories: 170 },
+  'premier protein':         { food: 'Premier Protein shake', protein_g: 30, calories: 160 },
+  'orgain':                  { food: 'Orgain protein shake', protein_g: 20, calories: 150 },
+  'ensure':                  { food: 'Ensure (8oz)', protein_g: 9, calories: 220 },
+  'muscle milk':             { food: 'Muscle Milk shake', protein_g: 25, calories: 160 },
+
+  // Tuna / jerky / packaged protein
+  'tuna packet':             { food: 'tuna packet (2.6oz)', protein_g: 17, calories: 70 },
+  'starkist packet':         { food: 'StarKist tuna packet', protein_g: 17, calories: 70 },
+  'salmon packet':           { food: 'salmon packet (2.6oz)', protein_g: 14, calories: 90 },
+  'sardines':                { food: 'sardines (1 can)', protein_g: 22, calories: 190 },
+  'turkey jerky':            { food: 'turkey jerky (1 oz)', protein_g: 12, calories: 80 },
+  'beef jerky':              { food: 'beef jerky (1 oz)', protein_g: 9, calories: 80 },
+  'chomps':                  { food: 'Chomps meat stick', protein_g: 9, calories: 100 },
+
+  // Common breakfasts
+  'oatmeal with berries':    { food: 'oatmeal + berries', protein_g: 7, calories: 220 },
+  'oatmeal with peanut butter': { food: 'oatmeal + peanut butter', protein_g: 14, calories: 340 },
+  'overnight oats':          { food: 'overnight oats (1 cup)', protein_g: 10, calories: 280 },
+  'avocado toast':           { food: 'avocado toast (1 slice)', protein_g: 5, calories: 220 },
+  'eggs and avocado':        { food: '2 eggs + avocado', protein_g: 15, calories: 320 },
+  'eggs and toast and coffee': { food: '2 eggs + toast + coffee', protein_g: 15, calories: 220 },
+  'yogurt with berries':     { food: 'Greek yogurt + berries', protein_g: 18, calories: 180 },
+  'yogurt and granola':      { food: 'Greek yogurt + granola', protein_g: 18, calories: 280 },
+  'cereal':                  { food: 'cereal with milk (1 cup)', protein_g: 10, calories: 250 },
+  'pancakes':                { food: 'pancakes (2 medium)', protein_g: 8, calories: 220 },
+  'waffle':                  { food: 'waffle', protein_g: 5, calories: 220 },
+  'bacon':                   { food: 'bacon (2 strips)', protein_g: 6, calories: 80 },
+  'sausage':                 { food: 'breakfast sausage (1 link)', protein_g: 5, calories: 90 },
+  'breakfast sandwich':      { food: 'breakfast sandwich', protein_g: 18, calories: 380 },
+
+  // Common lunches / dinners
+  'chicken salad':           { food: 'chicken salad', protein_g: 25, calories: 350 },
+  'tuna salad':              { food: 'tuna salad', protein_g: 22, calories: 320 },
+  'turkey sandwich':         { food: 'turkey sandwich', protein_g: 22, calories: 380 },
+  'ham sandwich':            { food: 'ham sandwich', protein_g: 18, calories: 360 },
+  'grilled cheese':          { food: 'grilled cheese', protein_g: 11, calories: 380 },
+  'caesar salad':            { food: 'Caesar salad', protein_g: 8, calories: 300 },
+  'caesar salad with chicken': { food: 'Caesar salad + chicken', protein_g: 35, calories: 480 },
+  'cobb salad':              { food: 'Cobb salad', protein_g: 30, calories: 480 },
+  'burrito bowl':            { food: 'burrito bowl', protein_g: 30, calories: 600 },
+  'chipotle bowl':           { food: 'Chipotle bowl', protein_g: 30, calories: 600 },
+  'chicken wrap':            { food: 'chicken wrap', protein_g: 25, calories: 450 },
+  'turkey wrap':             { food: 'turkey wrap', protein_g: 22, calories: 440 },
+  'soup':                    { food: 'soup (1 cup)', protein_g: 6, calories: 180 },
+  'chicken soup':            { food: 'chicken soup (1 cup)', protein_g: 8, calories: 150 },
+  'chicken noodle soup':     { food: 'chicken noodle soup (1 cup)', protein_g: 7, calories: 150 },
+  'tomato soup':             { food: 'tomato soup (1 cup)', protein_g: 4, calories: 160 },
+
+  // Asian / takeout staples
+  'sushi':                   { food: 'sushi (6 pieces)', protein_g: 14, calories: 300 },
+  '6 pieces of sushi':       { food: 'sushi (6 pieces)', protein_g: 14, calories: 300 },
+  'sushi roll':              { food: 'sushi roll', protein_g: 14, calories: 300 },
+  'california roll':         { food: 'California roll', protein_g: 9, calories: 250 },
+  'stir fry':                { food: 'stir fry', protein_g: 22, calories: 450 },
+  'chicken stir fry':        { food: 'chicken stir fry', protein_g: 30, calories: 480 },
+  'fried rice':              { food: 'fried rice (1 cup)', protein_g: 8, calories: 280 },
+  'lo mein':                 { food: 'lo mein (1 cup)', protein_g: 10, calories: 320 },
+  'pad thai':                { food: 'pad thai (1 serving)', protein_g: 16, calories: 500 },
+  'pho':                     { food: 'pho (1 bowl)', protein_g: 25, calories: 380 },
+
+  // Other proteins / sides
+  'turkey':                  { food: 'turkey (4oz)', protein_g: 28, calories: 175 },
+  'ground turkey':           { food: 'ground turkey (4oz)', protein_g: 22, calories: 170 },
+  'pork chop':               { food: 'pork chop (5oz)', protein_g: 30, calories: 290 },
+  'sweet potato':            { food: 'sweet potato (1 medium)', protein_g: 2, calories: 105 },
+  'baked potato':            { food: 'baked potato (1 medium)', protein_g: 5, calories: 165 },
+  'mashed potatoes':         { food: 'mashed potatoes (1 cup)', protein_g: 4, calories: 215 },
+  'roasted veggies':         { food: 'roasted vegetables (1 cup)', protein_g: 4, calories: 130 },
+  'cauliflower':             { food: 'cauliflower (1 cup)', protein_g: 2, calories: 30 },
+  'brussels sprouts':        { food: 'Brussels sprouts (1 cup)', protein_g: 4, calories: 55 },
+  'green beans':             { food: 'green beans (1 cup)', protein_g: 2, calories: 35 },
+  'asparagus':               { food: 'asparagus (1 cup)', protein_g: 3, calories: 30 },
+  'kale':                    { food: 'kale (1 cup)', protein_g: 2, calories: 35 },
+
+  // Nuts / seeds
+  'walnuts':                 { food: 'walnuts (1 oz)', protein_g: 4, calories: 185 },
+  'cashews':                 { food: 'cashews (1 oz)', protein_g: 5, calories: 160 },
+  'pistachios':              { food: 'pistachios (1 oz)', protein_g: 6, calories: 160 },
+  'pumpkin seeds':           { food: 'pumpkin seeds (1 oz)', protein_g: 9, calories: 150 },
+  'chia seeds':              { food: 'chia seeds (1 tbsp)', protein_g: 2, calories: 60 },
+  'hemp seeds':              { food: 'hemp seeds (2 tbsp)', protein_g: 6, calories: 110 },
+  'flax seeds':              { food: 'flax seeds (1 tbsp)', protein_g: 2, calories: 55 },
+  'almond butter':           { food: 'almond butter (2 tbsp)', protein_g: 7, calories: 195 },
+
+  // Fruit (round out the table for common entries)
+  'peach':                   { food: 'peach', protein_g: 1, calories: 60 },
+  'pear':                    { food: 'pear', protein_g: 1, calories: 100 },
+  'grapes':                  { food: 'grapes (1 cup)', protein_g: 1, calories: 105 },
+  'watermelon':              { food: 'watermelon (1 cup)', protein_g: 1, calories: 45 },
+  'pineapple':               { food: 'pineapple (1 cup)', protein_g: 1, calories: 85 },
+  'mango':                   { food: 'mango (1 cup)', protein_g: 1, calories: 100 },
+  'avocado':                 { food: 'avocado (1 whole)', protein_g: 4, calories: 240 },
+
+  // Drinks
+  'green tea':               { food: 'green tea', protein_g: 0, calories: 0 },
+  'iced coffee':             { food: 'iced coffee (black)', protein_g: 0, calories: 5 },
+  'americano':               { food: 'americano', protein_g: 0, calories: 10 },
+  'cold brew':               { food: 'cold brew (black)', protein_g: 0, calories: 5 },
+  'matcha latte':            { food: 'matcha latte', protein_g: 7, calories: 130 },
+  'kombucha':                { food: 'kombucha (16oz)', protein_g: 0, calories: 60 },
 };
 
 /**

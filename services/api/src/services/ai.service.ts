@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
+import type { Redis } from 'ioredis';
 import type { ChatTurn, DietaryRestriction, InboundMessage, OrchestratorOutput } from '@grace/shared';
 import {
   AIOrchestrator,
@@ -81,6 +82,10 @@ export interface AIServiceDeps {
   usda?: UsdaFoodService;
   bandit?: BanditService;
   faqCache?: FaqSemanticCache;
+  /** Optional Redis client â€” used to cache search_food_ideas results so the
+   *  same dietary profile + meal type doesn't re-pay the Google-Search
+   *  grounding round-trip on every "what should I eat for lunch" turn. */
+  redis?: Redis;
 }
 
 export class AIService {
@@ -863,7 +868,14 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
         tools.register(makeLogSideEffectTool({ users, userId: input.userId, phone: user?.phone ?? input.userId }));
       }
       if (toolSettings['search_food_ideas'] !== false) {
-        tools.register(makeSearchFoodIdeasTool({ llm: this.deps.llm, logger, userId: input.userId }));
+        tools.register(makeSearchFoodIdeasTool({
+          llm: this.deps.llm,
+          logger,
+          userId: input.userId,
+          ...(this.deps.redis ? { redis: this.deps.redis } : {}),
+          dietaryRestriction,
+          foodDislikes: cleanFoodDislikes,
+        }));
       }
       if (toolSettings['remove_food'] !== false) {
         tools.register(makeRemoveFoodTool({ pool: this.deps.pool, logger, userId: input.userId }));

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { detectUpgradeIntent, buildUpgradeUrl, coalesceMessages, detectPauseIntent } from './webhook.js';
+import {
+  detectUpgradeIntent,
+  buildUpgradeUrl,
+  coalesceMessages,
+  detectPauseIntent,
+  shouldSkipCoalesce,
+} from './webhook.js';
 
 // Minimal in-memory Redis mock for coalesceMessages tests.
 function makeMockRedis() {
@@ -159,5 +165,49 @@ describe('detectPauseIntent (Phase 1 coverage expansion)', () => {
     expect(detectPauseIntent('I just ate two eggs')).toBe(false);
     expect(detectPauseIntent('hi grace')).toBe(false);
     expect(detectPauseIntent('how are you')).toBe(false);
+  });
+});
+
+describe('shouldSkipCoalesce — knowledge / recommendation skip (Phase 16 latency)', () => {
+  it('skips coalesce for clear knowledge questions ending with ?', () => {
+    expect(shouldSkipCoalesce('What causes hair loss on Ozempic?')).toBe(true);
+    expect(shouldSkipCoalesce('How much protein per day?')).toBe(true);
+    expect(shouldSkipCoalesce('Can I take ibuprofen with Ozempic?')).toBe(true);
+    expect(shouldSkipCoalesce('Is matcha safe with Wegovy?')).toBe(true);
+    expect(shouldSkipCoalesce('Does Mounjaro cause hair loss?')).toBe(true);
+    expect(shouldSkipCoalesce('Should I eat before my shot?')).toBe(true);
+  });
+
+  it('skips coalesce for clear food recommendation questions', () => {
+    expect(shouldSkipCoalesce('What should I eat for lunch?')).toBe(true);
+    expect(shouldSkipCoalesce('Any snack ideas?')).toBe(true);
+    expect(shouldSkipCoalesce('What are some high protein dinners?')).toBe(true);
+  });
+
+  it('still requires the question mark on the knowledge path', () => {
+    // These don't match the new knowledge regex (no '?') AND don't match the
+    // existing greeting / brief-feeling / food-log skip lists, so they
+    // correctly fall through to the 2 s coalesce buffer.
+    expect(shouldSkipCoalesce('Actually I changed my mind')).toBe(false);
+    expect(shouldSkipCoalesce('Wait one sec')).toBe(false);
+    expect(shouldSkipCoalesce('Let me check the bottle')).toBe(false);
+  });
+
+  it('does NOT skip statements that happen to have a question word but no ?', () => {
+    expect(shouldSkipCoalesce('I dont know what to eat')).toBe(false);
+    expect(shouldSkipCoalesce('I told the doctor how I felt')).toBe(false);
+  });
+
+  it('does NOT skip very long questions (>120 chars) — give them the buffer', () => {
+    const long =
+      'What causes hair loss on Ozempic and how should I think about protein and resistance training given that I started semaglutide eight weeks ago?';
+    expect(long.length).toBeGreaterThan(120);
+    expect(shouldSkipCoalesce(long)).toBe(false);
+  });
+
+  it('keeps the original greeting / ack / food-log shortcuts working', () => {
+    expect(shouldSkipCoalesce('hi')).toBe(true);
+    expect(shouldSkipCoalesce('thanks')).toBe(true);
+    expect(shouldSkipCoalesce('I ate two eggs')).toBe(true);
   });
 });

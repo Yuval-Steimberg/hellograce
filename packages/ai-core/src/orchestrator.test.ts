@@ -174,14 +174,17 @@ describe('AIOrchestrator', () => {
   it('forces regen via grounding precheck even on a chat intent, without an LLM critic call', async () => {
     // Chat intent would normally skip the critic. But the response contains
     // an unsupported dose claim — precheck must fail-close and trigger regen.
+    // After 2026-06-03 latency cut: the retry critic is also skipped when
+    // the retry's precheck is clean AND the intent is non-risky (chat).
+    // Total LLM calls: planner + gen + regen (no critic on either attempt).
     const llm = new MockLLM([
       JSON.stringify({ intent: 'chat', needsTools: false, toolCalls: [], rationale: '' }),
       'Just take 2mg next time — that should help.',
       // No critic call expected for attempt 1 (precheck handles it).
-      // Retry response, clean:
+      // Retry response, clean — no dose claim, precheck passes:
       "I can't suggest doses — your prescriber is the right person to ask. Want to talk through what you're noticing?",
-      // Critic call for retry (precheck clean now):
-      healthyCriticJson,
+      // No critic call expected for attempt 2 either (precheck clean +
+      // non-risky 'chat' intent + no truncation/drift).
     ]);
     const tools = new ToolRegistry();
     const orch = new AIOrchestrator({ llm, tools });
@@ -194,9 +197,8 @@ describe('AIOrchestrator', () => {
       toolsEnabled: true,
     });
 
-    expect(llm.calls).toHaveLength(4); // planner + gen + regen + critic (precheck skipped LLM critic on attempt 1)
+    expect(llm.calls).toHaveLength(3); // planner + gen + regen (critic skipped on both attempts)
     expect(out.regenerated).toBe(true);
-    expect(out.critic?.pass).toBe(true);
     expect(out.text).toContain('prescriber');
   });
 

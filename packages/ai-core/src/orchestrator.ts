@@ -1140,16 +1140,55 @@ export class AIOrchestrator {
             severity: 'regen',
           });
         }
-        const retryCritic = await this.review(
-          retryPrecheck,
-          input.text,
-          retryValidated.text,
-          input.retrieved,
-        );
+        // 2026-06-03 latency cut: retry critic now mirrors the initial-critic
+        // gate. If the initial pass didn't need a critic (non-risky intent,
+        // pure content-rule violation), the retry shouldn't need one either.
+        // The retry's own content-check + grounding + truncation guards
+        // already enforce correctness; the critic LLM call (~2s) was
+        // hidden tax on every regen for non-risky intents.
+        const needsRetryCritic =
+          truncated ||
+          topicDrift ||
+          retryPrecheck.unsupported.length > 0 ||
+          this.shouldRunCritic(plan, retryValidated);
+        let retryCritic: CriticReport;
+        let retryReviewMs = 0;
+        if (needsRetryCritic) {
+          const retryReviewStart = Date.now();
+          retryCritic = await this.review(
+            retryPrecheck,
+            input.text,
+            retryValidated.text,
+            input.retrieved,
+          );
+          retryReviewMs = Date.now() - retryReviewStart;
+        } else {
+          // Synthesize a passing critic so downstream logic stays unchanged.
+          // All real safety checks (content rules, block violations,
+          // grounding, relevance, truncation) still run independently.
+          retryCritic = {
+            scores: { grounding: 5, safety: 5, on_task: 5, tone: 5 },
+            overall: 20,
+            pass: true,
+            issues: [],
+            source: 'precheck',
+          };
+        }
+        // Fold retry-review time into the headline review bucket so the
+        // dashboard reflects the true cost (or absence) of this stage.
+        reviewMs += retryReviewMs;
 
-        // If the original failure was a relevance issue, verify the retry is on-topic too.
+        // Only re-check relevance if the original failure WAS a relevance/drift
+        // issue. Most regens fire on content-rule violations where re-verifying
+        // topical relevance after a retry adds an LLM call (~150ms) for nothing.
         let retryRelevanceFail = false;
-        if (retryCritic.pass && retryRegenViolations.length === 0 && retryBlockViolations.length === 0 && topicDrift && lastAssistantMessage) {
+        if (
+          retryCritic.pass &&
+          retryRegenViolations.length === 0 &&
+          retryBlockViolations.length === 0 &&
+          topicDrift &&
+          lastAssistantMessage
+        ) {
           const retryVerdict = await this.relevance.check(input.text, retryValidated.text, lastAssistantMessage);
           retryRelevanceFail = !retryVerdict.relevant;
         }

@@ -494,6 +494,94 @@ describe('endsMidWord — completeness gate (2026-06-03 hard rule)', () => {
   });
 });
 
+describe('detectReasoningRequest — explain-vs-repeat gate (2026-06-03)', () => {
+  const calculatedPrior =
+    "Your protein target lands at about 111 g per day, based on your 175 lb weight.";
+  const recommendationPrior =
+    "I'd recommend hitting at least 100 g of protein today and getting a short walk in after dinner.";
+  const noAnchorPrior = "That sounds rough, want to share more?";
+
+  it('fires on bare why? after a numeric prior turn', async () => {
+    const { detectReasoningRequest } = await import('./orchestrator.js');
+    expect(detectReasoningRequest('Why?', calculatedPrior)).toBe(true);
+    expect(detectReasoningRequest('Why', calculatedPrior)).toBe(true);
+  });
+
+  it('fires on "how did you calculate that?"', async () => {
+    const { detectReasoningRequest } = await import('./orchestrator.js');
+    expect(detectReasoningRequest('How did you calculate that?', calculatedPrior)).toBe(true);
+    expect(detectReasoningRequest('How did you get to 111?', calculatedPrior)).toBe(true);
+    expect(detectReasoningRequest('Where did that number come from?', calculatedPrior)).toBe(true);
+  });
+
+  it('fires on "can you explain?" after a recommendation', async () => {
+    const { detectReasoningRequest } = await import('./orchestrator.js');
+    expect(detectReasoningRequest('Can you explain?', recommendationPrior)).toBe(true);
+    expect(detectReasoningRequest('Can you walk me through that?', recommendationPrior)).toBe(true);
+  });
+
+  it('does NOT fire when the prior message has no concrete anchor', async () => {
+    const { detectReasoningRequest } = await import('./orchestrator.js');
+    expect(detectReasoningRequest('Why?', noAnchorPrior)).toBe(false);
+    expect(detectReasoningRequest('How?', noAnchorPrior)).toBe(false);
+  });
+
+  it('does NOT fire on long messages that just contain "why"', async () => {
+    const { detectReasoningRequest } = await import('./orchestrator.js');
+    expect(
+      detectReasoningRequest(
+        'Why am I so tired today even though I slept well and ate enough protein and water?',
+        calculatedPrior,
+      ),
+    ).toBe(false);
+  });
+
+  it('does NOT fire on missing inputs', async () => {
+    const { detectReasoningRequest } = await import('./orchestrator.js');
+    expect(detectReasoningRequest(undefined, calculatedPrior)).toBe(false);
+    expect(detectReasoningRequest('Why?', undefined)).toBe(false);
+  });
+});
+
+describe('detectMustAcknowledge — latest-message priority (2026-06-03)', () => {
+  it('flags reported symptoms', async () => {
+    const { detectMustAcknowledge } = await import('./orchestrator.js');
+    expect(detectMustAcknowledge('I have a terrible headache')?.type).toBe('symptom');
+    expect(detectMustAcknowledge("I'm so dizzy right now")?.type).toBe('symptom');
+    expect(detectMustAcknowledge('my hair is falling out')?.type).toBe('symptom');
+    expect(detectMustAcknowledge('Chest pain since this morning')?.type).toBe('symptom');
+    expect(detectMustAcknowledge('losing my hair lately')?.type).toBe('symptom');
+    expect(detectMustAcknowledge('my hair fell out in clumps')?.type).toBe('symptom');
+    expect(detectMustAcknowledge('really bad heartburn after dinner')?.type).toBe('symptom');
+  });
+
+  it('flags corrections', async () => {
+    const { detectMustAcknowledge } = await import('./orchestrator.js');
+    expect(detectMustAcknowledge('Actually I meant 2 mg')?.type).toBe('correction');
+    expect(detectMustAcknowledge('Wait, scratch that')?.type).toBe('correction');
+    expect(detectMustAcknowledge('Sorry, I meant Wegovy not Ozempic')?.type).toBe('correction');
+  });
+
+  it('flags new medication info', async () => {
+    const { detectMustAcknowledge } = await import('./orchestrator.js');
+    expect(detectMustAcknowledge('I just started 1 mg today')?.type).toBe('new_info');
+    expect(detectMustAcknowledge('I switched my dose this week')?.type).toBe('new_info');
+  });
+
+  it('returns null on neutral messages', async () => {
+    const { detectMustAcknowledge } = await import('./orchestrator.js');
+    expect(detectMustAcknowledge('Hello')).toBeNull();
+    expect(detectMustAcknowledge('Thanks for that')).toBeNull();
+    expect(detectMustAcknowledge("What's for dinner?")).toBeNull();
+  });
+
+  it('handles missing input', async () => {
+    const { detectMustAcknowledge } = await import('./orchestrator.js');
+    expect(detectMustAcknowledge(undefined)).toBeNull();
+    expect(detectMustAcknowledge('')).toBeNull();
+  });
+});
+
 describe('trimToLastCompleteSentence — final safety net', () => {
   it('trims a truncated trailing clause back to the prior sentence end', async () => {
     const { trimToLastCompleteSentence } = await import('./orchestrator.js');

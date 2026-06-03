@@ -299,6 +299,108 @@ export function detectMultiPartMessage(userText: string | undefined): boolean {
   return false;
 }
 
+// ── Reasoning-request detection (CRITICAL 2026-06-03 launch rule) ────────
+// Production failure: user asks "Why?" / "How did you calculate that?" and
+// Grace REPEATS the recommendation instead of EXPLAINING the reasoning.
+// This detector + the matching focus-marker banner flip Grace into
+// "explain previous response" mode.
+//
+// Context-aware on purpose: a bare "Why?" with no prior Grace context is
+// just an open question. We only fire reasoning-request mode when:
+//   • the user message is short (≤ 12 words)
+//   • starts with a reasoning trigger (why/how/where/show me/explain)
+//   • the prior Grace message contains a number, recommendation verb, or
+//     "your X is Y" assertion — i.e. there's something concrete TO explain
+const REASONING_TRIGGERS_RE =
+  /^\s*(?:and\s+|but\s+|so\s+|wait\s+|ok\s+)?(?:why\??|how\s+(?:do you know|did you (?:calculate|get|arrive|come up|compute|derive|figure)|is that|did that|do you (?:calculate|compute|estimate|figure|figure that))|where (?:did|does) (?:that|this|the) (?:number|figure|come)|can you (?:explain|walk me through|tell me how|show me how|break (?:that|this|it) down)|(?:what'?s|what is) the (?:reasoning|logic|math|calculation|basis|source)|show (?:me )?(?:the|your) (?:math|work|calculation|reasoning)|explain (?:that|this|why|how)|what makes you (?:say|think|recommend)|on what basis|based on what|says? who|where (?:is|are) (?:that|those) from)\b/i;
+
+const PRIOR_REASONING_ANCHOR_RE =
+  /\b(?:\d+\s*(?:g|kg|lbs?|kcal|oz|cup|cups|cal|grams?|pounds?|ounces?|hours?|days?|weeks?|months?|years?|%)|recommend|suggest|target|aim for|should|need to|try|here'?s why|because)\b/i;
+
+export function detectReasoningRequest(
+  userText: string | undefined,
+  lastAssistantMessage: string | undefined,
+): boolean {
+  if (!userText || !lastAssistantMessage) return false;
+  const trimmed = userText.trim();
+  if (trimmed.length === 0) return false;
+  // Cap word count — long messages with "why" inside are usually new
+  // questions ("why am I so tired today?") not reasoning asks.
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length > 12) return false;
+  if (!REASONING_TRIGGERS_RE.test(trimmed)) return false;
+  // Context gate: the prior Grace turn must have SOMETHING to explain
+  // (a number, a recommendation, a target). Otherwise it's an open Q.
+  return PRIOR_REASONING_ANCHOR_RE.test(lastAssistantMessage);
+}
+
+// ── Must-acknowledge content (latest-message priority — CRITICAL) ────────
+// When the user's latest message reports a symptom, makes a correction,
+// or shares a meaningful update, that content MUST be acknowledged
+// FIRST regardless of prior conversation flow. The detector returns a
+// short tag string ("symptom: headache", "correction", "new info: weight")
+// that the focus marker uses to instruct Grace to lead with this content.
+// Symptom matchers — case-insensitive regex. Word-boundary anchored so
+// short terms ("pain", "rash") don't false-match inside other words.
+// Compound terms ("chest pain", "shortness of breath") allow flexible
+// whitespace. Hair variants accept "hair is falling out", "hair fell out",
+// "losing hair", etc.
+const SYMPTOM_RES: Array<{ re: RegExp; label: string }> = [
+  { re: /\bheadaches?\b|\bmigraines?\b/i, label: 'headache' },
+  { re: /\bnause(?:a|ous)\b|\bqueasy\b|\bvomit(?:ing)?\b|\bthrow(?:ing)?\s+up\b/i, label: 'nausea' },
+  { re: /\bdizz(?:y|iness)\b|\blightheaded\b|\bfaint(?:ing)?\b/i, label: 'dizziness' },
+  { re: /\bchest\s+pain\b|\bpalpitations?\b|\bshortness\s+of\s+breath\b/i, label: 'chest pain' },
+  { re: /\bpain\b|\baching\b|\bcramp(?:s|ing)?\b/i, label: 'pain' },
+  { re: /\bdiarrhea\b|\bconstipat(?:ed|ion)\b/i, label: 'GI symptom' },
+  { re: /\bbloat(?:ed|ing)\b|\bheartburn\b|\breflux\b|\bindigestion\b|\bburping\b|\bsulfur\b/i, label: 'GI symptom' },
+  { re: /\bfatigue\b|\bexhausted\b|\bwiped\b|\bdrained\b/i, label: 'fatigue' },
+  { re: /\bshaking\b|\btremors?\b|\bsweating\b|\bchills\b|\bfever\b/i, label: 'systemic symptom' },
+  { re: /\brash\b|\bitchy\b|\bswollen\b|\bswelling\b/i, label: 'skin symptom' },
+  { re: /\bdepressed\b|\banxious\b|\bpanic\b/i, label: 'mood symptom' },
+  // Hair: matches "hair loss", "hair shedding", "hair falling out", "hair is falling", "losing my hair", "hair fell out"
+  { re: /\bhair\s+(?:loss|shedding|thinning|fall(?:ing)?|fell|is\s+(?:falling|shedding|thinning))\b|\blosing\s+(?:my\s+)?hair\b/i, label: 'hair loss' },
+];
+
+const CORRECTION_PATTERNS_RE =
+  /^\s*(?:actually|wait|no wait|sorry|correction|i meant|i mean|let me correct|let me clarify|to clarify|on second thought|scratch that|nevermind|never mind|whoops|my bad|i mistyped|i typed wrong)\b/i;
+
+// New-info: matches dose / medication / weight / med-name changes. Broader
+// than the prior version — accepts "I just started 1 mg today", "switched
+// to Wegovy", "bumped my dose", etc. Used purely to flag that the latest
+// message contains material new context that must be acknowledged.
+const NEW_INFO_RE = new RegExp(
+  '\\b(?:i\\s+)?(?:just\\s+|now\\s+|finally\\s+|recently\\s+)?' +
+  '(?:started|switched|stopped|paused|increased|decreased|lowered|raised|changed|bumped|moved)\\s+' +
+  '(?:(?:to|up|down|over)\\s+)?' +
+  '(?:my\\s+)?' +
+  '(?:dose|doses|medication|meds?|injection|shot|pill|prescription|to\\s+\\d+\\s*(?:mg|mcg)|\\d+\\s*(?:mg|mcg)|' +
+  'ozempic|wegovy|mounjaro|zepbound|rybelsus|semaglutide|tirzepatide|saxenda|liraglutide)\\b',
+  'i',
+);
+
+export interface MustAcknowledge {
+  type: 'symptom' | 'correction' | 'new_info';
+  label: string;
+}
+
+export function detectMustAcknowledge(userText: string | undefined): MustAcknowledge | null {
+  if (!userText) return null;
+  const trimmed = userText.trim();
+  if (trimmed.length === 0) return null;
+  if (CORRECTION_PATTERNS_RE.test(trimmed)) {
+    return { type: 'correction', label: trimmed.slice(0, 80) };
+  }
+  if (NEW_INFO_RE.test(trimmed)) {
+    return { type: 'new_info', label: trimmed.slice(0, 80) };
+  }
+  for (const { re, label } of SYMPTOM_RES) {
+    if (re.test(trimmed)) {
+      return { type: 'symptom', label };
+    }
+  }
+  return null;
+}
+
 // Injected right before the user turn to prevent the LLM from anchoring on
 // old topics. Quotes the last Grace message so the model knows NOT to repeat it.
 function buildFocusMarker(
@@ -306,9 +408,49 @@ function buildFocusMarker(
   toolResults: ToolResult[],
   lastAssistantMessage?: string,
   userText?: string,
-  opts?: { isTopicSwitch?: boolean; isMultiPart?: boolean },
+  opts?: {
+    isTopicSwitch?: boolean;
+    isMultiPart?: boolean;
+    isReasoningRequest?: boolean;
+    mustAcknowledge?: MustAcknowledge | null;
+  },
 ): string {
   const parts: string[] = [];
+
+  // REASONING REQUEST — highest priority: user wants the WHY/HOW behind your
+  // previous response, NOT a repeat of the recommendation. Production rule
+  // (2026-06-03 CRITICAL): if user asks "why?" / "how did you calculate?",
+  // Grace must explain the reasoning, not re-state the answer.
+  if (opts?.isReasoningRequest && lastAssistantMessage) {
+    const prev = lastAssistantMessage.trim().slice(0, 200).replace(/"/g, "'");
+    parts.push(
+      `🧠 REASONING REQUEST — THIS IS YOUR #1 PRIORITY INSTRUCTION.\n` +
+      `The user is asking you to EXPLAIN your previous response. They want the REASONING, the CALCULATION, or the LOGIC behind it — NOT a repeat of the recommendation.\n` +
+      `Your previous response was: "${prev}"\n` +
+      `Now: walk through HOW you arrived at it. Cite the specific numbers, sources, or assumptions you used. If you made a calculation, show it. If you cited a fact, explain where it comes from (USDA, GLP-1 research, the user's own logged data). Do NOT restate the recommendation as the answer.`,
+    );
+  }
+
+  // MUST-ACKNOWLEDGE — user just reported a symptom, a correction, or a
+  // material update. That content has to land FIRST in the response,
+  // regardless of conversation flow. Production rule: latest message
+  // priority. Reported symptoms must never be ignored.
+  if (opts?.mustAcknowledge) {
+    const ack = opts.mustAcknowledge;
+    if (ack.type === 'symptom') {
+      parts.push(
+        `⚠️ USER REPORTED A SYMPTOM ("${ack.label}") — ACKNOWLEDGE THIS FIRST. Lead the response by addressing the symptom they just reported. Do not bury it behind unrelated content. Empathize briefly, then give specific, GLP-1-aware guidance.`,
+      );
+    } else if (ack.type === 'correction') {
+      parts.push(
+        `⚠️ USER IS CORRECTING SOMETHING — ACKNOWLEDGE THE CORRECTION FIRST. Confirm you got the new information, then update your response based on it. Never ignore a correction or continue with stale info.`,
+      );
+    } else {
+      parts.push(
+        `⚠️ USER SHARED NEW INFORMATION ("${ack.label}") — ACKNOWLEDGE IT FIRST. The med / dose / weight just changed. Lead with confirming the update, then any follow-up.`,
+      );
+    }
+  }
 
   // Topic-switch is the highest-priority warning. When the orchestrator's
   // detector fires, the assistant turn has ALREADY been stripped from
@@ -498,6 +640,16 @@ export class AIOrchestrator {
     //       to address every part.
     const isTopicSwitch = detectTopicSwitch(input.text, lastAssistantMessage);
     const isMultiPart = detectMultiPartMessage(input.text);
+    // Reasoning-request detection — "why?" / "how did you calculate?"
+    // After previous Grace response containing numbers / recommendations.
+    // When this fires, the focus marker tells Grace to EXPLAIN the prior
+    // reasoning instead of repeating the recommendation. Production rule
+    // (2026-06-03 CRITICAL): never re-state when user asks why.
+    const isReasoningRequest = detectReasoningRequest(input.text, lastAssistantMessage);
+    // Must-acknowledge detection — symptom / correction / new-info that
+    // has to land FIRST in the response regardless of conversation flow.
+    const mustAcknowledge = detectMustAcknowledge(input.text);
+
     const generationHistory: ChatTurn[] = isTopicSwitch
       ? stripAssistantTurns([...input.history])
       : [...input.history];
@@ -505,14 +657,14 @@ export class AIOrchestrator {
     // Topic-focus injection. Always inject a focus marker right before the
     // user turn. It (1) tells Gemini what kind of message this is, (2)
     // explicitly quotes the last Grace message so the model knows NOT to
-    // repeat it verbatim, and (3) on detected topic-switch or multi-part,
-    // emits the strongest banner ("⛔ TOPIC SWITCH" or "MULTI-PART").
+    // repeat it verbatim, and (3) on detected topic-switch / multi-part /
+    // reasoning-request / must-acknowledge, emits the strongest banner.
     const focusMarker = buildFocusMarker(
       classification.type,
       toolResults,
       lastAssistantMessage,
       input.text,
-      { isTopicSwitch, isMultiPart },
+      { isTopicSwitch, isMultiPart, isReasoningRequest, mustAcknowledge },
     );
 
     const generationMessages = [

@@ -751,6 +751,19 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bholistic approach\b/i, reason: '"holistic approach" — wellness jargon, be specific instead' },
   { pattern: /\bmore careful monitoring\b/i, reason: '"more careful monitoring" — vague, name what to monitor specifically' },
 
+  // ── 2026-06-03 memory-limitation exposure (CRITICAL launch rule) ────────
+  // Users should never see internal AI/system disclaimers. If context is
+  // missing, ask a NATURAL clarifying question instead of explaining that
+  // Grace's memory is limited. Each pattern triggers regen with the
+  // instruction "ask a natural clarifying question, do not explain memory".
+  { pattern: /\bi (?:lost|don'?t have) (?:the |any |access to )?(?:context|conversation|previous (?:messages?|turns?)|history|earlier (?:parts?|messages?|conversation))/i, reason: 'Exposing memory limitations — ban. Ask a natural clarifying question instead.' },
+  { pattern: /\bmy memory (?:doesn'?t|does not) (?:carry over|persist|work that way|hold|retain)\b/i, reason: 'Exposing memory limitations — ban' },
+  { pattern: /\bi can'?t see (?:earlier|previous|prior|past) (?:parts?|messages?|turns?|conversation|content)\b/i, reason: 'Exposing memory limitations — ban' },
+  { pattern: /\bi don'?t (?:have|maintain|keep|retain) (?:memory|history|context) (?:of|from|across)\b/i, reason: 'Exposing memory limitations — ban' },
+  { pattern: /\bi don'?t remember what (?:you|we) (?:told me|said|asked|mentioned|discussed) (?:before|earlier|previously|last time)\b/i, reason: 'Exposing memory limitations — ban' },
+  { pattern: /\bi (?:don'?t have|lack|missing) (?:access to|the ability to recall|the context (?:to|of))\b/i, reason: 'Exposing memory/access limitations — ban' },
+  { pattern: /\b(?:my )?(?:context|conversation) (?:window|history|limit|limitation)\b/i, reason: 'Exposing system/context limitations — ban' },
+
   // ── 2026-06-03 production screenshots: corporate medical-advice deflection
   // "While I'm here to support you on your GLP-1 journey, I can't give medical
   // advice" — this is the lazy fallback for ANY drug-interaction question and

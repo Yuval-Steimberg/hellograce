@@ -8,6 +8,12 @@ export interface TurnPersistJob {
   userText: string;
   assistantText: string;
   toolResults: ToolResult[];
+  /** Classified message intent — drives /admin/latency per-category breakdowns. */
+  intent?: string;
+  /** End-to-end latency for the assistant turn (ms). */
+  latencyMs?: number;
+  /** Per-stage breakdown for slow-request diagnosis. */
+  stageTimings?: Record<string, number>;
 }
 
 /**

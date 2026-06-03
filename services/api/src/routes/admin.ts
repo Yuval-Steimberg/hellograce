@@ -108,6 +108,99 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     };
   });
 
+  // ─── Latency telemetry ──────────────────────────────────────────────────────
+  //
+  // Returns P50 / P95 / P99 response latency, overall and grouped by intent,
+  // over a configurable window. Backed by messages.latency_ms (populated
+  // since migration 20260603000001). Per-stage breakdown comes from
+  // messages.stage_timings JSONB so we can see exactly which step in the
+  // pipeline is hot — no re-instrumentation needed when investigating a
+  // slow-request alert.
+  app.get('/admin/latency', async (req) => {
+    const q = req.query as { window?: string };
+    const windowMap: Record<string, string> = {
+      '1h': "interval '1 hour'",
+      '24h': "interval '24 hours'",
+      '7d': "interval '7 days'",
+      '30d': "interval '30 days'",
+    };
+    const win = windowMap[q.window ?? '24h'] ?? windowMap['24h']!;
+
+    const [{ rows: overall }, { rows: byIntent }, { rows: byStage }, { rows: slowSamples }] =
+      await Promise.all([
+        deps.pool.query<{
+          n: string; p50: string; p95: string; p99: string; max: string; avg: string;
+        }>(
+          `SELECT count(*)::text AS n,
+                  percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms)::int::text AS p50,
+                  percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int::text AS p95,
+                  percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)::int::text AS p99,
+                  max(latency_ms)::text AS max,
+                  avg(latency_ms)::int::text AS avg
+           FROM messages
+           WHERE role = 'assistant'
+             AND latency_ms IS NOT NULL
+             AND created_at > now() - ${win}`,
+        ),
+        deps.pool.query<{
+          intent: string; n: string; p50: string; p95: string; p99: string; avg: string;
+        }>(
+          `SELECT COALESCE(intent, 'unknown') AS intent,
+                  count(*)::text AS n,
+                  percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms)::int::text AS p50,
+                  percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms)::int::text AS p95,
+                  percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms)::int::text AS p99,
+                  avg(latency_ms)::int::text AS avg
+           FROM messages
+           WHERE role = 'assistant'
+             AND latency_ms IS NOT NULL
+             AND created_at > now() - ${win}
+           GROUP BY intent
+           ORDER BY count(*) DESC
+           LIMIT 50`,
+        ),
+        // Per-stage breakdown — averages the JSONB stage_timings keys across
+        // all messages in the window. Top 12 stages by total time.
+        deps.pool.query<{ stage: string; avg_ms: string; p95_ms: string; n: string }>(
+          `SELECT key AS stage,
+                  avg((value)::int)::int::text AS avg_ms,
+                  percentile_cont(0.95) WITHIN GROUP (ORDER BY (value)::int)::int::text AS p95_ms,
+                  count(*)::text AS n
+           FROM messages, jsonb_each_text(stage_timings)
+           WHERE role = 'assistant'
+             AND stage_timings IS NOT NULL
+             AND created_at > now() - ${win}
+           GROUP BY key
+           ORDER BY avg((value)::int) DESC
+           LIMIT 12`,
+        ),
+        // Top 10 slow-request samples — show what's hitting the tail.
+        deps.pool.query<{
+          intent: string; latency_ms: number; created_at: Date; stage_timings: unknown; content: string;
+        }>(
+          `SELECT COALESCE(intent, 'unknown') AS intent,
+                  latency_ms,
+                  created_at,
+                  stage_timings,
+                  left(content, 120) AS content
+           FROM messages
+           WHERE role = 'assistant'
+             AND latency_ms IS NOT NULL
+             AND created_at > now() - ${win}
+           ORDER BY latency_ms DESC
+           LIMIT 10`,
+        ),
+      ]);
+
+    return {
+      window: q.window ?? '24h',
+      overall: overall[0] ?? null,
+      by_intent: byIntent,
+      by_stage: byStage,
+      slow_samples: slowSamples,
+    };
+  });
+
   // ─── Conversations ───────────────────────────────────────────────────────────
 
   app.get('/admin/conversations', async () => {

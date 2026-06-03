@@ -971,7 +971,11 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   // The format-enforcer strips the colon; this bans the phrase so regen writes
   // direct prose instead: "Lentil soup is easy, edamame is quick, yogurt is filling."
   { pattern: /\bhere are a few more\b/i, reason: '"Here are a few more" — list-intro opener. Write in direct flowing prose without an intro sentence.' },
-  { pattern: /\bhere are (?:some|a few|several|my top|additional) .{2,60}:\s*$/im, reason: '"Here are some/a few X:" — list intro. Write as direct prose, no intro sentence with colon.' },
+  // "Here are X ideas/options/tips/foods/meals:" — broadened to catch the
+  // free-form-adjective pattern ("Here are a few vegetarian dinner ideas that
+  // are high in protein and tend to sit well on GLP-1:") that the previous
+  // narrow regex missed. Up to 6 words may sit between "are" and the noun.
+  { pattern: /\bhere are (?:[^\n.:!?]{0,80}?)(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?|meals?|dinners?|lunches|breakfasts|snacks|foods?|recipes?|examples?)\b[^.:!?\n]{0,120}:/i, reason: '"Here are some/a few X:" — list intro. Write as direct prose, no intro sentence with colon.' },
 
   // Corporate / AI-generated tone markers (section 14 of behavioral spec)
   { pattern: /\bhere'?s the thing\s*[—–-]/i, reason: '"Here\'s the thing —" — em-dash AI tell' },

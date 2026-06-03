@@ -29,6 +29,7 @@ import type { UsdaFoodService } from './usda-food.service.js';
 import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
 import { makeLogFoodTool } from '../tools/log-food.js';
@@ -101,7 +102,9 @@ export class AIService {
   }
 
   async handleMessage(input: InboundMessage): Promise<OrchestratorOutput> {
+    const lat = new LatencyTracker();
     const t0 = Date.now();
+    lat.mark('safety_check');
 
     // Safety pre-check (deterministic, no LLM cost).
     const safety = classifyMessage(input.text);
@@ -123,28 +126,35 @@ export class AIService {
     // needs analysis). Tool results / RAG / memory are all skipped for these
     // turns because they don't add anything to a "Hi" â†’ "Hey there" exchange.
     if (input.media.length === 0) {
+      lat.mark('fast_path_lookup');
       const fast = tryFastPath(input.text, input.userId);
       if (fast) {
+        const stageTimings = lat.snapshot();
+        const totalMs = Date.now() - t0;
         this.deps.logger.info(
-          { userId: input.userId, category: fast.category, latencyMs: Date.now() - t0 },
+          { userId: input.userId, category: fast.category, latencyMs: totalMs, stageTimings },
           'ai.fast_path.hit',
         );
+        // Persist with intent so /admin/latency surfaces fast-path stats.
+        this.persistLatency(input.userId, `fast_path_${fast.category}`, totalMs, stageTimings, input.text, fast.text);
         return {
           text: fast.text,
           confidence: 'high',
           intent: `fast_path_${fast.category}`,
           toolResults: [],
           usedRetrieval: false,
-          latencyMs: Date.now() - t0,
+          latencyMs: totalMs,
         };
       }
 
       // Food-log fast-response: when the message is a clear food log AND the
       // fast-lookup table can resolve the macros, skip the orchestrator entirely
       // and respond with a deterministic template. ~2-4s â†’ ~150ms.
+      lat.mark('classify');
       const intentClass = classifyIntent(input.text);
       if (intentClass.type === 'food_log') {
         try {
+          lat.mark('food_log_fast');
           const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
           const fastFood = await tryFoodLogFastResponse(input.text, {
             pool: this.deps.pool,
@@ -154,10 +164,13 @@ export class AIService {
             proteinGoalGrams: user?.protein_goal_grams ?? null,
           });
           if (fastFood) {
+            const stageTimings = lat.snapshot();
+            const totalMs = Date.now() - t0;
             this.deps.logger.info(
-              { userId: input.userId, food: fastFood.macros.food, latencyMs: Date.now() - t0 },
+              { userId: input.userId, food: fastFood.macros.food, latencyMs: totalMs, stageTimings },
               'ai.food_log_fast.served',
             );
+            this.persistLatency(input.userId, 'food_log_fast', totalMs, stageTimings, input.text, fastFood.text);
             return {
               text: fastFood.text,
               confidence: 'high',
@@ -176,7 +189,7 @@ export class AIService {
                 },
               ],
               usedRetrieval: false,
-              latencyMs: Date.now() - t0,
+              latencyMs: totalMs,
             };
           }
         } catch (err) {
@@ -190,7 +203,7 @@ export class AIService {
     }
 
     try {
-      return await this.handleMessageInner(input, t0);
+      return await this.handleMessageInner(input, t0, lat);
     } catch (outerErr) {
       // Emergency fallback: fires when the full pipeline throws (DB down, LLM
       // timeout, etc.). Makes one last bare LLM call with no tools/RAG/history.
@@ -225,11 +238,12 @@ export class AIService {
   // (3) detect dietary restrictions + side effects, (4) build personalised system
   // prompt with runtime context, (5) register per-request tools, (6) call
   // orchestrator.run(), (7) fire-and-forget persistence + memory extraction.
-  private async handleMessageInner(input: InboundMessage, t0: number): Promise<OrchestratorOutput> {
+  private async handleMessageInner(input: InboundMessage, t0: number, lat: LatencyTracker): Promise<OrchestratorOutput> {
     const { logger, memory, rag, flags, users } = this.deps;
 
     // Fire all independent I/O in parallel: user profile, conversation, history, tool settings,
     // and media analysis. RAG retrieval needs augmentedText so it runs after media completes.
+    lat.mark('parallel_io');
     const twilioAuth = this.deps.twilioSid && this.deps.twilioToken
       ? { sid: this.deps.twilioSid, token: this.deps.twilioToken }
       : undefined;
@@ -316,6 +330,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     // memory retrieval in parallel. The planner only needs input.text; RAG
     // needs the augmented text; memory needs the augmented text. None depend
     // on each other, so Promise.all saves ~600â€“1500ms per message.
+    lat.mark('classify');
     const intentClass = classifyIntent(augmentedText);
     // Skip the planner LLM call when the classifier is already confident enough
     // that the planner would just confirm "no tools needed, generate prose".
@@ -375,15 +390,43 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       CLASSIFIER_SKIP_PLANNER.has(intentClass.type) || !flags.toolsEnabled;
     const planner = new PlannerAgent(this.deps.llm);
 
+    // RAG skip on log / acknowledgment intents â€” these confirm or store the
+    // user's action; the knowledge corpus adds nothing to a "you logged 25g
+    // protein, you're at 50g today" reply. Saves ~300-500ms per matching turn.
+    // Production note (2026-06-03): rag.retrieve embeds the user message
+    // (~150ms cached / 350ms cold) + pgvector lookup (~50-200ms) â†’ 300-500ms.
+    // For the listed intents the cost is pure dead weight.
+    const RAG_SKIP_INTENTS = new Set([
+      'food_log', 'weight_log', 'mood_log',
+      'exercise_log', 'injection_log',
+      'greeting', 'gibberish',
+      'scheduling', 'pause_request',
+    ]);
+    const ragSkippedForIntent = RAG_SKIP_INTENTS.has(intentClass.type);
+
+    // User-memory skip on the same intents â€” long-term memory chunks are about
+    // background context (preferences, history) which doesn't change how Grace
+    // confirms a log or replies to a greeting. Saves another ~150-300ms.
+    const userMemorySkipped = RAG_SKIP_INTENTS.has(intentClass.type);
+
+    lat.mark('rag_planner_memory');
     const [retrieved, userMemories, prePlannedDecisionRaw] = await Promise.all([
-      flags.ragEnabled ? rag.retrieve(augmentedText, { userId: input.userId, topK: 5 }) : Promise.resolve([]),
-      this.deps.userMemory
+      flags.ragEnabled && !ragSkippedForIntent
+        ? rag.retrieve(augmentedText, { userId: input.userId, topK: 5 })
+        : Promise.resolve([]),
+      this.deps.userMemory && !userMemorySkipped
         ? this.deps.userMemory.retrieve(input.userId, augmentedText, 3)
         : Promise.resolve([] as string[]),
       skipPlanner
         ? Promise.resolve<PlannerDecision>({ intent: 'chat', needsTools: false, toolCalls: [], rationale: `classifier_fast_path_${intentClass.type}` })
         : planner.plan(augmentedText).catch((): PlannerDecision => ({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'planner_error' })),
     ]);
+    if (ragSkippedForIntent || userMemorySkipped) {
+      logger.info(
+        { userId: input.userId, intent: intentClass.type, ragSkipped: ragSkippedForIntent, memSkipped: userMemorySkipped },
+        'ai.handle.rag_memory_skipped',
+      );
+    }
 
     // FORCE log_food on food_log classification OR when the message contains
     // obvious food words but the classifier missed it. This prevents Grace
@@ -408,6 +451,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     // (e.g. "veggie KFC") we re-ask with the follow-up template variant.
     const lastGraceMessage = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
 
+    lat.mark('vague_food_check');
     if (flags.toolsEnabled) {
       const vague = detectVagueFood(input.text, lastGraceMessage);
       if (vague.vague) {
@@ -456,7 +500,15 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     //   3. Conversation history is short (< 4 turns) OR the last reply was
     //      more than 2h ago (treat as a fresh topic)
     //   4. The cache must be initialized (initialize() completed at boot)
-    const FAQ_INTENT_BLOCK = new Set(['food_log', 'weight_log', 'mood_log']);
+    // FAQ cache only fires on knowledge-style questions. Skip the lookup for
+    // log/acknowledgment/admin intents that can never benefit. Saves ~150-300ms
+    // per matching turn (the embedding + pgvector lookup).
+    const FAQ_INTENT_BLOCK = new Set([
+      'food_log', 'weight_log', 'mood_log',
+      'exercise_log', 'injection_log',
+      'scheduling', 'pause_request',
+      'greeting', 'gibberish',
+    ]);
     const conversationIsFresh =
       history.length < 4 ||
       (user?.last_reply_at && Date.now() - new Date(user.last_reply_at).getTime() > 2 * 3_600_000);
@@ -467,6 +519,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       !user?.injection_flow_stage &&
       conversationIsFresh
     ) {
+      lat.mark('faq_cache_lookup');
       const hit = await this.deps.faqCache.lookup(input.text);
       if (hit) {
         // â”€â”€ SAFETY: validate cached response against THIS user's context â”€â”€
@@ -977,6 +1030,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       }
     }
 
+    lat.mark('orchestrator');
     const result = await orchestrator.run({
       userId: input.userId,
       text: finalText,
@@ -995,6 +1049,29 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       ...(userMemories.length > 0 ? { userMemories } : {}),
     });
 
+    lat.mark('persist');
+    const stageTimings = lat.snapshot();
+    const totalMs = Date.now() - t0;
+    const intentForLog = result.intent ?? intentClass.type ?? 'general';
+
+    // Slow-request alerting â€” log a structured warning when totalMs exceeds the
+    // per-intent target. This is the diagnostic surface that catches latency
+    // regressions without re-instrumenting.
+    const target = LATENCY_TARGETS_MS[intentForLog] ?? DEFAULT_LATENCY_TARGET_MS;
+    if (totalMs > target) {
+      logger.warn(
+        {
+          userId: input.userId,
+          intent: intentForLog,
+          totalMs,
+          targetMs: target,
+          overBy: totalMs - target,
+          stageTimings,
+        },
+        'ai.handle.slow_response',
+      );
+    }
+
     // Offload persistence to BullMQ (non-blocking) or fall back to fire-and-forget.
     if (this.deps.turnQueue) {
       void this.deps.turnQueue
@@ -1004,6 +1081,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
           userText: input.text,
           assistantText: result.text,
           toolResults: result.toolResults,
+          intent: intentForLog,
+          latencyMs: totalMs,
+          stageTimings,
         })
         .catch((err) => logger.warn({ err }, 'turn-queue.add.failed'));
     }
@@ -1069,7 +1149,15 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
         .appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
         .catch((err) => logger.warn({ err }, 'memory.append.user.failed'));
       void memory
-        .appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: result.text })
+        .appendTurn({
+          userId: input.userId,
+          conversationId,
+          role: 'assistant',
+          content: result.text,
+          latencyMs: totalMs,
+          intent: intentForLog,
+          stageTimings,
+        })
         .catch((err) => logger.warn({ err }, 'memory.append.assistant.failed'));
       for (const tr of result.toolResults) {
         void this.deps.pool
@@ -1088,7 +1176,8 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
         intent: result.intent,
         confidence: result.confidence,
         latencyMs: result.latencyMs,
-        totalMs: Date.now() - t0,
+        totalMs,
+        stageTimings,
         retrievedCount: retrieved.length,
         mediaCount: input.media.length,
         isNew,
@@ -1097,6 +1186,52 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     );
 
     return result;
+  }
+
+  /** Persist a fast-path response's intent + latency + stage timings via the
+   *  same channel as full-pipeline turns so /admin/latency reflects ALL traffic.
+   *  Fire-and-forget; falls back to memory.appendTurn when no turnQueue. */
+  private persistLatency(
+    userId: string,
+    intent: string,
+    latencyMs: number,
+    stageTimings: Record<string, number>,
+    userText: string,
+    assistantText: string,
+  ): void {
+    if (this.deps.turnQueue) {
+      void this.deps.turnQueue
+        .add('persist', {
+          userId,
+          conversationId: `fastpath-${userId}`, // best-effort; worker tolerates
+          userText,
+          assistantText,
+          toolResults: [],
+          intent,
+          latencyMs,
+          stageTimings,
+        })
+        .catch(() => undefined);
+      return;
+    }
+    // No queue: write directly so latency is still captured.
+    void this.deps.memory
+      .ensureConversation(userId)
+      .then((conversationId) =>
+        Promise.all([
+          this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: userText }),
+          this.deps.memory.appendTurn({
+            userId,
+            conversationId,
+            role: 'assistant',
+            content: assistantText,
+            latencyMs,
+            intent,
+            stageTimings,
+          }),
+        ]),
+      )
+      .catch(() => undefined);
   }
 
   private async countTodaysCheckIns(userId: string): Promise<number> {

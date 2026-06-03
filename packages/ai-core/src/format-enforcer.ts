@@ -323,7 +323,12 @@ export function enforceFormat(
   //
   // Lookahead `(?=[.\n])` for the trailing terminator so consecutive matches
   // can re-anchor on the SAME period that ended the previous match.
-  const labelColonRe = /(^|[.!?]\s+)([A-Z][\w\s]{2,28}):\s+(\w[^.\n]{4,80})(?=[.\n])/g;
+  // Body upper-bound raised 80 → 240 (production failure 2026-06-03:
+  // "Tofu Scramble with Spinach: Crumble a block of tofu and cook it with some
+  // cumin, paprika, and nutritional yeast for a cheesy flavor. Add a handful
+  // of spinach for extra fiber." — the body is 180+ chars; the old 80 cap
+  // skipped it entirely). Hyphen now allowed in label too ("High-Protein").
+  const labelColonRe = /(^|[.!?]\s+)([A-Z][\w\s-]{2,32}):\s+(\w[^.\n]{4,240})(?=[.\n])/g;
   let labelHits = 0;
   text.replace(labelColonRe, () => { labelHits++; return ''; });
   if (labelHits >= 1) {
@@ -336,12 +341,13 @@ export function enforceFormat(
   // These guarantee a list follows. Strip them so the remaining text reads
   // as direct prose. We replace the colon with a period so the next sentence
   // stands alone instead of dangling as a list intro.
-  // "here are a few more X for Y:" — "more" was missing from quantifier list,
-  // and trailing context ("to help you reach your protein target") was not
-  // allowed between the noun and the colon. Production failure 2026-06-03:
-  // "Here are a few more vegetarian dinner ideas to help you reach your 60g
-  // protein target: High-Protein Pasta..." passed through unstripped.
-  const listIntroRe = /\b(here'?s (?:a |the |my )?(?:breakdown|summary|explanation|overview)[^.:!?\n]{0,60}|here'?s why(?:\s+it'?s\s+happening)?|here'?s what (?:you (?:can|should) do|to do)|here are (?:the |some |a few |more |a few more |several |my |additional )?(?:key |main |important |top |extra |other |additional )?(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?)[^.:!?\n]{0,80})\s*:\s*/gi;
+  // "here are a few more X for Y:" — production failure 2026-06-03:
+  // "Here are a few vegetarian dinner ideas that are high in protein and tend
+  // to sit well on GLP-1: Tofu Scramble with Spinach: Crumble..."
+  // Previous regex hard-coded a small list of adjectives between "few" and
+  // "ideas"; this version allows up to 6 free-form words ("vegetarian dinner",
+  // "vegan lunch", "high-protein breakfast", etc) before reaching the list-noun.
+  const listIntroRe = /\b(here'?s (?:a |the |my )?(?:breakdown|summary|explanation|overview)[^.:!?\n]{0,80}|here'?s why(?:\s+it'?s\s+happening)?|here'?s what (?:you (?:can|should) do|to do)|here are (?:[^\n.:!?]{0,80}?)(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?|meals?|dinners?|lunches|breakfasts|snacks|foods?|recipes?|examples?)[^.:!?\n]{0,120})\s*:\s*/gi;
   if (listIntroRe.test(text)) {
     text = text.replace(listIntroRe, '');
     fixes.push('list_intro_stripped');

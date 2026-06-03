@@ -14,11 +14,19 @@ export function createTurnPersistWorker(deps: {
   const worker = new Worker<TurnPersistJob>(
     'turn-persist',
     async (job) => {
-      const { userId, conversationId, userText, assistantText, toolResults } = job.data;
+      const { userId, conversationId, userText, assistantText, toolResults, intent, latencyMs, stageTimings } = job.data;
 
       await Promise.all([
         deps.memory.appendTurn({ userId, conversationId, role: 'user', content: userText }),
-        deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: assistantText }),
+        deps.memory.appendTurn({
+          userId,
+          conversationId,
+          role: 'assistant',
+          content: assistantText,
+          ...(typeof latencyMs === 'number' ? { latencyMs } : {}),
+          ...(intent ? { intent } : {}),
+          ...(stageTimings ? { stageTimings } : {}),
+        }),
       ]);
 
       for (const tr of toolResults) {

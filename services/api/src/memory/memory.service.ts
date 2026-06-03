@@ -26,11 +26,32 @@ export class MemoryService {
       .reverse();
   }
 
-  async appendTurn(turn: { userId: string; role: 'user' | 'assistant'; content: string; conversationId: string }): Promise<void> {
+  async appendTurn(turn: {
+    userId: string;
+    role: 'user' | 'assistant';
+    content: string;
+    conversationId: string;
+    /** End-to-end latency for assistant turns (used by /admin/latency). */
+    latencyMs?: number;
+    /** Classified intent — drives per-category percentile breakdowns. */
+    intent?: string;
+    /** Per-stage timing for slow-request diagnosis. */
+    stageTimings?: Record<string, number>;
+  }): Promise<void> {
+    // Backward-compatible: when latency/intent/stages are undefined, the
+    // generated SQL uses NULL for those columns so legacy callers keep working.
     await this.pool.query(
-      `INSERT INTO messages (user_id, conversation_id, role, content)
-       VALUES ($1, $2, $3, $4)`,
-      [turn.userId, turn.conversationId, turn.role, turn.content],
+      `INSERT INTO messages (user_id, conversation_id, role, content, latency_ms, intent, stage_timings)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        turn.userId,
+        turn.conversationId,
+        turn.role,
+        turn.content,
+        turn.latencyMs ?? null,
+        turn.intent ?? null,
+        turn.stageTimings ? JSON.stringify(turn.stageTimings) : null,
+      ],
     );
   }
 

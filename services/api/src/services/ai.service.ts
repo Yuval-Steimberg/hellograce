@@ -1135,8 +1135,28 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
 
     lat.mark('persist');
     const stageTimings = lat.snapshot();
+    // Fold orchestrator-internal timings (generate / guards / regen) into the
+    // per-stage breakdown so /admin/latency shows where time goes inside the
+    // orchestrator. Without these, the "orchestrator" stage looks like an
+    // opaque 20s blob and we can't tell whether to attack the generate call,
+    // the parallel guards, or the regen path.
+    if (result.internalTimings) {
+      if (typeof result.internalTimings.generate === 'number') {
+        stageTimings['orch_generate'] = result.internalTimings.generate;
+      }
+      if (typeof result.internalTimings.guards === 'number') {
+        stageTimings['orch_guards'] = result.internalTimings.guards;
+      }
+      if (typeof result.internalTimings.regen === 'number' && result.internalTimings.regen > 0) {
+        stageTimings['orch_regen'] = result.internalTimings.regen;
+      }
+    }
     const totalMs = Date.now() - t0;
-    const intentForLog = result.intent ?? intentClass.type ?? 'general';
+    // Use the deterministic classifier intent (food_question, weight_log, etc.)
+    // rather than the planner's tool/chat intent. Earlier telemetry showed
+    // 'get_food_summary' and 'chat' polluting the breakdown — those are tool
+    // names and planner outputs, not message categories.
+    const intentForLog = intentClass.type ?? 'general';
 
     // Slow-request alerting — log a structured warning when totalMs exceeds the
     // per-intent target. This is the diagnostic surface that catches latency

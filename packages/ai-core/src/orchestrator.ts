@@ -586,7 +586,16 @@ export class AIOrchestrator {
     const classification = classifyMessage(input.text);
     const simpleTypes = ['greeting', 'gibberish', 'food_log', 'weight_log', 'mood_log'];
     const skipPlanner = simpleTypes.includes(classification.type);
-    const isSimpleMessage = simpleTypes.includes(classification.type) || classification.type === 'emotional';
+    // 2026-06-03 latency emergency: production telemetry showed orchestrator
+    // taking 20-27s per message because thinking was enabled by default for
+    // any intent NOT in this list. Inverting the gate: thinking is OFF by
+    // default, ON only for intents that genuinely need chain-of-thought
+    // (drug-interaction safety, medication dose/timing, doctor appointment
+    // prep, GLP-1 mechanism questions). Everything else — food logs, weight
+    // logs, food recommendations, emotional support, social situations —
+    // generates faster without thinking and the quality is equivalent.
+    const NEEDS_THINKING = new Set(['knowledge', 'medication_question', 'appointment_prep']);
+    const isSimpleMessage = !NEEDS_THINKING.has(classification.type);
 
     const chatFallbackPlan: PlannerDecision = { intent: 'chat', needsTools: false, toolCalls: [], rationale: 'tools_disabled' };
     // If the caller ran the planner in parallel with RAG (ai.service.ts does
@@ -696,12 +705,15 @@ export class AIOrchestrator {
       generationTokenBudget = 8192; // knowledge / food question — thinking enabled, full room
     }
 
+    let regenMs = 0;
+    const generateStart = Date.now();
     const llmResp = await this.deps.llm.generate({
       messages: generationMessages,
       temperature: 0.6,
       maxOutputTokens: generationTokenBudget,
       disableThinking: isSimpleMessage,
     });
+    const generateMs = Date.now() - generateStart;
 
     // ─── Format enforcement (silent auto-fix) ─────────────────────────
     // Strip em dashes, markdown bold, numbered lists, etc. that Gemini Flash
@@ -781,6 +793,7 @@ export class AIOrchestrator {
         toolResults,
         usedRetrieval: input.retrieved.length > 0,
         latencyMs: Date.now() - started,
+        internalTimings: { generate: generateMs, guards: 0, regen: 0, thinkingDisabled: isSimpleMessage },
         usedSafeFallback: true,
         critic: {
           scores: { grounding: 1, safety: 1, on_task: 1, tone: 1 },
@@ -922,6 +935,7 @@ export class AIOrchestrator {
       ? baseSystem.slice(baseSystem.indexOf('━━━ THIS USER'), baseSystem.indexOf('━━━ END OF USER DATA ━━━') + 24)
       : '';
 
+    const guardsStart = Date.now();
     const [relevanceVerdict, behavioralViolations, earlyCritic] = await Promise.all([
       shouldRunRelevance
         ? this.relevance.check(input.text, validated.text, lastAssistantMessage)
@@ -937,6 +951,7 @@ export class AIOrchestrator {
         ? this.review(precheck, input.text, validated.text, input.retrieved)
         : Promise.resolve<CriticReport | null>(null),
     ]);
+    const guardsMs = Date.now() - guardsStart;
 
     if (relevanceVerdict && !relevanceVerdict.relevant) {
       topicDrift = true;
@@ -998,6 +1013,13 @@ export class AIOrchestrator {
             ? buildContentRegenInstruction(regenViolations, input.dietaryRestriction)
             : '') +
           truncationAddendum;
+        // Match the retry budget + thinking gate to the initial call so a
+        // weight_log regen doesn't suddenly pay the full 8192-token thinking
+        // budget when the initial call had thinking disabled. Without this,
+        // a single content-rule trip on a simple intent doubled the latency
+        // from ~2s to ~20s (production telemetry, 2026-06-03).
+        const retryTokenBudget = isSimpleMessage ? Math.max(1024, generationTokenBudget) : 8192;
+        const regenStart = Date.now();
         const retryResp = await this.deps.llm.generate({
           messages: [
             { role: 'system', content: baseSystem + addendum },
@@ -1011,8 +1033,10 @@ export class AIOrchestrator {
             { role: 'user', content: input.text },
           ],
           temperature: 0.4,
-          maxOutputTokens: 8192,
+          maxOutputTokens: retryTokenBudget,
+          disableThinking: isSimpleMessage,
         });
+        regenMs = Date.now() - regenStart;
         const retryFormatted = enforceFormat(retryResp.text, enforceOpts);
         const retryValidated = validateResponse(retryFormatted.text);
         const retryPrecheck = precheckGrounding(retryValidated.text, input.retrieved);
@@ -1114,6 +1138,12 @@ export class AIOrchestrator {
       toolResults,
       usedRetrieval: input.retrieved.length > 0,
       latencyMs: Date.now() - started,
+      internalTimings: {
+        generate: generateMs,
+        guards: guardsMs,
+        regen: regenMs,
+        thinkingDisabled: isSimpleMessage,
+      },
       ...(critic ? { critic } : {}),
       ...(regenerated ? { regenerated } : {}),
       ...(usedSafeFallback ? { usedSafeFallback } : {}),

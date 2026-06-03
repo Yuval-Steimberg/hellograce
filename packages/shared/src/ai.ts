@@ -108,6 +108,18 @@ export interface OrchestratorOutput {
   regenerated?: boolean;
   /** True if both attempts failed the gate and a safe fallback was returned. */
   usedSafeFallback?: boolean;
+  /** Internal stage timing (set by AIOrchestrator.run). Surfaced so the API
+   *  layer can record per-stage breakdowns to messages.stage_timings JSONB. */
+  internalTimings?: {
+    /** Initial LLM generate call (ms). */
+    generate?: number;
+    /** Parallel post-gen guards: relevance + behavioral + critic (ms). */
+    guards?: number;
+    /** Retry LLM call when content / guards failed (ms). 0 when no retry. */
+    regen?: number;
+    /** Whether thinking was disabled on the initial call. */
+    thinkingDisabled?: boolean;
+  };
 }
 
 export type CriticCriterion = 'grounding' | 'safety' | 'on_task' | 'tone';

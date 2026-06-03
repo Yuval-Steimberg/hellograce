@@ -84,11 +84,17 @@ export class UserService {
   // (ensureUser / update) invalidate the cache key so freshness is bounded.
   // Per-user only — never shared across users.
   private userCache = new Map<string, { user: GraceUser; expiresAt: number }>();
-  // Bumped 30s → 60s (2026-06-03): user profile rarely changes mid-conversation
-  // and the parallel_io stage was dominated by this read. Invalidation
-  // (ensureUser / update / dietary_pattern persist) still clears the cache
-  // immediately, so freshness is preserved when the user actually changes.
-  private readonly USER_CACHE_TTL_MS = 60_000;
+  // Bumped 30s → 60s → 5s (2026-06-03):
+  //   - 60s caused a cross-machine staleness bug. Fly runs 2 machines; admin
+  //     PUT on machine A invalidates A's cache but B's cache stays stale up
+  //     to 60s. If the user's next WhatsApp message routes to B, dietary
+  //     filter sees null and they get chicken/fish recommended despite being
+  //     vegetarian. Production failure 2026-06-03 21:47 IDT.
+  //   - 5s is the safe upper bound: enough to cover the in-request duplicate
+  //     read (getByPhone + getById run within ~50ms of each other) while
+  //     keeping cross-machine staleness under the human-perceivable threshold.
+  // Long-term fix: move user cache to Redis (shared across machines).
+  private readonly USER_CACHE_TTL_MS = 5_000;
 
   // ── Per-method query caches (2026-06-03 latency cut) ─────────────────────
   // parallel_io was 1.3-1.7s in production telemetry, dominated by 9 parallel

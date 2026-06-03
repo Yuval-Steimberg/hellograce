@@ -78,28 +78,30 @@ export class LatencyTracker {
  * These are TARGETS, not SLOs. We log breaches; we don't fail requests.
  */
 export const LATENCY_TARGETS_MS: Record<string, number> = {
-  // Trivial — fast-path hit or deterministic
-  fast_path: 1000,
-  food_log_fast: 1000,
-  greeting: 1000,
-  gibberish: 1000,
-  // Standard coaching
-  food_log: 2000,
-  weight_log: 2000,
-  mood_log: 2000,
-  emotional: 2000,
-  exercise_log: 2000,
-  injection_log: 2000,
-  social_situation: 2000,
-  scheduling: 2000,
-  pause_request: 2000,
-  // Complex — need RAG / multi-tool / longer generation
-  knowledge: 3000,
-  medication_question: 3000,
-  food_question: 3000,
-  appointment_prep: 3000,
-  general: 3000,
+  // Simple — fast-path hit or deterministic (<2s per directive 2026-06-03)
+  fast_path: 2000,
+  food_log_fast: 2000,
+  weight_log_fast: 2000,
+  query_fast: 2000,
+  greeting: 2000,
+  gibberish: 2000,
+  // Standard coaching (<3s)
+  food_log: 3000,
+  weight_log: 3000,
+  mood_log: 3000,
+  emotional: 3000,
+  exercise_log: 3000,
+  injection_log: 3000,
+  social_situation: 3000,
+  scheduling: 3000,
+  pause_request: 3000,
+  // Complex — RAG + multi-tool + longer generation (<5s)
+  knowledge: 5000,
+  medication_question: 5000,
+  food_question: 5000,
+  appointment_prep: 5000,
+  general: 5000,
 };
 
 /** Default target for any intent not in the table above. */
-export const DEFAULT_LATENCY_TARGET_MS = 3000;
+export const DEFAULT_LATENCY_TARGET_MS = 5000;

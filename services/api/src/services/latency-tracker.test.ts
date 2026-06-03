@@ -77,11 +77,11 @@ describe('LatencyTracker', () => {
     expect(snap2['a']).not.toBe(999_999);
   });
 
-  it('exposes per-intent latency targets and a default', () => {
-    expect(LATENCY_TARGETS_MS.fast_path).toBe(1000);
-    expect(LATENCY_TARGETS_MS.food_log).toBe(2000);
-    expect(LATENCY_TARGETS_MS.knowledge).toBe(3000);
-    expect(LATENCY_TARGETS_MS.appointment_prep).toBe(3000);
-    expect(DEFAULT_LATENCY_TARGET_MS).toBe(3000);
+  it('exposes per-intent latency targets and a default (2/3/5s per 2026-06-03 directive)', () => {
+    expect(LATENCY_TARGETS_MS.fast_path).toBe(2000);
+    expect(LATENCY_TARGETS_MS.food_log).toBe(3000);
+    expect(LATENCY_TARGETS_MS.knowledge).toBe(5000);
+    expect(LATENCY_TARGETS_MS.appointment_prep).toBe(5000);
+    expect(DEFAULT_LATENCY_TARGET_MS).toBe(5000);
   });
 });

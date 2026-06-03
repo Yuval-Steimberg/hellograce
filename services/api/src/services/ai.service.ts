@@ -16,6 +16,8 @@ import {
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
 import { tryFoodLogFastResponse } from './food-log-fast.js';
+import { tryWeightLogFastResponse } from './weight-log-fast.js';
+import { tryQueryFast } from './query-fast.js';
 import type { LLMProvider, PlannerDecision } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { UserMemoryService } from '../memory/user-memory.service.js';
@@ -198,6 +200,88 @@ export class AIService {
             'ai.food_log_fast.error',
           );
           // Fall through to the regular orchestrator
+        }
+      }
+
+      // ── Weight-log fast-path ──────────────────────────────────────────────
+      // "I weigh 185 lbs" / "184.6" / "scale says 200". Pure number + unit;
+      // no reasoning needed. ~3s → ~200ms.
+      if (intentClass.type === 'weight_log') {
+        try {
+          lat.mark('weight_log_fast');
+          const wlf = await tryWeightLogFastResponse(input.text, {
+            pool: this.deps.pool,
+            logger: this.deps.logger,
+            userId: input.userId,
+            intentType: intentClass.type,
+          });
+          if (wlf) {
+            const stageTimings = lat.snapshot();
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info(
+              { userId: input.userId, lbs: wlf.weightLbs, latencyMs: totalMs, stageTimings },
+              'ai.weight_log_fast.served',
+            );
+            this.persistLatency(input.userId, 'weight_log_fast', totalMs, stageTimings, input.text, wlf.text);
+            return {
+              text: wlf.text,
+              confidence: 'high',
+              intent: 'weight_log_fast',
+              toolResults: [
+                {
+                  name: 'log_weight',
+                  args: { weight_lbs: wlf.weightLbs },
+                  output: { weight_lbs: wlf.weightLbs, previous_lbs: wlf.previousLbs },
+                  latencyMs: 0,
+                  ok: true,
+                },
+              ],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.weight_log_fast.error',
+          );
+        }
+      }
+
+      // ── Profile-query fast-path ───────────────────────────────────────────
+      // "What's my protein goal?" / "How much have I had today?" /
+      // "How am I doing?" — single DB read + template render. ~3s → ~250ms.
+      // Gated to food_question + general intents (where these questions land).
+      if (intentClass.type === 'food_question' || intentClass.type === 'general') {
+        try {
+          lat.mark('query_fast');
+          const qf = await tryQueryFast(input.text, {
+            users: this.deps.users,
+            logger: this.deps.logger,
+            userId: input.userId,
+          });
+          if (qf) {
+            const stageTimings = lat.snapshot();
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info(
+              { userId: input.userId, category: qf.category, latencyMs: totalMs, stageTimings },
+              'ai.query_fast.served',
+            );
+            this.persistLatency(input.userId, `query_fast_${qf.category}`, totalMs, stageTimings, input.text, qf.text);
+            return {
+              text: qf.text,
+              confidence: 'high',
+              intent: `query_fast_${qf.category}`,
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.query_fast.error',
+          );
         }
       }
     }

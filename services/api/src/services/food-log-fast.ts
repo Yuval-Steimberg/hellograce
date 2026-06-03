@@ -54,6 +54,9 @@ export interface FoodLogFastDeps {
   userId: string;
   intentType: string;
   proteinGoalGrams?: number | null;
+  /** Optional — when present, invalidated after INSERT so the next
+   *  getTodaysFoodSummary call reads fresh totals instead of a stale cache. */
+  users?: { invalidateTodaysFoodCache: (userId: string) => void };
 }
 
 /**
@@ -94,6 +97,10 @@ export async function tryFoodLogFastResponse(
        ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
       [deps.userId, macros.food, macros.protein_g, macros.calories, macros.confidence, trimmed, dedupeKey],
     );
+
+    // Invalidate the cached daily food summary so the next handleMessage()
+    // turn sees the just-inserted log instead of a stale 10s-old aggregate.
+    deps.users?.invalidateTodaysFoodCache(deps.userId);
 
     // Read the live daily total post-insert so the response is accurate.
     const totalsResult = await deps.pool.query<{ total_protein_g: number; total_calories: number }>(

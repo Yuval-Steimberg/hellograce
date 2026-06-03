@@ -211,6 +211,9 @@ export function makeLogFoodTool(deps: {
    *  consulted first; LLM-only estimation is used as a fallback for novel
    *  or compound items USDA can't match. */
   usda?: UsdaFoodService;
+  /** Optional — invalidated after every successful INSERT so the next
+   *  prompt build reads the fresh totals instead of a stale 10s cache. */
+  users?: { invalidateTodaysFoodCache: (userId: string) => void };
 }): Tool {
   return {
     name: 'log_food',
@@ -276,6 +279,13 @@ export function makeLogFoodTool(deps: {
       );
 
       const wasDuplicate = result.rowCount === 0;
+      // Invalidate today's food summary cache so the immediately-following
+      // prompt build / response includes this new entry (cache TTL is 10s,
+      // so without explicit invalidation a quick "what's my total?" follow-
+      // up would miss the just-logged item).
+      if (!wasDuplicate) {
+        deps.users?.invalidateTodaysFoodCache(deps.userId);
+      }
       if (wasDuplicate) {
         deps.logger.info(
           { userId: deps.userId, food: parsed.food, source },

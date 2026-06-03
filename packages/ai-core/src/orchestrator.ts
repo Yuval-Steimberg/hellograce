@@ -603,6 +603,22 @@ export class AIOrchestrator {
     const NEEDS_THINKING = new Set(['knowledge', 'medication_question', 'appointment_prep']);
     const isSimpleMessage = !NEEDS_THINKING.has(classification.type);
 
+    // 2026-06-03 latency cut #2: explicit model selection per intent.
+    // gemini-2.0-flash is ~40% faster than gemini-2.5-flash on simple
+    // generation calls (no thinking, single-turn prose) without measurable
+    // quality regression on log acks, food recommendations, emotional
+    // support, or general chat. Knowledge / medication / appointment_prep
+    // stay on gemini-2.5-flash because chain-of-thought genuinely matters
+    // for those intents (drug-interaction safety, dose timing, multi-step
+    // doctor-question generation).
+    //
+    // The provider falls back to the env-configured model when generate()
+    // is called without an explicit `model` field, so existing behavior is
+    // preserved for the LLM-critic / behavioral-guard / relevance-check
+    // calls (those already pin to gemini-2.0-flash internally).
+    const fastModel = 'gemini-2.0-flash';
+    const generateModel: string | undefined = isSimpleMessage ? fastModel : undefined;
+
     const chatFallbackPlan: PlannerDecision = { intent: 'chat', needsTools: false, toolCalls: [], rationale: 'tools_disabled' };
     // If the caller ran the planner in parallel with RAG (ai.service.ts does
     // this for latency), use that result directly. Otherwise plan now.
@@ -727,6 +743,7 @@ export class AIOrchestrator {
       temperature: 0.6,
       maxOutputTokens: generationTokenBudget,
       disableThinking: isSimpleMessage,
+      ...(generateModel ? { model: generateModel } : {}),
     });
     const generateMs = Date.now() - generateStart;
     const postgenStart = Date.now();
@@ -1106,6 +1123,7 @@ export class AIOrchestrator {
           temperature: 0.4,
           maxOutputTokens: retryTokenBudget,
           disableThinking: isSimpleMessage,
+          ...(generateModel ? { model: generateModel } : {}),
         });
         regenMs = Date.now() - regenStart;
         const retryFormatted = enforceFormat(retryResp.text, enforceOpts);

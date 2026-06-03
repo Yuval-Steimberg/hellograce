@@ -164,6 +164,7 @@ export class AIService {
             userId: input.userId,
             intentType: intentClass.type,
             proteinGoalGrams: user?.protein_goal_grams ?? null,
+            users: this.deps.users,
           });
           if (fastFood) {
             const stageTimings = lat.snapshot();
@@ -993,6 +994,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
           userId: input.userId,
           source: logFoodSource,
           ...(this.deps.usda ? { usda: this.deps.usda } : {}),
+          users: this.deps.users,
         }));
       }
       if (toolSettings['log_weight'] !== false) {

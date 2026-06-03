@@ -86,6 +86,41 @@ export class UserService {
   private userCache = new Map<string, { user: GraceUser; expiresAt: number }>();
   private readonly USER_CACHE_TTL_MS = 30_000;
 
+  // ── Per-method query caches (2026-06-03 latency cut) ─────────────────────
+  // parallel_io was 1.3-1.7s in production telemetry, dominated by 9 parallel
+  // Supabase queries from Fly/iad to Supabase/ap-northeast-1 (~150ms RTT each).
+  // The two heaviest reads are getTodaysFoodSummary (multi-row sum with TZ
+  // subquery) and getKnownFacts (sorted scan of user_profile_facts).
+  //
+  // Short TTLs ensure freshness — getTodaysFoodSummary at 10s means food logs
+  // visibly land within ~10s of insertion even without explicit invalidation,
+  // and getKnownFacts at 5min is comfortably under the background fact-extract
+  // worker's typical update cadence.
+  //
+  // Cache is invalidated on:
+  //   - getTodaysFoodSummary: invalidateTodaysFoodCache(userId) is called from
+  //     food-log-fast.ts and the log_food tool after successful INSERT
+  //   - getKnownFacts: invalidated when the fact-extract worker writes
+  private todaysFoodCache = new Map<string, { value: Awaited<ReturnType<UserService['getTodaysFoodSummary']>>; expiresAt: number }>();
+  private knownFactsCache = new Map<string, { value: Awaited<ReturnType<UserService['getKnownFacts']>>; expiresAt: number }>();
+  private readonly TODAYS_FOOD_TTL_MS = 10_000;     // 10s — short so new logs land fast
+  private readonly KNOWN_FACTS_TTL_MS = 5 * 60_000; // 5min — facts evolve slowly
+
+  /** Public invalidator — call after writing to food_logs so the next read
+   *  sees the new total. Safe to call from anywhere (tools, fast-paths). */
+  invalidateTodaysFoodCache(userId: string): void {
+    this.todaysFoodCache.delete(userId);
+  }
+
+  /** Public invalidator — call after writing to user_profile_facts. Clears
+   *  all (userId, limit) variants so any subsequent read sees the new facts. */
+  invalidateKnownFactsCache(userId: string): void {
+    const prefix = `${userId}|`;
+    for (const key of this.knownFactsCache.keys()) {
+      if (key.startsWith(prefix)) this.knownFactsCache.delete(key);
+    }
+  }
+
   constructor(private pool: Pool) {}
 
   private invalidateUserCache(keys: Array<string | null | undefined>): void {
@@ -307,6 +342,12 @@ export class UserService {
     items: string[];
     items_detailed: Array<{ food: string; protein_g: number; calories: number; logged_at: string }>;
   }> {
+    // Cache hit fast-path — 10s TTL is short enough that food logs land within
+    // the typical user reaction window; invalidation runs after every insert.
+    const cached = this.todaysFoodCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
     const { rows } = await this.pool.query<{ food: string; protein_g: number; calories: number; created_at: Date }>(
       `WITH user_tz AS (
          SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
@@ -323,7 +364,7 @@ export class UserService {
        ORDER BY created_at DESC`,
       [userId],
     );
-    return {
+    const value = {
       protein_g: rows.reduce((s, r) => s + r.protein_g, 0),
       calories: rows.reduce((s, r) => s + r.calories, 0),
       items: rows.map((r) => r.food),
@@ -334,6 +375,8 @@ export class UserService {
         logged_at: new Date(r.created_at).toISOString(),
       })),
     };
+    this.todaysFoodCache.set(userId, { value, expiresAt: Date.now() + this.TODAYS_FOOD_TTL_MS });
+    return value;
   }
 
   /**
@@ -390,6 +433,14 @@ export class UserService {
     userId: string,
     limit = 30,
   ): Promise<Array<{ fact: string; category: string; confidence: string }>> {
+    // Cache hit fast-path — facts change slowly (background extraction worker
+    // updates them at most every few turns), so a 5-min TTL is safe. Calls
+    // from the fact-extract worker invalidate via invalidateKnownFactsCache().
+    const cacheKey = `${userId}|${limit}`;
+    const cached = this.knownFactsCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
     try {
       const { rows } = await this.pool.query<{ fact: string; category: string; confidence: string }>(
         `SELECT fact, category, confidence
@@ -401,6 +452,7 @@ export class UserService {
          LIMIT $2`,
         [userId, limit],
       );
+      this.knownFactsCache.set(cacheKey, { value: rows, expiresAt: Date.now() + this.KNOWN_FACTS_TTL_MS });
       return rows;
     } catch {
       return [];

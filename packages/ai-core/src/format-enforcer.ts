@@ -84,6 +84,21 @@ const FILLER_OPENERS: RegExp[] = [
   /^what (?:a |an )(?:amazing|wonderful|great|excellent|smart|thoughtful|brilliant|fantastic|lovely|inspiring) (?:choice|question|idea|thought|approach|mindset)[!.,]?\s*/i,
   // "I love that you're..." / "Love that you're..." — same patronizing pattern
   /^(?:i )?love (?:that |how )(?:you'?re|you (?:are|have))[^.!?]{0,80}[.!]?\s*/i,
+  // 2026-06-03 behavioral-guard catches these as principle violations forcing
+  // a 3s regen. Strip deterministically:
+  //   - "Congrats on / Congratulations on ..." (NO SYCOPHANTIC OPENERS)
+  /^(?:congrats|congratulations)\b[^.!?]{0,80}[.!]?\s*/i,
+  //   - "Wonderful / Lovely / Beautiful / Smart that you ..."
+  /^(?:wonderful|lovely|beautiful|smart|thoughtful|nice|perfect|fantastic|amazing|excellent|brilliant) (?:that |to (?:hear|see|know))[^.!?]{0,80}[.!]?\s*/i,
+  //   - "Yeah, " / "Sure, " / "Alright, " / "So, " preambles (NO PREAMBLE).
+  //     Only the clear AI-tell openers; "Got it, " / "Okay, " / "Right, " /
+  //     "Ok, " stay because they're legitimate brief acknowledgments Grace
+  //     uses on log confirmations.
+  /^(?:yeah|sure|alright|so)\s*[,—-]+\s*/i,
+  //   - Generic fallback openers with clear context (NO GENERIC FALLBACKS)
+  /^(?:i'?m here (?:and )?ready to help|how can i help (?:you )?today|what'?s on your mind|happy to (?:chat|help|assist))[!.,]?\s*/i,
+  // "Of course! Yes," "Definitely! Sure," patterns
+  /^(?:of course|definitely|absolutely)[!.,]?\s+(?:yes|sure|i can|happy to|i'?d be (?:happy|glad))[,.!]?\s*/i,
 ];
 
 // Map: each context type allows these specific runtime-data openers.

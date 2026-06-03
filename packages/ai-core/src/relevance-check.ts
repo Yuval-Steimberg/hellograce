@@ -52,7 +52,9 @@ export class RelevanceChecker {
         temperature: 0.0,
         maxOutputTokens: 150,
         responseFormat: 'json',
-        model: 'gemini-2.5-flash',
+        // 2026-06-03 latency cut: lite is faster for JSON, fallback catches
+        // any unreliability. catch() returns null (no opinion) on parse fail.
+        model: 'gemini-2.5-flash-lite',
         disableThinking: true,
       });
 

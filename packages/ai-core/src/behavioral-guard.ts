@@ -78,9 +78,17 @@ Check the response against all 15 principles. Be strict — flag any clear viola
           { role: 'user', content: prompt },
         ],
         temperature: 0.0,
-        maxOutputTokens: 400,
+        // Was 400 — the model only emits {"violations":[...]} with at most
+        // a few entries. 250 is comfortable for the worst real case (3-4
+        // violations × ~50 tokens each) and trims model output time.
+        maxOutputTokens: 250,
         responseFormat: 'json',
-        model: 'gemini-2.5-flash',
+        // 2026-06-03 latency cut: gemini-2.5-flash-lite is ~40% faster than
+        // 2.5-flash on JSON output. The 404 fallback chain in GeminiProvider
+        // (isTransientGeminiError) routes to env.GEMINI_FALLBACK_MODEL if
+        // lite has trouble with the structured JSON. catch() below also
+        // returns "no violations" (safe default) on any parse failure.
+        model: 'gemini-2.5-flash-lite',
         disableThinking: true,
       });
 

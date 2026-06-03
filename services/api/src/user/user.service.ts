@@ -84,7 +84,11 @@ export class UserService {
   // (ensureUser / update) invalidate the cache key so freshness is bounded.
   // Per-user only — never shared across users.
   private userCache = new Map<string, { user: GraceUser; expiresAt: number }>();
-  private readonly USER_CACHE_TTL_MS = 30_000;
+  // Bumped 30s → 60s (2026-06-03): user profile rarely changes mid-conversation
+  // and the parallel_io stage was dominated by this read. Invalidation
+  // (ensureUser / update / dietary_pattern persist) still clears the cache
+  // immediately, so freshness is preserved when the user actually changes.
+  private readonly USER_CACHE_TTL_MS = 60_000;
 
   // ── Per-method query caches (2026-06-03 latency cut) ─────────────────────
   // parallel_io was 1.3-1.7s in production telemetry, dominated by 9 parallel

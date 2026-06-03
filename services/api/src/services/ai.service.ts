@@ -1356,7 +1356,20 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       .catch(() => undefined);
   }
 
+  // 60s in-memory cache: check-in count only changes when the scheduler fires
+  // a proactive message, which happens at most a few times per day. The
+  // user-facing tradeoff is "did I get an extra check-in I shouldn't have?"
+  // â€” 60s of staleness here is unobservable in practice. The query itself
+  // (CTE + COUNT with TZ subquery) is the second-most-expensive in
+  // parallel_io after getTodaysFoodSummary.
+  private checkinsCountCache = new Map<string, { value: number; expiresAt: number }>();
+  private readonly CHECKIN_COUNT_TTL_MS = 60_000;
+
   private async countTodaysCheckIns(userId: string): Promise<number> {
+    const cached = this.checkinsCountCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
     // User's calendar day, not UTC â€” same fix as getTodaysFoodSummary.
     const { rows } = await this.deps.pool.query<{ count: string }>(
       `WITH user_tz AS (
@@ -1369,7 +1382,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
              = (now() AT TIME ZONE user_tz.tz)::date`,
       [userId],
     );
-    return Number(rows[0]?.count ?? 0);
+    const value = Number(rows[0]?.count ?? 0);
+    this.checkinsCountCache.set(userId, { value, expiresAt: Date.now() + this.CHECKIN_COUNT_TTL_MS });
+    return value;
   }
 
   private buildPersonalisedPrompt(

@@ -682,7 +682,17 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       [phone, ...keys.map((k) => fields[k])],
     );
     if (!rowCount) throw new ValidationError('User not found');
-    return { ok: true };
+    // Return the updated row so caller can verify the write landed.
+    // Production failure 2026-06-03: admin couldn't tell if the dietary
+    // PUT had any effect because the response was just { ok: true }.
+    const { rows: refreshed } = await deps.pool.query(
+      `SELECT phone, first_name, dietary_pattern, dietary_restriction,
+              primary_goal, protein_goal_grams, calorie_goal_kcal,
+              activity_level, height_cm, sex
+         FROM users WHERE phone = $1`,
+      [phone],
+    );
+    return { ok: true, user: refreshed[0] ?? null };
   });
 
   // ─── Stripe billing (admin) ──────────────────────────────────────────────────

@@ -360,7 +360,12 @@ export function enforceFormat(
   // cumin, paprika, and nutritional yeast for a cheesy flavor. Add a handful
   // of spinach for extra fiber." — the body is 180+ chars; the old 80 cap
   // skipped it entirely). Hyphen now allowed in label too ("High-Protein").
-  const labelColonRe = /(^|[.!?]\s+)([A-Z][\w\s-]{2,32}):\s+(\w[^.\n]{4,240})(?=[.\n])/g;
+  // Label length 32 → 60 (2026-06-03): production failure showed
+  // "Creamy Tomato Soup with Grilled Cheese Croutons: A classic for a reason"
+  // (49-char label) escaping the strip and rendering as a list-item to users.
+  // 60 chars covers compound dish names without false-positiving on natural
+  // sentence prefixes (typical "Subject: " preamble is < 30 chars).
+  const labelColonRe = /(^|[.!?]\s+)([A-Z][\w\s-]{2,60}):\s+(\w[^.\n]{4,240})(?=[.\n])/g;
   let labelHits = 0;
   text.replace(labelColonRe, () => { labelHits++; return ''; });
   if (labelHits >= 1) {

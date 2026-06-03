@@ -530,7 +530,7 @@ function buildFocusMarker(
 
   const intentDescription: Record<MessageType, string> = {
     food_log: 'logging a food they ate. Acknowledge + state the protein from the tool result. Do NOT continue any previous topic.',
-    food_question: 'asking a question about food or nutrition. Answer their question directly. Do NOT continue any previous topic. HARD RULES (regen-triggering — first attempt MUST follow): (1) NO opener like "It\'s wonderful you\'re thinking", "That\'s a great question", "I love that you\'re", "What an amazing choice", "Happy to help". Just answer. (2) MAXIMUM ONE question mark in the response, at the END only — never two questions in a row.',
+    food_question: 'asking a question about food or nutrition. Answer their question directly. Do NOT continue any previous topic. HARD RULES (regen-triggering — first attempt MUST follow): (1) NO opener like "It\'s wonderful you\'re thinking", "That\'s a great question", "I love that you\'re", "What an amazing choice", "Happy to help", "Since you\'ve...let\'s focus on". Just answer. (2) MAXIMUM ONE question mark, at the END only. (3) NO list-item format like "Dish Name: description, Other Dish: description" — write the dishes in flowing prose, e.g. "Try a lentil soup or a tofu stir-fry — both are quick and satisfying." (4) Keep the WHOLE response to 2-3 short sentences.',
     weight_log: 'reporting their weight. Acknowledge + respond warmly. Do NOT continue any previous topic.',
     mood_log: 'sharing their mood or energy level. Respond with empathy. Do NOT continue any previous topic.',
     greeting: 'just greeting you. Reply with ONE warm sentence. Topic reset — do NOT reference any prior conversation.',

@@ -52,9 +52,12 @@ export class RelevanceChecker {
         temperature: 0.0,
         maxOutputTokens: 150,
         responseFormat: 'json',
-        // 2026-06-03 latency cut: lite is faster for JSON, fallback catches
-        // any unreliability. catch() returns null (no opinion) on parse fail.
-        model: 'gemini-2.5-flash-lite',
+        // 2026-06-03 revert: lite was returning false positives on food_question
+        // responses ("relevance_check_failed" on a clearly-on-topic dinner reply
+        // → forced a 2.7s regen). Keeping relevance on gemini-2.5-flash — the
+        // ~250ms latency cost is worth the accuracy. behavioral-guard stays on
+        // lite because it's strict-match semantics (banned phrases / preambles).
+        model: 'gemini-2.5-flash',
         disableThinking: true,
       });
 

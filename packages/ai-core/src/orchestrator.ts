@@ -725,6 +725,22 @@ export class AIOrchestrator {
       generationTokenBudget = 1024;
     } else if (classification.type === 'emotional') {
       generationTokenBudget = 1024; // 2-sentence empathic reply, thinking off
+    } else if (classification.type === 'food_question') {
+      // 2026-06-03 cascade fix: was 8192 (catch-all). Production telemetry
+      // showed every food_question over-generating, hitting the 8192 cap,
+      // truncating mid-sentence, then triggering a 6+ second cascade:
+      //   regen (LLM #2) → retry-critic (LLM #3) → web-search-fallback
+      //   (LLM #4 with Google Search grounding). Total ~10s of wasted work.
+      // A food recommendation response is 2-3 sentences (~150 tokens), so
+      // 1024 leaves comfortable headroom. Truncation eliminated → entire
+      // cascade eliminated.
+      generationTokenBudget = 1024;
+    } else if (classification.type === 'general' || classification.type === 'social_situation' ||
+               classification.type === 'scheduling' || classification.type === 'pause_request' ||
+               classification.type === 'exercise_log' || classification.type === 'injection_log') {
+      // Conversational chat — 2-4 sentences. Same truncation-prevention logic
+      // as food_question; previously fell into the 8192 catch-all.
+      generationTokenBudget = 1024;
     } else if (classification.type === 'appointment_prep') {
       // Appointment prep needs full thinking room — quality matters more than
       // latency for a doctor-visit response. Keep the same 8192 ceiling and

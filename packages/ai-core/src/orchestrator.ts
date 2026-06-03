@@ -12,6 +12,7 @@
 // ────────────────────────────────────────────────────────────────────────────
 
 import type {
+  ChatTurn,
   CriticReport,
   LLMProvider,
   OrchestratorInput,
@@ -208,6 +209,57 @@ function extractTopicKeywords(text: string): string[] {
     .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 }
 
+/**
+ * Topic-switch detection. Returns true when the user's CURRENT message is on
+ * a different topic than the most recent Grace response.
+ *
+ * Production failure pattern (2026-06-03 screenshots):
+ *   Turn 1: "I'm scared I'm losing muscle" → Grace's long muscle response.
+ *   Turn 2: "My hair is falling out, is this from Ozempic?" → Grace
+ *           ANSWERED ABOUT MUSCLE LOSS AGAIN.
+ *
+ * Root cause: Gemini Flash overweights the most-recent assistant turn in
+ * history, even when an intervening system message says "TOPIC SWITCH —
+ * do NOT continue muscle." Adding warnings is not enough; we have to remove
+ * the anchor itself by stripping that prior assistant turn from history
+ * before the generation call.
+ *
+ * Conservative thresholds to avoid false positives on legitimate follow-ups:
+ *   • previous Grace message must be substantial (> 100 chars) — short acks
+ *     don't anchor strongly so stripping isn't needed
+ *   • user message must have ≥ 3 content words — single-keyword "thanks" /
+ *     "ok" / "hair?" are too thin to call a topic shift confidently
+ *   • keyword overlap with the previous Grace message must be ≤ 1 — at least
+ *     one shared word is fine (mentioning the medication, "GLP-1", etc.)
+ */
+export function detectTopicSwitch(
+  userText: string | undefined,
+  lastAssistantMessage: string | undefined,
+): boolean {
+  if (!userText || !lastAssistantMessage) return false;
+  if (lastAssistantMessage.trim().length <= 100) return false;
+  const userKws = extractTopicKeywords(userText);
+  const prevKws = extractTopicKeywords(lastAssistantMessage);
+  if (userKws.length < 3) return false;
+  if (prevKws.length < 4) return false;
+  const overlap = userKws.filter((w) => prevKws.includes(w)).length;
+  return overlap <= 1;
+}
+
+/**
+ * Remove the most recent assistant turn from history. Used when topic-switch
+ * is detected so the LLM doesn't anchor on it. The corresponding user turn
+ * stays (it gives benign context about what the user was last asking about).
+ */
+export function stripLastAssistantTurn(history: ChatTurn[]): ChatTurn[] {
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i]?.role === 'assistant') {
+      return [...history.slice(0, i), ...history.slice(i + 1)];
+    }
+  }
+  return [...history];
+}
+
 // Injected right before the user turn to prevent the LLM from anchoring on
 // old topics. Quotes the last Grace message so the model knows NOT to repeat it.
 function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssistantMessage?: string, userText?: string): string {
@@ -363,9 +415,23 @@ export class AIOrchestrator {
     // explicitly quotes the last Grace message so the model knows NOT to
     // repeat it verbatim — the most common Gemini Flash failure pattern.
     const focusMarker = buildFocusMarker(classification.type, toolResults, lastAssistantMessage, input.text);
+
+    // ── Topic-switch defense (2026-06-03 production failure fix) ─────────
+    // When the user shifts topic between turns ("muscle" → "hair"),
+    // Gemini Flash will keep continuing the previous topic if the prior
+    // long assistant turn sits right before the new user message. Stripping
+    // that turn removes the anchor entirely — the model only sees the
+    // current question + the topic-switch warning in the focus marker.
+    // The previous USER turn stays in history because it's benign context
+    // (and removing both turns leaves an odd pair of unmatched roles).
+    const isTopicSwitch = detectTopicSwitch(input.text, lastAssistantMessage);
+    const generationHistory: ChatTurn[] = isTopicSwitch
+      ? stripLastAssistantTurn([...input.history])
+      : [...input.history];
+
     const generationMessages = [
       { role: 'system' as const, content: baseSystem },
-      ...renderHistory(input.history),
+      ...renderHistory(generationHistory),
       { role: 'system' as const, content: focusMarker },
       { role: 'user' as const, content: input.text },
     ];
@@ -697,7 +763,12 @@ export class AIOrchestrator {
         const retryResp = await this.deps.llm.generate({
           messages: [
             { role: 'system', content: baseSystem + addendum },
-            ...renderHistory(input.history),
+            // Use the SAME topic-switch-stripped history so the retry
+            // doesn't re-anchor on the old assistant turn after a drift
+            // failure. Without this, the regen kept producing the
+            // wrong-topic answer because it still saw the muscle response
+            // as the most recent assistant turn.
+            ...renderHistory(generationHistory),
             { role: 'system' as const, content: focusMarker },
             { role: 'user', content: input.text },
           ],

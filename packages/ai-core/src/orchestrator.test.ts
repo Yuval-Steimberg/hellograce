@@ -299,3 +299,89 @@ describe('AIOrchestrator', () => {
     expect(out.text).not.toContain('double');
   });
 });
+
+describe('detectTopicSwitch', () => {
+  it('returns true when the user shifts from one body system to another', async () => {
+    const { detectTopicSwitch } = await import('./orchestrator.js');
+    const prior =
+      "It's really common to worry about muscle loss while losing weight on GLP-1s. Research shows that around 25-35% of the weight lost can be lean mass, so your concern is valid. The best ways to protect your muscle are protein and resistance training.";
+    const next = 'My hair is falling out, is this from Ozempic';
+    expect(detectTopicSwitch(next, prior)).toBe(true);
+  });
+
+  it('returns true on the lab-result follow-up after a hair answer', async () => {
+    const { detectTopicSwitch } = await import('./orchestrator.js');
+    const prior =
+      "What you're likely seeing is telogen effluvium, which is temporary hair shedding caused by the metabolic stress of rapid weight loss, not damage to your hair follicles directly. It usually starts 2-3 months in and resolves within 6-9 months.";
+    const next = 'My labs came back and my A1C is 5.8, is that okay';
+    expect(detectTopicSwitch(next, prior)).toBe(true);
+  });
+
+  it('returns false when the follow-up shares 2+ topic words (continuation)', async () => {
+    const { detectTopicSwitch } = await import('./orchestrator.js');
+    const prior =
+      'Protein is the most impactful thing you can do for muscle preservation. Aim for 1.2 to 1.6 grams per kilogram of your current body weight, daily.';
+    const next = 'How much protein should I aim for at lunch';
+    expect(detectTopicSwitch(next, prior)).toBe(false);
+  });
+
+  it('returns false when the previous message is short (no real anchor)', async () => {
+    const { detectTopicSwitch } = await import('./orchestrator.js');
+    const prior = 'Got it, around 25g.';
+    const next = 'How is my hair affected';
+    expect(detectTopicSwitch(next, prior)).toBe(false);
+  });
+
+  it('returns false when the user message is too brief to call a shift confidently', async () => {
+    const { detectTopicSwitch } = await import('./orchestrator.js');
+    const prior =
+      'Plateaus are super common in months 3-6, especially after the first rapid loss. The medication is still doing its job — the scale is just catching up.';
+    const next = 'Hair?';
+    expect(detectTopicSwitch(next, prior)).toBe(false);
+  });
+
+  it('returns false on missing inputs', async () => {
+    const { detectTopicSwitch } = await import('./orchestrator.js');
+    expect(detectTopicSwitch(undefined, 'whatever')).toBe(false);
+    expect(detectTopicSwitch('hello', undefined)).toBe(false);
+    expect(detectTopicSwitch('', '')).toBe(false);
+  });
+});
+
+describe('stripLastAssistantTurn', () => {
+  it('removes the most recent assistant turn but keeps prior user turn', async () => {
+    const { stripLastAssistantTurn } = await import('./orchestrator.js');
+    const history = [
+      { role: 'user' as const, content: 'muscle?', createdAt: new Date() },
+      { role: 'assistant' as const, content: 'muscle answer', createdAt: new Date() },
+    ];
+    const result = stripLastAssistantTurn(history);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.role).toBe('user');
+    expect(result[0]?.content).toBe('muscle?');
+  });
+
+  it('removes only the LAST assistant turn, leaving earlier ones intact', async () => {
+    const { stripLastAssistantTurn } = await import('./orchestrator.js');
+    const history = [
+      { role: 'user' as const, content: 'q1', createdAt: new Date() },
+      { role: 'assistant' as const, content: 'a1', createdAt: new Date() },
+      { role: 'user' as const, content: 'q2', createdAt: new Date() },
+      { role: 'assistant' as const, content: 'a2 (most recent)', createdAt: new Date() },
+    ];
+    const result = stripLastAssistantTurn(history);
+    expect(result).toHaveLength(3);
+    expect(result.map((t) => t.content)).toEqual(['q1', 'a1', 'q2']);
+  });
+
+  it('returns a copy of empty history when no assistant turns exist', async () => {
+    const { stripLastAssistantTurn } = await import('./orchestrator.js');
+    expect(stripLastAssistantTurn([])).toEqual([]);
+    const onlyUsers = [
+      { role: 'user' as const, content: 'a', createdAt: new Date() },
+      { role: 'user' as const, content: 'b', createdAt: new Date() },
+    ];
+    const result = stripLastAssistantTurn(onlyUsers);
+    expect(result).toEqual(onlyUsers);
+  });
+});

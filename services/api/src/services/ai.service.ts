@@ -1160,6 +1160,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       if (typeof it.guards === 'number') {
         stageTimings['orch_guards'] = it.guards;
       }
+      if (typeof it.review === 'number' && it.review > 0) {
+        stageTimings['orch_review'] = it.review;
+      }
       if (typeof it.regen === 'number' && it.regen > 0) {
         stageTimings['orch_regen'] = it.regen;
       }

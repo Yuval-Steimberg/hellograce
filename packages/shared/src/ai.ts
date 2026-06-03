@@ -119,6 +119,8 @@ export interface OrchestratorOutput {
     postgen?: number;
     /** Parallel post-gen guards: relevance + behavioral + critic (ms). */
     guards?: number;
+    /** Critic LLM call inside needsReview when not already run earlier (ms). */
+    review?: number;
     /** Retry LLM call when content / guards failed (ms). 0 when no retry. */
     regen?: number;
     /** Whether thinking was disabled on the initial call. */

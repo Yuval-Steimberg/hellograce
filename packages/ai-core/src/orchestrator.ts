@@ -803,7 +803,7 @@ export class AIOrchestrator {
         toolResults,
         usedRetrieval: input.retrieved.length > 0,
         latencyMs: Date.now() - started,
-        internalTimings: { tools: toolsMs, generate: generateMs, postgen: Date.now() - postgenStart, guards: 0, regen: 0, thinkingDisabled: isSimpleMessage },
+        internalTimings: { tools: toolsMs, generate: generateMs, postgen: Date.now() - postgenStart, guards: 0, review: 0, regen: 0, thinkingDisabled: isSimpleMessage },
         usedSafeFallback: true,
         critic: {
           scores: { grounding: 1, safety: 1, on_task: 1, tone: 1 },
@@ -995,18 +995,36 @@ export class AIOrchestrator {
 
     // Step 7: If any check failed, regenerate with targeted feedback appended
     // to the system prompt so the LLM knows exactly what to fix.
+    let reviewMs = 0;
     if (needsReview) {
       // Reuse the critic result if it ran in the parallel guard batch above;
-      // otherwise run it now (this branch hit because of truncation / drift /
-      // content-rule violations that don't trigger shouldRunCriticEarly).
-      if (!critic) {
+      // otherwise we may need to run it now. Production telemetry (2026-06-03)
+      // showed the critic was a HIDDEN 2-3s cost — it ran inside needsReview
+      // every time a content-rule violation triggered for a non-risky intent
+      // (e.g. food_question tripping a banned phrase check). That's wasted
+      // work: the content checker already proved the response needs a regen,
+      // and the critic's grounding/safety/tone scores can't override that.
+      //
+      // Critic is now only run here when there's an actual quality concern
+      // it can adjudicate: truncation, topic drift, unsupported grounding
+      // claims, or a risky-intent gate from the planner. Pure content-rule
+      // violations on non-risky intents skip the critic and regen directly.
+      const needsCritic =
+        !critic &&
+        (truncated ||
+          topicDrift ||
+          precheck.unsupported.length > 0 ||
+          this.shouldRunCritic(plan, validated));
+      if (needsCritic) {
+        const reviewStart = Date.now();
         critic = await this.review(precheck, input.text, validated.text, input.retrieved);
+        reviewMs = Date.now() - reviewStart;
       }
 
       // Treat a content-rule violation (forbidden food, banned phrase, DB rule)
       // as a hard fail even if the LLM-critic thinks the draft was fine — Gemini-
       // as-judge often misses dietary slips and persona violations.
-      const hardFail = !critic.pass || regenViolations.length > 0;
+      const hardFail = (critic && !critic.pass) || regenViolations.length > 0;
 
       if (hardFail) {
         regenerated = true;
@@ -1018,10 +1036,11 @@ export class AIOrchestrator {
           intent: classification.type,
           truncated,
           topicDrift,
-          criticPass: critic.pass,
+          criticPass: critic ? critic.pass : 'skipped',
           violations: regenViolations.map((v) => v.code),
           generateMs,
           guardsMs,
+          reviewMs,
         }, 'orchestrator.regen_fired');
         // When the original response was truncated (length finishReason or
         // ended mid-word), add an explicit brevity instruction so the retry
@@ -1031,8 +1050,11 @@ export class AIOrchestrator {
         const truncationAddendum = truncated
           ? '\n\n━━━ TRUNCATION RECOVERY ━━━\nYour previous draft cut off mid-sentence — it was TOO LONG. Rewrite in MAXIMUM 2-3 SHORT sentences. Pure prose only. No lists. No headers. No "Here\'s a breakdown". State the most important thing FIRST, in one sentence. Then stop. The message MUST end with a complete sentence and proper punctuation.\n'
           : '';
+        // Critic may be skipped on non-risky intents (2026-06-03 latency cut).
+        // The addendum then comes purely from the content-rule violations.
+        const criticAddendum = critic ? buildCriticAddendum(critic) : '';
         const addendum =
-          buildCriticAddendum(critic) +
+          criticAddendum +
           (regenViolations.length > 0
             ? buildContentRegenInstruction(regenViolations, input.dietaryRestriction)
             : '') +
@@ -1167,6 +1189,7 @@ export class AIOrchestrator {
         generate: generateMs,
         postgen: postgenMs,
         guards: guardsMs,
+        review: reviewMs,
         regen: regenMs,
         thinkingDisabled: isSimpleMessage,
       },

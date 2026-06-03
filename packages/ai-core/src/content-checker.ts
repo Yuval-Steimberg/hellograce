@@ -966,6 +966,13 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bi'?m here to (support|help) you\b/i, reason: '"I\'m here to support you" — banned corporate voice' },
   { pattern: /\bi want you to know\b/i, reason: '"I want you to know" — banned filler' },
 
+  // List-intro openers — H3 PROSE ONLY bans these (production failure 2026-06-03:
+  // "Here are a few more vegetarian dinner ideas... : Food Name: description, Food Name:...")
+  // The format-enforcer strips the colon; this bans the phrase so regen writes
+  // direct prose instead: "Lentil soup is easy, edamame is quick, yogurt is filling."
+  { pattern: /\bhere are a few more\b/i, reason: '"Here are a few more" — list-intro opener. Write in direct flowing prose without an intro sentence.' },
+  { pattern: /\bhere are (?:some|a few|several|my top|additional) .{2,60}:\s*$/im, reason: '"Here are some/a few X:" — list intro. Write as direct prose, no intro sentence with colon.' },
+
   // Corporate / AI-generated tone markers (section 14 of behavioral spec)
   { pattern: /\bhere'?s the thing\s*[—–-]/i, reason: '"Here\'s the thing —" — em-dash AI tell' },
   { pattern: /\bthe goal is\s*[—–-]/i, reason: '"The goal is —" — corporate em-dash structure' },

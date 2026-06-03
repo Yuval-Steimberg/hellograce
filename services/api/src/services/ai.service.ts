@@ -634,6 +634,15 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       );
     }
 
+    // Context isolation flag: when the force-log fired in a fresh context (not
+    // a continuation of a Grace food question), prior assistant turns must be
+    // stripped from the orchestrator history. Without this, a user saying
+    // "I also ate two slices of pizza" after a dinner recommendation thread gets
+    // MORE dinner advice instead of a food-log acknowledgment (production failure
+    // 2026-06-03). The continuation case is NOT isolated â€” it needs the prior
+    // Grace message to build the combined context.
+    const isolateFoodLog = shouldForceLogFood;
+
     // FORCE the right protein-related tool based on the exact question shape.
     // The classifier (FOOD_SUMMARY / FOOD_HISTORY / PROTEIN_TARGET / FOOD_REMOVAL)
     // all map to `food_question` intent, but each subgroup needs a DIFFERENT
@@ -908,7 +917,17 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     // the LLM starts fresh and doesn't anchor on the old conversation thread.
     const TOPIC_CLOSERS = /^(thanks|thank you|thx|ty|ok|okay|got it|cool|great|perfect|awesome|nice|good|alright|sounds good|will do|noted|k|kk)\.?!?$/i;
     let effectiveHistory = history;
-    if (history.length >= 2) {
+    if (isolateFoodLog) {
+      // Strip all prior Grace replies: the food-log response should NOT be
+      // anchored to a prior dinner/recommendation thread. Only user turns are
+      // kept so the profile context (dietary, goal) is still visible to the LLM
+      // via the system prompt rather than through assistant-turn anchoring.
+      effectiveHistory = history.filter((t) => t.role === 'user');
+      logger.info(
+        { userId: input.userId, textPreview: input.text.slice(0, 60) },
+        'ai.handle.food_log_history_isolated',
+      );
+    } else if (history.length >= 2) {
       const lastUserTurn = [...history].reverse().find((t) => t.role === 'user');
       if (lastUserTurn && TOPIC_CLOSERS.test(lastUserTurn.content.trim())) {
         const lastUserIdx = history.lastIndexOf(lastUserTurn);

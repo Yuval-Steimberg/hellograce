@@ -113,7 +113,8 @@ export const FOOD_REMOVAL_QUESTION: RegExp[] = [
 
 const FOOD_LOG: RegExp[] = [
   // Direct past-tense verbs at start of message
-  /^(i )?(just |already |i'?ve |i've )?(had|ate|eaten|finished|grabbed|made|cooked|ordered|got|drank|consumed|tried|enjoyed|polished off|crushed|nibbled|munched|snacked) (a |an |some |the |my |2 |3 |4 )?\w/i,
+  // "also" covers "I also ate X" / "I also had X" (common continuation logs)
+  /^(i )?(just |already |also |i'?ve |i've )?(had|ate|eaten|finished|grabbed|made|cooked|ordered|got|drank|consumed|tried|enjoyed|polished off|crushed|nibbled|munched|snacked) (a |an |some |the |my |2 |3 |4 )?\w/i,
   // "I'm eating", "I'm having" (present tense)
   /^i'?m (eating|having|drinking|finishing|munching|snacking|sipping)\b/i,
   // "Snacked on X" / "Snacking on X" — common casual log

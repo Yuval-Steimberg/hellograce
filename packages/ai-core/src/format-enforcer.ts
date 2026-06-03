@@ -336,7 +336,12 @@ export function enforceFormat(
   // These guarantee a list follows. Strip them so the remaining text reads
   // as direct prose. We replace the colon with a period so the next sentence
   // stands alone instead of dangling as a list intro.
-  const listIntroRe = /\b(here'?s (?:a |the |my )?(?:breakdown|summary|explanation|overview)[^.:!?\n]{0,60}|here'?s why(?:\s+it'?s\s+happening)?|here'?s what (?:you (?:can|should) do|to do)|here are (?:the |some |a few |my )?(?:key |main |important |top )?(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?))\s*:\s*/gi;
+  // "here are a few more X for Y:" — "more" was missing from quantifier list,
+  // and trailing context ("to help you reach your protein target") was not
+  // allowed between the noun and the colon. Production failure 2026-06-03:
+  // "Here are a few more vegetarian dinner ideas to help you reach your 60g
+  // protein target: High-Protein Pasta..." passed through unstripped.
+  const listIntroRe = /\b(here'?s (?:a |the |my )?(?:breakdown|summary|explanation|overview)[^.:!?\n]{0,60}|here'?s why(?:\s+it'?s\s+happening)?|here'?s what (?:you (?:can|should) do|to do)|here are (?:the |some |a few |more |a few more |several |my |additional )?(?:key |main |important |top |extra |other |additional )?(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?)[^.:!?\n]{0,80})\s*:\s*/gi;
   if (listIntroRe.test(text)) {
     text = text.replace(listIntroRe, '');
     fixes.push('list_intro_stripped');

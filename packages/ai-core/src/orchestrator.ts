@@ -742,12 +742,26 @@ export class AIOrchestrator {
       // as food_question; previously fell into the 8192 catch-all.
       generationTokenBudget = 1024;
     } else if (classification.type === 'appointment_prep') {
-      // Appointment prep needs full thinking room — quality matters more than
-      // latency for a doctor-visit response. Keep the same 8192 ceiling and
-      // ensure thinking stays enabled.
-      generationTokenBudget = 8192;
+      // 4-6 specific questions in flowing prose. quality-guard caps at 800
+      // chars (~200 tokens). 2048 = ~1500 thinking + 500 output, comfortable
+      // headroom WITH thinking enabled. Was 8192 — same truncation-cascade
+      // risk as food_question (2026-06-03 telemetry).
+      generationTokenBudget = 2048;
+    } else if (classification.type === 'knowledge') {
+      // GLP-1 mechanism / side-effect explanations. quality-guard caps at
+      // 600 chars (~150 tokens output). 2048 = ~1500 thinking + 500 output.
+      // Was 8192 (catch-all). Truncation cascade risk identical to food_question.
+      generationTokenBudget = 2048;
+    } else if (classification.type === 'medication_question') {
+      // Dose timing / storage / travel-with-pen — short fact-based answers
+      // that quality-guard caps at the 350-char default (~90 tokens).
+      // 1024 = ~700 thinking + 300 output with thinking enabled.
+      generationTokenBudget = 1024;
     } else {
-      generationTokenBudget = 8192; // knowledge / food question — thinking enabled, full room
+      // Defensive default — if a new intent type is added without an
+      // explicit budget, use a conservative 1024 instead of 8192 to keep
+      // the truncation-cascade risk bounded.
+      generationTokenBudget = 1024;
     }
 
     let regenMs = 0;
@@ -1133,7 +1147,14 @@ export class AIOrchestrator {
         // budget when the initial call had thinking disabled. Without this,
         // a single content-rule trip on a simple intent doubled the latency
         // from ~2s to ~20s (production telemetry, 2026-06-03).
-        const retryTokenBudget = isSimpleMessage ? Math.max(1024, generationTokenBudget) : 8192;
+        // Retry budget mirrors initial — was 8192 for thinking intents which
+        // re-created the truncation cascade. The TRUNCATION RECOVERY addendum
+        // instructs the model to write 2-3 short sentences on retry, so
+        // matching initial budget is correct. 2.5x headroom for simple intents
+        // covers edge cases where retry needs slightly more room.
+        const retryTokenBudget = isSimpleMessage
+          ? Math.max(1024, generationTokenBudget)
+          : Math.max(2048, generationTokenBudget);
         const regenStart = Date.now();
         const retryResp = await this.deps.llm.generate({
           messages: [
@@ -1351,7 +1372,12 @@ export class AIOrchestrator {
           { role: 'user', content: userText },
         ],
         temperature: 0.4,
-        maxOutputTokens: 8192,
+        // Web-search fallback used to be 8192 — but quality-guard rejects
+        // anything over 800 chars even for the heaviest intent (appointment_
+        // prep). 2048 = ~1500 grounded-thinking + 500 output, fits every
+        // realistic answer. Same truncation-cascade prevention as the main
+        // generate path.
+        maxOutputTokens: 2048,
         useGoogleSearch: true,
       });
       const formatted = enforceFormat(webResp.text, { ...(stripName ? { stripFirstName: stripName } : {}) });

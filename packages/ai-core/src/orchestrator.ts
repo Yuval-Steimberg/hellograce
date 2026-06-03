@@ -530,7 +530,7 @@ function buildFocusMarker(
 
   const intentDescription: Record<MessageType, string> = {
     food_log: 'logging a food they ate. Acknowledge + state the protein from the tool result. Do NOT continue any previous topic.',
-    food_question: 'asking a question about food or nutrition. Answer their question directly. Do NOT continue any previous topic.',
+    food_question: 'asking a question about food or nutrition. Answer their question directly. Do NOT continue any previous topic. HARD RULES (regen-triggering — first attempt MUST follow): (1) NO opener like "It\'s wonderful you\'re thinking", "That\'s a great question", "I love that you\'re", "What an amazing choice", "Happy to help". Just answer. (2) MAXIMUM ONE question mark in the response, at the END only — never two questions in a row.',
     weight_log: 'reporting their weight. Acknowledge + respond warmly. Do NOT continue any previous topic.',
     mood_log: 'sharing their mood or energy level. Respond with empathy. Do NOT continue any previous topic.',
     greeting: 'just greeting you. Reply with ONE warm sentence. Topic reset — do NOT reference any prior conversation.',
@@ -987,19 +987,32 @@ export class AIOrchestrator {
 
     const postgenMs = Date.now() - postgenStart;
     const guardsStart = Date.now();
+    // Per-guard timing — when orch_guards is hot, we need to know WHICH of the
+    // three is bounding the parallel wait. Wrap each promise so we capture
+    // its individual duration before Promise.all resolves.
+    let relevanceGuardMs = 0;
+    let behavioralGuardMs = 0;
+    let criticGuardMs = 0;
+    const timeGuard = <T>(p: Promise<T>, set: (ms: number) => void): Promise<T> => {
+      const start = Date.now();
+      return p.then(
+        (v) => { set(Date.now() - start); return v; },
+        (e) => { set(Date.now() - start); throw e; },
+      );
+    };
     const [relevanceVerdict, behavioralViolations, earlyCritic] = await Promise.all([
       shouldRunRelevance
-        ? this.relevance.check(input.text, validated.text, lastAssistantMessage)
+        ? timeGuard(this.relevance.check(input.text, validated.text, lastAssistantMessage), (ms) => { relevanceGuardMs = ms; })
         : Promise.resolve<{ relevant: boolean; reason: string } | null>(null),
       shouldRunBehavioral
-        ? this.behavioral.check({
+        ? timeGuard(this.behavioral.check({
             userMessage: input.text,
             graceResponse: validated.text,
             userContext: userContextBlock,
-          })
+          }), (ms) => { behavioralGuardMs = ms; })
         : Promise.resolve<Array<{ principle: string; reason: string }>>([]),
       shouldRunCriticEarly
-        ? this.review(precheck, input.text, validated.text, input.retrieved)
+        ? timeGuard(this.review(precheck, input.text, validated.text, input.retrieved), (ms) => { criticGuardMs = ms; })
         : Promise.resolve<CriticReport | null>(null),
     ]);
     const guardsMs = Date.now() - guardsStart;
@@ -1269,6 +1282,9 @@ export class AIOrchestrator {
         generate: generateMs,
         postgen: postgenMs,
         guards: guardsMs,
+        guardRelevance: relevanceGuardMs,
+        guardBehavioral: behavioralGuardMs,
+        guardCritic: criticGuardMs,
         review: reviewMs,
         regen: regenMs,
         thinkingDisabled: isSimpleMessage,

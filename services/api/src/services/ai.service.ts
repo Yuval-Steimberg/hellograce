@@ -1174,6 +1174,15 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       if (typeof it.guards === 'number') {
         stageTimings['orch_guards'] = it.guards;
       }
+      if (typeof it.guardRelevance === 'number' && it.guardRelevance > 0) {
+        stageTimings['guard_relevance'] = it.guardRelevance;
+      }
+      if (typeof it.guardBehavioral === 'number' && it.guardBehavioral > 0) {
+        stageTimings['guard_behavioral'] = it.guardBehavioral;
+      }
+      if (typeof it.guardCritic === 'number' && it.guardCritic > 0) {
+        stageTimings['guard_critic'] = it.guardCritic;
+      }
       if (typeof it.review === 'number' && it.review > 0) {
         stageTimings['orch_review'] = it.review;
       }

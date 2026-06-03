@@ -119,6 +119,12 @@ export interface OrchestratorOutput {
     postgen?: number;
     /** Parallel post-gen guards: relevance + behavioral + critic (ms). */
     guards?: number;
+    /** LLM relevance check duration (ms, 0 when skipped). */
+    guardRelevance?: number;
+    /** LLM behavioral guard duration (ms, 0 when skipped). */
+    guardBehavioral?: number;
+    /** Early-critic duration inside the guards batch (ms, 0 when skipped). */
+    guardCritic?: number;
     /** Critic LLM call inside needsReview when not already run earlier (ms). */
     review?: number;
     /** Retry LLM call when content / guards failed (ms). 0 when no retry. */

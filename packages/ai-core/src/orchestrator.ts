@@ -606,10 +606,15 @@ export class AIOrchestrator {
     // 2026-06-03 hotfix: Google deprecated gemini-2.0-flash entirely. Every
     // non-knowledge LLM call was hitting 404 and falling into the bare-bones
     // emergency-fallback path (no dietary filter, no format enforcer, no
-    // content rules). Reverted to gemini-2.5-flash with disableThinking which
-    // still gives ~40% of the speed win without depending on a deprecated
-    // model. Once gemini-2.5-flash-lite is verified-stable we can switch.
-    const fastModel = 'gemini-2.5-flash';
+    // content rules). Switched to gemini-2.5-flash-lite — Google's current
+    // fastest model in the 2.5 family, supports disableThinking, ~50% faster
+    // than gemini-2.5-flash on simple intents.
+    //
+    // Safety net: if Google deprecates this too, the 404 → fallback chain in
+    // GeminiProvider (isTransientGeminiError now matches 404) will route the
+    // call to env.GEMINI_FALLBACK_MODEL (= gemini-2.5-flash, known-working).
+    // No more emergency-fallback path on model deprecations.
+    const fastModel = 'gemini-2.5-flash-lite';
     const generateModel: string | undefined = isSimpleMessage ? fastModel : undefined;
 
     const chatFallbackPlan: PlannerDecision = { intent: 'chat', needsTools: false, toolCalls: [], rationale: 'tools_disabled' };

@@ -603,20 +603,13 @@ export class AIOrchestrator {
     const NEEDS_THINKING = new Set(['knowledge', 'medication_question', 'appointment_prep']);
     const isSimpleMessage = !NEEDS_THINKING.has(classification.type);
 
-    // 2026-06-03 latency cut #2: explicit model selection per intent.
-    // gemini-2.0-flash is ~40% faster than gemini-2.5-flash on simple
-    // generation calls (no thinking, single-turn prose) without measurable
-    // quality regression on log acks, food recommendations, emotional
-    // support, or general chat. Knowledge / medication / appointment_prep
-    // stay on gemini-2.5-flash because chain-of-thought genuinely matters
-    // for those intents (drug-interaction safety, dose timing, multi-step
-    // doctor-question generation).
-    //
-    // The provider falls back to the env-configured model when generate()
-    // is called without an explicit `model` field, so existing behavior is
-    // preserved for the LLM-critic / behavioral-guard / relevance-check
-    // calls (those already pin to gemini-2.0-flash internally).
-    const fastModel = 'gemini-2.0-flash';
+    // 2026-06-03 hotfix: Google deprecated gemini-2.0-flash entirely. Every
+    // non-knowledge LLM call was hitting 404 and falling into the bare-bones
+    // emergency-fallback path (no dietary filter, no format enforcer, no
+    // content rules). Reverted to gemini-2.5-flash with disableThinking which
+    // still gives ~40% of the speed win without depending on a deprecated
+    // model. Once gemini-2.5-flash-lite is verified-stable we can switch.
+    const fastModel = 'gemini-2.5-flash';
     const generateModel: string | undefined = isSimpleMessage ? fastModel : undefined;
 
     const chatFallbackPlan: PlannerDecision = { intent: 'chat', needsTools: false, toolCalls: [], rationale: 'tools_disabled' };

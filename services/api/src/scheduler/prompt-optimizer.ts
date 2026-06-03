@@ -670,7 +670,7 @@ Respond with ONLY the JSON object.`,
     // LLM call at all — so the optimizer ALWAYS produces a usable result when
     // 👎 feedback exists, even during a full Gemini outage.
 
-    const OPTIMIZER_MODEL = 'gemini-2.0-flash';
+    const OPTIMIZER_MODEL = 'gemini-2.5-flash';
 
     const attempts: Array<{ label: string; generate: () => Promise<{ text: string; finishReason?: string }> }> = [
       {

@@ -350,7 +350,7 @@ export class MessageGenerator {
         ],
         temperature: 0.85,
         maxOutputTokens: 280,
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         disableThinking: true,
       });
 

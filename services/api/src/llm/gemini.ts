@@ -184,13 +184,19 @@ export class GeminiProvider implements LLMProvider {
   }
 }
 
-/** True for transient errors worth retrying — 503 overload, 429 rate limit, network. */
+/** True for transient errors worth retrying — 503 overload, 429 rate limit,
+ *  network, AND 404 model-not-found. The 404 case is technically not transient,
+ *  but treating it as one lets the GEMINI_FALLBACK_MODEL chain catch model
+ *  deprecations automatically. Production failure 2026-06-03: Google deprecated
+ *  gemini-2.0-flash overnight and every call started returning 404, falling
+ *  into the bare-bones emergency-fallback path that bypassed dietary/content
+ *  guards. Now the fallback model kicks in BEFORE that path runs. */
 function isTransientGeminiError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const status = (err as { status?: number }).status;
-  if (status === 503 || status === 429 || status === 500 || status === 504) return true;
+  if (status === 503 || status === 429 || status === 500 || status === 504 || status === 404) return true;
   const message = (err as { message?: string }).message ?? '';
-  return /503|overload|high demand|unavailable|rate limit|429|timeout|ECONN|ETIMEDOUT/i.test(message);
+  return /503|overload|high demand|unavailable|rate limit|429|timeout|ECONN|ETIMEDOUT|404|no longer available|not found/i.test(message);
 }
 
 function hashRequest(req: LLMRequest): string {

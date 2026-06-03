@@ -24,7 +24,11 @@ const EnvSchema = z.object({
   GEMINI_API_KEY: z.string().min(1),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
   /** Used when the primary model returns 503/429 even after retries. */
-  GEMINI_FALLBACK_MODEL: z.string().default('gemini-2.0-flash'),
+  // 2026-06-03: was 'gemini-2.0-flash' but Google deprecated that model
+  // entirely (404 on every call). Reverted to the same primary so a transient
+  // failure on primary still falls back to a known-working model. Override
+  // via env if you want a different fallback.
+  GEMINI_FALLBACK_MODEL: z.string().default('gemini-2.5-flash'),
 
   RAG_ENABLED: z
     .string()

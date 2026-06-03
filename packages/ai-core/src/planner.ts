@@ -48,7 +48,7 @@ export class PlannerAgent {
       temperature: 0.1,
       maxOutputTokens: 300,
       responseFormat: 'json',
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       disableThinking: true,
     });
 

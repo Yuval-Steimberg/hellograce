@@ -656,7 +656,7 @@ Each question must:
 Return ONLY a JSON array of strings. No markdown fences, no commentary.`;
 
       const resp = await this.deps.llm.generate({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         messages: [
           { role: 'system', content: 'You generate realistic patient questions in JSON format only. No markdown.' },
           { role: 'user', content: prompt },
@@ -798,7 +798,7 @@ Example format:
 
     try {
       const resp = await this.deps.llm.generate({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         messages: [
           { role: 'system', content: 'You generate content moderation rules in JSON format only. No markdown.' },
           { role: 'user', content: prompt },

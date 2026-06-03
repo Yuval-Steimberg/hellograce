@@ -80,7 +80,7 @@ Check the response against all 15 principles. Be strict — flag any clear viola
         temperature: 0.0,
         maxOutputTokens: 400,
         responseFormat: 'json',
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         disableThinking: true,
       });
 

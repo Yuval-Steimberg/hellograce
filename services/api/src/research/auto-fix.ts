@@ -30,7 +30,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Pool } from 'pg';
-import type { LLMProvider } from '@grace/shared';
+import type { LLMProvider, DbContentRule } from '@grace/shared';
 import type { Logger } from 'pino';
 import type { Redis } from 'ioredis';
 import type { PromptOptimizer, SyntheticFeedback } from '../scheduler/prompt-optimizer.js';
@@ -200,7 +200,15 @@ export class ResearchAutoFix {
     }
 
     // ── 2. Re-replay through the CURRENT active Grace ────────────────────
+    // Load the currently-active content rules so the sandbox replay matches
+    // production exactly. Without this, the replay misses every regen path
+    // the content checker would have fired on, so the auto-fix keeps
+    // re-detecting banned phrases that production already blocks → tries to
+    // insert a rule with the same exact pattern → all marked duplicate →
+    // "Content rules added: 0" forever. Loading dbRules lets the replay
+    // surface only GENUINELY new failure patterns.
     const systemPrompt = await this.loadActiveSystemPrompt();
+    const dbRules = await this.loadActiveContentRules();
     const stillFailing: Array<{ post: FailingPost; freshResponse: string; failTypes: string[] }> = [];
 
     const queue = [...posts];
@@ -215,6 +223,7 @@ export class ResearchAutoFix {
             persona: REPLAY_PERSONA,
             systemPrompt,
             llm: this.deps.llm,
+            ...(dbRules.length > 0 ? { dbRules } : {}),
           });
           const lastGrace = [...result.turns].reverse().find((t) => t.role === 'grace');
           const freshResponse = lastGrace?.text ?? '';
@@ -951,6 +960,34 @@ Example format:
       return rows[0]?.content ?? 'You are Grace, a WhatsApp companion for GLP-1 users.';
     } catch {
       return 'You are Grace, a WhatsApp companion for GLP-1 users.';
+    }
+  }
+
+  /**
+   * Load the same content rules the production AI pipeline uses, so the
+   * replay's content checker fires the same regens. Errors degrade
+   * gracefully — an empty rule list just means the replay won't catch DB rules,
+   * which is the prior behavior.
+   */
+  private async loadActiveContentRules(): Promise<DbContentRule[]> {
+    try {
+      const { rows } = await this.deps.pool.query<DbContentRule>(
+        `SELECT id, rule_type, pattern, is_regex, flags, reason, severity, applies_to
+           FROM content_rules
+          WHERE is_active = TRUE
+            AND applies_to IN ('ai', 'all')`,
+      );
+      this.deps.logger.info(
+        { count: rows.length },
+        'research.auto_fix.content_rules_loaded',
+      );
+      return rows;
+    } catch (err) {
+      this.deps.logger.warn(
+        { err: (err as Error).message },
+        'research.auto_fix.content_rules_load_failed',
+      );
+      return [];
     }
   }
 

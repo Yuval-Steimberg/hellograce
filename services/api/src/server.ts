@@ -283,11 +283,37 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const autoFix = new ResearchAutoFix({ pool, llm, logger, redis, promptOptimizer });
 
   const researchAutoFix = async (): Promise<void> => {
+    // Distributed lock — Fly runs ≥ 2 machines and node-cron fires on every
+    // one. Without this, both machines run the pipeline simultaneously and
+    // each kicks the prompt optimizer in the background → the second optimizer
+    // run hits the 15-min rate limit → admin sees a spurious "rate-limited"
+    // WhatsApp report alongside the real run.  SET NX EX guarantees only one
+    // machine actually runs per tick.  TTL is set well beyond a typical run
+    // (auto-fix completes in 1–3 min) so a crash can't deadlock the next day.
+    const lockKey = 'research:autofix:cron_lock';
+    const lockTtlSec = 20 * 60;
+    const acquired = await redis
+      .set(lockKey, Date.now().toString(), 'EX', lockTtlSec, 'NX')
+      .catch(() => null);
+    if (acquired !== 'OK') {
+      logger.info('research.auto_fix.cron.skipped_lock_held_by_other_machine');
+      return;
+    }
     try {
       logger.info('research.auto_fix.cron.start');
       const report = await autoFix.run({ sampleSize: 60 });
       logger.info(report, 'research.auto_fix.cron.done');
       if (env.ADMIN_PHONE) {
+        // Surface the per-pattern action so admins can tell at a glance
+        // whether each detected pattern produced a new content rule, hit a
+        // duplicate, or routed to the prompt-fix path. Without this, the
+        // report always read "Content rules added: 0" without explaining why.
+        const formatPattern = (p: { pattern: string; count: number; action: string }) => {
+          const tag = p.action === 'content_rule' ? ''
+            : p.action === 'logged' ? ''
+            : `, ${p.action}`;
+          return `${p.pattern} (${p.count}×${tag})`;
+        };
         const lines = [
           '🔧 Grace auto-fix run',
           ``,
@@ -296,7 +322,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
           `📏 Content rules added: ${report.contentRulesGenerated}`,
           `🧠 Synthetic feedback injected: ${report.syntheticFeedbackInjected}`,
           report.topPatterns.length > 0
-            ? `🔍 Top patterns: ${report.topPatterns.slice(0, 3).map((p) => `${p.pattern} (${p.count}×)`).join(', ')}`
+            ? `🔍 Top patterns: ${report.topPatterns.slice(0, 3).map(formatPattern).join(', ')}`
             : '',
           report.weakestDimensions.length > 0
             ? `📉 Weakest dim: ${report.weakestDimensions[0]?.dim} (avg ${report.weakestDimensions[0]?.avgScore}/5)`
@@ -308,6 +334,10 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       }
     } catch (err) {
       logger.error({ err: err instanceof Error ? err.message : String(err) }, 'research.auto_fix.cron.failed');
+    } finally {
+      // Release the lock so the next day's cron isn't blocked if the TTL
+      // outlives the run.
+      await redis.del(lockKey).catch(() => undefined);
     }
   };
 

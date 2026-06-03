@@ -19,6 +19,7 @@ import type {
   RetrievedDoc,
   OrchestratorOutput,
   DietaryRestriction,
+  DbContentRule,
 } from '@grace/shared';
 
 export interface ReplayPersona {
@@ -180,6 +181,9 @@ export interface RunReplayOpts {
   persona: ReplayPersona;
   systemPrompt: string;
   llm: LLMProvider;
+  /** Active DB content rules — applied by the orchestrator's content checker so
+   *  the replay reflects what production would actually send (post-regen). */
+  dbRules?: DbContentRule[];
 }
 
 export async function runSandboxReplay(opts: RunReplayOpts): Promise<{ turns: ReplayTurn[] }> {
@@ -243,6 +247,7 @@ export async function runSandboxReplay(opts: RunReplayOpts): Promise<{ turns: Re
         ...(opts.persona.foodDislikes?.length ? { foodDislikes: opts.persona.foodDislikes } : {}),
         isFirstMessage: turns.length === 1,
         ...(prePlannedDecision ? { prePlannedDecision } : {}),
+        ...(opts.dbRules && opts.dbRules.length > 0 ? { dbRules: opts.dbRules } : {}),
       });
     } catch (err) {
       turns.push({

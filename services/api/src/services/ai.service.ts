@@ -8,6 +8,7 @@ import {
   ToolRegistry,
   classifyMessage as classifyIntent,
   checkContent,
+  detectTopicSwitch,
   FOOD_HISTORY_QUESTION,
   PROTEIN_TARGET_QUESTION,
   FOOD_REMOVAL_QUESTION,
@@ -763,6 +764,27 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
       .filter(Boolean);
 
+    // Topic-switch suppression of stale context (2026-06-03 production fix):
+    // activeTopic explicitly tells Grace the previous topic is "still live",
+    // and conversationSummary carries durable references to older topics.
+    // Both are anchors the orchestrator's history-strip can't reach because
+    // they live in the system prompt. When the user has clearly shifted
+    // topic, drop both so Grace responds clean to the NEW message.
+    const lastAssistantFromHistory = [...history]
+      .reverse()
+      .find((t) => t.role === 'assistant')?.content;
+    const topicSwitchAtAiService = detectTopicSwitch(input.text, lastAssistantFromHistory);
+    if (topicSwitchAtAiService) {
+      logger.info(
+        {
+          userId: input.userId,
+          activeTopicSuppressed: !!activeTopic,
+          conversationSummarySuppressed: !!conversationSummary,
+        },
+        'ai.handle.topic_switch_context_suppressed',
+      );
+    }
+
     // Build personalised system prompt with user context.
     const systemPrompt = this.buildPersonalisedPrompt(user, isNew, {
       todaysFood,
@@ -770,8 +792,8 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       knownFacts,
       dietaryRestriction,
       currentUserText: input.text,
-      ...(conversationSummary ? { conversationSummary: conversationSummary.summary } : {}),
-      ...(activeTopic ? { activeTopic } : {}),
+      ...(!topicSwitchAtAiService && conversationSummary ? { conversationSummary: conversationSummary.summary } : {}),
+      ...(!topicSwitchAtAiService && activeTopic ? { activeTopic } : {}),
     });
 
     // Track which modality drove this request so log_food rows are tagged

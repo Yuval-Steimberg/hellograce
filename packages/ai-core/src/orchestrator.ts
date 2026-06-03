@@ -247,9 +247,21 @@ export function detectTopicSwitch(
 }
 
 /**
- * Remove the most recent assistant turn from history. Used when topic-switch
- * is detected so the LLM doesn't anchor on it. The corresponding user turn
- * stays (it gives benign context about what the user was last asking about).
+ * Strip EVERY assistant turn from history. Used when topic-switch is
+ * detected — Gemini Flash will anchor on ANY prior Grace turn, not just
+ * the most recent one. After a series of muscle / hair / A1C turns, the
+ * second-most-recent assistant turn is just as risky an anchor as the
+ * last one. User turns stay because they're short, don't anchor strongly,
+ * and give the LLM useful arc-of-conversation context.
+ */
+export function stripAssistantTurns(history: ChatTurn[]): ChatTurn[] {
+  return history.filter((t) => t.role !== 'assistant');
+}
+
+/**
+ * Legacy single-turn strip — kept for tests that explicitly assert it.
+ * Production path uses stripAssistantTurns (strips all) because partial
+ * stripping leaves earlier anchors intact.
  */
 export function stripLastAssistantTurn(history: ChatTurn[]): ChatTurn[] {
   for (let i = history.length - 1; i >= 0; i--) {
@@ -260,21 +272,70 @@ export function stripLastAssistantTurn(history: ChatTurn[]): ChatTurn[] {
   return [...history];
 }
 
+/**
+ * Multi-part message detection. When a user message contains multiple
+ * distinct asks (coalesced from rapid bursts, or one long message with
+ * two questions), Gemini Flash often addresses only the first part and
+ * skips the rest. Production failure: "I have no appetite, is that the
+ * medication? I forgot my injection yesterday, what should I do?" →
+ * Grace answered only about appetite.
+ *
+ * Heuristic: 2+ question marks OR an explicit conjunction joining two
+ * independent clauses. Keep conservative — false positives just add a
+ * harmless reminder; false negatives drop a user request entirely.
+ */
+export function detectMultiPartMessage(userText: string | undefined): boolean {
+  if (!userText) return false;
+  const trimmed = userText.trim();
+  if (trimmed.length < 30) return false;
+  // Two or more question marks → almost certainly multiple asks.
+  const questionMarks = (trimmed.match(/\?/g) ?? []).length;
+  if (questionMarks >= 2) return true;
+  // "X. Also Y" / "X. And what about Y" / "X. By the way Y" patterns —
+  // two distinct sentences with a continuation cue.
+  if (/[.?!]\s+(also|and what about|by the way|another (thing|question)|one more thing|plus|oh and)\b/i.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
 // Injected right before the user turn to prevent the LLM from anchoring on
 // old topics. Quotes the last Grace message so the model knows NOT to repeat it.
-function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssistantMessage?: string, userText?: string): string {
+function buildFocusMarker(
+  type: MessageType,
+  toolResults: ToolResult[],
+  lastAssistantMessage?: string,
+  userText?: string,
+  opts?: { isTopicSwitch?: boolean; isMultiPart?: boolean },
+): string {
   const parts: string[] = [];
 
-  // Hard "do not repeat" guard — the most common failure mode is Gemini
-  // Flash copy-pasting the previous assistant message verbatim before adding
-  // new content. Quoting the first ~80 chars makes the model explicitly aware
-  // of what it must NOT start with.
-  if (lastAssistantMessage && lastAssistantMessage.trim().length > 40) {
+  // Topic-switch is the highest-priority warning. When the orchestrator's
+  // detector fires, the assistant turn has ALREADY been stripped from
+  // history — this banner reinforces the strip with an explicit instruction.
+  if (opts?.isTopicSwitch && userText && lastAssistantMessage) {
+    const userKeywords = extractTopicKeywords(userText);
+    const prevKeywords = extractTopicKeywords(lastAssistantMessage);
+    const required = userKeywords.slice(0, 6).join(', ');
+    const banned = prevKeywords.slice(0, 8).join(', ');
+    parts.push(
+      `⛔ TOPIC SWITCH DETECTED — THIS IS YOUR #1 PRIORITY INSTRUCTION.\n` +
+      `The user has CHANGED the topic. Their NEW message is: "${userText.slice(0, 200)}"\n` +
+      `You MUST answer ONLY about: ${required}.\n` +
+      `You MUST NOT mention, continue, or reference these words/topics from earlier: ${banned}.\n` +
+      `The previous conversation topic is CLOSED. If your response continues the old topic instead of addressing the new one, it will be rejected.`,
+    );
+  } else if (lastAssistantMessage && lastAssistantMessage.trim().length > 40) {
+    // Normal no-repeat guard — Gemini Flash copy-pastes the prev message
+    // ~5% of the time. Quoting the first ~100 chars stops the verbatim repeat.
     const snippet = lastAssistantMessage.trim().slice(0, 100).replace(/"/g, "'");
     parts.push(
       `CRITICAL: Your previous message ("${snippet}...") has already been sent and received by the user. Do NOT repeat any part of it. Do NOT start with those words. Write a completely fresh reply to the NEW message below.`,
     );
 
+    // Soft topic-switch warning when the strict orchestrator-level detector
+    // didn't fire (e.g. prev message was < 100 chars, but ≥ 2 user keywords
+    // and ≤ 1 overlap). Lower-priority than the strict banner above.
     if (userText) {
       const userKeywords = extractTopicKeywords(userText);
       const prevKeywords = extractTopicKeywords(lastAssistantMessage);
@@ -290,6 +351,18 @@ function buildFocusMarker(type: MessageType, toolResults: ToolResult[], lastAssi
         );
       }
     }
+  }
+
+  // Multi-part message reminder. When a user sent 2 questions in one turn
+  // (often via WhatsApp coalescing of rapid bursts), the LLM tends to drop
+  // one. This banner makes it explicit. Production failure: "I have no
+  // appetite, is that the medication? I forgot my injection yesterday, what
+  // should I do?" → Grace answered only about appetite.
+  if (opts?.isMultiPart && userText) {
+    parts.push(
+      `MULTI-PART MESSAGE — the user asked TWO or more separate things in their message. ` +
+      `Address EVERY part. Do not skip any question. Keep each answer short — 1 short sentence per part is fine — but every question gets a direct answer.`,
+    );
   }
 
   // For food-summary queries with a fresh tool result, the answer IS the
@@ -410,24 +483,37 @@ export class AIOrchestrator {
       .reverse()
       .find((m) => m.role === 'assistant')?.content ?? undefined;
 
-    // Topic-focus injection. Always inject a focus marker right before the
-    // user turn. It (1) tells Gemini what kind of message this is, and (2)
-    // explicitly quotes the last Grace message so the model knows NOT to
-    // repeat it verbatim — the most common Gemini Flash failure pattern.
-    const focusMarker = buildFocusMarker(classification.type, toolResults, lastAssistantMessage, input.text);
-
-    // ── Topic-switch defense (2026-06-03 production failure fix) ─────────
-    // When the user shifts topic between turns ("muscle" → "hair"),
-    // Gemini Flash will keep continuing the previous topic if the prior
-    // long assistant turn sits right before the new user message. Stripping
-    // that turn removes the anchor entirely — the model only sees the
-    // current question + the topic-switch warning in the focus marker.
-    // The previous USER turn stays in history because it's benign context
-    // (and removing both turns leaves an odd pair of unmatched roles).
+    // ── Context-isolation defenses (2026-06-03 production failures) ─────
+    // Two independent failure modes from the screenshots:
+    //
+    //   (1) TOPIC SWITCH: user says "hair?" after a muscle answer; Gemini
+    //       Flash anchors on the most-recent assistant turn(s) and keeps
+    //       producing muscle content. Fix: detect the switch and strip
+    //       EVERY assistant turn from history — there's nothing left to
+    //       anchor on. User turns stay (short, low-anchor, useful context).
+    //
+    //   (2) MULTI-PART MESSAGE: coalesced WhatsApp burst contains two
+    //       independent asks; Gemini answers only the first. Fix: detect
+    //       2+ '?' or continuation cues and instruct the model explicitly
+    //       to address every part.
     const isTopicSwitch = detectTopicSwitch(input.text, lastAssistantMessage);
+    const isMultiPart = detectMultiPartMessage(input.text);
     const generationHistory: ChatTurn[] = isTopicSwitch
-      ? stripLastAssistantTurn([...input.history])
+      ? stripAssistantTurns([...input.history])
       : [...input.history];
+
+    // Topic-focus injection. Always inject a focus marker right before the
+    // user turn. It (1) tells Gemini what kind of message this is, (2)
+    // explicitly quotes the last Grace message so the model knows NOT to
+    // repeat it verbatim, and (3) on detected topic-switch or multi-part,
+    // emits the strongest banner ("⛔ TOPIC SWITCH" or "MULTI-PART").
+    const focusMarker = buildFocusMarker(
+      classification.type,
+      toolResults,
+      lastAssistantMessage,
+      input.text,
+      { isTopicSwitch, isMultiPart },
+    );
 
     const generationMessages = [
       { role: 'system' as const, content: baseSystem },

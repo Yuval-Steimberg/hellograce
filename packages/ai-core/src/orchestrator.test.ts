@@ -348,6 +348,81 @@ describe('detectTopicSwitch', () => {
   });
 });
 
+describe('stripAssistantTurns (production path — strips all)', () => {
+  it('removes every assistant turn, keeping all user turns intact', async () => {
+    const { stripAssistantTurns } = await import('./orchestrator.js');
+    const history = [
+      { role: 'user' as const, content: 'muscle Q', createdAt: new Date() },
+      { role: 'assistant' as const, content: 'muscle A', createdAt: new Date() },
+      { role: 'user' as const, content: 'hair Q', createdAt: new Date() },
+      { role: 'assistant' as const, content: 'hair A (wrong, was muscle)', createdAt: new Date() },
+    ];
+    const result = stripAssistantTurns(history);
+    expect(result).toHaveLength(2);
+    expect(result.every((t) => t.role === 'user')).toBe(true);
+    expect(result.map((t) => t.content)).toEqual(['muscle Q', 'hair Q']);
+  });
+
+  it('returns the empty array when given empty history', async () => {
+    const { stripAssistantTurns } = await import('./orchestrator.js');
+    expect(stripAssistantTurns([])).toEqual([]);
+  });
+
+  it('returns the same user turns when no assistant turns exist', async () => {
+    const { stripAssistantTurns } = await import('./orchestrator.js');
+    const onlyUsers = [
+      { role: 'user' as const, content: 'a', createdAt: new Date() },
+      { role: 'user' as const, content: 'b', createdAt: new Date() },
+    ];
+    expect(stripAssistantTurns(onlyUsers)).toEqual(onlyUsers);
+  });
+});
+
+describe('detectMultiPartMessage', () => {
+  it('returns true when the message has two question marks', async () => {
+    const { detectMultiPartMessage } = await import('./orchestrator.js');
+    expect(
+      detectMultiPartMessage(
+        'I have no appetite, is that the medication? I forgot my injection yesterday, what should I do?',
+      ),
+    ).toBe(true);
+  });
+
+  it('returns true on continuation cues like "Also"/"And"/"By the way"', async () => {
+    const { detectMultiPartMessage } = await import('./orchestrator.js');
+    expect(
+      detectMultiPartMessage('I felt rough yesterday. Also, what foods are best to eat tonight?'),
+    ).toBe(true);
+    expect(
+      detectMultiPartMessage(
+        'Took my shot this morning. By the way, my hair is shedding more lately.',
+      ),
+    ).toBe(true);
+    expect(
+      detectMultiPartMessage(
+        "I'm at 60g today. Another question — should I worry about the plateau?",
+      ),
+    ).toBe(true);
+  });
+
+  it('returns false on a single short question', async () => {
+    const { detectMultiPartMessage } = await import('./orchestrator.js');
+    expect(detectMultiPartMessage('How much protein should I have today?')).toBe(false);
+  });
+
+  it('returns false on short messages even with one question mark', async () => {
+    const { detectMultiPartMessage } = await import('./orchestrator.js');
+    expect(detectMultiPartMessage('hi?')).toBe(false);
+    expect(detectMultiPartMessage('really?')).toBe(false);
+  });
+
+  it('returns false on missing input', async () => {
+    const { detectMultiPartMessage } = await import('./orchestrator.js');
+    expect(detectMultiPartMessage(undefined)).toBe(false);
+    expect(detectMultiPartMessage('')).toBe(false);
+  });
+});
+
 describe('stripLastAssistantTurn', () => {
   it('removes the most recent assistant turn but keeps prior user turn', async () => {
     const { stripLastAssistantTurn } = await import('./orchestrator.js');

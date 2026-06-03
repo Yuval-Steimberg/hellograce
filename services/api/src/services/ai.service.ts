@@ -485,6 +485,12 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       'exercise_log', 'injection_log',
       'greeting', 'gibberish',
       'scheduling', 'pause_request',
+      // Food recommendations don't need GLP-1 KB retrieval â€” the prompt's
+      // FOOD RECOMMENDATIONS section + tool calls (get_food_summary,
+      // search_food_ideas) already provide everything the response needs.
+      // Production telemetry 2026-06-03 showed RAG burning ~750ms here with
+      // no measurable impact on response quality.
+      'food_question',
     ]);
     const ragSkippedForIntent = RAG_SKIP_INTENTS.has(intentClass.type);
 
@@ -1027,7 +1033,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
         tools.register(makeRemoveFoodTool({ pool: this.deps.pool, logger, userId: input.userId }));
       }
     }
-    const orchestrator = new AIOrchestrator({ llm: this.deps.llm, tools });
+    const orchestrator = new AIOrchestrator({ llm: this.deps.llm, tools, logger });
 
     // Load DB content rules (60s cache â€” effectively free after first call).
     const dbRules = this.deps.contentRulesService
@@ -1141,14 +1147,21 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     // opaque 20s blob and we can't tell whether to attack the generate call,
     // the parallel guards, or the regen path.
     if (result.internalTimings) {
-      if (typeof result.internalTimings.generate === 'number') {
-        stageTimings['orch_generate'] = result.internalTimings.generate;
+      const it = result.internalTimings;
+      if (typeof it.tools === 'number' && it.tools > 0) {
+        stageTimings['orch_tools'] = it.tools;
       }
-      if (typeof result.internalTimings.guards === 'number') {
-        stageTimings['orch_guards'] = result.internalTimings.guards;
+      if (typeof it.generate === 'number') {
+        stageTimings['orch_generate'] = it.generate;
       }
-      if (typeof result.internalTimings.regen === 'number' && result.internalTimings.regen > 0) {
-        stageTimings['orch_regen'] = result.internalTimings.regen;
+      if (typeof it.postgen === 'number' && it.postgen > 0) {
+        stageTimings['orch_postgen'] = it.postgen;
+      }
+      if (typeof it.guards === 'number') {
+        stageTimings['orch_guards'] = it.guards;
+      }
+      if (typeof it.regen === 'number' && it.regen > 0) {
+        stageTimings['orch_regen'] = it.regen;
       }
     }
     const totalMs = Date.now() - t0;

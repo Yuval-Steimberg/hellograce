@@ -39,6 +39,12 @@ export interface OrchestratorDeps {
   tools: ToolRegistry;
   planner?: PlannerAgent;
   critic?: LLMCritic;
+  /** Optional structured logger — currently used only for regen-reason
+   *  diagnostics so production telemetry can attribute the ~1.6s retry tax
+   *  to specific violations (truncation / topic drift / content rule / etc.).
+   *  Any pino-compatible logger works; calls are guarded with `?.` so a
+   *  missing logger never breaks the pipeline. */
+  logger?: { info?: (obj: unknown, msg: string) => void };
 }
 
 // Typed fallbacks — each message type gets contextually appropriate recovery
@@ -607,8 +613,11 @@ export class AIOrchestrator {
         : chatFallbackPlan;
 
     let toolResults: ToolResult[] = [];
+    let toolsMs = 0;
     if (plan.needsTools && plan.toolCalls.length > 0) {
+      const toolsStart = Date.now();
       toolResults = await this.deps.tools.executeMany(plan.toolCalls);
+      toolsMs = Date.now() - toolsStart;
     }
 
     // Long-term semantic memories about this user — top-k retrieved by
@@ -714,6 +723,7 @@ export class AIOrchestrator {
       disableThinking: isSimpleMessage,
     });
     const generateMs = Date.now() - generateStart;
+    const postgenStart = Date.now();
 
     // ─── Format enforcement (silent auto-fix) ─────────────────────────
     // Strip em dashes, markdown bold, numbered lists, etc. that Gemini Flash
@@ -793,7 +803,7 @@ export class AIOrchestrator {
         toolResults,
         usedRetrieval: input.retrieved.length > 0,
         latencyMs: Date.now() - started,
-        internalTimings: { generate: generateMs, guards: 0, regen: 0, thinkingDisabled: isSimpleMessage },
+        internalTimings: { tools: toolsMs, generate: generateMs, postgen: Date.now() - postgenStart, guards: 0, regen: 0, thinkingDisabled: isSimpleMessage },
         usedSafeFallback: true,
         critic: {
           scores: { grounding: 1, safety: 1, on_task: 1, tone: 1 },
@@ -935,6 +945,7 @@ export class AIOrchestrator {
       ? baseSystem.slice(baseSystem.indexOf('━━━ THIS USER'), baseSystem.indexOf('━━━ END OF USER DATA ━━━') + 24)
       : '';
 
+    const postgenMs = Date.now() - postgenStart;
     const guardsStart = Date.now();
     const [relevanceVerdict, behavioralViolations, earlyCritic] = await Promise.all([
       shouldRunRelevance
@@ -999,6 +1010,19 @@ export class AIOrchestrator {
 
       if (hardFail) {
         regenerated = true;
+        // Diagnostic log so we can see WHY each regen fires — production
+        // telemetry showed ~1.6s tax per regen but no way to attribute the
+        // cause without re-instrumenting. Logs intent + the violation codes
+        // + truncation flag + critic pass.
+        this.deps.logger?.info?.({
+          intent: classification.type,
+          truncated,
+          topicDrift,
+          criticPass: critic.pass,
+          violations: regenViolations.map((v) => v.code),
+          generateMs,
+          guardsMs,
+        }, 'orchestrator.regen_fired');
         // When the original response was truncated (length finishReason or
         // ended mid-word), add an explicit brevity instruction so the retry
         // fits comfortably inside the token budget. This is the safeguard
@@ -1139,7 +1163,9 @@ export class AIOrchestrator {
       usedRetrieval: input.retrieved.length > 0,
       latencyMs: Date.now() - started,
       internalTimings: {
+        tools: toolsMs,
         generate: generateMs,
+        postgen: postgenMs,
         guards: guardsMs,
         regen: regenMs,
         thinkingDisabled: isSimpleMessage,

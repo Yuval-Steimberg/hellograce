@@ -111,8 +111,12 @@ export interface OrchestratorOutput {
   /** Internal stage timing (set by AIOrchestrator.run). Surfaced so the API
    *  layer can record per-stage breakdowns to messages.stage_timings JSONB. */
   internalTimings?: {
+    /** Tool execution time (search_food_ideas, log_food, etc.) (ms). */
+    tools?: number;
     /** Initial LLM generate call (ms). */
     generate?: number;
+    /** Format enforcer + content checker + grounding precheck + drift detection (ms). */
+    postgen?: number;
     /** Parallel post-gen guards: relevance + behavioral + critic (ms). */
     guards?: number;
     /** Retry LLM call when content / guards failed (ms). 0 when no retry. */

@@ -75,6 +75,15 @@ const FILLER_OPENERS: RegExp[] = [
   /^(oh,?\s*)?(that'?s |what )?(such )?(a |an )?(great|excellent|fantastic|wonderful|amazing|brilliant|terrific|awesome|fabulous|insightful) (question|point|observation|thought)[!.,]?\s*/i,
   /^(absolutely|definitely|of course)[!.,]?\s+(yes|sure|i can|happy to)[,.!]?\s*/i,
   /^happy to (help|chat|share|talk about that)[,.!]?\s*/i,
+  // 2026-06-03 production failure: "It's wonderful you're thinking about a
+  // nourishing dinner!" — Grace praising the user for asking. Sycophantic,
+  // patronizing, and adds zero value. Strip the entire "it's/that's/what an
+  // X you're Y" prefix up to the first sentence terminator.
+  /^(it'?s |that'?s |how )?(so |really |truly |absolutely )?(wonderful|lovely|amazing|fantastic|great|nice|beautiful|smart|thoughtful|mindful|brilliant|insightful|admirable) (?:that |to (?:see|hear|know) (?:that )?)?(you'?re|you (?:are|have))[^.!?]{0,80}[.!]?\s*/i,
+  // "What an X choice / question / idea"
+  /^what (?:a |an )(?:amazing|wonderful|great|excellent|smart|thoughtful|brilliant|fantastic|lovely|inspiring) (?:choice|question|idea|thought|approach|mindset)[!.,]?\s*/i,
+  // "I love that you're..." / "Love that you're..." — same patronizing pattern
+  /^(?:i )?love (?:that |how )(?:you'?re|you (?:are|have))[^.!?]{0,80}[.!]?\s*/i,
 ];
 
 // Map: each context type allows these specific runtime-data openers.

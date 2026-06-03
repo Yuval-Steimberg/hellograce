@@ -28,6 +28,12 @@ export interface AdminDeps {
   bandit?: BanditService;
   /** 2026-05-30: FAQ semantic cache for latency telemetry. */
   faqCache?: import('../cache/faq-semantic-cache.js').FaqSemanticCache;
+  /** UserService — used by PUT /admin/users/:phone to invalidate the
+   *  in-memory user cache after a write. Without this, the next handleMessage
+   *  call reads stale data (60s TTL) and a freshly-set dietary_pattern doesn't
+   *  apply until cache expiry. Production bug 2026-06-03: vegetarian user got
+   *  chicken/fish recommendations even after dietary_pattern was set. */
+  users?: import('../user/user.service.js').UserService;
 }
 
 async function auditLog(pool: Pool, action: string, ip: string, details?: Record<string, unknown>): Promise<void> {
@@ -676,12 +682,23 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     }
     const keys = Object.keys(fields);
     if (keys.length === 0) return { ok: true };
-    const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
-    const { rowCount } = await deps.pool.query(
-      `UPDATE users SET ${sets}, updated_at = now() WHERE phone = $1`,
-      [phone, ...keys.map((k) => fields[k])],
-    );
-    if (!rowCount) throw new ValidationError('User not found');
+    // Prefer UserService.update so the in-memory user cache is invalidated
+    // immediately — without this, the very next handleMessage call reads the
+    // pre-update user (60s cache TTL) and any freshly-set field like
+    // dietary_pattern silently fails to apply for up to a minute. Production
+    // bug 2026-06-03: vegetarian user got chicken/fish recommendations even
+    // after dietary_pattern was set, because the user-fetch hit cache before
+    // the next minute rolled over.
+    if (deps.users) {
+      await deps.users.update(phone, fields as Parameters<typeof deps.users.update>[1]);
+    } else {
+      const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
+      const { rowCount } = await deps.pool.query(
+        `UPDATE users SET ${sets}, updated_at = now() WHERE phone = $1`,
+        [phone, ...keys.map((k) => fields[k])],
+      );
+      if (!rowCount) throw new ValidationError('User not found');
+    }
     // Return the updated row so caller can verify the write landed.
     // Production failure 2026-06-03: admin couldn't tell if the dietary
     // PUT had any effect because the response was just { ok: true }.

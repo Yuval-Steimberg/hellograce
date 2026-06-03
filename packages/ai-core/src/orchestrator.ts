@@ -1261,17 +1261,38 @@ export class AIOrchestrator {
           validated = retryValidated;
           critic = retryCritic;
         } else {
-          // Step 8: Web search fallback — last resort before the canned safe
-          // fallback. Calls Gemini with Google Search grounding when the KB
-          // has no answer. Content rules still apply. Falls through to Step 9
-          // (safe fallback) if web search also fails or violates a block rule.
-          const webResult = await this.tryWebSearchFallback(
-            baseSystem,
-            input.text,
-            input.history,
-            contentCheckOpts,
-            stripName,
-          );
+          // 2026-06-03 latency cut: web-search fallback only fires for intents
+          // where grounding in current research genuinely matters (knowledge,
+          // medication_question). For food_question / general / emotional /
+          // social_situation / etc., the system prompt already contains the
+          // GLP-1 food rules + dietary filter + user context, and Google
+          // Search adds a 3-4s LLM call (with grounding) for no quality gain.
+          // Skipping it saves ~4s on every regen-failure path.
+          const WEB_SEARCH_INTENTS = new Set([
+            'knowledge',
+            'medication_question',
+            'appointment_prep',
+          ]);
+          const shouldTryWebSearch = WEB_SEARCH_INTENTS.has(classification.type);
+          let webResult: ValidationResult | null = null;
+          let webSearchMs = 0;
+          if (shouldTryWebSearch) {
+            const webStart = Date.now();
+            // Step 8: Web search fallback — last resort before the canned safe
+            // fallback. Calls Gemini with Google Search grounding when the KB
+            // has no answer. Content rules still apply.
+            webResult = await this.tryWebSearchFallback(
+              baseSystem,
+              input.text,
+              input.history,
+              contentCheckOpts,
+              stripName,
+            );
+            webSearchMs = Date.now() - webStart;
+            // Fold into the existing regen telemetry bucket so the dashboard
+            // shows this cost without a new column.
+            regenMs += webSearchMs;
+          }
           if (webResult) {
             validated = webResult;
             critic = retryCritic;

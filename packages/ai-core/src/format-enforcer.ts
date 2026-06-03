@@ -584,6 +584,24 @@ export function enforceFormat(
     fixes.push('dot_comma_fixed');
   }
 
+  // ─── Multi-question collapse ───────────────────────────────────────────
+  // Production telemetry (2026-06-03): every food_question regen was firing
+  // on "two_questions" — the model produced multiple "?" marks. The regen LLM
+  // call took 3.4s to rewrite. Deterministic strip is ~free: when the
+  // response contains 2+ question marks, keep only the LAST one (the most
+  // useful follow-up) and convert earlier ones to periods. This kills the
+  // regen trigger at source. Safer than dropping the response altogether and
+  // costs zero LLM time.
+  const allQuestionMarks = (text.match(/\?/g) ?? []).length;
+  if (allQuestionMarks >= 2) {
+    const lastQ = text.lastIndexOf('?');
+    if (lastQ > 0) {
+      const before = text.slice(0, lastQ).replace(/\?/g, '.');
+      text = before + text.slice(lastQ);
+      fixes.push('multi_question_collapsed');
+    }
+  }
+
   // ─── Final whitespace cleanup ─────────────────────────────────────────
   // Drop leading/trailing whitespace per line, collapse 3+ blank lines.
   text = text

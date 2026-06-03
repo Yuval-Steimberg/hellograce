@@ -659,6 +659,13 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /^oh gosh\b/im, reason: '"Oh gosh" — artificial emotional reaction, banned' },
   { pattern: /^oh wow\b/im, reason: '"Oh wow" — artificial emotional reaction, banned' },
   { pattern: /^yikes\b/im, reason: '"Yikes" — artificial emotional reaction, banned' },
+  // ── 2026-06-03 production screenshots: "Ugh" / "Sigh" openers are not
+  // empathetic — they read as Grace being annoyed or emotionally drained by
+  // the user. Hard-banned regardless of position (Grace was using them
+  // mid-sentence too: "Anytime. Glad to hear you slept well, but ugh, that
+  // stomach pain sounds rough."). Matches "ugh," "ugh," "ugh!" anywhere.
+  { pattern: /\bugh[,.!\s—-]/i, reason: '"Ugh" — sounds annoyed/drained, never empathetic. Drop it entirely.' },
+  { pattern: /\bsigh[,.!\s—-]/i, reason: '"Sigh" — sounds emotionally exhausted by the user, banned' },
 
   // Meta-AI self-awareness — Grace never talks about herself as a system/AI/model
   { pattern: /\binternal processing error\b/i, reason: '"internal processing error" — meta-AI self-reference, banned' },
@@ -743,6 +750,25 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\blayers? of complexity\b/i, reason: '"layers of complexity" — vague filler, give specific information' },
   { pattern: /\bholistic approach\b/i, reason: '"holistic approach" — wellness jargon, be specific instead' },
   { pattern: /\bmore careful monitoring\b/i, reason: '"more careful monitoring" — vague, name what to monitor specifically' },
+
+  // ── 2026-06-03 production screenshots: corporate medical-advice deflection
+  // "While I'm here to support you on your GLP-1 journey, I can't give medical
+  // advice" — this is the lazy fallback for ANY drug-interaction question and
+  // it strips Grace of all her real knowledge. Grace knows common GLP-1 drug
+  // interactions (NSAIDs/ibuprofen, alcohol, insulin, sulfonylureas) and
+  // should answer with the knowledge she has, ending with a "your pharmacist
+  // can confirm specifics" warm redirect — NOT a flat refusal.
+  { pattern: /\bi\s+can'?t\s+give\s+(?:you\s+)?(?:any\s+)?medical\s+advice\b/i, reason: '"I can\'t give medical advice" — flat refusal, banned. Answer with what you know + warm pharmacist/doctor redirect for specifics.' },
+  { pattern: /\bwhile\s+i'?m\s+here\s+to\s+support\s+you\s+on\s+your\s+glp-?1\s+journey,?\s*i\s+can'?t\b/i, reason: 'Corporate disclaimer opener before refusing — banned. Just answer or warmly redirect.' },
+
+  // ── 2026-06-03 production screenshots: passive-aggressive clarifications
+  // "Tell me a bit more so I can actually help" / "so I can give you
+  // something useful" implies the user's input wasn't useful — feels
+  // dismissive on a vulnerable message ("I have no appetite, is that the
+  // medication?" → this passive-aggressive prompt instead of an answer).
+  { pattern: /\bso\s+(?:i\s+can\s+)?(?:actually\s+)?(help|be\s+useful)\b/i, reason: '"so I can actually help" / "so I can be useful" — implies the user wasn\'t helpful. Use "so I can support you" instead.' },
+  { pattern: /\bso\s+i\s+can\s+give\s+you\s+something\s+useful\b/i, reason: '"so I can give you something useful" — implies the previous turn wasn\'t useful, banned' },
+  { pattern: /\btell\s+me\s+(?:a\s+bit\s+)?more\s+(?:about\s+what'?s\s+going\s+on\s+)?so\s+(?:i\s+can\s+)?(?:actually\s+help|give\s+you\s+something)/i, reason: '"Tell me more so I can actually help/give you something" — passive-aggressive ask, banned' },
 
   // ── 2026-06-02 production screenshot bans ────────────────────────────────
   // Production failures from the stomach-pain screenshots produced two

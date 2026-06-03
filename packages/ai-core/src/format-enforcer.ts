@@ -62,6 +62,11 @@ const FILLER_OPENERS: RegExp[] = [
   /^Thanks (so much |very much )?for sharing (that|this)( with me)?[,.!]?\s*/i,
   /^As (an AI|a language model|an assistant)[,.!]?\s*[^.!?]*[.!?]\s*/i,
   /^Let me (start by|begin by) saying[,.!]?\s*/i,
+  // 2026-06-03 production: "Ugh, " / "Sigh, " openers strip — the content
+  // checker also flags these (regen) but stripping deterministically guards
+  // against the case where regen also produces one.
+  /^ugh[,.!\s—-]+/i,
+  /^sigh[,.!\s—-]+/i,
 ];
 
 // Map: each context type allows these specific runtime-data openers.

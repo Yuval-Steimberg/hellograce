@@ -76,6 +76,36 @@ const EnvSchema = z.object({
    *  reply. Default 2h — recommended minimum so Grace feels like a companion,
    *  not a notification system. Set to 0 to disable. */
   ENGAGEMENT_COOLDOWN_HOURS: z.coerce.number().min(0).max(48).default(2),
+
+  /** TRUST GEMINI mode (2026-06-04 architecture refactor).
+   *
+   *  When TRUST_GEMINI=true, the response pipeline collapses 7 guard layers
+   *  down to 3 essential ones: safety check (medical emergencies), format
+   *  enforcer (cosmetic — em-dashes, markdown), and harmful-content checker
+   *  (privacy leaks, forbidden food, banned dose claims). The brittle
+   *  LLM-as-judge guards that produce most false positives are bypassed:
+   *
+   *    - behavioral_guard: catches "deflection" patterns but over-fires on
+   *      legitimate "I need more info" responses → user sees canned fallback
+   *    - relevance_check: semantic on-topic check that flags borderline
+   *      cases → triggers regen that produces shorter / worse answers
+   *    - quality_guard sentence caps: forces knowledge intent to <8 sentences,
+   *      breaking multi-part medical answers
+   *    - critic: Gemini-as-judge for non-safety intents → adds ~2s and rarely
+   *      catches anything the deterministic checks miss
+   *
+   *  Default OFF — strict pipeline is the baseline. Flip to true to A/B
+   *  test the lean pipeline in production.
+   *
+   *  When false, granular flags below can still disable individual layers. */
+  TRUST_GEMINI: z.coerce.boolean().default(false),
+
+  /** Individual guard toggles. Set to false to disable a specific layer
+   *  without flipping the whole pipeline. Composes with TRUST_GEMINI —
+   *  if TRUST_GEMINI=true, these are all forced to false regardless. */
+  BEHAVIORAL_GUARD_ENABLED: z.coerce.boolean().default(true),
+  RELEVANCE_CHECK_ENABLED: z.coerce.boolean().default(true),
+  QUALITY_GUARD_STRICT: z.coerce.boolean().default(true),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

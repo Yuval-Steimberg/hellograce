@@ -90,6 +90,17 @@ export interface AIServiceDeps {
    *  same dietary profile + meal type doesn't re-pay the Google-Search
    *  grounding round-trip on every "what should I eat for lunch" turn. */
   redis?: Redis;
+  /** 2026-06-04 TRUST GEMINI flags (passed from env). When trustGemini=true,
+   *  behavioral guard / relevance check / quality guard sentence caps are all
+   *  bypassed — Gemini's response ships unless safety / harmful-content
+   *  checks flag it. Lets us A/B test the lean pipeline without removing
+   *  any code. */
+  guards?: {
+    trustGemini?: boolean;
+    behavioralEnabled?: boolean;
+    relevanceEnabled?: boolean;
+    qualityStrict?: boolean;
+  };
 }
 
 export class AIService {
@@ -1120,7 +1131,14 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         tools.register(makeRemoveFoodTool({ pool: this.deps.pool, logger, userId: input.userId }));
       }
     }
-    const orchestrator = new AIOrchestrator({ llm: this.deps.llm, tools, logger });
+    const orchestrator = new AIOrchestrator({
+      llm: this.deps.llm,
+      tools,
+      logger,
+      // Pass-through TRUST GEMINI flags. When trustGemini=true, the
+      // orchestrator skips behavioral / relevance / quality guards entirely.
+      ...(this.deps.guards ? { guards: this.deps.guards } : {}),
+    });
 
     // Load DB content rules (60s cache — effectively free after first call).
     const dbRules = this.deps.contentRulesService

@@ -101,7 +101,29 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     userMemory,
     faqCache,
     redis,
+    // 2026-06-04 TRUST GEMINI flags — bypass LLM-as-judge guards.
+    guards: {
+      trustGemini: env.TRUST_GEMINI,
+      behavioralEnabled: env.BEHAVIORAL_GUARD_ENABLED,
+      relevanceEnabled: env.RELEVANCE_CHECK_ENABLED,
+      qualityStrict: env.QUALITY_GUARD_STRICT,
+    },
   });
+  if (env.TRUST_GEMINI) {
+    logger.info(
+      { trustGemini: true, behavioral: false, relevance: false, qualityStrict: false },
+      'startup.trust_gemini_mode',
+    );
+  } else if (!env.BEHAVIORAL_GUARD_ENABLED || !env.RELEVANCE_CHECK_ENABLED || !env.QUALITY_GUARD_STRICT) {
+    logger.info(
+      {
+        behavioral: env.BEHAVIORAL_GUARD_ENABLED,
+        relevance: env.RELEVANCE_CHECK_ENABLED,
+        qualityStrict: env.QUALITY_GUARD_STRICT,
+      },
+      'startup.guards_partially_disabled',
+    );
+  }
 
   const sender = new TwilioSender(
     {

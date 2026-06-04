@@ -45,6 +45,15 @@ export interface OrchestratorDeps {
    *  Any pino-compatible logger works; calls are guarded with `?.` so a
    *  missing logger never breaks the pipeline. */
   logger?: { info?: (obj: unknown, msg: string) => void };
+  /** 2026-06-04 TRUST GEMINI flags. Pass these in from env. When trustGemini
+   *  is true, ALL three LLM-as-judge guards are bypassed regardless of the
+   *  individual flags. Granular flags let you disable one guard at a time. */
+  guards?: {
+    trustGemini?: boolean;
+    behavioralEnabled?: boolean;
+    relevanceEnabled?: boolean;
+    qualityStrict?: boolean;
+  };
 }
 
 // Typed fallbacks — each message type gets contextually appropriate recovery
@@ -1056,7 +1065,18 @@ export class AIOrchestrator {
     // Catches walls of text, nutrition-report formatting, numeric clutter,
     // and excessive questions that slip past content rules and the LLM
     // relevance check. Failures trigger regen with specific feedback.
-    const qualityIssue = checkResponseQuality(validated.text, classification.type);
+    //
+    // 2026-06-04: gated on guards.qualityStrict (default true). When false
+    // OR when trustGemini is on, we skip the sentence/length cap regens that
+    // produced the "knowledge answer chopped to 2 sentences" failures and
+    // trust Gemini to format the response. Cosmetic issues (em-dashes,
+    // markdown, headers) are still cleaned by format-enforcer below.
+    const trustGeminiMode = this.deps.guards?.trustGemini === true;
+    const qualityStrictFlag = this.deps.guards?.qualityStrict !== false;
+    const qualityGuardActive = !trustGeminiMode && qualityStrictFlag;
+    const qualityIssue = qualityGuardActive
+      ? checkResponseQuality(validated.text, classification.type)
+      : null;
     if (qualityIssue) {
       regenViolations.push({
         code: qualityIssue.code,
@@ -1100,17 +1120,30 @@ export class AIOrchestrator {
       'exercise_log',
       'injection_log',
     ]);
+    // 2026-06-04 TRUST GEMINI gates. When trustGeminiMode=true, all three
+    // LLM-as-judge guards are skipped — Gemini's natural output ships
+    // unless safety / format / harmful-content checks flag it. This is the
+    // lean pipeline. (trustGeminiMode was already computed above for the
+    // quality-guard gate.)
+    const behavioralFlagOn = this.deps.guards?.behavioralEnabled !== false; // default true
+    const relevanceFlagOn = this.deps.guards?.relevanceEnabled !== false;
     const shouldRunRelevance =
+      !trustGeminiMode &&
+      relevanceFlagOn &&
       !isTrivial &&
       !topicDrift &&
       !RELEVANCE_SKIP_INTENTS.has(classification.type) &&
       (lastAssistantMessage || looksLikeQuestion) &&
       input.text.length > 10;
     const shouldRunBehavioral =
+      !trustGeminiMode &&
+      behavioralFlagOn &&
       !isTrivial && !topicDrift && regenViolations.length === 0;
     // Run the critic in this parallel batch only when the intent is risky
     // (it'll be needed regardless of other guards). Non-risky critic invocations
     // happen later via review() inside the needsReview branch.
+    // Note: critic is NOT bypassed by trustGemini — risky intents (safety_*)
+    // still get adjudicated because that's a hard safety requirement.
     const shouldRunCriticEarly =
       !isTrivial && this.shouldRunCritic(plan, validated);
 
@@ -1311,8 +1344,11 @@ export class AIOrchestrator {
         );
         // Apply quality guard to the retry too — if the regen is still
         // verbose / cluttered, fall through to safe fallback rather than
-        // shipping a bad response.
-        const retryQualityIssue = checkResponseQuality(retryValidated.text, classification.type);
+        // shipping a bad response. Same trustGemini / qualityStrict gate
+        // as the initial guard above.
+        const retryQualityIssue = qualityGuardActive
+          ? checkResponseQuality(retryValidated.text, classification.type)
+          : null;
         if (retryQualityIssue) {
           retryRegenViolations.push({
             code: retryQualityIssue.code,

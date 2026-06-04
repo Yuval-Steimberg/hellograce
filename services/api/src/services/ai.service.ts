@@ -474,6 +474,15 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       // The planner LLM (~600ms) was pure overhead on every protein follow-
       // up question. Skipping it saves ~500-600ms with zero accuracy cost.
       'food_question',
+      // 2026-06-04 latency cut: 'general' is the catch-all for unclassifiable
+      // chat â€” "why?", "ok thanks", short follow-ups. Production telemetry
+      // showed the planner LLM burning ~1.4s on every general turn,
+      // returning "no tools needed" on the vast majority. The few general
+      // turns that DO benefit from a tool (e.g. a misclassified food log)
+      // are caught by the force-call blocks downstream (shouldForceLogFood
+      // etc.). Skipping the planner here saves ~1.4s on chat follow-ups
+      // with zero functional loss.
+      'general',
       // INTENTIONALLY NOT INCLUDED (planner needed for correct tool call):
       //   - weight_log: needs log_weight tool, no force block exists
       //   - mood_log: needs log_mood tool, no force block exists
@@ -481,7 +490,6 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       //     no force block, so the planner picks the right tool
       //   - pause_request: short-circuits at the webhook layer; never reaches
       //     this code path anyway
-      //   - general: planner picks the right tool based on full text analysis
     ]);
     const skipPlanner =
       CLASSIFIER_SKIP_PLANNER.has(intentClass.type) || !flags.toolsEnabled;

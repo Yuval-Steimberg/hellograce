@@ -130,7 +130,25 @@ export class AIService {
     // turns because they don't add anything to a "Hi" → "Hey there" exchange.
     if (input.media.length === 0) {
       lat.mark('fast_path_lookup');
-      const fast = tryFastPath(input.text, input.userId);
+      // 2026-06-04 fix: when Grace's previous message ended with an OFFER
+      // question ("want me to walk you through?", "should I add it?",
+      // "want a few options?"), the user's "Yes" / "Sure" is a COMMITMENT
+      // to that action, not a generic ack. Fast-path would return
+      // "Glad that landed well." — wrong. Skip fast-path in this case
+      // so the orchestrator can deliver the promised content.
+      const recentTurns = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
+      const lastAssistant = [...recentTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+      const lastWasOfferQuestion = /\?\s*$/.test(lastAssistant.trim()) &&
+        /\b(want me to|would you (?:like|want)|should i|can i|may i|how about|do you want|interested in|let me know if you'?d like|let me know if you want|i can (?:walk you|show you|share|give|explain|break|go through|run through))\b/i.test(lastAssistant);
+      const isAffirmation = /^(?:yes|yep|yeah|yup|sure|ok|okay|sounds good|please do|please|alright|go ahead|do it|let'?s do it|yes please|absolutely)[!.?]?\s*$/i.test(input.text.trim());
+      const skipFastPathDueToOffer = lastWasOfferQuestion && isAffirmation;
+      if (skipFastPathDueToOffer) {
+        this.deps.logger.info(
+          { userId: input.userId, last: lastAssistant.slice(0, 80), text: input.text },
+          'ai.fast_path.skipped_offer_followthrough',
+        );
+      }
+      const fast = skipFastPathDueToOffer ? null : tryFastPath(input.text, input.userId);
       if (fast) {
         const stageTimings = lat.snapshot();
         const totalMs = Date.now() - t0;

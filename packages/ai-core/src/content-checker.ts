@@ -126,6 +126,10 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   // comma-joined inline variant ("Lentil soup: ... , Tofu stir-fry: ... ,
   // Greek yogurt: ...") that the lunch-recommendation response produced.
   violations.push(...checkInlineLabelColonList(text));
+  // Always check: phrase repetition (production failure 2026-06-04).
+  // "GLP-1 medications" appearing 4× in 3 sentences slipped past every other
+  // guard. Deterministic 2-gram frequency check catches it.
+  violations.push(...checkPhraseRepetition(text));
 
   return violations;
 }
@@ -137,19 +141,94 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
 // All separated by commas or periods, all on one line, but structurally a
 // 4-item list with label-colon items. H3 PROSE ONLY explicitly bans this
 // but the LLM still emits it on food-recommendation responses. We catch
-// any response with 3+ short "Capitalized Phrase:" markers followed by a
+// any response with 2+ "Capitalized Phrase:" markers followed by a
 // description and force regen.
-const INLINE_LABEL_COLON_RE = /\b([A-Z][a-z]+(?:[\s-]+[a-z]+){0,4}):\s+[A-Za-z][a-z]/g;
+//
+// 2026-06-04 production failure: "Here's why GLP-1 medications work, and a
+// bit more about coffee: How GLP-1 Medications Work: GLP-1 (...) is a..."
+// — two colons in a row. The old INLINE_LABEL_COLON_RE required `[A-Z][a-z]+`
+// for the label, missing "How GLP-1 Medications Work" (uppercase GLP-1 in
+// the middle). And the count threshold was 3, so even with the broader regex
+// two colons wouldn't fire. Now: label allows uppercase + digits + hyphens
+// inside, and threshold is 2 (a single header is still suspicious; two is
+// definitively a leak).
+const INLINE_LABEL_COLON_RE = /\b([A-Z][\w-]*(?:[\s-]+[A-Za-z][\w-]*){0,5}):\s+[A-Za-z]/g;
 
 function checkInlineLabelColonList(response: string): ContentViolation[] {
   // Skip very short responses (no room for a list anyway).
   if (response.length < 80) return [];
   const matches = [...response.matchAll(INLINE_LABEL_COLON_RE)];
-  if (matches.length < 3) return [];
+  // Threshold lowered 3 → 2: two "Title Case:" patterns in one response is
+  // already a list-leak. (One could be a legitimate "Subject: blah" preamble.)
+  if (matches.length < 2) return [];
   const labels = matches.slice(0, 5).map((m) => m[1]).filter(Boolean);
   return [{
     code: 'inline_label_colon_list',
-    message: `Response contains ${matches.length} "Label: description" patterns (${labels.map((l) => `"${l}"`).join(', ')}) — that's a list disguised as prose. H3 PROSE ONLY bans this. Rewrite as flowing prose without "Label: description" structures. Example: instead of "Lentil soup: it's hydrating. Tofu stir-fry: toss with edamame." write "Lentil soup is hydrating, tofu stir-fry with edamame is filling, and a Greek yogurt bowl is quick."`,
+    message: `Response contains ${matches.length} "Label: description" patterns (${labels.map((l) => `"${l}"`).join(', ')}) — that's a list disguised as prose. H3 PROSE ONLY bans this. Rewrite as flowing prose with NO colon-followed-by-explanation structures. Example: instead of "Lentil soup: it's hydrating. Tofu stir-fry: toss with edamame." write "Lentil soup is hydrating, tofu stir-fry with edamame is filling, and a Greek yogurt bowl is quick."`,
+    severity: 'regen',
+  }];
+}
+
+// ── Phrase repetition ─────────────────────────────────────────────────────────
+// Catches the production failure where Grace echoes the same multi-word phrase
+// over and over within a few sentences:
+//   "...on GLP-1 medications, coffee is fine. Here's why GLP-1 medications
+//    work... How GLP-1 Medications Work: GLP-1 (...) is a hormone... GLP-1
+//    medications are synthetic versions..."
+// "GLP-1 medications" appears 4× in 3 sentences. The behavioral guard doesn't
+// reliably catch this; we need a deterministic check.
+//
+// Algorithm: tokenize lowercased response, count 2-gram phrase frequencies,
+// flag any 2-word phrase that appears ≥4 times. 4× is the threshold because
+// some phrases (the user's medication, "protein target") legitimately repeat
+// 2-3× in a longer response. 4+ in <600 chars is robot-speak.
+function checkPhraseRepetition(response: string): ContentViolation[] {
+  // Short responses don't have room for repetition.
+  if (response.length < 200) return [];
+  // Tokenize: lowercase, strip punctuation, keep word chars + hyphens + digits.
+  const tokens = response
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+  if (tokens.length < 30) return [];
+  // Build 2-gram counts, skipping stop-word-led grams ("is the", "of a") which
+  // legitimately repeat in any prose.
+  const STOP_WORDS = new Set([
+    'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'and', 'or', 'but', 'so', 'if', 'then', 'than', 'as', 'at', 'by', 'in',
+    'on', 'to', 'of', 'for', 'with', 'from', 'into', 'about', 'over', 'under',
+    'i', 'you', 'we', 'they', 'he', 'she', 'it', 'me', 'us', 'my', 'your',
+    'our', 'their', 'his', 'her', 'its', 'this', 'that', 'these', 'those',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'can', 'could',
+    'should', 'may', 'might', 'must', 'one', 'two', 'three', 'first', 'also',
+    'just', 'only', 'very', 'much', 'more', 'some', 'any', 'no', 'not', 'yes',
+  ]);
+  const counts = new Map<string, number>();
+  for (let i = 0; i < tokens.length - 1; i++) {
+    const a = tokens[i]!;
+    const b = tokens[i + 1]!;
+    // Skip if first token is stop word (low-signal) or either is empty.
+    if (STOP_WORDS.has(a)) continue;
+    if (a.length < 3 || b.length < 2) continue;
+    const gram = `${a} ${b}`;
+    counts.set(gram, (counts.get(gram) ?? 0) + 1);
+  }
+  // Find the most over-repeated 2-gram.
+  let worstGram = '';
+  let worstCount = 0;
+  for (const [gram, n] of counts) {
+    if (n > worstCount) {
+      worstCount = n;
+      worstGram = gram;
+    }
+  }
+  // Threshold: 4+ occurrences in <600 chars, or 5+ in any response.
+  const threshold = response.length < 600 ? 4 : 5;
+  if (worstCount < threshold) return [];
+  return [{
+    code: 'phrase_repetition',
+    message: `Response repeats "${worstGram}" ${worstCount} times — that's robotic. Rewrite using varied phrasing (pronouns "it" / "they", synonyms, or just dropping repeat references). One mention is enough for the reader to track.`,
     severity: 'regen',
   }];
 }

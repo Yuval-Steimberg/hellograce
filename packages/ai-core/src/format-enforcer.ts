@@ -250,6 +250,31 @@ export function enforceFormat(
     fixes.push('double_dash_replaced');
   }
 
+  // ─── List-intro / section-header / Title-Case-header stripping (early) ──
+  // These must run BEFORE stray_colon_cleaned. Otherwise stray_colon_cleaned
+  // strips the trailing `:` from "How GLP-1 Medications Work:" before this
+  // rule has a chance to fire, leaving the orphan header words awkwardly in
+  // prose ("...about coffee How GLP-1 Medications Work GLP-1..."). Moved
+  // from later in the function to fire here (2026-06-04 production failure).
+  //
+  // Pattern 1: "Here's why X, Y, and Z:" / "Here's a breakdown of...:" / etc.
+  const listIntroEarlyRe = /\b(here'?s (?:a |the |my )?(?:breakdown|summary|explanation|overview)[^.:!?\n]{0,80}|here'?s why[^.:!?\n]{0,120}|here'?s what[^.:!?\n]{0,120}|here are (?:[^\n.:!?]{0,80}?)(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?|meals?|dinners?|lunches|breakfasts|snacks|foods?|recipes?|examples?)[^.:!?\n]{0,120})\s*:\s*/gi;
+  if (listIntroEarlyRe.test(text)) {
+    text = text.replace(listIntroEarlyRe, '');
+    fixes.push('list_intro_stripped');
+  }
+
+  // Pattern 2: Generalized Title-Case Header followed by Colon. 3+ Title Case
+  // words (allowing uppercase tokens like "GLP-1" / "USDA" in the middle)
+  // followed by `:` and a body. Anchored at sentence/clause start so we
+  // never strip inside flowing prose. Production failure: "How GLP-1
+  // Medications Work: GLP-1 is a hormone..." — 4-word Title Case header.
+  const titleCaseHeaderEarlyRe = /(^|[.!?:]\s+)([A-Z][\w-]*(?:\s+[A-Z][\w-]*){2,5}):\s+/g;
+  if (titleCaseHeaderEarlyRe.test(text)) {
+    text = text.replace(titleCaseHeaderEarlyRe, (_, prefix) => prefix);
+    fixes.push('title_case_header_stripped');
+  }
+
   // ─── Stray colons in mid-sentence ("foods that: are bland" → "foods that are bland")
   // Gemini sometimes inserts colons before clauses where none is needed.
   // Only strip colons NOT preceded by a known label pattern (e.g. "Rate this:").
@@ -382,24 +407,9 @@ export function enforceFormat(
     fixes.push('label_colon_flattened');
   }
 
-  // ─── List-introducing phrases (2026-05-30 feedback) ────────────────────
-  // "Here's a breakdown of...:" / "Here's why it's happening:" / etc.
-  // These guarantee a list follows. Strip them so the remaining text reads
-  // as direct prose. We replace the colon with a period so the next sentence
-  // stands alone instead of dangling as a list intro.
-  // "here are a few more X for Y:" — production failure 2026-06-03:
-  // "Here are a few vegetarian dinner ideas that are high in protein and tend
-  // to sit well on GLP-1: Tofu Scramble with Spinach: Crumble..."
-  // Previous regex hard-coded a small list of adjectives between "few" and
-  // "ideas"; this version allows up to 6 free-form words ("vegetarian dinner",
-  // "vegan lunch", "high-protein breakfast", etc) before reaching the list-noun.
-  const listIntroRe = /\b(here'?s (?:a |the |my )?(?:breakdown|summary|explanation|overview)[^.:!?\n]{0,80}|here'?s why(?:\s+it'?s\s+happening)?|here'?s what (?:you (?:can|should) do|to do)|here are (?:[^\n.:!?]{0,80}?)(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?|meals?|dinners?|lunches|breakfasts|snacks|foods?|recipes?|examples?)[^.:!?\n]{0,120})\s*:\s*/gi;
-  if (listIntroRe.test(text)) {
-    text = text.replace(listIntroRe, '');
-    fixes.push('list_intro_stripped');
-  }
-
   // Section-header colons at line start (e.g. "Why it's happening:" / "What to do:")
+  // These don't get caught by the early list-intro or title-case strips because
+  // they're shorter and start at line beginning, not mid-sentence.
   const sectionHeaderRe = /^\s*(why it'?s happening|what to do|causes?|solutions?|tips?|steps?|key points?|main points?|background|the answer|the (?:short|tl;?dr) (?:answer|version))\s*:\s*/gim;
   if (sectionHeaderRe.test(text)) {
     text = text.replace(sectionHeaderRe, '');

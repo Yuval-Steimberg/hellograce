@@ -953,6 +953,13 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bif you asked a friend\b/i, reason: 'Hypothetical framing ("if you asked a friend") — banned. Answer the question Grace actually received.' },
   { pattern: /\bwhat kind of things would be helpful\b/i, reason: 'Meta-commentary about what info would help — banned. Ask the specific question OR answer with what you have.' },
   { pattern: /\blet me explain why\b/i, reason: '"Let me explain why" — preamble. Just explain.' },
+  // 2026-06-04 production failure: Grace replied to "What should I eat for
+  // breakfast?" with "Okay, to give you the best breakfast recommendation,
+  // I need a little more information. Tell me about: 1. Your Goals... 2."
+  // — multi-question numbered list AS the response (vs prose answer).
+  { pattern: /\bto give you the best (?:\w+\s+)?recommendation,?\s*i need (?:a |little |bit |some )?more (?:info|information|details?)\b/i, reason: 'Meta-commentary preamble — banned. Either answer with available info OR ask ONE concrete question, never both.' },
+  { pattern: /\btell me about:\s*\d+\./i, reason: 'Numbered list of questions — banned. Ask ONE specific question or answer the original.' },
+  { pattern: /\bi need (?:a |little |bit |some )?more (?:info|information)\s+(?:to\s+|so\s+)/i, reason: '"I need more info to / so..." — meta-commentary preamble, banned.' },
   { pattern: /^absolutely!/im, reason: '"Absolutely!" opener — banned' },
   { pattern: /^of course!/im, reason: '"Of course!" opener — banned' },
   { pattern: /^hi there!/im, reason: '"Hi there!" opener — banned' },

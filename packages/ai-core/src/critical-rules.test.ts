@@ -205,4 +205,26 @@ describe('CRITICAL RULE: Never end a response mid-sentence', () => {
   it('accepts complete responses ending in question mark', () => {
     expect(endsMidWord('Want me to walk you through the math?')).toBe(false);
   });
+
+  // 2026-06-04 production failure: response ended with stranded "2." after
+  // an earlier "1." item that had content. The list was started but not
+  // finished — must be detected as mid-sentence.
+  it('detects stranded numbered list ending ("1. content. 2.")', () => {
+    const text = 'Tell me about: 1. Your goals, what are you trying to achieve. 2.';
+    expect(endsMidWord(text)).toBe(true);
+  });
+
+  it('detects stranded "2." after long parenthetical content', () => {
+    const text = 'Tell me about: 1. Your Goals, what are you trying to achieve (e.g, energy, feeling full). 2.';
+    expect(endsMidWord(text)).toBe(true);
+  });
+
+  it('does NOT false-positive on completed numbered list', () => {
+    const text = '1. Eat tofu. 2. Drink water. 3. Sleep well.';
+    expect(endsMidWord(text)).toBe(false);
+  });
+
+  it('does NOT false-positive on a number with units', () => {
+    expect(endsMidWord("You're at 56g protein today, 4g to go.")).toBe(false);
+  });
 });

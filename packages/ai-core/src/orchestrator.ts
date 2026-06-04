@@ -99,9 +99,13 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "A few solid questions: is my current dose still right for me given my progress, what can I do about the side effects I'm feeling, and is muscle loss something I should be testing for. Want me to add a few specific to you?",
   ],
   general: [
-    "I'm listening — tell me a bit more so I can actually help.",
-    "Tell me a bit more about what's going on so I can give you something useful.",
-    "I'm here — share a bit more so I can help with the right thing.",
+    // 2026-06-04 fix: previous fallbacks contained banned phrases ("so I can
+    // actually help", "so I can give you something useful") that bypassed
+    // the content checker because they're canned. Replaced with neutral
+    // open-ended prompts that don't trip any rule.
+    "What's on your mind?",
+    "Tell me more about that.",
+    "What's going on today?",
   ],
   // Phase 1 coverage expansion intents — short, warm fallbacks per type.
   exercise_log: [
@@ -1636,6 +1640,29 @@ export function endsMidWord(text: string): boolean {
   }
   // No terminal punctuation or emoji at all
   if (!/[.!?…)\]}'"`]$|[\p{Extended_Pictographic}]$/u.test(trimmed)) return true;
+  // 2026-06-04 production failure: response ended with "...(e.g. ... high-protein?) 2."
+  // — a stranded numbered list intro ("2." with no content after). Pattern:
+  // text ends with a digit + period + optional whitespace, AND an earlier
+  // numbered item exists ("1. <content>"). Means the list was started but
+  // not finished.
+  const endsWithStrandedListNumRe = /\b(\d+)\.\s*$/;
+  const endMatch = trimmed.match(endsWithStrandedListNumRe);
+  if (endMatch) {
+    const endNum = parseInt(endMatch[1]!, 10);
+    if (endNum >= 1 && endNum <= 20) {
+      // Did an earlier numbered item appear with actual content after it?
+      const earlierItemsRe = new RegExp(`(?:^|[\\s\\S])(\\d+)\\.\\s+\\S`, 'g');
+      let prev = 0;
+      let m: RegExpExecArray | null;
+      while ((m = earlierItemsRe.exec(trimmed)) !== null) {
+        const n = parseInt(m[1]!, 10);
+        if (n < endNum) { prev = Math.max(prev, n); }
+      }
+      // If we saw an earlier numbered item (e.g. "1. Your Goals,..."), the
+      // ending "2." is a stranded list intro.
+      if (prev > 0) return true;
+    }
+  }
   return false;
 }
 

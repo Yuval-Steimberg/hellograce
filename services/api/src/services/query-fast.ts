@@ -83,8 +83,11 @@ const PROGRESS_TODAY_RE =
 
 // "When did I start" / "when did I begin" / "when did I start ozempic/wegovy/
 // mounjaro/injections/the medication/glp-1"
+// 2026-06-04 expansion: added "do you remember when/what date I started"
+// and "remind me when" patterns after production failure where Grace
+// HALLUCINATED a start date ("January 1st, 2024") instead of looking it up.
 const START_DATE_RE =
-  /^(?:when did i (?:start(?:ed)?|begin|began)|how long (?:have i been|since i started)|what(?:'?s| is| was)?\s+(?:my\s+)?start date)(?:\s+(?:on|with|using|taking))?(?:\s+(?:injections?|ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|the medication|medication|treatment|glp-?1|glp))?\s*\??$/i;
+  /^(?:(?:do you )?remember (?:when|what date) i (?:start(?:ed)?|began)|remind me (?:when|what date) i (?:start(?:ed)?|began)|when did i (?:start(?:ed)?|begin|began)|how long (?:have i been|since i started)|what(?:'?s| is| was)?\s+(?:my\s+)?start date)(?:\s+(?:on|with|using|taking|the))?(?:\s+(?:injections?|ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|the medication|medication|treatment|glp-?1|glp))?\s*\??$/i;
 
 // "What's my week number" / "what week am I on" / "how many weeks" / "what week"
 const WEEK_NUMBER_RE =

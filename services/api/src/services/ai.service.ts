@@ -1249,6 +1249,65 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       ...(userMemories.length > 0 ? { userMemories } : {}),
     });
 
+    // ── Duplicate-response blocking (2026-06-04 production failure) ─────
+    // User got the exact same "It's great/smart you're thinking about your
+    // full macronutrient picture..." paragraph THREE TIMES to three different
+    // questions. The ResponseFingerprintService's recent-list check catches
+    // near-realtime duplication BEFORE the message ships.
+    //
+    // When a duplicate fires, we replace the response with a brief
+    // self-aware acknowledgment instead of shipping the dupe (or running
+    // another regen, which costs latency the user already paid for).
+    if (this.deps.fingerprint && result.text && !result.usedSafeFallback) {
+      const dupCheck = await this.deps.fingerprint.checkRecentDuplicate(
+        input.userId,
+        result.text,
+      ).catch(() => null);
+      if (dupCheck?.isDuplicate) {
+        logger.warn(
+          {
+            userId: input.userId,
+            jaccard: dupCheck.maxJaccard,
+            originalLen: result.text.length,
+            matchedExcerpt: dupCheck.matchedExcerpt,
+          },
+          'ai.response_duplicate_blocked',
+        );
+        if (this.deps.productionIssues) {
+          void this.deps.productionIssues.captureFireAndForget({
+            userId: input.userId,
+            conversationId,
+            userMessage: input.text,
+            graceResponse: result.text,
+            trigger: 'phrase_repetition',
+            violationCodes: ['recent_response_duplicate'],
+            context: {
+              intent: result.intent,
+              jaccard: dupCheck.maxJaccard,
+              matchedExcerpt: dupCheck.matchedExcerpt,
+            },
+          });
+        }
+        // Replace with a brief, self-aware alternative. Different from any
+        // typed fallback so it doesn't itself become a repeated pattern.
+        // Variant chosen by hash of (userId + day) so it varies per user
+        // and across days but is stable for one conversation.
+        const variants = [
+          "I just said something similar — what specifically did you want me to dig into?",
+          "I covered most of that in my last reply. What angle would be useful here?",
+          "That overlaps with what I just told you. Anything you want me to go deeper on?",
+        ];
+        let hash = 0;
+        const seed = `${input.userId}|${new Date().toISOString().slice(0, 10)}`;
+        for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+        const replacement = variants[Math.abs(hash) % variants.length]!;
+        result.text = replacement;
+      }
+      // Always record AFTER any replacement so the next turn's check sees
+      // what we actually shipped (replacement OR original).
+      void this.deps.fingerprint.recordRecent(input.userId, result.text);
+    }
+
     // ── Production issue capture (Layer 4 of defense-in-depth) ──────────
     // Fire-and-forget: capture every regen/fallback/violation event so we
     // can review and promote to regression tests. NEVER blocks the user.

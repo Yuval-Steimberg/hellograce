@@ -398,7 +398,26 @@ export function makeLogFoodTool(deps: {
         { userId: deps.userId, food: parsed.food, protein: parsed.protein_g, dailyProteinG, source },
         'tool.log_food.ok',
       );
-      return { ...parsed, daily_protein_g: dailyProteinG, daily_calories: dailyCalories };
+      // 2026-06-04: explicit field names so the LLM can't misread. Production
+      // failure: tool returned `daily_protein_g: 35` but the LLM ignored it
+      // and used the pre-log "Total protein TODAY: 0g" from system context,
+      // saying "still at 0g for the day" right after logging 35g.
+      // The verbose field names below are picked specifically so the LLM
+      // physically cannot use the wrong number.
+      return {
+        ...parsed,
+        // Pre-existing fields kept for backward compatibility with any code
+        // that reads them. New verbose fields are the source of truth.
+        daily_protein_g: dailyProteinG,
+        daily_calories: dailyCalories,
+        // Explicit, unmistakable field names — the LLM MUST use these.
+        this_log_protein_g: parsed.protein_g,
+        this_log_calories: parsed.calories,
+        daily_protein_g_after_this_log: dailyProteinG,
+        daily_calories_after_this_log: dailyCalories,
+        instruction_to_grace:
+          'When you write the user-facing reply, the running total for today is daily_protein_g_after_this_log. Do not use any older total from the system context block. Compute: "You\'re at " + daily_protein_g_after_this_log + "g today."',
+      };
     },
   };
 }

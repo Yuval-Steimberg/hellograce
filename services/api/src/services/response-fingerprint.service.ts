@@ -21,6 +21,16 @@ const NGRAM_SIZE = 5;
 const FP_KEY_PREFIX = 'fp:'; // fp:{userId}
 const MIN_TEXT_LEN = 30; // skip ultra-short replies — "ok 🤍" can't be meaningfully repetitive
 
+// Recent-response duplication blocking (2026-06-04 production failure):
+// user got the EXACT same "It's great/smart you're thinking about your full
+// macronutrient picture..." paragraph THREE TIMES in a row to three different
+// questions. The 90-day fingerprint set is for long-term observation; this
+// short-list captures the last N replies for near-realtime dedupe.
+const RECENT_LIST_PREFIX = 'fp:recent:'; // fp:recent:{userId}
+const RECENT_LIST_SIZE = 5; // keep the last 5 Grace replies for comparison
+const RECENT_LIST_TTL_SECONDS = 2 * 60 * 60; // 2h — covers a single session
+const RECENT_OVERLAP_THRESHOLD = 0.55; // Jaccard ≥ this = definitely a dupe
+
 export interface FingerprintOverlap {
   /** Jaccard similarity 0–1: |A ∩ B| / |A ∪ B|. */
   jaccard: number;
@@ -81,6 +91,73 @@ export class ResponseFingerprintService {
       return { jaccard, totalNgrams: candidateHashes.length, matchingNgrams };
     } catch (err) {
       this.logger.warn({ err, userId }, 'fingerprint.check.failed');
+      return empty;
+    }
+  }
+
+  /**
+   * Append text to the user's "recent replies" Redis LIST and trim to the
+   * last RECENT_LIST_SIZE items. Used by checkRecentDuplicate to detect
+   * near-realtime repetition across the last few turns.
+   */
+  async recordRecent(userId: string, text: string): Promise<void> {
+    try {
+      const clean = text.trim();
+      if (clean.length < MIN_TEXT_LEN) return;
+      const key = RECENT_LIST_PREFIX + userId;
+      const pipe = this.redis.pipeline();
+      pipe.lpush(key, clean);
+      pipe.ltrim(key, 0, RECENT_LIST_SIZE - 1);
+      pipe.expire(key, RECENT_LIST_TTL_SECONDS);
+      await pipe.exec();
+    } catch (err) {
+      this.logger.warn({ err, userId }, 'fingerprint.record_recent.failed');
+    }
+  }
+
+  /**
+   * Check whether `text` is a near-duplicate of any of the user's last N
+   * Grace replies. Returns the max Jaccard similarity across the recent
+   * list and a boolean `isDuplicate` set when it exceeds the threshold.
+   *
+   * Fast: one Redis LRANGE + N small in-memory n-gram-set intersections.
+   * No LLM, no extra Redis round-trips per item.
+   */
+  async checkRecentDuplicate(
+    userId: string,
+    text: string,
+  ): Promise<{ isDuplicate: boolean; maxJaccard: number; matchedExcerpt: string | null }> {
+    const empty = { isDuplicate: false, maxJaccard: 0, matchedExcerpt: null };
+    try {
+      const clean = text.trim();
+      if (clean.length < MIN_TEXT_LEN) return empty;
+      const candidateHashes = new Set(ngramHashes(clean, NGRAM_SIZE));
+      if (candidateHashes.size === 0) return empty;
+
+      const recent = await this.redis.lrange(RECENT_LIST_PREFIX + userId, 0, RECENT_LIST_SIZE - 1);
+      if (recent.length === 0) return empty;
+
+      let maxJ = 0;
+      let matched: string | null = null;
+      for (const prior of recent) {
+        const priorHashes = new Set(ngramHashes(prior, NGRAM_SIZE));
+        if (priorHashes.size === 0) continue;
+        let inter = 0;
+        for (const h of candidateHashes) if (priorHashes.has(h)) inter++;
+        const union = candidateHashes.size + priorHashes.size - inter;
+        const j = union > 0 ? inter / union : 0;
+        if (j > maxJ) {
+          maxJ = j;
+          matched = prior;
+        }
+      }
+      return {
+        isDuplicate: maxJ >= RECENT_OVERLAP_THRESHOLD,
+        maxJaccard: maxJ,
+        matchedExcerpt: matched ? matched.slice(0, 120) : null,
+      };
+    } catch (err) {
+      this.logger.warn({ err, userId }, 'fingerprint.check_recent.failed');
       return empty;
     }
   }

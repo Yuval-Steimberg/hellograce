@@ -130,6 +130,15 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   // "GLP-1 medications" appearing 4× in 3 sentences slipped past every other
   // guard. Deterministic 2-gram frequency check catches it.
   violations.push(...checkPhraseRepetition(text));
+  // Always check: validation-only response on a forward-looking fear/worry.
+  // Catches the production failure: user said "I'm scared I'll gain all the
+  // weight back" → Grace ONLY validated ("really understandable common fear,
+  // takes courage...") with no reframe, no information, no practical next
+  // step. The behavioral guard's principle 16 caught this when active, but
+  // TRUST_GEMINI disables it; this deterministic check is the safety net.
+  if (opts.userMessage) {
+    violations.push(...checkValidationOnly(text, opts.userMessage));
+  }
 
   return violations;
 }
@@ -229,6 +238,35 @@ function checkPhraseRepetition(response: string): ContentViolation[] {
   return [{
     code: 'phrase_repetition',
     message: `Response repeats "${worstGram}" ${worstCount} times — that's robotic. Rewrite using varied phrasing (pronouns "it" / "they", synonyms, or just dropping repeat references). One mention is enough for the reader to track.`,
+    severity: 'regen',
+  }];
+}
+
+// ── Validation-only on forward-looking fear / worry ──────────────────────────
+// Production failure 2026-06-04: user said "I'm scared I'll gain all the
+// weight back one day" → Grace's response was 100% acknowledgment ("That's a
+// really understandable and common fear...takes a lot of courage..."), with
+// zero reframe and zero practical takeaway. The user wanted help moving
+// forward; they got a sympathy paragraph.
+//
+// Detection:
+//   1. User message contains forward-looking concern markers
+//      (I'm scared/afraid/worried/anxious + future word)
+//   2. Grace response is at least 60 chars (not a trivial one-liner ack)
+//   3. Grace response LACKS any of: practical-action markers, reframe
+//      markers, concrete-information markers
+//   → flag as validation_only, force regen with explicit "add reframe +
+//     practical step" instruction.
+const FORWARD_LOOKING_FEAR_RE = /\b(i'?m|im|i am|i'?ve been)\s+(scared|afraid|worried|anxious|nervous|terrified)\s+(i'?ll|i will|it'?ll|that|about|of\s+(?:gaining|losing|failing|regaining|having))/i;
+const ACTION_REFRAME_RE = /\b(try|do|start|practice|focus on|aim for|build|track|set|consider|one (?:thing|step)|next (?:step|move)|when (?:that|this) (?:happens|comes up)|if (?:that|this) happens|research shows|studies show|the data|evidence (?:shows|suggests)|most people who maintain|maintenance (?:research|studies)|the way to|what helps|what works|the key)/i;
+function checkValidationOnly(response: string, userMessage: string): ContentViolation[] {
+  if (!FORWARD_LOOKING_FEAR_RE.test(userMessage)) return [];
+  if (response.trim().length < 60) return [];
+  if (ACTION_REFRAME_RE.test(response)) return [];
+  return [{
+    code: 'validation_only_on_fear',
+    message:
+      'User expressed a FORWARD-LOOKING concern (fear/worry about something that hasn\'t happened) and the response is pure validation with no reframe or practical step. Rewrite to include THREE elements: (1) brief validation (one phrase, not a paragraph), (2) reframe with real info (e.g. maintenance research: ~85% of people who lose weight on a GLP-1 regain SOME, but those who maintain protein intake + resistance training keep most of the loss), (3) ONE practical next step they can take now. Drop "really understandable" / "common fear" / "takes courage" — those are validation-only.',
     severity: 'regen',
   }];
 }
@@ -1082,6 +1120,23 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\b(check.in|message|tracking)\s+cadence\b/i, reason: '"cadence" — corporate jargon, not how people talk' },
   { pattern: /\b(account|settings)\s+(is\s+)?(now\s+)?configured\b/i, reason: '"configured" — corporate support language' },
   { pattern: /\byour (account|profile)\s+(has been|is)\s+(updated|set up)\s+to\s+ensure\b/i, reason: 'corporate update-confirmation template' },
+  // 2026-06-04 production failures from the 4-screenshot review:
+  { pattern: /\b(really|very|quite|so) (understandable|common)\b/i, reason: '"really understandable" / "really common" — generic empty validation; replace with specific reflection of what the user said' },
+  { pattern: /\b(it'?s|that'?s|so) smart (to|that you'?re|of you)\b/i, reason: '"smart to think" / "smart of you" — sycophantic teacher language' },
+  { pattern: /\bit'?s great you'?re thinking\b/i, reason: '"it\'s great you\'re thinking about..." — sycophantic compliment, drop and answer directly' },
+  { pattern: /\byou'?re right to ask\b/i, reason: '"you\'re right to ask" — sycophantic opener; answer the question directly' },
+  { pattern: /\bthank you for letting me know\b/i, reason: 'robotic acknowledgment; just respond to what they shared' },
+  { pattern: /\bi'?ve (made a note|noted that|recorded that|saved that)\b/i, reason: 'database-receipt phrasing; respond like a human, not a CRM' },
+  { pattern: /\bit takes a lot of courage\b/i, reason: 'self-help-book phrasing; speak plainly' },
+  { pattern: /\b(healthier you|a healthier version of you)\b/i, reason: 'wellness-brand phrasing; talk about the actual goal' },
+  // Tool / capability hallucination — Grace cannot set scheduled reminders
+  // for specific times, cannot edit profile data via chat (settings URL only),
+  // cannot save bidirectional notes back to the user (no notes-to-user tool).
+  // Saying she can creates a broken promise the user notices on the next turn.
+  { pattern: /\b(would you like|want) me to send you a (message|reminder|notification) at\b/i, reason: 'Grace cannot schedule one-off reminders for a specific clock time; never offer this' },
+  { pattern: /\bi (can|will|could) (send you a reminder|remind you) at\b/i, reason: 'same — no clock-time reminder tool exists' },
+  { pattern: /\bi (can|will) set (a |an )?(reminder|alarm|alert) for\b/i, reason: 'no reminder-setting tool; do not promise this' },
+  { pattern: /\bjust tell me the new date\b.{0,30}(treatment|start)/i, reason: 'no natural-language date-edit tool; direct user to graceglp.com/settings' },
 ];
 
 export function checkBannedPhrases(text: string): ContentViolation[] {

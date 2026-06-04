@@ -941,6 +941,18 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   // Sycophantic acknowledgments
   { pattern: /\bgreat question!?\b/i, reason: '"great question" — banned sycophancy' },
   { pattern: /\boh,?\s*that'?s a great question\b/i, reason: '"that\'s a great question" — banned sycophancy' },
+  // 2026-06-04 production failure: Grace replied to "What should I eat for
+  // breakfast?" with "I'm asking 'why' because I need more information..." +
+  // "Think of it this way if you asked a friend..." + "Here's why I need
+  // more info and what kind of things would be helpful". These are
+  // META-COMMENTARY patterns — Grace explaining WHAT SHE WOULD DO instead
+  // of answering the user's actual question. ANSWER THE QUESTION rule.
+  { pattern: /\bi'?m asking ['"]?why['"]?\b/i, reason: '"I\'m asking why" — meta-commentary, banned. Just answer the user\'s question.' },
+  { pattern: /\bthink of it this way\b/i, reason: '"Think of it this way" — preamble / framing, banned. State the answer directly.' },
+  { pattern: /\bhere'?s why i need (?:more|some|the) info(?:rmation)?\b/i, reason: 'Meta-commentary about needing info — banned. Either answer with available data or ask ONE specific question, not both.' },
+  { pattern: /\bif you asked a friend\b/i, reason: 'Hypothetical framing ("if you asked a friend") — banned. Answer the question Grace actually received.' },
+  { pattern: /\bwhat kind of things would be helpful\b/i, reason: 'Meta-commentary about what info would help — banned. Ask the specific question OR answer with what you have.' },
+  { pattern: /\blet me explain why\b/i, reason: '"Let me explain why" — preamble. Just explain.' },
   { pattern: /^absolutely!/im, reason: '"Absolutely!" opener — banned' },
   { pattern: /^of course!/im, reason: '"Of course!" opener — banned' },
   { pattern: /^hi there!/im, reason: '"Hi there!" opener — banned' },

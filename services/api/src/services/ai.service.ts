@@ -504,6 +504,13 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       // Production telemetry 2026-06-03 showed RAG burning ~750ms here with
       // no measurable impact on response quality.
       'food_question',
+      // 2026-06-04: 'general' = catch-all for unclassifiable messages. These
+      // are typically chat ("tell me a joke", "ok thanks") or follow-up
+      // questions that piggyback on conversation context, not novel knowledge
+      // queries. Production telemetry showed RAG burning 1.7s on a
+      // misclassified breakfast question that landed in 'general'. Knowledge
+      // queries STILL hit RAG because they classify as 'knowledge' / 'medication_question'.
+      'general',
     ]);
     const ragSkippedForIntent = RAG_SKIP_INTENTS.has(intentClass.type);
 

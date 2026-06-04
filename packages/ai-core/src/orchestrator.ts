@@ -572,7 +572,24 @@ function buildFocusMarker(
 
   if (userText && userText.length > 3 && type !== 'greeting' && type !== 'gibberish') {
     const echo = userText.trim().slice(0, 150).replace(/"/g, "'");
-    parts.push(`>>> THE USER'S CURRENT MESSAGE: "${echo}" <<<\nYour ENTIRE response must answer THIS message. Not the previous one. Not something from history. THIS one above.`);
+    // 2026-06-04 production failure: Grace replied to "What should I eat for
+    // breakfast?" with meta-commentary about why she'd ask "why" — even
+    // referencing the user's earlier "Why?" turn. Strengthened banner:
+    //   - LAST line of the message defines the priority topic
+    //   - Forbid meta-commentary about what Grace would ask back
+    //   - Forbid hypothetical "if you asked a friend" framing
+    //   - Forbid "I'm asking why because" preambles
+    parts.push(
+      `>>> THE USER'S CURRENT MESSAGE: "${echo}" <<<\n` +
+      `Your ENTIRE response must answer THIS message. Not the previous one. Not something from history. THIS one above.\n` +
+      `If the message has multiple parts, the LAST sentence/question defines the priority — answer that first, then optionally the earlier parts in one or two sentences.\n` +
+      `BANNED — these are meta-commentary, not answers:\n` +
+      `  ✗ "I'm asking why because I need more information..."\n` +
+      `  ✗ "Think of it this way if you asked a friend..."\n` +
+      `  ✗ "Here's why I need more info and what kind of things would be helpful..."\n` +
+      `  ✗ "Let me explain why I'm asking..."\n` +
+      `Either ANSWER with what you have, or ask ONE concrete clarifying question. Never both. Never explain WHY you'd ask.`,
+    );
   }
 
   return parts.join('\n');

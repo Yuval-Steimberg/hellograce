@@ -818,15 +818,20 @@ export class AIOrchestrator {
       generationTokenBudget = 1024;
     } else if (classification.type === 'appointment_prep') {
       // 4-6 specific questions in flowing prose. quality-guard caps at 800
-      // chars (~200 tokens). 2048 = ~1500 thinking + 500 output, comfortable
-      // headroom WITH thinking enabled. Was 8192 — same truncation-cascade
-      // risk as food_question (2026-06-03 telemetry).
-      generationTokenBudget = 2048;
+      // chars (~200 tokens). 2026-06-04 latency cut: production telemetry
+      // showed appointment_prep generates taking 11s with 2048 budget and
+      // thinking enabled — way over-provisioned for a 5-sentence answer.
+      // Cut to 1024 (~700 thinking + 300 output), still comfortable headroom.
+      generationTokenBudget = 1024;
     } else if (classification.type === 'knowledge') {
       // GLP-1 mechanism / side-effect explanations. quality-guard caps at
-      // 600 chars (~150 tokens output). 2048 = ~1500 thinking + 500 output.
-      // Was 8192 (catch-all). Truncation cascade risk identical to food_question.
-      generationTokenBudget = 2048;
+      // 600 chars (~150 tokens output). 2026-06-04 latency cut: production
+      // telemetry showed knowledge generates p95=12520ms with budget 2048,
+      // even though screenshots show 3-4 sentence answers. The 2048 budget
+      // was funding thinking tokens that weren't producing better answers.
+      // 1024 = ~700 thinking + 300 output, more than enough for any answer
+      // the quality-guard would let through.
+      generationTokenBudget = 1024;
     } else if (classification.type === 'medication_question') {
       // Dose timing / storage / travel-with-pen — short fact-based answers
       // that quality-guard caps at the 350-char default (~90 tokens).
@@ -1240,23 +1245,31 @@ export class AIOrchestrator {
             ? buildContentRegenInstruction(regenViolations, input.dietaryRestriction)
             : '') +
           truncationAddendum;
-        // 2026-06-04 latency cut: regens were paying full thinking budget for
-        // non-simple intents (food_question, knowledge) — but the retry feedback
-        // is DETERMINISTIC: "you tripped rule X, here's the corrected text to
-        // produce." Chain-of-thought adds nothing on a deterministic-correction
-        // task. Telemetry: 28/29 turns regenerated, regen avg=2.6s, p95=3.5s.
-        // Disabling thinking + capping budget at 768 brings regen to ~700ms.
+        // 2026-06-04 latency cut v2: regen is now ALWAYS small + fast + no
+        // thinking. The addendum tells the model exactly what to fix and
+        // demands 2-3 short sentences max — there is no reason chain-of-thought
+        // or a 2048-token budget should ever be needed on retry. Even when
+        // truncation forced the regen, the recovery instruction explicitly
+        // says "rewrite in MAXIMUM 2-3 SHORT sentences", so 512 is enough.
         //
-        // For TRULY risky regens (truncation that needs to repack a long answer,
-        // or a knowledge-tier draft that failed the critic), keep a larger budget
-        // since the model needs room to rewrite. Otherwise: tiny budget, no
-        // thinking, fast model.
-        const needsLargerRetry =
-          truncated || (!isSimpleMessage && critic && !critic.pass);
-        const retryTokenBudget = needsLargerRetry
-          ? Math.max(1024, generationTokenBudget)
-          : 768;
+        // Production observation (v1 of this fix): truncated regens were
+        // taking 12-14s because budget was max(1024, generationTokenBudget) =
+        // 2048 for knowledge, and even with disableThinking + flash-lite the
+        // model burned the budget. Hard-capping at 512 cuts decode time.
+        const retryTokenBudget = 512;
         const regenStart = Date.now();
+        const regenModel = 'gemini-2.5-flash-lite';
+        // Diagnostic log — confirms which model / budget the regen actually
+        // used, so we can verify a deploy carried the latency-cut code path.
+        // Grep `orchestrator.regen_started` in fly logs to see this.
+        this.deps.logger?.info?.({
+          intent: classification.type,
+          model: regenModel,
+          budget: retryTokenBudget,
+          thinking: false,
+          truncated,
+          topicDrift,
+        }, 'orchestrator.regen_started');
         const retryResp = await this.deps.llm.generate({
           messages: [
             { role: 'system', content: baseSystem + addendum },
@@ -1276,7 +1289,7 @@ export class AIOrchestrator {
           disableThinking: true,
           // Unconditionally use the fast model on regen — flash-lite handles
           // deterministic rewrites as well as flash for ~50% less latency.
-          model: 'gemini-2.5-flash-lite',
+          model: regenModel,
         });
         regenMs = Date.now() - regenStart;
         const retryFormatted = enforceFormat(retryResp.text, enforceOpts);

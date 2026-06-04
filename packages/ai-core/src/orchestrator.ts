@@ -1240,19 +1240,22 @@ export class AIOrchestrator {
             ? buildContentRegenInstruction(regenViolations, input.dietaryRestriction)
             : '') +
           truncationAddendum;
-        // Match the retry budget + thinking gate to the initial call so a
-        // weight_log regen doesn't suddenly pay the full 8192-token thinking
-        // budget when the initial call had thinking disabled. Without this,
-        // a single content-rule trip on a simple intent doubled the latency
-        // from ~2s to ~20s (production telemetry, 2026-06-03).
-        // Retry budget mirrors initial — was 8192 for thinking intents which
-        // re-created the truncation cascade. The TRUNCATION RECOVERY addendum
-        // instructs the model to write 2-3 short sentences on retry, so
-        // matching initial budget is correct. 2.5x headroom for simple intents
-        // covers edge cases where retry needs slightly more room.
-        const retryTokenBudget = isSimpleMessage
+        // 2026-06-04 latency cut: regens were paying full thinking budget for
+        // non-simple intents (food_question, knowledge) — but the retry feedback
+        // is DETERMINISTIC: "you tripped rule X, here's the corrected text to
+        // produce." Chain-of-thought adds nothing on a deterministic-correction
+        // task. Telemetry: 28/29 turns regenerated, regen avg=2.6s, p95=3.5s.
+        // Disabling thinking + capping budget at 768 brings regen to ~700ms.
+        //
+        // For TRULY risky regens (truncation that needs to repack a long answer,
+        // or a knowledge-tier draft that failed the critic), keep a larger budget
+        // since the model needs room to rewrite. Otherwise: tiny budget, no
+        // thinking, fast model.
+        const needsLargerRetry =
+          truncated || (!isSimpleMessage && critic && !critic.pass);
+        const retryTokenBudget = needsLargerRetry
           ? Math.max(1024, generationTokenBudget)
-          : Math.max(2048, generationTokenBudget);
+          : 768;
         const regenStart = Date.now();
         const retryResp = await this.deps.llm.generate({
           messages: [
@@ -1268,8 +1271,12 @@ export class AIOrchestrator {
           ],
           temperature: 0.4,
           maxOutputTokens: retryTokenBudget,
-          disableThinking: isSimpleMessage,
-          ...(generateModel ? { model: generateModel } : {}),
+          // Unconditionally disable thinking on regen — the addendum gives the
+          // model a precise correction instruction, no reasoning needed.
+          disableThinking: true,
+          // Unconditionally use the fast model on regen — flash-lite handles
+          // deterministic rewrites as well as flash for ~50% less latency.
+          model: 'gemini-2.5-flash-lite',
         });
         regenMs = Date.now() - regenStart;
         const retryFormatted = enforceFormat(retryResp.text, enforceOpts);

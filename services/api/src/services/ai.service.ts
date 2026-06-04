@@ -873,9 +873,25 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     }
     // 4. Today's totals — the original FORCE block (covers "how much left",
     //    "did I overeat", "how did I reach X", "show me what I logged today").
+    //
+    // 2026-06-04 fix: previous regex was too broad. It matched "eat" alone,
+    // so "what should I eat for breakfast?" triggered get_food_summary
+    // force-call — wrong tool for a recommendation request. The LLM then
+    // tried to generate breakfast suggestions with "you're at 0g protein"
+    // as primary context, produced meat for a vegetarian, regen failed,
+    // fallback fired with the food-summary template. Three coordinated bugs
+    // from one bad gate.
+    //
+    // Tightened to ONLY fire on phrases that genuinely ask about TODAY'S
+    // STATUS, not on any food-related word. Recommendation phrasing
+    // ("what should I eat", "what to eat", "ideas", "recommend") is
+    // explicitly excluded.
+    const looksLikeRecommendation = /\b(should i (?:eat|have|drink|make|cook|order|try)|ideas?|recommend|suggest(?:ion)?s?|what (?:to|can|could) (?:eat|have|drink|make|cook|order)|any (?:food|meal|snack|dinner|lunch|breakfast))\b/i.test(input.text);
+    const looksLikeStatusQuery = /\b(how (?:much|many)\s+(?:protein|calorie|kcal|carb|gram)|protein (?:left|remaining|today|so far)|calorie(?:s)? (?:left|remaining|today|so far)|did i (?:over|under)?eat|am i (?:over|under|at|close)|how am i doing|where am i (?:at|on)|breakdown|break ?down|coming from|show me (?:what|all|the foods)|what foods? (?:did i|have i)|how did i (?:reach|reached|get|got))\b/i.test(input.text);
     const isFoodSummaryQuery = !isFoodHistoryQuery && !isTargetQuery && !isRemovalQuery &&
       intentClass.type === 'food_question' &&
-      /\b(protein|calorie|kcal|carb|eat|overeat|left|remaining|reach|reached|breakdown|break ?down|show|list|coming from|what foods?|what meals?|what items?)\b/i.test(input.text);
+      looksLikeStatusQuery &&
+      !looksLikeRecommendation;
     if (
       isFoodSummaryQuery &&
       flags.toolsEnabled &&

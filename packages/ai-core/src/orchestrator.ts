@@ -552,9 +552,23 @@ function buildFocusMarker(
     }
   }
 
+  // Shared HARD RULES applied to EVERY food-related response (regardless of
+  // intent classification). 2026-06-04 production wins on food_question
+  // recommendations proved these rules work — extracted to apply universally
+  // so social_situation eating advice, food_log responses, food-flavored
+  // general turns, and emotional+food turns get the same protection.
+  const FOOD_RESPONSE_HARD_RULES =
+    'HARD RULES (regen-triggering — first attempt MUST follow): ' +
+    '(1) NO sycophantic openers ("It\'s wonderful you\'re thinking", "That\'s a great question", "I love that you\'re", "What an amazing choice", "Happy to help", "Since you\'ve...let\'s focus on"). Just answer. ' +
+    '(2) MAXIMUM ONE question mark, at the END only. ' +
+    '(3) NO list-item format like "Dish Name: description, Other Dish: description" — write dishes in flowing prose, e.g. "Try a lentil soup or a tofu stir-fry — both are quick and satisfying." ' +
+    '(4) Keep the WHOLE response to 2-3 short sentences. ' +
+    '(5) Respect dietary restrictions ABSOLUTELY (the user\'s dietary_pattern is on the context block — if vegan/vegetarian/pescatarian, NEVER suggest excluded foods). ' +
+    '(6) When recommending foods, NAME 2-3 SPECIFIC items (not "lean proteins" or "non-starchy vegetables" — actual dishes / ingredients).';
+
   const intentDescription: Record<MessageType, string> = {
-    food_log: 'logging a food they ate. Acknowledge + state the protein from the tool result. Do NOT continue any previous topic.',
-    food_question: 'asking a question about food or nutrition. Answer their question directly. Do NOT continue any previous topic. HARD RULES (regen-triggering — first attempt MUST follow): (1) NO opener like "It\'s wonderful you\'re thinking", "That\'s a great question", "I love that you\'re", "What an amazing choice", "Happy to help", "Since you\'ve...let\'s focus on". Just answer. (2) MAXIMUM ONE question mark, at the END only. (3) NO list-item format like "Dish Name: description, Other Dish: description" — write the dishes in flowing prose, e.g. "Try a lentil soup or a tofu stir-fry — both are quick and satisfying." (4) Keep the WHOLE response to 2-3 short sentences.',
+    food_log: `logging a food they ate. Acknowledge + state the protein from the tool result. Do NOT continue any previous topic. ${FOOD_RESPONSE_HARD_RULES}`,
+    food_question: `asking a question about food or nutrition. Answer their question directly. Do NOT continue any previous topic. ${FOOD_RESPONSE_HARD_RULES}`,
     weight_log: 'reporting their weight. Acknowledge + respond warmly. Do NOT continue any previous topic.',
     mood_log: 'sharing their mood or energy level. Respond with empathy. Do NOT continue any previous topic.',
     greeting: 'just greeting you. Reply with ONE warm sentence. Topic reset — do NOT reference any prior conversation.',
@@ -568,11 +582,26 @@ function buildFocusMarker(
     exercise_log: 'reporting a workout / walk / cardio session. Briefly acknowledge + tie to muscle preservation or protein within 1-2 hours. Do NOT continue any previous topic. Do NOT estimate calories burned.',
     injection_log: 'confirming they took their weekly shot (or daily pill). Short warm acknowledgment + a single practical tip (hydration / protein first / nausea timing). Do NOT lecture. Do NOT continue any previous topic.',
     medication_question: 'asking a medication-specific question: dose timing, storage, travel, refill, switching, injection site. Answer with facts. For dose-change asks, use the warm clinical-redirect template ("That one I\'d genuinely leave to your doctor..."). Do NOT use alarmist language.',
-    social_situation: 'asking about restaurants, parties, travel meals, weddings, holidays, or family pressure around eating. Be practical (1-2 actionable strategies) and warm — never shaming. No restrictive language. Acknowledge the social dimension.',
+    // Social situations are mostly about food strategies → inherit food rules
+    social_situation: `asking about restaurants, parties, travel meals, weddings, holidays, or family pressure around eating. Be practical (1-2 actionable strategies) and warm — never shaming. No restrictive language. Acknowledge the social dimension. ${FOOD_RESPONSE_HARD_RULES}`,
     pause_request: 'asking to pause messages / take a break. Confirm in ONE warm sentence + tell them they can text you anytime to resume. Do NOT ask why. Do NOT try to keep them engaged.',
   };
 
   parts.push(`[CURRENT USER MESSAGE TYPE: ${intentDescription[type]}]`);
+
+  // 2026-06-04: detect food keywords in the CURRENT message AND inject food
+  // HARD RULES if the intent didn't already (e.g. a 'general' or 'emotional'
+  // turn that mentions food). Catches misclassified food asks like
+  // "I'm hungry, what should I have?" / "any snack ideas?" that fall outside
+  // food_question for some reason.
+  const intentsWithFoodRules = new Set(['food_log', 'food_question', 'social_situation']);
+  if (
+    !intentsWithFoodRules.has(type) &&
+    userText &&
+    /\b(eat|breakfast|lunch|dinner|snack|meal|hungry|appetite|food|recipe|cook|order|grab|protein|carb|calories?)\b/i.test(userText)
+  ) {
+    parts.push(`[FOOD CONTEXT DETECTED] ${FOOD_RESPONSE_HARD_RULES}`);
+  }
 
   if (userText && userText.length > 3 && type !== 'greeting' && type !== 'gibberish') {
     const echo = userText.trim().slice(0, 150).replace(/"/g, "'");

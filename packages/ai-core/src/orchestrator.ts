@@ -453,11 +453,16 @@ function buildFocusMarker(
   // Grace must explain the reasoning, not re-state the answer.
   if (opts?.isReasoningRequest && lastAssistantMessage) {
     const prev = lastAssistantMessage.trim().slice(0, 200).replace(/"/g, "'");
+    // Extract specific numbers from the prior response so we can cite them.
+    const numbersInPrior = prev.match(/\d+(?:\.\d+)?\s*(?:g|kg|lbs?|kcal|cal|%|min|hrs?|days?|weeks?)/gi) ?? [];
+    const numList = numbersInPrior.length > 0 ? ` (specifically: ${numbersInPrior.join(', ')})` : '';
     parts.push(
       `🧠 REASONING REQUEST — THIS IS YOUR #1 PRIORITY INSTRUCTION.\n` +
-      `The user is asking you to EXPLAIN your previous response. They want the REASONING, the CALCULATION, or the LOGIC behind it — NOT a repeat of the recommendation.\n` +
-      `Your previous response was: "${prev}"\n` +
-      `Now: walk through HOW you arrived at it. Cite the specific numbers, sources, or assumptions you used. If you made a calculation, show it. If you cited a fact, explain where it comes from (USDA, GLP-1 research, the user's own logged data). Do NOT restate the recommendation as the answer.`,
+      `The user is asking you to EXPLAIN your previous response. They want the REASONING, the CALCULATION, or the LOGIC behind it — NOT a repeat, and NOT generic educational content.\n` +
+      `Your previous response was: "${prev}"${numList}\n` +
+      `2026-06-04 RULE — DO NOT give generic GLP-1 education ("muscle loss happens", "protein is important"). The user already knows that. They want the MATH BEHIND THEIR SPECIFIC NUMBER.\n` +
+      `Use the user's actual weight, goal, age, sex from the context block to SHOW THE CALCULATION. E.g. if you recommended 60g protein, the reasoning is something like: "60g ≈ your weight in kg × 1.2g/kg (the GLP-1 muscle-preservation target). At [X]kg, the math gives 60g."\n` +
+      `Format: ONE sentence with the actual computation. NO general "GLP-1 medications can sometimes lead to muscle loss" filler — straight to the numbers.`,
     );
   }
 

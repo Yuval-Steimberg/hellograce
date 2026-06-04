@@ -10,6 +10,7 @@ import {
   classifyMessage as classifyIntent,
   checkContent,
   detectTopicSwitch,
+  detectReasoningRequest,
   FOOD_HISTORY_QUESTION,
   PROTEIN_TARGET_QUESTION,
   FOOD_REMOVAL_QUESTION,
@@ -936,6 +937,29 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     }
 
     // Detect side effects in the user's message and update their flow.
+    // 2026-06-04: force-call get_user_profile for reasoning requests so the
+    // LLM has the user's actual weight/goal/age/sex available when explaining
+    // a previous numeric recommendation. Production failure: user asked "Why?"
+    // after "Your protein goal is 60g.", Grace gave generic GLP-1 muscle
+    // education instead of showing the math (60g ≈ weight_kg × 1.2g/kg).
+    // The tool result lands in toolResults; the focus marker's REASONING
+    // REQUEST banner explicitly tells the LLM to use those numbers.
+    const lastAssistantInHistory = [...history].reverse().find((t) => t.role === 'assistant')?.content;
+    const isReasoningRequestHere = detectReasoningRequest(input.text, lastAssistantInHistory);
+    if (
+      isReasoningRequestHere &&
+      flags.toolsEnabled &&
+      !prePlannedDecision.toolCalls.some((c) => c.name === 'get_user_profile')
+    ) {
+      prePlannedDecision = {
+        intent: 'get_user_profile',
+        needsTools: true,
+        toolCalls: [{ name: 'get_user_profile', args: {} }],
+        rationale: 'forced_get_user_profile_for_reasoning',
+      };
+      logger.info({ userId: input.userId, text: input.text.slice(0, 60) }, 'ai.handle.forced_get_user_profile_for_reasoning');
+    }
+
     if (user) await this.detectAndSetSideEffectFlow(user.phone, augmentedText, user.side_effect_flow);
 
     // Detect dietary restrictions stated in this conversation OR in stored facts.

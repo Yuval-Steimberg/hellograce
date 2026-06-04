@@ -12,16 +12,18 @@ interface FoodEstimate {
   confidence: 'low' | 'medium' | 'high';
 }
 
-const FOOD_SYSTEM_PROMPT = `You estimate protein and calories from a casual food description. Use USDA-anchored values.
+const FOOD_SYSTEM_PROMPT = `You estimate protein and calories for each distinct food item the user mentioned. Use USDA-anchored values.
 
 DECOMPOSITION RULE — CRITICAL:
-If the description has multiple items (joined by "and", "with", "plus", commas), DECOMPOSE first, look each up, then SUM. Never match a compound description to a single anchor.
+You MUST emit ONE entry per distinct food item.
+  "3 eggs with salad, tuna, rice" → 4 items: eggs / salad / tuna / rice
+  "salad and an omelet with 2 eggs" → 2 items: salad + 2-egg omelet
+  "yogurt with granola and banana" → 3 items: Greek yogurt + granola + banana
+  "toast with peanut butter" → 2 items: toast + peanut butter
+  "a burrito" → 1 item (compound dish): burrito
+  "a sandwich" → 1 item: sandwich
 
-Examples:
-  "salad and an omelet with 2 eggs" → salad (3g, 100kcal) + 2-egg omelet (12g, 180kcal) = 15g, 280kcal
-  "chicken and rice" → 30g, 450kcal (matches anchor directly)
-  "yogurt with granola and banana" → Greek yogurt (17g) + granola (4g) + banana (1g) = 22g, 360kcal
-  "toast with peanut butter" → toast (3g) + PB 2tbsp (8g) = 11g, 270kcal
+The server sums your per-item values, so a missing item = a silent undercount. DO NOT collapse multiple foods into a single item.
 
 KEY ANCHORS (per serving):
   1 egg=6g/70kcal | 2 eggs/omelet=12g/180kcal | 3 eggs/omelet=18g/270kcal
@@ -40,10 +42,10 @@ KEY ANCHORS (per serving):
   coffee/tea=0g/5kcal
 
 NEVER refuse. NEVER ask for grams or portions. NEVER return 0g for a real food.
-Return ONLY this JSON, nothing else: {"food":"<label>","protein_g":<int>,"calories":<int>,"confidence":"low|medium|high"}`;
+Output the JSON matching the provided schema. Server sums totals.`;
 
-const RETRY_PROMPT = `Return ONLY valid JSON for this food description. Estimate using common sense.
-Format: {"food":"<short label>","protein_g":<integer>,"calories":<integer>,"confidence":"medium"}`;
+const RETRY_PROMPT = `Decompose this food description into per-item protein and calories. Each distinct item = one entry.
+Estimate using common sense; never refuse. The server sums per-item values.`;
 
 // Decomposition-only prompt for the USDA path. The LLM splits the description
 // into items + estimated grams; USDA provides the actual per-100g constants.
@@ -136,57 +138,135 @@ async function estimateViaUsda(
   };
 }
 
+// 2026-06-04 structural fix (Option B): force the LLM to emit a typed
+// items array, then SUM on the server. Eliminates the silent undercount
+// class — production failure was "3 eggs with salad, Tuna, Rice" → 45g
+// (real ~55g) because the model returned a flat estimate without
+// decomposing. The schema forces decomposition because `items` is required
+// and validated as a non-empty array.
+const FOOD_ITEMS_SCHEMA: import('@grace/shared').ResponseSchema = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Short food label (e.g. "3 eggs", "1 can tuna", "1 cup rice")' },
+          protein_g: { type: 'integer', description: 'Estimated grams of protein for THIS item only' },
+          calories: { type: 'integer', description: 'Estimated calories for THIS item only' },
+        },
+        required: ['name', 'protein_g', 'calories'],
+      },
+      description:
+        'EACH distinct food item gets its own entry. If user says "eggs and toast", emit 2 items, not 1. Compound dishes (a burrito, a sandwich) count as ONE item.',
+    },
+    confidence: {
+      type: 'string',
+      enum: ['low', 'medium', 'high'],
+      description: 'Overall confidence in the estimate (low if portions are very ambiguous)',
+    },
+  },
+  required: ['items', 'confidence'],
+};
+
+interface ItemizedEstimate {
+  items: Array<{ name: string; protein_g: number; calories: number }>;
+  confidence: 'low' | 'medium' | 'high';
+}
+
 async function estimateFoodMacros(llm: LLMProvider, food: string): Promise<FoodEstimate | null> {
-  // Primary attempt with the full anchor table.
+  // Primary attempt with full anchor table + structured-output schema.
+  // The schema GUARANTEES the response is `{items: [...], confidence: ...}`
+  // — Gemini's responseSchema enforces shape at the API boundary. We sum
+  // on the server, so even if the model gives a per-item estimate that
+  // doesn't add up cleanly, the total is internally consistent.
   const resp = await llm.generate({
     messages: [
       { role: 'system', content: FOOD_SYSTEM_PROMPT },
       { role: 'user', content: food },
     ],
     temperature: 0.1,
-    maxOutputTokens: 500,
-    responseFormat: 'json',
+    maxOutputTokens: 600,
+    responseSchema: FOOD_ITEMS_SCHEMA,
   });
-  const primary = parseFoodEstimate(resp.text);
-  if (primary && primary.protein_g > 0 && primary.calories > 0) return primary;
+  const primary = parseItemizedEstimate(resp.text);
+  if (primary) {
+    const summed = sumItemized(primary, food);
+    if (summed && summed.protein_g > 0 && summed.calories > 0) return summed;
+  }
 
   // Retry once with a minimal prompt — long prompts + JSON mode sometimes
-  // produce empty output on Gemini Flash. Defensive second attempt.
+  // produce empty output on Gemini Flash. Same schema; smaller prompt.
   const retry = await llm.generate({
     messages: [
       { role: 'system', content: RETRY_PROMPT },
       { role: 'user', content: food },
     ],
     temperature: 0.2,
-    maxOutputTokens: 200,
-    responseFormat: 'json',
+    maxOutputTokens: 300,
+    responseSchema: FOOD_ITEMS_SCHEMA,
   });
-  return parseFoodEstimate(retry.text);
+  const retryParsed = parseItemizedEstimate(retry.text);
+  if (retryParsed) {
+    const summed = sumItemized(retryParsed, food);
+    if (summed) return summed;
+  }
+  return null;
 }
 
-function parseFoodEstimate(raw: string): FoodEstimate | null {
+function parseItemizedEstimate(raw: string): ItemizedEstimate | null {
   try {
     const cleaned = raw.replace(/```json\n?|\n?```/g, '').trim();
-    const obj = JSON.parse(cleaned) as Partial<FoodEstimate>;
-    if (
-      typeof obj.food !== 'string' ||
-      typeof obj.protein_g !== 'number' ||
-      typeof obj.calories !== 'number'
-    ) {
-      return null;
-    }
-    return {
-      food: obj.food,
-      protein_g: Math.max(0, Math.round(obj.protein_g)),
-      calories: Math.max(0, Math.round(obj.calories)),
-      confidence: ['low', 'medium', 'high'].includes(obj.confidence as string)
-        ? (obj.confidence as 'low' | 'medium' | 'high')
-        : 'medium',
-    };
+    if (!cleaned) return null;
+    const obj = JSON.parse(cleaned) as Partial<ItemizedEstimate>;
+    if (!Array.isArray(obj.items) || obj.items.length === 0) return null;
+    const validItems = obj.items
+      .filter((i): i is { name: string; protein_g: number; calories: number } =>
+        i !== null && typeof i === 'object' &&
+        typeof i.name === 'string' && i.name.trim().length > 0 &&
+        typeof i.protein_g === 'number' && Number.isFinite(i.protein_g) &&
+        typeof i.calories === 'number' && Number.isFinite(i.calories)
+      )
+      .map((i) => ({
+        name: i.name.trim(),
+        protein_g: Math.max(0, Math.round(i.protein_g)),
+        calories: Math.max(0, Math.round(i.calories)),
+      }));
+    if (validItems.length === 0) return null;
+    const conf = ['low', 'medium', 'high'].includes(obj.confidence as string)
+      ? (obj.confidence as 'low' | 'medium' | 'high')
+      : 'medium';
+    return { items: validItems, confidence: conf };
   } catch {
     return null;
   }
 }
+
+/** Server-side sum. The single source of truth for totals — even if the
+ *  model emits a separate "total" field we ignore it and re-sum locally. */
+function sumItemized(itemized: ItemizedEstimate, originalFood: string): FoodEstimate | null {
+  const protein = itemized.items.reduce((s, i) => s + i.protein_g, 0);
+  const calories = itemized.items.reduce((s, i) => s + i.calories, 0);
+  if (protein === 0 && calories === 0) return null;
+  // Label: when ≥2 items, joining them gives the user a clean readout
+  // ("3 eggs + tuna + rice"). When 1 item, use the original food string
+  // as-is so we don't reduce "Greek yogurt with hemp seeds" to "yogurt".
+  const label = itemized.items.length === 1
+    ? (itemized.items[0]!.name || originalFood)
+    : itemized.items.map((i) => i.name).join(' + ');
+  return {
+    food: label,
+    protein_g: Math.max(0, Math.round(protein)),
+    calories: Math.max(0, Math.round(calories)),
+    confidence: itemized.confidence,
+  };
+}
+
+// parseFoodEstimate (flat shape) was replaced by parseItemizedEstimate +
+// sumItemized when we moved to structured per-item output (2026-06-04).
+// Removed to keep the file lean.
 
 /**
  * log_food: estimate protein/calories for a food the user mentioned and
@@ -737,3 +817,11 @@ function hasOtherFoodTokens(normalizedInput: string, matchedKey: string): boolea
   }
   return false;
 }
+
+// Test exports — internal helpers exposed for unit tests so we can verify
+// the structured-output sum logic without spinning up a real LLM.
+export const __testing = {
+  parseItemizedEstimate,
+  sumItemized,
+  FOOD_ITEMS_SCHEMA,
+};

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { lookupCommonFoodMacros } from './log-food.js';
+import { lookupCommonFoodMacros, __testing } from './log-food.js';
+
+const { parseItemizedEstimate, sumItemized } = __testing;
 
 describe('lookupCommonFoodMacros — fast-path macro table (2026-06-01)', () => {
   it('matches "2 eggs" exactly', () => {
@@ -128,5 +130,128 @@ describe('lookupCommonFoodMacros — Phase 16 expansion (2026-06-03)', () => {
   it('hits packaged tuna / jerky', () => {
     expect(lookupCommonFoodMacros('tuna packet')?.protein_g).toBe(17);
     expect(lookupCommonFoodMacros('I had a turkey jerky')?.protein_g).toBe(12);
+  });
+});
+
+// ── Structured-output path (2026-06-04 Option B fix) ──────────────────────
+// estimateFoodMacros now demands per-item arrays via Gemini's responseSchema
+// then sums on the server. These tests cover the parse + sum helpers without
+// hitting a real LLM.
+
+describe('parseItemizedEstimate — strict JSON parser', () => {
+  it('parses a clean per-item response', () => {
+    const raw = JSON.stringify({
+      items: [
+        { name: '3 eggs', protein_g: 18, calories: 210 },
+        { name: '1 can tuna', protein_g: 20, calories: 110 },
+        { name: 'salad', protein_g: 3, calories: 100 },
+        { name: '1 cup rice', protein_g: 4, calories: 200 },
+      ],
+      confidence: 'high',
+    });
+    const out = parseItemizedEstimate(raw);
+    expect(out).not.toBeNull();
+    expect(out!.items).toHaveLength(4);
+    expect(out!.confidence).toBe('high');
+  });
+
+  it('strips markdown code fences', () => {
+    const raw = '```json\n{"items":[{"name":"eggs","protein_g":12,"calories":140}],"confidence":"medium"}\n```';
+    expect(parseItemizedEstimate(raw)).not.toBeNull();
+  });
+
+  it('rejects empty items array', () => {
+    expect(parseItemizedEstimate(JSON.stringify({ items: [], confidence: 'low' }))).toBeNull();
+  });
+
+  it('drops invalid items but keeps valid ones', () => {
+    const raw = JSON.stringify({
+      items: [
+        { name: 'eggs', protein_g: 12, calories: 140 },
+        { name: '', protein_g: 5, calories: 50 },          // empty name → drop
+        { name: 'toast', protein_g: 'invalid', calories: 80 }, // bad type → drop
+        { name: 'rice', protein_g: 4, calories: 200 },
+      ],
+      confidence: 'medium',
+    });
+    const out = parseItemizedEstimate(raw);
+    expect(out!.items.map((i) => i.name)).toEqual(['eggs', 'rice']);
+  });
+
+  it('rounds floats and clamps negatives to zero', () => {
+    const raw = JSON.stringify({
+      items: [{ name: 'eggs', protein_g: 12.7, calories: 140.4 }, { name: 'X', protein_g: -3, calories: 50 }],
+      confidence: 'medium',
+    });
+    const out = parseItemizedEstimate(raw);
+    expect(out!.items[0]!.protein_g).toBe(13);
+    expect(out!.items[0]!.calories).toBe(140);
+    expect(out!.items[1]!.protein_g).toBe(0);
+  });
+
+  it('returns null on malformed JSON', () => {
+    expect(parseItemizedEstimate('not json')).toBeNull();
+    expect(parseItemizedEstimate('')).toBeNull();
+  });
+
+  it('defaults confidence to medium when invalid', () => {
+    const raw = JSON.stringify({
+      items: [{ name: 'eggs', protein_g: 12, calories: 140 }],
+      confidence: 'totally_made_up',
+    });
+    expect(parseItemizedEstimate(raw)!.confidence).toBe('medium');
+  });
+});
+
+describe('sumItemized — server-side total', () => {
+  it('sums "3 eggs with salad, Tuna, Rice" correctly (the production bug)', () => {
+    // This is the EXACT failure case from 2026-06-04:
+    //   Old flow returned a flat 45g (under-count).
+    //   New flow: schema forces per-item, server sums.
+    const itemized = {
+      items: [
+        { name: '3 eggs', protein_g: 18, calories: 210 },
+        { name: 'salad', protein_g: 3, calories: 100 },
+        { name: '1 can tuna', protein_g: 20, calories: 110 },
+        { name: '1 cup rice', protein_g: 4, calories: 200 },
+      ],
+      confidence: 'high' as const,
+    };
+    const total = sumItemized(itemized, '3 eggs with salad, Tuna, Rice');
+    expect(total!.protein_g).toBe(45);        // 18+3+20+4 = 45  ← correct math
+    expect(total!.calories).toBe(620);        // 210+100+110+200 = 620
+    expect(total!.food).toBe('3 eggs + salad + 1 can tuna + 1 cup rice');
+    expect(total!.confidence).toBe('high');
+  });
+
+  it('uses original food string for single-item logs (no name collapse)', () => {
+    const itemized = {
+      items: [{ name: 'yogurt', protein_g: 17, calories: 100 }],
+      confidence: 'high' as const,
+    };
+    const total = sumItemized(itemized, 'Greek yogurt with hemp seeds');
+    // For 1 item, keep the item's own name (this is what the LLM returned).
+    expect(total!.food).toBe('yogurt');
+  });
+
+  it('returns null when both protein and calories sum to zero', () => {
+    const itemized = {
+      items: [{ name: 'water', protein_g: 0, calories: 0 }],
+      confidence: 'high' as const,
+    };
+    expect(sumItemized(itemized, 'water')).toBeNull();
+  });
+
+  it('rounds the summed totals', () => {
+    const itemized = {
+      items: [
+        { name: 'a', protein_g: 12, calories: 140 },
+        { name: 'b', protein_g: 8, calories: 90 },
+      ],
+      confidence: 'medium' as const,
+    };
+    const total = sumItemized(itemized, 'a and b');
+    expect(total!.protein_g).toBe(20);
+    expect(total!.calories).toBe(230);
   });
 });

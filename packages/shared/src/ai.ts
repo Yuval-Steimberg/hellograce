@@ -188,6 +188,30 @@ export interface LLMRequest {
   model?: string;
   /** Disable thinking/reasoning tokens to reduce cost on simple messages. */
   disableThinking?: boolean;
+  /** Structured-output schema. When set, the provider forces JSON output
+   *  matching this schema (Gemini's responseSchema). Eliminates malformed
+   *  output and lets the caller trust the parsed shape. Supersedes
+   *  responseFormat — when schema is present, the response IS JSON. */
+  responseSchema?: ResponseSchema;
+}
+
+/** Minimal JSON Schema subset that maps cleanly to Gemini's responseSchema
+ *  (which itself is a subset of OpenAPI 3.0 schema). Provider-agnostic so
+ *  we can swap models without rewriting tool code. */
+export interface ResponseSchema {
+  type: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean';
+  /** For type='object': map of property name → schema. */
+  properties?: Record<string, ResponseSchema>;
+  /** For type='object': required property names. */
+  required?: string[];
+  /** For type='array': the item schema. */
+  items?: ResponseSchema;
+  /** For type='string' or 'number': enum of allowed values. */
+  enum?: Array<string | number>;
+  /** Human-readable description — guides the model's reasoning. */
+  description?: string;
+  /** For type='array': minimum item count (Gemini supports this). */
+  minItems?: number;
 }
 
 export interface LLMResponse {

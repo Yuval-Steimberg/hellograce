@@ -134,8 +134,17 @@ export class GeminiProvider implements LLMProvider {
     const genConfig: Record<string, unknown> = {
       temperature: req.temperature ?? 0.6,
       maxOutputTokens: req.maxOutputTokens ?? 250,
-      ...(req.responseFormat === 'json' ? { responseMimeType: 'application/json' } : {}),
+      ...(req.responseFormat === 'json' || req.responseSchema
+        ? { responseMimeType: 'application/json' }
+        : {}),
     };
+    // Structured-output (Gemini's responseSchema). When set, the model is
+    // FORCED to produce JSON matching the schema — catches malformed outputs
+    // at the API boundary instead of relying on downstream parsing. Used
+    // by log_food and other tools where the response shape is critical.
+    if (req.responseSchema) {
+      genConfig.responseSchema = req.responseSchema;
+    }
     // thinkingConfig only works on Gemini 2.5+ models. Sending it to 2.0
     // models causes a 400 error. Check the model name before setting it.
     if (req.disableThinking && /2\.5|gemini-exp/i.test(modelName)) {

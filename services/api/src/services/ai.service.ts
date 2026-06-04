@@ -1349,26 +1349,38 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     userText: string,
     assistantText: string,
   ): void {
-    if (this.deps.turnQueue) {
-      void this.deps.turnQueue
-        .add('persist', {
-          userId,
-          conversationId: `fastpath-${userId}`, // best-effort; worker tolerates
-          userText,
-          assistantText,
-          toolResults: [],
-          intent,
-          latencyMs,
-          stageTimings,
-        })
-        .catch(() => undefined);
-      return;
-    }
-    // No queue: write directly so latency is still captured.
-    void this.deps.memory
-      .ensureConversation(userId)
-      .then((conversationId) =>
-        Promise.all([
+    // 2026-06-04 CRITICAL FIX: previously this used a fake conversation ID
+    // ('fastpath-${userId}') which violated the messages.conversation_id
+    // foreign key on conversations(id). EVERY fast-path persist (query_fast,
+    // food_log_fast, weight_log_fast, fast_path) was SILENTLY FAILING. The
+    // result: when a user asked "What's my protein goal?" and got query_fast
+    // answer "Your daily protein target is 60g.", that turn never appeared
+    // in history. The next message ("why?") couldn't see that prior reply,
+    // so detectReasoningRequest returned false (no anchor), reasoning
+    // fallback didn't fire, and the user got a generic "What's on your mind?"
+    // typed fallback.
+    //
+    // Fix: always resolve the real conversation ID via ensureConversation
+    // (which is cached for 5min so the cost is ~free after the first call).
+    // Then write through the normal queue or directly. The fix preserves
+    // history continuity across fast-path AND orchestrator turns.
+    void (async () => {
+      try {
+        const conversationId = await this.deps.memory.ensureConversation(userId);
+        if (this.deps.turnQueue) {
+          await this.deps.turnQueue.add('persist', {
+            userId,
+            conversationId,
+            userText,
+            assistantText,
+            toolResults: [],
+            intent,
+            latencyMs,
+            stageTimings,
+          });
+          return;
+        }
+        await Promise.all([
           this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: userText }),
           this.deps.memory.appendTurn({
             userId,
@@ -1379,9 +1391,11 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
             intent,
             stageTimings,
           }),
-        ]),
-      )
-      .catch(() => undefined);
+        ]);
+      } catch (err) {
+        this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err), userId, intent }, 'persist_latency.failed');
+      }
+    })();
   }
 
   // 60s in-memory cache: check-in count only changes when the scheduler fires

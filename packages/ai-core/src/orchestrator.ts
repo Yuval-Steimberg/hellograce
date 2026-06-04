@@ -1133,6 +1133,21 @@ export class AIOrchestrator {
       'exercise_log',
       'injection_log',
     ]);
+    // Intents where the relevance check ALWAYS runs, even in TRUST_GEMINI
+    // mode. These are factual / medical question types where the cost of
+    // off-topic or cross-talk responses outweighs the ~700ms judge latency.
+    // Production failure 2026-06-04: with TRUST_GEMINI on, user asked "can
+    // I have coffee?" then "is hair loss normal?" — Grace answered BOTH
+    // (joining "Yes, you can have coffee. Regarding hair loss...") AND
+    // asked "What kind of injections are you referring to?" (deflection
+    // despite knowing the user's medication). The relevance check would
+    // have caught the off-topic re-answer and forced a regen on the
+    // current message only.
+    const CRITICAL_RELEVANCE_INTENTS = new Set([
+      'knowledge',
+      'medication_question',
+      'appointment_prep',
+    ]);
     // 2026-06-04 TRUST GEMINI gates. When trustGeminiMode=true, all three
     // LLM-as-judge guards are skipped — Gemini's natural output ships
     // unless safety / format / harmful-content checks flag it. This is the
@@ -1140,8 +1155,13 @@ export class AIOrchestrator {
     // quality-guard gate.)
     const behavioralFlagOn = this.deps.guards?.behavioralEnabled !== false; // default true
     const relevanceFlagOn = this.deps.guards?.relevanceEnabled !== false;
+    // Critical intents (knowledge/medication/appointment_prep) get the
+    // relevance check EVEN in trustGeminiMode — they have the highest cost
+    // of cross-talk or off-topic answers. Other intents follow the
+    // trustGeminiMode rule.
+    const intentForcesRelevance = CRITICAL_RELEVANCE_INTENTS.has(classification.type);
     const shouldRunRelevance =
-      !trustGeminiMode &&
+      (intentForcesRelevance || !trustGeminiMode) &&
       relevanceFlagOn &&
       !isTrivial &&
       !topicDrift &&

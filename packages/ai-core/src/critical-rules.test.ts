@@ -111,4 +111,34 @@ describe('CRITICAL RULE: Never end a response mid-sentence', () => {
     expect(r.wasTrimmed).toBe(false);
     expect(r.trimmed).toBe('Try a tofu stir-fry.');
   });
+
+  // 2026-06-04 production failure regressions
+  it('detects unclosed parenthesis as mid-sentence (production: "Greek yogurt (approx.")', () => {
+    expect(endsMidWord('Try Greek yogurt (approx.')).toBe(true);
+    expect(endsMidWord('Try Greek yogurt (approx. 200g).')).toBe(false);
+  });
+
+  it('detects unclosed square brackets', () => {
+    expect(endsMidWord('See the table [section')).toBe(true);
+    expect(endsMidWord('See the table [section 4].')).toBe(false);
+  });
+
+  it('detects unclosed curly braces', () => {
+    expect(endsMidWord('Try {tofu')).toBe(true);
+  });
+
+  it('detects unmatched double quotes', () => {
+    expect(endsMidWord('She said "hello.')).toBe(true);
+    expect(endsMidWord('She said "hello".')).toBe(false);
+  });
+
+  it('detects stranded hedge words like "approximately"', () => {
+    expect(endsMidWord('Eat about 30 grams of protein, approximately.')).toBe(true);
+    expect(endsMidWord('Try about 30g.')).toBe(false);
+  });
+
+  it('detects stranded "such as," / "including," / "for example,"', () => {
+    expect(endsMidWord('Try plant proteins, such as.')).toBe(true);
+    expect(endsMidWord('Many options exist.')).toBe(false);
+  });
 });

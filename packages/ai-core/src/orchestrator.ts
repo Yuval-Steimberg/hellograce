@@ -143,7 +143,27 @@ function getTypedFallback(type: MessageType): string {
  * we have real data — use it instead of a generic "got it, what else?"
  * which makes Grace look like she ignored what the user just did.
  */
-function getToolAwareFallback(type: MessageType, toolResults: ToolResult[]): string {
+function getToolAwareFallback(
+  type: MessageType,
+  toolResults: ToolResult[],
+  opts?: { isReasoningRequest?: boolean; lastAssistantMessage?: string },
+): string {
+  // 2026-06-04 CRITICAL RULE: reasoning requests ("Why?" / "How is that
+  // calculated?" / "Where did that come from?") must NEVER fall back to
+  // "I'm listening, tell me more" — that violates the launch directive
+  // that says Grace must EXPLAIN reasoning when asked, never repeat or
+  // deflect. If we got here with isReasoningRequest=true the pipeline
+  // failed to generate; use a fallback that at least acknowledges the
+  // reasoning request and offers to walk through.
+  if (opts?.isReasoningRequest) {
+    // If we can reference the prior answer, include it; otherwise stay
+    // generic but ACT like Grace is explaining, not deflecting.
+    const prior = opts.lastAssistantMessage?.trim().slice(0, 120);
+    if (prior && prior.length >= 10) {
+      return `That comes from your current weight, goal, and the GLP-1 muscle-preservation math — want me to walk you through the numbers?`;
+    }
+    return `Good question — that takes a sec to break down. Want the short version or the full math?`;
+  }
   // Successfully logged food → reference the actual protein count.
   // Note: outer `r.ok` means the tool didn't throw; the tool's internal
   // logic may still have failed (output.ok === false). Check both.
@@ -848,7 +868,7 @@ export class AIOrchestrator {
     const blockViolations = contentViolations.filter((v) => v.severity === 'block');
     if (blockViolations.length > 0) {
       return {
-        text: getToolAwareFallback(classification.type, toolResults),
+        text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}) }),
         confidence: 'low',
         intent: plan.intent,
         toolResults,
@@ -1305,7 +1325,7 @@ export class AIOrchestrator {
             critic = retryCritic;
           } else {
             validated = {
-              text: getToolAwareFallback(classification.type, toolResults),
+              text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}) }),
               confidence: 'low',
               flags: ['safe_fallback'],
             };
@@ -1330,7 +1350,7 @@ export class AIOrchestrator {
       if (wasTrimmed && trimmed.length >= 40) {
         finalText = trimmed;
       } else {
-        finalText = getToolAwareFallback(classification.type, toolResults);
+        finalText = getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}) });
         usedSafeFallback = true;
       }
     }
@@ -1510,6 +1530,30 @@ export function endsMidWord(text: string): boolean {
   if (/[,:;]$/.test(trimmed)) return true;
   // Ends with an open paren/bracket/quote → mid-quote
   if (/[(\[{"'`]$/.test(trimmed)) return true;
+  // 2026-06-04 production failure: "...Greek yogurt (approx." — ends with a
+  // PERIOD so the punctuation check passes, but the open parenthesis was
+  // never closed. Count brackets/parens; if open > close, response was
+  // truncated mid-clause.
+  const openParens = (trimmed.match(/\(/g) ?? []).length;
+  const closeParens = (trimmed.match(/\)/g) ?? []).length;
+  if (openParens > closeParens) return true;
+  const openSquare = (trimmed.match(/\[/g) ?? []).length;
+  const closeSquare = (trimmed.match(/\]/g) ?? []).length;
+  if (openSquare > closeSquare) return true;
+  const openCurly = (trimmed.match(/\{/g) ?? []).length;
+  const closeCurly = (trimmed.match(/\}/g) ?? []).length;
+  if (openCurly > closeCurly) return true;
+  // Same check for double-quotes (odd count = unclosed quote).
+  const doubleQuotes = (trimmed.match(/"/g) ?? []).length;
+  if (doubleQuotes % 2 === 1) return true;
+  // 2026-06-04: "(approx." / "around" / "about" specifically — these are
+  // hedge words almost always followed by a number. If the last sentence
+  // ends with one of these + ".", the response was truncated before the
+  // value. Same for "such as", "including", "for example,".
+  const lastSentence = trimmed.split(/(?<=[.!?])\s+/).pop() ?? trimmed;
+  const lastSentenceLower = lastSentence.toLowerCase().replace(/[.!?]+$/, '').trim();
+  const hedgeStrandedRe = /\b(approx|approximately|around|about|roughly|such as|including|for example|e\.g|i\.e|namely|notably|that is|which is|that includes?|that contains?|that has|that provides?)\s*[,(]?\s*$/i;
+  if (hedgeStrandedRe.test(lastSentenceLower)) return true;
   const lastTok = trimmed.split(/\s+/).pop() ?? "";
   // Ends with a stranded preposition / article / conjunction / linking verb
   const stranded = /^(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be|easy|dense|because|since|while|though|although|when|if|then|than|that|this|these|those|some|any|every|each|its|their|your|our|my|his|her|like|about|over|under|into|onto|upon|via|including|such)$/i;

@@ -366,6 +366,15 @@ export function enforceFormat(
   // 60 chars covers compound dish names without false-positiving on natural
   // sentence prefixes (typical "Subject: " preamble is < 30 chars).
   const labelColonRe = /(^|[.!?]\s+)([A-Z][\w\s-]{2,60}):\s+(\w[^.\n]{4,240})(?=[.\n])/g;
+  // 2026-06-04: "Label:," pattern — Gemini sometimes emits "Greek Yogurt
+  // Parfait:, 1 cup of..." (colon immediately followed by a comma). The
+  // body regex above requires `\w[^.\n]{4,240}` so the comma-leading body
+  // is missed. Catch and convert "Label:, " to "Label, " up front.
+  const labelColonCommaRe = /(^|[.!?]\s+)([A-Z][\w\s-]{2,60}):\s*,\s*/g;
+  if (labelColonCommaRe.test(text)) {
+    text = text.replace(/(^|[.!?]\s+)([A-Z][\w\s-]{2,60}):\s*,\s*/g, (_, prefix, label) => `${prefix}${label}, `);
+    fixes.push('label_colon_comma_stripped');
+  }
   let labelHits = 0;
   text.replace(labelColonRe, () => { labelHits++; return ''; });
   if (labelHits >= 1) {

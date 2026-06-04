@@ -29,7 +29,13 @@ export interface QueryFastResult {
     | 'weight_goal'
     | 'protein_today'
     | 'calorie_today'
-    | 'progress_today';
+    | 'progress_today'
+    | 'start_date'
+    | 'week_number'
+    | 'medication'
+    | 'injection_day'
+    | 'current_weight'
+    | 'age';
 }
 
 export interface QueryFastDeps {
@@ -69,6 +75,37 @@ const CALORIE_TODAY_RE =
 const PROGRESS_TODAY_RE =
   /^(?:how am i doing(?:\s+(?:today|on (?:protein|calories)|so far))?|progress (?:check|today|update)|status (?:check|today|update)|where am i (?:at|on (?:protein|calories)))\??$/i;
 
+// ─── Personal-data queries (added 2026-06-04 after production failure) ─────
+// User asked "When did I start injections?" and "What's my week number?" —
+// both fell into 'general' intent, the LLM produced something that failed
+// quality guards, and the user got the "I'm following, keep going" safe
+// fallback. These are deterministic computations from the user row.
+
+// "When did I start" / "when did I begin" / "when did I start ozempic/wegovy/
+// mounjaro/injections/the medication/glp-1"
+const START_DATE_RE =
+  /^(?:when did i (?:start(?:ed)?|begin|began)|how long (?:have i been|since i started)|what(?:'?s| is| was)?\s+(?:my\s+)?start date)(?:\s+(?:on|with|using|taking))?(?:\s+(?:injections?|ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|the medication|medication|treatment|glp-?1|glp))?\s*\??$/i;
+
+// "What's my week number" / "what week am I on" / "how many weeks" / "what week"
+const WEEK_NUMBER_RE =
+  /^(?:what(?:'?s| is)?\s+(?:my\s+)?(?:current\s+)?week(?:\s+number)?|what week (?:am i (?:on|in)|is it)|how many weeks (?:have i been|am i in|on (?:the medication|ozempic|wegovy|mounjaro|zepbound|glp-?1)))\s*\??$/i;
+
+// "What medication am I on" / "what's my med" / "what drug"
+const MEDICATION_RE =
+  /^(?:what(?:'?s| is| am)?\s+(?:my\s+)?(?:medication|med|drug|prescription|gl?p-?1)(?:\s+(?:am i (?:on|taking)|do i take|i'?m on))?|what am i (?:taking|on)|which (?:medication|drug|med) (?:am i on|do i take))\s*\??$/i;
+
+// "What's my injection day" / "when do I inject" / "when's my shot day"
+const INJECTION_DAY_RE =
+  /^(?:what(?:'?s| is)?\s+(?:my\s+)?(?:injection|shot|dose|jab) (?:day|date)|when (?:do i|is my) (?:inject|injection|shot|dose|jab)|which day (?:do i (?:inject|take it)|is (?:my )?(?:shot|injection|dose)))\s*\??$/i;
+
+// "What's my current weight" / "how much do I weigh"
+const CURRENT_WEIGHT_RE =
+  /^(?:what(?:'?s| is)?\s+(?:my\s+)?(?:current\s+)?weight|how much do i weigh|what do i weigh)\s*\??$/i;
+
+// "How old am I" / "what's my age"
+const AGE_RE =
+  /^(?:how old am i|what(?:'?s| is)?\s+(?:my\s+)?age)\s*\??$/i;
+
 /**
  * Attempt to answer the message as a deterministic profile/progress query.
  * Returns null when the message doesn't qualify — caller falls through to the
@@ -97,6 +134,12 @@ export async function tryQueryFast(
     : PROTEIN_TODAY_RE.test(t) ? 'protein_today'
     : CALORIE_TODAY_RE.test(t) ? 'calorie_today'
     : PROGRESS_TODAY_RE.test(t) ? 'progress_today'
+    : START_DATE_RE.test(t) ? 'start_date'
+    : WEEK_NUMBER_RE.test(t) ? 'week_number'
+    : MEDICATION_RE.test(t) ? 'medication'
+    : INJECTION_DAY_RE.test(t) ? 'injection_day'
+    : CURRENT_WEIGHT_RE.test(t) ? 'current_weight'
+    : AGE_RE.test(t) ? 'age'
     : null;
   if (!matchedCategory) return null;
 
@@ -222,6 +265,82 @@ export async function tryQueryFast(
           category: 'progress_today',
         };
       }
+
+      case 'start_date': {
+        const d = user.glp1_start_date;
+        if (!d) return null; // unset → let LLM handle (e.g. "I don't have that on file")
+        const start = new Date(d);
+        const formatted = start.toLocaleDateString('en-US', {
+          year: 'numeric', month: 'long', day: 'numeric',
+        });
+        const weeks = Math.floor((Date.now() - start.getTime()) / (7 * 24 * 60 * 60 * 1000));
+        const ago = weeks <= 0
+          ? 'this week'
+          : weeks === 1 ? 'about 1 week ago'
+          : weeks < 52 ? `about ${weeks} weeks ago`
+          : `about ${Math.floor(weeks / 52)} year${Math.floor(weeks / 52) === 1 ? '' : 's'} ago`;
+        return {
+          text: `You started on ${formatted}, ${ago}.`,
+          category: 'start_date',
+        };
+      }
+
+      case 'week_number': {
+        const d = user.glp1_start_date;
+        if (!d) return null;
+        const start = new Date(d);
+        const weekNum = Math.floor((Date.now() - start.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
+        if (weekNum <= 0) return null;
+        return {
+          text: `You're in week ${weekNum} of your GLP-1 journey.`,
+          category: 'week_number',
+        };
+      }
+
+      case 'medication': {
+        const med = user.medication;
+        if (!med || med.trim().length === 0) return null;
+        const dose = user.dose_mg ? ` at ${user.dose_mg} mg` : '';
+        return {
+          text: `You're on ${med}${dose}.`,
+          category: 'medication',
+        };
+      }
+
+      case 'injection_day': {
+        const day = user.injection_day;
+        if (!day || day.trim().length === 0) return null;
+        return {
+          text: `Your injection day is ${day}.`,
+          category: 'injection_day',
+        };
+      }
+
+      case 'current_weight': {
+        const w = user.current_weight;
+        if (!w || w <= 0) return null;
+        const goal = user.goal_weight;
+        if (goal && goal > 0 && w > goal) {
+          const toGo = Math.round((w - goal) * 10) / 10;
+          return {
+            text: `You're at ${w} lbs, ${toGo} lbs from your ${goal} lbs goal.`,
+            category: 'current_weight',
+          };
+        }
+        return {
+          text: `You're at ${w} lbs.`,
+          category: 'current_weight',
+        };
+      }
+
+      case 'age': {
+        const a = user.age;
+        if (!a || a <= 0) return null;
+        return {
+          text: `You're ${a}.`,
+          category: 'age',
+        };
+      }
     }
   } catch (err) {
     deps.logger.warn(
@@ -242,4 +361,10 @@ export const __testing = {
   PROTEIN_TODAY_RE,
   CALORIE_TODAY_RE,
   PROGRESS_TODAY_RE,
+  START_DATE_RE,
+  WEEK_NUMBER_RE,
+  MEDICATION_RE,
+  INJECTION_DAY_RE,
+  CURRENT_WEIGHT_RE,
+  AGE_RE,
 };

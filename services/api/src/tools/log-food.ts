@@ -664,6 +664,17 @@ export function lookupCommonFoodMacros(input: string): FoodEstimate | null {
   };
   const best = tryMatch(heavyNorm) ?? tryMatch(lightNorm);
   if (best) {
+    // 2026-06-04 production failure: user sent "3 eggs with salade, Tuna, Rice"
+    // — the matcher found "3 eggs" (key length 6, keyWordCount 2 → acceptable)
+    // and returned ONLY eggs. But the message has FOUR foods.
+    //
+    // Multi-food bail: after a match, check whether there are OTHER food
+    // tokens in the input that aren't covered by the matched key. If yes,
+    // return null so food-log-fast falls through to the full log_food tool
+    // which decomposes via LLM and logs each item separately.
+    if (hasOtherFoodTokens(lightNorm, best.key) || hasOtherFoodTokens(heavyNorm, best.key)) {
+      return null;
+    }
     return {
       food: best.macros.food,
       protein_g: best.macros.protein_g,
@@ -672,4 +683,57 @@ export function lookupCommonFoodMacros(input: string): FoodEstimate | null {
     };
   }
   return null;
+}
+
+// Set of distinctive food tokens harvested from COMMON_FOODS — single words
+// that are unambiguously foods. Used by hasOtherFoodTokens to detect when a
+// multi-item meal slipped past the substring matcher.
+const FOOD_TOKEN_SET: Set<string> = (() => {
+  const STOP = new Set([
+    'with', 'and', 'of', 'cup', 'cups', 'slice', 'slices', 'piece', 'pieces',
+    'serving', 'servings', 'oz', 'g', 'gram', 'grams', 'tbsp', 'tsp',
+    'medium', 'large', 'small', 'plain', 'regular', 'whole', 'half',
+    'a', 'an', 'the', 'one', 'two', 'three', 'four', 'five', 'six',
+    'my', 'some', 'this', 'that',
+  ]);
+  const set = new Set<string>();
+  for (const key of Object.keys(COMMON_FOODS)) {
+    for (const tok of key.split(/\s+/)) {
+      const t = tok.toLowerCase();
+      if (t.length < 3) continue;
+      if (STOP.has(t)) continue;
+      if (/^\d+$/.test(t)) continue;
+      set.add(t);
+    }
+  }
+  // Additional unambiguous food words not in COMMON_FOODS keys.
+  for (const t of ['tuna', 'rice', 'salad', 'salade', 'salmon', 'eggs', 'egg',
+                   'chicken', 'beef', 'pork', 'fish', 'tofu', 'tempeh',
+                   'yogurt', 'cheese', 'milk', 'oats', 'oatmeal',
+                   'banana', 'apple', 'berries', 'pasta', 'bread', 'toast',
+                   'shake', 'smoothie', 'soup', 'sandwich', 'wrap',
+                   'edamame', 'beans', 'lentils', 'chickpea', 'chickpeas',
+                   'avocado', 'shrimp', 'turkey', 'bacon', 'sausage',
+                   'cottage', 'kefir', 'hummus', 'quinoa']) {
+    set.add(t);
+  }
+  return set;
+})();
+
+/**
+ * Returns true if the normalized input contains a food token (from the
+ * COMMON_FOODS-derived dictionary) that ISN'T part of the matched key.
+ * Indicates the user listed multiple foods in one message.
+ */
+function hasOtherFoodTokens(normalizedInput: string, matchedKey: string): boolean {
+  const keyTokens = new Set(matchedKey.toLowerCase().split(/\s+/));
+  const inputTokens = normalizedInput.toLowerCase().split(/\s+/);
+  let otherCount = 0;
+  for (const tok of inputTokens) {
+    if (tok.length < 3) continue;
+    if (keyTokens.has(tok)) continue;
+    if (FOOD_TOKEN_SET.has(tok)) otherCount++;
+    if (otherCount >= 1) return true;
+  }
+  return false;
 }

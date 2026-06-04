@@ -1130,8 +1130,15 @@ export class AIOrchestrator {
         // fits comfortably inside the token budget. This is the safeguard
         // for Bug 3 in the 2026-05-30 full-feedback report — responses
         // cutting off mid-sentence multiple times per session.
+        // 2026-06-04 fix: the previous addendum told the LLM to be SHORTER
+        // but didn't say "keep the actual answer". Production failure: user
+        // asked "what should I eat for breakfast?", initial response listed
+        // 2 dishes + context (~500 chars, tripped too_long), retry stripped
+        // everything except "You're at 0g protein today — your goal is 60g."
+        // — no actual answer. Now we explicitly tell the retry to PRESERVE
+        // the substantive answer and only trim padding/preamble.
         const truncationAddendum = truncated
-          ? '\n\n━━━ TRUNCATION RECOVERY ━━━\nYour previous draft cut off mid-sentence — it was TOO LONG. Rewrite in MAXIMUM 2-3 SHORT sentences. Pure prose only. No lists. No headers. No "Here\'s a breakdown". State the most important thing FIRST, in one sentence. Then stop. The message MUST end with a complete sentence and proper punctuation.\n'
+          ? '\n\n━━━ TRUNCATION RECOVERY ━━━\nYour previous draft cut off mid-sentence — it was TOO LONG. Rewrite in MAXIMUM 2-3 SHORT sentences. Pure prose only. No lists. No headers. No "Here\'s a breakdown". CRITICAL: KEEP the substantive answer (specific food names, protein numbers, the actual recommendation). Trim only padding, preamble, and explanation. If the user asked what to eat, your reply MUST still name 2-3 specific foods. The message MUST end with a complete sentence and proper punctuation.\n'
           : '';
         // Critic may be skipped on non-risky intents (2026-06-03 latency cut).
         // The addendum then comes purely from the content-rule violations.

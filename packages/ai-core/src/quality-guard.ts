@@ -98,6 +98,12 @@ export function checkResponseQuality(text: string, type: MessageType): QualityIs
   // ─── Total length ───────────────────────────────────────────────────────
   // Hard cap on character count by type to catch verbose responses that
   // somehow stayed within sentence limits.
+  // Bumped food_question 450 → 600 (2026-06-04): production failure showed
+  // model exceeding 450 chars → too_long regen → retry stripped the actual
+  // food recommendation, leaving only "You're at 0g protein today — your
+  // goal is 60g." (no answer to "what should I eat for breakfast?"). 600
+  // matches knowledge — both intents need enough room to provide 2-3
+  // specific recommendations with brief context.
   const charLimit: Record<MessageType, number> = {
     greeting: 120,
     gibberish: 120,
@@ -107,7 +113,7 @@ export function checkResponseQuality(text: string, type: MessageType): QualityIs
     scheduling: 200,
     emotional: 280,
     general: 350,
-    food_question: 450,
+    food_question: 600,
     knowledge: 600,
     appointment_prep: 800,
     // Phase 1 coverage expansion intents

@@ -1524,6 +1524,10 @@ export class AIOrchestrator {
       ...(critic ? { critic } : {}),
       ...(regenerated ? { regenerated } : {}),
       ...(usedSafeFallback ? { usedSafeFallback } : {}),
+      // Surface which guards triggered regen so ai.service.ts can feed the
+      // production-issue capture loop with the actual cause. Empty array
+      // when nothing fired (clean response, no regen).
+      regenTriggerCodes: regenViolations.map((v) => v.code),
     };
   }
 

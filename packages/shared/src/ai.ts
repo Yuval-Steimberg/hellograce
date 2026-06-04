@@ -108,6 +108,10 @@ export interface OrchestratorOutput {
   regenerated?: boolean;
   /** True if both attempts failed the gate and a safe fallback was returned. */
   usedSafeFallback?: boolean;
+  /** Codes of the violations that triggered the regen (banned_phrase,
+   *  behavioral_violation, relevance_check_failed, etc). Used by the
+   *  production-issue capture loop to label what kind of failure happened. */
+  regenTriggerCodes?: string[];
   /** Internal stage timing (set by AIOrchestrator.run). Surfaced so the API
    *  layer can record per-stage breakdowns to messages.stage_timings JSONB. */
   internalTimings?: {

@@ -15,6 +15,7 @@ import { FaqSemanticCache } from './cache/faq-semantic-cache.js';
 import { RagService } from './rag/rag.service.js';
 import { MemoryService } from './memory/memory.service.js';
 import { UserMemoryService } from './memory/user-memory.service.js';
+import { ProductionIssuesService } from './services/production-issues.service.js';
 import { AIService } from './services/ai.service.js';
 import { TwilioSender } from './twilio/sender.js';
 import { getTurnQueue, getFactExtractQueue, closeQueues } from './workers/queues.js';
@@ -70,6 +71,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const messageTemplatesService = new MessageTemplatesService(pool, logger);
 
   const userMemory = new UserMemoryService(pool, embedder, llm, logger);
+  const productionIssues = new ProductionIssuesService(pool, logger);
 
   // FAQ semantic cache — opt-in via FAQ_CACHE_ENABLED env var. Initializes
   // (embeds all seeds) in the background so server boot isn't blocked.
@@ -101,6 +103,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     userMemory,
     faqCache,
     redis,
+    productionIssues,
     // 2026-06-04 TRUST GEMINI flags — bypass LLM-as-judge guards.
     guards: {
       trustGemini: env.TRUST_GEMINI,

@@ -25,6 +25,7 @@ import type { UserMemoryService } from '../memory/user-memory.service.js';
 import type { RagService } from '../rag/rag.service.js';
 import type { UserService } from '../user/user.service.js';
 import type { ContentRulesService } from './content-rules.service.js';
+import type { ProductionIssuesService } from './production-issues.service.js';
 import type { ResponseFingerprintService } from './response-fingerprint.service.js';
 import type { ConversationSummaryService } from './conversation-summary.service.js';
 import type { TopicTrackerService } from './topic-tracker.service.js';
@@ -101,6 +102,10 @@ export interface AIServiceDeps {
     relevanceEnabled?: boolean;
     qualityStrict?: boolean;
   };
+  /** Production issue capture — Layer 4 of defense-in-depth. Every regen
+   *  fire and safe-fallback fire is captured (fire-and-forget) so we can
+   *  review and promote to regression tests. Closes the user feedback loop. */
+  productionIssues?: ProductionIssuesService;
 }
 
 export class AIService {
@@ -1243,6 +1248,41 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       prePlannedDecision,
       ...(userMemories.length > 0 ? { userMemories } : {}),
     });
+
+    // ── Production issue capture (Layer 4 of defense-in-depth) ──────────
+    // Fire-and-forget: capture every regen/fallback/violation event so we
+    // can review and promote to regression tests. NEVER blocks the user.
+    if (this.deps.productionIssues) {
+      const issueSvc = this.deps.productionIssues;
+      if (result.usedSafeFallback) {
+        void issueSvc.captureFireAndForget({
+          userId: input.userId,
+          conversationId,
+          userMessage: input.text,
+          graceResponse: result.text,
+          trigger: 'safe_fallback',
+          violationCodes: result.regenTriggerCodes,
+          context: { intent: result.intent, confidence: result.confidence, regenerated: result.regenerated },
+        });
+      } else if (result.regenerated && result.regenTriggerCodes && result.regenTriggerCodes.length > 0) {
+        const codes = result.regenTriggerCodes;
+        const primary: 'behavioral_violation' | 'topic_drift' | 'phrase_repetition' | 'long_response_chopped' | 'truncation_cascade' =
+          codes.includes('behavioral_violation') ? 'behavioral_violation'
+          : codes.includes('relevance_check_failed') || codes.includes('topic_drift') ? 'topic_drift'
+          : codes.includes('phrase_repetition') ? 'phrase_repetition'
+          : (codes.includes('too_long') || codes.includes('too_many_sentences')) ? 'long_response_chopped'
+          : 'truncation_cascade';
+        void issueSvc.captureFireAndForget({
+          userId: input.userId,
+          conversationId,
+          userMessage: input.text,
+          graceResponse: result.text,
+          trigger: primary,
+          violationCodes: codes,
+          context: { intent: result.intent, confidence: result.confidence },
+        });
+      }
+    }
 
     lat.mark('persist');
     const stageTimings = lat.snapshot();

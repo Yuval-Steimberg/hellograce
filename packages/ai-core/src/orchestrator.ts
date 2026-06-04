@@ -1018,9 +1018,25 @@ export class AIOrchestrator {
       classification.type === 'greeting' ||
       classification.type === 'gibberish' ||
       validated.text.length < 40;
+    // 2026-06-04 latency cut: skip relevance check for food intents. The
+    // response is constrained by the dietary filter + food rules to be about
+    // food; the relevance check was producing false positives (telemetry
+    // showed a clearly-on-topic dinner response flagged "not relevant",
+    // triggering a 4.5s regen + needsReview cascade). Saves ~700ms per
+    // food_question / food_log turn. Knowledge / medication / general intents
+    // still get relevance checked because they genuinely can drift.
+    const RELEVANCE_SKIP_INTENTS = new Set([
+      'food_log',
+      'food_question',
+      'weight_log',
+      'mood_log',
+      'exercise_log',
+      'injection_log',
+    ]);
     const shouldRunRelevance =
       !isTrivial &&
       !topicDrift &&
+      !RELEVANCE_SKIP_INTENTS.has(classification.type) &&
       (lastAssistantMessage || looksLikeQuestion) &&
       input.text.length > 10;
     const shouldRunBehavioral =
@@ -1346,9 +1362,22 @@ export class AIOrchestrator {
     // than to ship a half-thought.
     let finalText = validated.text;
     if (!usedSafeFallback && endsMidWord(finalText)) {
-      const { trimmed, wasTrimmed } = trimToLastCompleteSentence(finalText);
-      if (wasTrimmed && trimmed.length >= 40) {
-        finalText = trimmed;
+      // ITERATIVE trim: a single trim might leave a residue that ALSO ends
+      // mid-sentence (e.g. unmatched paren earlier in the text). Keep
+      // trimming back to earlier sentence boundaries until the result is
+      // clean OR we run out of complete sentences. Bounded to 6 iterations
+      // so a pathological response (every sentence has unmatched brackets)
+      // can't loop forever — at that point we fall to the safe template.
+      let candidate = finalText;
+      let cleaned = false;
+      for (let i = 0; i < 6; i++) {
+        const { trimmed, wasTrimmed } = trimToLastCompleteSentence(candidate);
+        if (!wasTrimmed || trimmed.length < 40) break;
+        candidate = trimmed;
+        if (!endsMidWord(candidate)) { cleaned = true; break; }
+      }
+      if (cleaned) {
+        finalText = candidate;
       } else {
         finalText = getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}) });
         usedSafeFallback = true;
@@ -1530,10 +1559,12 @@ export function endsMidWord(text: string): boolean {
   if (/[,:;]$/.test(trimmed)) return true;
   // Ends with an open paren/bracket/quote → mid-quote
   if (/[(\[{"'`]$/.test(trimmed)) return true;
-  // 2026-06-04 production failure: "...Greek yogurt (approx." — ends with a
-  // PERIOD so the punctuation check passes, but the open parenthesis was
-  // never closed. Count brackets/parens; if open > close, response was
-  // truncated mid-clause.
+  // Ends with a mathematical operator → stranded calculation
+  if (/[+\-*/=×÷±]\s*$/.test(trimmed)) return true;
+  // Ends with a percent sign or currency symbol with no preceding number nearby
+  // (handled by the punctuation check below — percent / currency at end is fine
+  //  e.g. "lost 5%." but "lost %" would fail the no-terminator check.)
+  // Bracket balance (incl. parens, square, curly, angle)
   const openParens = (trimmed.match(/\(/g) ?? []).length;
   const closeParens = (trimmed.match(/\)/g) ?? []).length;
   if (openParens > closeParens) return true;
@@ -1546,20 +1577,48 @@ export function endsMidWord(text: string): boolean {
   // Same check for double-quotes (odd count = unclosed quote).
   const doubleQuotes = (trimmed.match(/"/g) ?? []).length;
   if (doubleQuotes % 2 === 1) return true;
-  // 2026-06-04: "(approx." / "around" / "about" specifically — these are
-  // hedge words almost always followed by a number. If the last sentence
-  // ends with one of these + ".", the response was truncated before the
-  // value. Same for "such as", "including", "for example,".
+  // Open markdown bold (** unbalanced)
+  const boldMarkers = (trimmed.match(/\*\*/g) ?? []).length;
+  if (boldMarkers % 2 === 1) return true;
+  // Empty markdown header at end: "## " or "### " alone on a line
+  if (/(?:^|\n)#{1,6}\s*$/.test(trimmed)) return true;
+  // Empty list-item bullet at end: "- " / "* " / "• " / "1. " with no content
+  if (/(?:^|\n)\s*(?:[-*•]|\d+\.)\s*$/.test(trimmed)) return true;
+  // Stranded hedge / connector words at end of last sentence — almost always
+  // followed by content the model dropped.
   const lastSentence = trimmed.split(/(?<=[.!?])\s+/).pop() ?? trimmed;
   const lastSentenceLower = lastSentence.toLowerCase().replace(/[.!?]+$/, '').trim();
-  const hedgeStrandedRe = /\b(approx|approximately|around|about|roughly|such as|including|for example|e\.g|i\.e|namely|notably|that is|which is|that includes?|that contains?|that has|that provides?)\s*[,(]?\s*$/i;
+  // Hedge words: when these end a sentence, the model dropped the value/clause
+  // that should have followed (e.g. "Eat around" → "around 60g"). Only includes
+  // words that REQUIRE follow-on content; excludes ambiguous ones like "next"
+  // (valid: "Try this next.") and "first" (valid: "Eat that first.").
+  const hedgeStrandedRe = /\b(approx|approximately|around|about|roughly|nearly|almost|just over|just under|just below|just above|less than|more than|up to|at least|at most|such as|including|for example|e\.g|i\.e|namely|notably|that is|which is|that includes?|that contains?|that has|that provides?|due to|because of|in order to|so that|such that|so as to|in case|provided that|assuming that|given that|considering that|despite|even though|in spite of|on the other hand|in contrast|finally|moreover|furthermore|however|nevertheless|therefore|consequently|as a result|in addition|on top of)\s*[,(]?\s*$/i;
   if (hedgeStrandedRe.test(lastSentenceLower)) return true;
-  const lastTok = trimmed.split(/\s+/).pop() ?? "";
+  const lastTokRaw = trimmed.split(/\s+/).pop() ?? "";
+  // Strip trailing terminator punctuation so "when." matches "when" stranded.
+  const lastTok = lastTokRaw.replace(/[.!?…,;:]+$/, '');
   // Ends with a stranded preposition / article / conjunction / linking verb
-  const stranded = /^(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be|easy|dense|because|since|while|though|although|when|if|then|than|that|this|these|those|some|any|every|each|its|their|your|our|my|his|her|like|about|over|under|into|onto|upon|via|including|such)$/i;
+  // 2026-06-04: restricted to words that ALMOST NEVER validly end a sentence.
+  // Excluded: more, less, most, least, all, none, here, there, where, now,
+  // first, second, third, last, next (these often end complete sentences:
+  // "Tell me more", "That's all", "Go there", "I'll try the tofu first").
+  // Included: articles, most prepositions, auxiliary verbs that need a main
+  // verb (is, was, been, being, am), subordinating conjunctions that need a
+  // clause (when, if, because, since, while, though, although, whether,
+  // unless, until), coordinators that need a tail (and, or, but, nor, so).
+  const stranded = /^(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be|been|being|am|because|since|while|though|although|when|if|then|than|that|its|their|your|our|my|his|her|into|onto|upon|via|including|such|without|within|throughout|across|between|among|alongside|toward|towards|after|before|until|unless|whether|either|neither|nor)$/i;
   if (stranded.test(lastTok)) return true;
+  // Bare number followed by no unit at end (e.g. "around 60" → likely
+  // "60 grams" / "60 minutes" cut off). Only fires when the second-to-last
+  // token suggests a quantity is expected.
+  if (/^\d+(?:\.\d+)?$/.test(lastTok) && trimmed.length > 8) {
+    const prevTok = trimmed.split(/\s+/).slice(-2, -1)[0]?.toLowerCase() ?? '';
+    if (/^(about|around|approximately|roughly|nearly|almost|over|under|up to|at least|just|exactly|around|just|maybe|like)$/i.test(prevTok)) {
+      return true;
+    }
+  }
   // No terminal punctuation or emoji at all
-  if (!/[.!?…]$|[\p{Extended_Pictographic}]$/u.test(trimmed)) return true;
+  if (!/[.!?…)\]}'"`]$|[\p{Extended_Pictographic}]$/u.test(trimmed)) return true;
   return false;
 }
 

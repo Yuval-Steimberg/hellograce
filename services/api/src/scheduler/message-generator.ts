@@ -1,5 +1,5 @@
 import type { LLMProvider, DbContentRule } from '@grace/shared';
-import { GRACE_SYSTEM_PROMPT, checkContent } from '@grace/ai-core';
+import { GRACE_SYSTEM_PROMPT, checkContent, endsMidWord, trimToLastCompleteSentence } from '@grace/ai-core';
 import type { GraceUser } from '../user/user.service.js';
 import type { ContentRulesService } from '../services/content-rules.service.js';
 import type { MessageTemplatesService } from '../services/message-templates.service.js';
@@ -564,8 +564,8 @@ Do NOT ask a question. Do NOT send a second follow-up.`,
 //      quote — anything else means it was cut off and we fall back.
 const FORBIDDEN_LABEL_PREFIX = /^(morning|midday|afternoon|evening|night|daily|weekly|injection|protein|hydration|side[\s-]?effect|bonus|spontaneous)\s+(reminder|check[\s-]?in|nudge|note|update|message|hello|hi|thought)[\s:.\-—–,]+/i;
 const GENERIC_LABEL_PREFIX = /^(reminder|check[\s-]?in|note|update|hey there)[\s:,.\-—–]+/i;
-// Allow standard sentence punctuation, common Grace emojis, and quote marks.
-const COMPLETE_ENDING = /[.!?…"')\]🤍🌿🌙💪💉🧡✨🍃🤍🌱☀️🌞🌤️]$/u;
+// Note: COMPLETE_ENDING regex was replaced by the shared endsMidWord guard
+// imported from @grace/ai-core (2026-06-04 unification).
 
 function sanitizeProactiveOutput(raw: string, firstName: string | null): string | null {
   let text = raw.trim();
@@ -599,34 +599,26 @@ function sanitizeProactiveOutput(raw: string, firstName: string | null): string 
   // Reject too-short results (likely the prefix was the entire message).
   if (text.length < 15) return null;
 
-  // Reject if it doesn't end cleanly — most likely truncated by token budget.
-  // Before rejecting, try trimming back to the last complete sentence — a
-  // proactive message can salvage a partial generation. If the trim leaves
-  // ≥15 chars and ends cleanly, ship the trimmed version; otherwise fall
-  // back to the canned message at the caller.
-  if (!COMPLETE_ENDING.test(text)) {
-    const trimmed = trimToLastCompleteSentenceLocal(text);
-    if (trimmed.length >= 15 && COMPLETE_ENDING.test(trimmed)) {
-      return trimmed;
+  // 2026-06-04 unified mid-sentence check: use the same endsMidWord guard
+  // the orchestrator uses, so proactive messages get the SAME protection
+  // against (approx., unclosed brackets, stranded hedge words, etc.
+  // Iterative trim — same logic as the orchestrator's final safety net.
+  if (endsMidWord(text)) {
+    let candidate = text;
+    let cleaned = false;
+    for (let i = 0; i < 6; i++) {
+      const { trimmed, wasTrimmed } = trimToLastCompleteSentence(candidate);
+      if (!wasTrimmed || trimmed.length < 15) break;
+      candidate = trimmed;
+      if (!endsMidWord(candidate)) { cleaned = true; break; }
     }
+    if (cleaned) return candidate;
     return null;
   }
 
   return text;
 }
 
-// Local copy of the orchestrator's trim helper — kept inline so the proactive
-// pipeline doesn't take a dependency on @grace/ai-core's orchestrator module
-// (which pulls in heavy deps not needed at scheduler time).
-function trimToLastCompleteSentenceLocal(text: string): string {
-  const original = text.trim();
-  if (original.length === 0) return '';
-  const sentenceEnd = /[.!?…][")\]]?(?=\s|$)/g;
-  let lastIdx = -1;
-  let match: RegExpExecArray | null;
-  while ((match = sentenceEnd.exec(original)) !== null) {
-    lastIdx = match.index + match[0].length;
-  }
-  if (lastIdx === -1) return original;
-  return original.slice(0, lastIdx).trim();
-}
+// trimToLastCompleteSentence is now imported from @grace/ai-core (2026-06-04
+// unification), so the proactive path uses the EXACT SAME completeness check
+// as the orchestrator.

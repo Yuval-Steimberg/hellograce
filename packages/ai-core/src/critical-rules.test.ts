@@ -141,4 +141,68 @@ describe('CRITICAL RULE: Never end a response mid-sentence', () => {
     expect(endsMidWord('Try plant proteins, such as.')).toBe(true);
     expect(endsMidWord('Many options exist.')).toBe(false);
   });
+
+  // ── Comprehensive variations the rule must catch ──────────────────────
+  it('detects stranded mathematical operators', () => {
+    expect(endsMidWord('Your total is 60 +')).toBe(true);
+    expect(endsMidWord('Your total is 60 + 20 =')).toBe(true);
+    expect(endsMidWord('Your total is 80g.')).toBe(false);
+  });
+
+  it('detects stranded "due to," / "because of," / "in order to,"', () => {
+    expect(endsMidWord('Hair loss happens due to.')).toBe(true);
+    expect(endsMidWord('Eat protein in order to.')).toBe(true);
+    expect(endsMidWord('Eat protein because of the goal.')).toBe(false);
+  });
+
+  it('detects empty list bullet at end', () => {
+    expect(endsMidWord('Try:\n- Tofu\n- Lentils\n- ')).toBe(true);
+    expect(endsMidWord('Try:\n1. Tofu\n2. ')).toBe(true);
+  });
+
+  it('detects empty markdown header at end', () => {
+    expect(endsMidWord('Why this matters\n## ')).toBe(true);
+  });
+
+  it('detects unbalanced markdown bold', () => {
+    expect(endsMidWord('This is **important')).toBe(true);
+    expect(endsMidWord('This is **important**.')).toBe(false);
+  });
+
+  it('detects bare number with quantity hedge before it', () => {
+    expect(endsMidWord('Eat about 60')).toBe(true);
+    expect(endsMidWord('Eat approximately 30')).toBe(true);
+    expect(endsMidWord('Eat about 60g.')).toBe(false);
+  });
+
+  it('detects stranded conditional connectors', () => {
+    expect(endsMidWord('If you exercise, then.')).toBe(true);
+    expect(endsMidWord('Eat more protein when.')).toBe(true);
+    expect(endsMidWord('Eat protein when you can.')).toBe(false);
+  });
+
+  it('detects stranded sequence words', () => {
+    expect(endsMidWord('First,')).toBe(true);
+    expect(endsMidWord('Finally,')).toBe(true);
+    expect(endsMidWord('Moreover,')).toBe(true);
+    expect(endsMidWord('First, eat breakfast.')).toBe(false);
+  });
+
+  it('accepts emoji endings', () => {
+    expect(endsMidWord('Got it 👍')).toBe(false);
+    expect(endsMidWord('Sounds great! 🌿')).toBe(false);
+  });
+
+  it('accepts numeric values with units', () => {
+    expect(endsMidWord("You're at 56g protein today.")).toBe(false);
+    expect(endsMidWord('That target is 60g.')).toBe(false);
+  });
+
+  it('accepts compound responses with parens balanced', () => {
+    expect(endsMidWord('Try Greek yogurt (about 200g).')).toBe(false);
+  });
+
+  it('accepts complete responses ending in question mark', () => {
+    expect(endsMidWord('Want me to walk you through the math?')).toBe(false);
+  });
 });

@@ -10,3 +10,4 @@ export * from './quality-guard.js';
 export * from './relevance-check.js';
 export * from './orchestrator.js';
 export * from './tools/registry.js';
+export { enforceFormat } from './format-enforcer.js';

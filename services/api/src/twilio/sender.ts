@@ -1,5 +1,6 @@
 import twilio from 'twilio';
 import type { Logger } from 'pino';
+import { enforceFormat, checkContent } from '@grace/ai-core';
 import { UpstreamError } from '../errors.js';
 
 export interface TwilioSenderConfig {
@@ -37,15 +38,56 @@ export class EmptyOutboundError extends Error {
   constructor() { super('Outbound body is empty after sanitization'); }
 }
 
-export function sanitizeOutbound(input: string): string {
+export function sanitizeOutbound(input: string, logger?: Logger): string {
   let text = input;
 
+  // ─── Universal format-enforcer pass (2026-06-04) ──────────────────────
+  // The orchestrator runs enforceFormat on LLM responses, but messages can
+  // reach the sender via paths that bypass it: fast-path, food_log_fast,
+  // weight_log_fast, query_fast, safety canned responses, vague-food
+  // clarifications, scheduler welcomes, emergency LLM fallback, etc. Running
+  // it here gives EVERY outbound the same treatment: title-case headers,
+  // list intros, label-colon lists, stray colons, em-dashes, markdown — all
+  // caught regardless of source. format-enforcer is idempotent (no-op on
+  // clean text), so this is safe to run twice for the main orchestrator path.
+  try {
+    const formatted = enforceFormat(text, {});
+    if (formatted.fixes.length > 0 && logger) {
+      logger.info(
+        { original: text.slice(0, 200), fixes: formatted.fixes },
+        'twilio.sanitize.format_enforced',
+      );
+    }
+    text = formatted.text;
+  } catch (err) {
+    // enforceFormat throwing is a code bug, not a runtime case — log + continue.
+    logger?.warn({ err: (err as Error).message }, 'twilio.sanitize.enforce_format_failed');
+  }
+
+  // ─── Universal content-checker pass (logging only) ────────────────────
+  // checkContent normally drives the regen loop in the orchestrator. Here we
+  // run it without opts purely to LOG any violations that slip through canned
+  // / fast-path responses, so we can detect bad hardcoded strings or rule
+  // gaps. We do NOT regen at this point (the message is on its way out) — but
+  // logging gives us a tripwire for production-quality monitoring.
+  try {
+    const violations = checkContent(text, {});
+    if (violations.length > 0 && logger) {
+      logger.warn(
+        {
+          original: text.slice(0, 200),
+          violations: violations.map((v) => ({ code: v.code, severity: v.severity ?? 'regen' })),
+        },
+        'twilio.sanitize.content_violation',
+      );
+    }
+  } catch (err) {
+    logger?.warn({ err: (err as Error).message }, 'twilio.sanitize.check_content_failed');
+  }
+
   // ─── Markdown strip (Bug 4 remediation, 2026-05-30) ────────────────────
-  // Last-line defense: format-enforcer already strips these earlier in the
-  // pipeline, but messages can reach the sender via paths that skip the
-  // orchestrator (scheduler welcome, hardcoded webhook replies, scope-guard
-  // canned responses). SMS/WhatsApp render markdown literally, so any of
-  // these characters reaching the user would appear as garbage punctuation.
+  // Belt-and-suspenders after enforceFormat (which also strips markdown):
+  // these regexes are surgical and idempotent, so re-running is safe.
   //
   // Done BEFORE em-dash collapse so a "**bold**" with em-dash inside is
   // unwrapped first then its content gets the dash treatment.
@@ -131,13 +173,15 @@ export class TwilioSender {
       body = msg.body;
     } else {
       try {
-        body = sanitizeOutbound(msg.body);
+        body = sanitizeOutbound(msg.body, this.logger);
       } catch (err) {
         if (err instanceof EmptyOutboundError) {
           // Sanitizer produced an empty body — log and substitute a neutral
-          // fallback so the user is not left with silence.
+          // fallback so the user is not left with silence. The fallback itself
+          // gets re-sanitized (defense in depth) so an em-dash in it would
+          // still be caught.
           this.logger.warn({ original: msg.body }, 'twilio.send.empty_after_sanitize');
-          body = "I'm here — what's on your mind?";
+          body = sanitizeOutbound("I'm here. Tell me what's going on.", this.logger);
         } else {
           throw err;
         }

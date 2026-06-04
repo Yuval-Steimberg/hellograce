@@ -67,9 +67,11 @@ describe('sanitizeOutbound — mid-sentence truncation', () => {
     expect(out).toBe('Love hearing that 🧡');
   });
 
-  it('preserves complete sentences ending with exclamation', () => {
+  it('strips exclamation to period (format-enforcer H5: SMS stays calm)', () => {
+    // After 2026-06-04 universal-check pass, sanitizeOutbound runs
+    // enforceFormat which strips "!" everywhere per H5 rule.
     const out = sanitizeOutbound('Glad to hear that!');
-    expect(out).toBe('Glad to hear that!');
+    expect(out).toBe('Glad to hear that.');
   });
 
   it('keeps last complete thought when LLM truncates mid-word at the end', () => {

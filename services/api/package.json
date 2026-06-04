@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "eval": "tsx scripts/run-eval.ts",
     "auto-eval": "tsx scripts/run-auto-eval.ts",
+    "latency-bench": "tsx latency-bench/analyze.ts",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },

@@ -27,7 +27,8 @@ export interface FastPathResult {
     | 'appreciation'
     | 'love_it'
     | 'denial'
-    | 'confirmation';
+    | 'confirmation'
+    | 'identity';
 }
 
 // Pure greeting — no question, no follow-up content
@@ -241,6 +242,17 @@ const LOVE_IT_REPLIES: readonly string[] = [
   'Awesome.',
 ] as const;
 
+// 2026-06-04 production failure: "are you real?" was routed to general intent,
+// generated a long meandering response, tripped behavioral guard, regen also
+// failed, served "What's on your mind?" canned fallback. Identity questions
+// are deterministic and need a brief truthful answer.
+const IDENTITY_RE = /^(?:are\s+you|r\s+u)\s+(?:real|human|a\s+(?:bot|robot|machine|ai|person|chatbot|computer)|alive|sentient|a\s+real\s+person|an?\s+(?:ai|chatbot|bot|robot))\??$|^(?:who|what)\s+(?:are|r)\s+(?:you|u)\??$/i;
+const IDENTITY_REPLIES: readonly string[] = [
+  "I'm Grace — an AI companion built for people on GLP-1 medications. Real in the sense that I'm here, listening, and remember our chats. Not a human, but I won't pretend to be.",
+  "I'm Grace, an AI built to support you between doctor visits — food, mood, side effects, all of it. Not human, but here whenever you need me.",
+  "I'm Grace, your GLP-1 companion. An AI, not a person, but designed to actually pay attention and remember what matters to you.",
+] as const;
+
 function pickFromPool(pool: readonly string[], seed: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
@@ -267,8 +279,13 @@ export function tryFastPath(text: string, userId: string): FastPathResult | null
   // Hard length cap — anything longer than 40 chars almost certainly needs
   // real processing.
   if (trimmed.length === 0 || trimmed.length > 40) return null;
-  // Any question mark → real pipeline (user is asking something)
-  if (trimmed.includes('?')) return null;
+  // Identity questions are the ONE exception to "no `?` allowed" — they're
+  // deterministic and need a brief truthful response, not a full LLM pipeline.
+  const isIdentity = IDENTITY_RE.test(trimmed);
+  if (!isIdentity) {
+    // Any question mark → real pipeline (user is asking something)
+    if (trimmed.includes('?')) return null;
+  }
   // Any digit → could be a weight/food/dose log → real pipeline
   if (/\d/.test(trimmed)) return null;
   // Hash prefix is RLHF feedback comment — handled upstream
@@ -277,6 +294,10 @@ export function tryFastPath(text: string, userId: string): FastPathResult | null
   if (NEVER_FAST_PATH_RE.test(trimmed)) return null;
 
   const seed = `${userId}|${trimmed.toLowerCase()}`;
+
+  if (isIdentity) {
+    return { text: pickFromPool(IDENTITY_REPLIES, seed), category: 'identity' };
+  }
 
   // Order matters: more specific patterns first so a generic word doesn't
   // shadow a more meaningful match.

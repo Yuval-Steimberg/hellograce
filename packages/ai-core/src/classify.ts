@@ -287,7 +287,13 @@ const SOCIAL_SITUATION: RegExp[] = [
   /\b(can|how) (do|should) i (handle|navigate|manage|survive|deal with) (a |the )?(restaurant|wedding|party|dinner|holiday|vacation|buffet|cruise)/i,
   /\b(judging|judged|pressure|pressuring|commenting|comments) (me|about (my|the) (eating|weight|food|portion))/i,
   /\bbuffet\b/i,
+  // 2026-06-04 production failure: "holiday dinner coming up" missed the
+  // existing patterns (no "going to" / "I have" prefix) and fell into
+  // 'general' → safe fallback "Tell me more about that". Catch upcoming
+  // event mentions with "coming up" / "tonight" / "tomorrow" / "this week".
+  /\b(restaurant|wedding|party|dinner|brunch|barbecue|bbq|holiday|thanksgiving|christmas|easter|passover|iftar|bar mitzvah|baby shower|birthday|gathering|family dinner|reunion|event|date night|girls'? night|happy hour|potluck)\b.{0,15}\b(coming up|tonight|tomorrow|this (weekend|week|saturday|sunday|friday|monday|tuesday|wednesday|thursday)|next (week|weekend|month)|on (saturday|sunday|friday|monday|tuesday|wednesday|thursday))/i,
 ];
+
 
 // Pause / break request. Distinct from scheduling frequency changes.
 const PAUSE_REQUEST: RegExp[] = [

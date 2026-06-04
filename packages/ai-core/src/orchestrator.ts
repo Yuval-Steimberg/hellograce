@@ -99,13 +99,16 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "A few solid questions: is my current dose still right for me given my progress, what can I do about the side effects I'm feeling, and is muscle loss something I should be testing for. Want me to add a few specific to you?",
   ],
   general: [
-    // 2026-06-04 fix: previous fallbacks contained banned phrases ("so I can
-    // actually help", "so I can give you something useful") that bypassed
-    // the content checker because they're canned. Replaced with neutral
-    // open-ended prompts that don't trip any rule.
-    "What's on your mind?",
-    "Tell me more about that.",
-    "What's going on today?",
+    // 2026-06-04 fix v2: previous fallbacks ("What's on your mind?", "Tell me
+    // more about that.") are exactly the patterns behavioral-guard principle
+    // 10 flags as generic deflection. Production failure: "are you real?"
+    // hit the fallback and showed "What's on your mind?" — the user got an
+    // irrelevant deflection AND the fallback itself violated our own rules.
+    // Replaced with neutral concrete prose that doesn't deflect or ask a
+    // useless question.
+    "Walk me through it.",
+    "Say a little more so I'm tracking with you.",
+    "I'm following — keep going.",
   ],
   // Phase 1 coverage expansion intents — short, warm fallbacks per type.
   exercise_log: [

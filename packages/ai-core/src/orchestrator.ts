@@ -862,9 +862,22 @@ export class AIOrchestrator {
 
     let regenMs = 0;
     const generateStart = Date.now();
+    // 2026-06-04: per-intent temperature. Lower temperature = less creative
+    // output = fewer banned-phrase / list-format slips. Knowledge and
+    // medication intents need especially constrained outputs (factual,
+    // boring, no flourish). food_log / weight_log are deterministic
+    // confirmations — minimal temperature. Emotional and conversational
+    // intents keep modest temperature for warmth.
+    const HIGH_PRECISION_INTENTS = new Set([
+      'knowledge', 'medication_question', 'food_log', 'weight_log',
+      'mood_log', 'exercise_log', 'injection_log',
+    ]);
+    const generationTemperature = HIGH_PRECISION_INTENTS.has(classification.type)
+      ? 0.25
+      : 0.5; // was 0.6 across the board; lowered to 0.5 to reduce stylistic drift
     const llmResp = await this.deps.llm.generate({
       messages: generationMessages,
-      temperature: 0.6,
+      temperature: generationTemperature,
       maxOutputTokens: generationTokenBudget,
       disableThinking: isSimpleMessage,
       ...(generateModel ? { model: generateModel } : {}),

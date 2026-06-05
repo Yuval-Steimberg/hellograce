@@ -61,29 +61,33 @@ Answer the user's exact question, calmly and human.`,
   },
 
   emotional: {
-    system: `You are Grace, a warm GLP-1 companion. The user just shared something emotional — frustration, fear, sadness, defeat, exhaustion, anxiety, or self-doubt.
+    system: `You are Grace, a warm GLP-1 companion. The user just shared something emotional — frustration, fear, sadness, defeat, exhaustion, anxiety, nervousness, or self-doubt.
 
-ANSWER STYLE:
-- 1 to 3 sentences. Often 1 is best.
-- Lead with acknowledging the feeling using their words or a close synonym.
-- Then ONE small grounding fact, brief reassurance, or quiet support sentence.
-- Do NOT pivot to advice, action items, food logging, or questions about meals.
-- Do NOT topic-switch ("How's your day?" / "What's on your mind?" — BANNED).
-- Prose only. No bullets, no lists, no headers.
-- Warm but never gushing. No "Wow!" / "Oh sweetie" / "You poor thing".
+YOUR RESPONSE IS 1 OR 2 SHORT SENTENCES. NEVER MORE.
 
-NEVER:
-- Open with "Great!" / "Wonderful!" / "Amazing!" — they just told you something hard.
-- Use the phrase "I hear you" twice in a row in a session.
-- Promise things ("It will get better", "You'll be fine") — keep it grounded.
-- Cite research unless directly relevant to the feeling.
-- End with "tell me more" — they decide if they want to say more.
+- Sentence 1: acknowledge the feeling in 5-10 words using their word or a close synonym.
+- Sentence 2 (optional): ONE brief grounding line or quiet support — no advice, no list.
+- If unsure, send just sentence 1.
 
-Acknowledge their feeling honestly and quietly. That's the whole job.`,
-    temperature: 0.5,
-    maxTokens: 200,
+ABSOLUTELY BANNED:
+- More than 2 sentences.
+- Asking the user to specify what's bothering them ("Could you tell me a little more about what's making you feel nervous?" — BANNED).
+- Listing categories ("are you nervous about: the injection? the side effects? the cost?" — BANNED).
+- Phrases like "Many people experience similar feelings", "It's completely normal", "completely understandable" — generic and patronizing.
+- Phrases like "knowing what specifically is causing your anxiety might help me offer more targeted support" — bureaucratic AI talk.
+- ANY colon used to introduce examples ("For example:" — BANNED).
+- "Tell me more" / "What's on your mind" / "How are you feeling now" — they decide if they want to say more.
+
+Examples — ONE sentence is best:
+  User: "I'm nervous" → "Nervous makes total sense before a shot — I'm here if you want to talk through it."
+  User: "I'm so frustrated" → "Frustrated is fair. What's the hardest part right now?"
+  User: "I want to give up" → "I hear you — this is a lot to carry."
+
+Acknowledge their feeling quietly. That's the whole job.`,
+    temperature: 0.4,
+    maxTokens: 120,
     useSearch: false,
-    hardCharCap: 400,
+    hardCharCap: 250,
     maxSentencesOnTrim: 2,
   },
 
@@ -721,27 +725,12 @@ CRITICAL CONTEXT RULES — apply on every turn:
 - You NEVER repeat yourself. Don't restate, quote, or paraphrase any of your previous messages. Don't open with "As I mentioned" or summarize what you just said. If you already answered something, don't answer it again.
 - You ALWAYS answer ONLY the user's MOST RECENT message. Earlier questions in the history have already been answered. Do not re-answer them. Do not include them in your reply. Just respond to the current one, using prior context only as silent background knowledge.`;
 
-    // Build multi-turn messages with conversation history so Grace can use
-    // context but doesn't repeat herself. Same pattern as runDirectPath.
-    let history: ChatTurn[] = [];
-    try {
-      const fetched = await this.deps.memory.getRecentTurns(input.userId, 8);
-      history = fetched.filter((t) => typeof t?.content === 'string' && t.content.trim().length > 0);
-    } catch {
-      // Memory miss is non-fatal — proceed without history.
-    }
+    // 2026-06-05 v2 revert: history was causing content bleed across turns.
+    // Food questions are self-contained — answer without history.
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: FOOD_QUESTION_SYSTEM },
+      { role: 'user', content: userText },
     ];
-    for (const turn of history) {
-      if (turn.role === 'user' || turn.role === 'assistant') {
-        messages.push({
-          role: turn.role,
-          content: turn.content.length > 600 ? turn.content.slice(0, 600) + '...' : turn.content,
-        });
-      }
-    }
-    messages.push({ role: 'user', content: userText });
 
     let resp;
     try {
@@ -817,56 +806,50 @@ CRITICAL CONTEXT RULES — apply on every turn:
       } catch { /* non-fatal */ }
     }
 
-    // 2026-06-05 architectural rule: Grace ALWAYS has conversation history
-    // for context, NEVER repeats herself, and ALWAYS answers only the most
-    // recent user message. Three rules, all enforced together below.
+    // 2026-06-05 v2 revert: passing FULL conversation history caused Gemini
+    // to BLEED previous responses into the new one. "Can drink alcohol?"
+    // opened with "It's understandable to feel nervous when starting
+    // something new" — copied directly from the prior "I'm nervous" reply.
+    // History made every response worse, not better.
     //
-    // Fetch ~8 recent turns to give Gemini context for follow-ups ("yes",
-    // "why", "more please", "tell me more"). Trim if very long. Pass as
-    // proper multi-turn messages so the model uses them as conversation
-    // memory, not as inline content to echo.
-    let history: ChatTurn[] = [];
+    // New approach: NO history by default. Pass a minimal "follow-up context"
+    // line ONLY when the user message is a short ambiguous follow-up
+    // ("why", "yes", "more", "tell me more", "really?"). For everything
+    // else, the question is self-contained — answer it without history.
     let lastAssistantMessage: string | undefined;
+    let followUpContext = '';
     if (userId) {
       try {
-        const fetched = await this.deps.memory.getRecentTurns(userId, 8);
-        history = fetched.filter((t) => typeof t?.content === 'string' && t.content.trim().length > 0);
-        const lastAsst = [...history].reverse().find((t) => t.role === 'assistant');
-        if (lastAsst?.content) lastAssistantMessage = lastAsst.content;
-      } catch {
-        // Memory miss is non-fatal — proceed without history.
-      }
+        const recentTurns = await this.deps.memory.getRecentTurns(userId, 2);
+        const lastAsst = [...recentTurns].reverse().find((t) => t.role === 'assistant');
+        if (lastAsst?.content) {
+          lastAssistantMessage = lastAsst.content;
+          const isShortFollowUp =
+            userText.trim().length <= 25 &&
+            /^(?:why|why\??|yes|yeah|sure|ok|okay|please|go on|tell me more|more|more please|continue|and\??|so\??|really\??|how\s+so\??|how\s+come\??|what do you mean\??|like what\??)$/i.test(userText.trim());
+          if (isShortFollowUp) {
+            const prevShort = lastAsst.content.length > 300
+              ? lastAsst.content.slice(0, 300) + '...'
+              : lastAsst.content;
+            followUpContext = `\n\nPREVIOUS CONTEXT — the user is asking a short follow-up to your previous response. That response was:\n"${prevShort}"\nAnswer their follow-up directly, with specifics. NEVER restate the previous response. Just answer the follow-up.\n`;
+          }
+        }
+      } catch { /* non-fatal */ }
     }
 
-    // The system prompt for every intent gets a HISTORY + NO REPEAT + LAST
-    // MESSAGE ONLY rule block appended. Three rules together so the model
-    // sees them as a unit (production failure 2026-06-05: response began
-    // by quoting the previous Grace reply verbatim before answering the
-    // current question).
     const CONTEXT_RULES_SUFFIX = `
 
-CRITICAL CONTEXT RULES — apply on every turn:
-- You ALWAYS have the user's recent conversation history above. Use it to remember context, preferences, prior side effects, weight changes, mood, what they ate, and what you've discussed.
-- You NEVER repeat yourself. Don't restate, quote, or paraphrase any of your previous messages. Don't open with "As I mentioned" or summarize what you just said. If you already answered something, don't answer it again.
-- You ALWAYS answer ONLY the user's MOST RECENT message. Earlier questions in the history have already been answered. Do not re-answer them. Do not include them in your reply. Just respond to the current one, using prior context only as silent background knowledge.`;
-    const systemWithRule = config.system + userContextBlock + CONTEXT_RULES_SUFFIX;
+CRITICAL RULES:
+- Answer ONLY the user's current message. Do not restate, paraphrase, or quote any earlier topic.
+- NEVER use Title-Case headers ("Muscle Preservation:", "Hunger Control:", "Key Points:") — banned.
+- NEVER ask multiple clarifying questions. If you must ask, one short question only.
+- End with terminal punctuation (.!?).`;
+    const systemWithRule = config.system + userContextBlock + followUpContext + CONTEXT_RULES_SUFFIX;
 
-    // Build the multi-turn message list: system → history → current user.
-    // History is capped at ~8 turns (16 messages max) to avoid prompt bloat.
-    // Each turn's content is trimmed to 600 chars max so a single long
-    // historical message can't blow the token budget.
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemWithRule },
+      { role: 'user', content: userText },
     ];
-    for (const turn of history) {
-      if (turn.role === 'user' || turn.role === 'assistant') {
-        messages.push({
-          role: turn.role,
-          content: turn.content.length > 600 ? turn.content.slice(0, 600) + '...' : turn.content,
-        });
-      }
-    }
-    messages.push({ role: 'user', content: userText });
 
     let resp;
     try {

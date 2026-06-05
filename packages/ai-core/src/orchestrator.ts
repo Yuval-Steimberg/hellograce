@@ -319,6 +319,29 @@ function getToolAwareFallback(
     if (/\bwhat (?:is|'?s)\s+my\b/.test(msg) || /\bdo you know\s+my\b/.test(msg) || /\btell me\s+my\b/.test(msg)) {
       return "I don't have that detail on file yet. You can set it at graceglp.com/settings.";
     }
+    // 2026-06-05 production failure: "how much water?" got the muscle-loss
+    // typed fallback (first array entry) because the knowledge typed
+    // fallbacks are hardcoded muscle-loss / mechanism / protein facts,
+    // none of which relate to water. Topic-specific helpful fallbacks
+    // for the most common knowledge sub-topics:
+    if (/\bwater|hydration|fluid|drink\b/.test(msg) && !/\balcohol|caffeine|coffee\b/.test(msg)) {
+      return "Aim for around 64-80 oz of water daily on GLP-1, sipped throughout the day rather than gulped — large amounts at once can amplify nausea.";
+    }
+    if (/\balcohol\b/.test(msg)) {
+      return "Moderation is the general guidance — alcohol can amplify GLP-1 nausea, low blood sugar, and dehydration. A drink or two with food is usually fine for most people, but cut back if you're feeling rough.";
+    }
+    if (/\bsleep|insomnia|tired|fatigue\b/.test(msg)) {
+      return "GLP-1s can disrupt sleep for some people — common causes are nighttime nausea, blood sugar swings, and vivid dreams. A small protein snack 1-2 hours before bed often helps.";
+    }
+    if (/\bcoffee|caffeine\b/.test(msg)) {
+      return "Coffee is generally fine on GLP-1s but can amplify stomach upset, especially on an empty stomach. Try having it with food, or switch to half-caf for a few days if it's hitting hard.";
+    }
+    if (/\bexercise|workout|gym|cardio|lift|train\b/.test(msg)) {
+      return "Resistance training a few times a week is the strongest protector against muscle loss on GLP-1, alongside hitting your protein target. Start light if appetite is suppressed and build up.";
+    }
+    if (/\bhair\s+(loss|fall|shed|thin)\b/.test(msg)) {
+      return "Hair shedding (telogen effluvium) is common with significant weight loss, including GLP-1 weight loss. It's typically temporary — protein, iron, and ferritin levels are worth checking with your doctor if it persists.";
+    }
   }
 
   return getTypedFallback(type);

@@ -327,18 +327,50 @@ export class AIService {
     } catch (outerErr) {
       // Emergency fallback: fires when the full pipeline throws (DB down, LLM
       // timeout, etc.). Makes one last bare LLM call with no tools/RAG/history.
+      //
+      // 2026-06-05 production failure: user asked "What should I eat for
+      // dinner?" → orchestrator threw → emergency fired with the old 1-line
+      // prompt → Gemini produced a ChatGPT-style 350-char "to give you the
+      // best recommendation I need 3 things from you" template with bullets
+      // → format-enforcer stripped bullets → unreadable grammar shipped to
+      // user. Two fixes:
+      //   1. Strong HARD RULES in the emergency prompt forbid the failure
+      //      modes (bullets, clarifying questions, "I need more info").
+      //   2. Emergency output goes through the content-checker before
+      //      shipping. If it trips any banned phrase, drop to a final
+      //      canned text instead of letting raw Gemini reach the user.
       this.deps.logger.error({ err: outerErr }, 'ai.handle.outer_catch');
       try {
         const emergency = await this.deps.llm.generate({
           messages: [
-            { role: 'system', content: 'You are Grace, a warm companion for people on GLP-1 medications. Answer the user\'s question directly in 2-3 sentences. Be calm, helpful, and human.' },
+            {
+              role: 'system',
+              content:
+                "You are Grace, a warm GLP-1 companion. Answer the user's message in ONE OR TWO short sentences. " +
+                'HARD RULES — every one is non-negotiable: ' +
+                '(1) NEVER say "to give you the best", "I need more information", "tell me about your goals", or ask any clarifying questions. ' +
+                '(2) NEVER use bullet points, numbered lists, dashes, or section headers — prose only. ' +
+                '(3) If asked for food ideas, name 2-3 specific GLP-1 friendly options in a single sentence (e.g. "Greek yogurt with hemp seeds, two-egg veggie omelet, or oatmeal with berries"). ' +
+                "(4) If you genuinely can't answer, say so in one sentence — never deflect with questions. " +
+                '(5) NEVER mention being an AI, a system, a chatbot, or that you are processing.',
+            },
             { role: 'user', content: input.text },
           ],
-          maxOutputTokens: 300,
+          maxOutputTokens: 200,
+          temperature: 0.3,
         });
-        if (emergency.text?.trim()) {
+        const rawEmergency = emergency.text?.trim() ?? '';
+        if (rawEmergency) {
+          // Run through the content-checker so banned phrases never reach
+          // the user via the emergency path. If anything trips, ship a
+          // safe canned text instead of the raw LLM output.
+          const violations = checkContent(rawEmergency, {});
+          const safeText =
+            violations.some((v) => v.severity !== 'log')
+              ? "I'm having trouble pulling that together right now — try again in a moment?"
+              : rawEmergency;
           return {
-            text: emergency.text.trim(),
+            text: safeText,
             confidence: 'low' as const,
             intent: 'emergency_fallback',
             toolResults: [],

@@ -244,6 +244,36 @@ function getToolAwareFallback(
     }
   }
 
+  // Food recommendations — search_food_ideas tool returned a list of
+  // specific ideas (curated bank or LLM grounded). 2026-06-05 production
+  // failure: user asked "What should I eat for breakfast?" → tool ran →
+  // returned 4 curated ideas → LLM-formatted response failed a guard →
+  // regen also failed → typed fallback shipped "What kind of meal are
+  // you thinking, breakfast, lunch, dinner, or a snack?" which echoed
+  // back what the user said. Now the fallback ships the actual ideas.
+  const foodIdeas = toolResults.find((r) => {
+    if (r.name !== 'search_food_ideas' || !r.ok || !r.output) return false;
+    const out = r.output as Record<string, unknown>;
+    return out['ok'] !== false && Array.isArray(out['ideas']) && (out['ideas'] as unknown[]).length > 0;
+  });
+  if (foodIdeas) {
+    const out = foodIdeas.output as Record<string, unknown>;
+    const ideas = out['ideas'] as Array<{ name?: string }>;
+    const names = ideas
+      .map((i) => (typeof i?.name === 'string' ? i.name.trim() : ''))
+      .filter((n) => n.length > 0)
+      .slice(0, 4);
+    if (names.length >= 2) {
+      // Natural comma-list with "or" before the last item.
+      const last = names.pop()!;
+      const list = names.length > 0 ? `${names.join(', ')}, or ${last}` : last;
+      return `A few options: ${list}. Anything sound good?`;
+    }
+    if (names.length === 1) {
+      return `${names[0]} is a solid one — want more options?`;
+    }
+  }
+
   return getTypedFallback(type);
 }
 

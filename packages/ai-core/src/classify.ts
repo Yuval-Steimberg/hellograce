@@ -156,7 +156,7 @@ const FOOD_LOG: RegExp[] = [
 ];
 
 const FOOD_QUESTION: RegExp[] = [
-  /\bwhat (should|can|could) i (eat|have|make|cook|order)\b/i,
+  /\bwhat (should|can|could) i (eat|have|make|cook|order|get|grab|pick|do|try)\b/i,
   /\b(recommend|suggest)(ion)?(s)? for (food|meal|dinner|lunch|snack|breakfast|protein)/i,
   /\b(good (protein|snack|meal|food) (options?|ideas?|choices?))\b/i,
   /\bhow much protein (in|is|does|for)\b/i,
@@ -398,9 +398,31 @@ export function classifyMessage(rawText: string): ClassifyResult {
   // Normalize iOS smart-quote apostrophes (U+2019) → ASCII before any pattern
   // matching, so "what's", "I'm", "can't" all hit the regexes. Without this,
   // mobile-typed messages fall through to 'general' and the wrong path runs.
+  //
+  // 2026-06-05 production failure: "wha t should i get for breakfast
+  // tommrrow?" → "Tell me a bit more?" because the typo "wha t" (split
+  // by a stray space) didn't match the FOOD_QUESTION regex's "what".
+  // Add common-typo normalization for high-frequency words so a few
+  // mobile typos don't break classification.
   const text = rawText
     .replace(/[‘’‚‛′]/g, "'")
-    .replace(/[“”„‟″]/g, '"');
+    .replace(/[“”„‟″]/g, '"')
+    // Stray-space typos in common question words
+    .replace(/\bwha\s+t\b/gi, 'what')
+    .replace(/\bwha\s*t\s*s\b/gi, "what's")
+    .replace(/\bwhy\s+y\b/gi, 'why')
+    .replace(/\bho\s+w\b/gi, 'how')
+    // Missing letters / extra letters in common words
+    .replace(/\btomm[rl]+row\b/gi, 'tomorrow')
+    .replace(/\btomorow\b/gi, 'tomorrow')
+    .replace(/\btomrrow\b/gi, 'tomorrow')
+    .replace(/\bbreakfst\b/gi, 'breakfast')
+    .replace(/\bdinr\b/gi, 'dinner')
+    .replace(/\blunc\b/gi, 'lunch')
+    // Common "what" typos
+    .replace(/\bwat\b/gi, 'what')
+    .replace(/\bwaht\b/gi, 'what')
+    .replace(/\bwhats\b/gi, "what's");
   if (isGibberish(text)) return { type: 'gibberish', confidence: 0.9 };
   if (matches(text, GREETING)) return { type: 'greeting', confidence: 0.95 };
   // Appointment prep MUST come BEFORE knowledge / general, since "Help me write

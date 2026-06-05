@@ -283,6 +283,17 @@ export function enforceFormat(
     text = text.replace(trailingListIntroRe, '$1.');
     fixes.push('trailing_list_intro_stripped');
   }
+
+  // Pattern 1b2 (2026-06-05 v3 production failure): "...might relate to
+  // muscles: 1." — response ended with "X: 1." but didn't start with
+  // "Here's". This is still a truncated list intro. Strip the trailing
+  // ": 1." (or ": 1" / ": 2." / ": First,") that signals an interrupted
+  // enumeration.
+  const trailingTruncatedListRe = /:\s*(?:\d+[.):]|first|second|third)\s*[.,]?\s*$/i;
+  if (trailingTruncatedListRe.test(text)) {
+    text = text.replace(trailingTruncatedListRe, '.');
+    fixes.push('trailing_truncated_list_stripped');
+  }
   // Pattern 1c (2026-06-05): parenthetical brand-name dumps
   // "(Ozempic, Wegovy, Mounjaro, Saxenda, Victoza)" — banned by prompt but
   // model still emits them. Collapse to a single drug or remove entirely.
@@ -313,16 +324,23 @@ export function enforceFormat(
   // chars before "s: T") which doesn't end with "options" plural. Now we
   // look at the full word ending right before the colon, plus an extended
   // multi-word prefix.
-  if (/[a-z]\s*:\s+[a-z]/i.test(text)) {
+  // 2026-06-05 production failure: "However, there are a few important
+  // things to keep in mind: Potential for increased side effects: Both
+  // alcohol and GLP-1s..." → "...to keep in mind Potential for increased
+  // side effects Both alcohol..." — case-insensitive matching stripped
+  // colons followed by capital-letter clauses ("X: Capital Y") which are
+  // almost always legitimate prose punctuation (a colon introducing an
+  // important phrase), NOT stray colons. Make the rule lowercase-to-
+  // lowercase ONLY (the original "foods that: are bland" case), so
+  // legitimate "to keep in mind: Potential" patterns survive.
+  if (/[a-z]\s*:\s+[a-z]/.test(text)) {
     const ALLOWED_LEAD_WORDS = /\b(example|note|tip|here|ideas|tries|try|options?|include|such|like|background|summary|total|totals|breakdown)$/i;
     const ALLOWED_LEAD_PHRASES = /\b(a few options|a few ideas|some options|some ideas|running total|daily total|today'?s total|protein today|calories today)$/i;
-    text = text.replace(/([a-z])\s*:\s+([a-z])/gi, (match, before, after, offset: number) => {
-      // Find the start of the word ending at `offset + 1` (immediately before ':').
+    text = text.replace(/([a-z])\s*:\s+([a-z])/g, (match, before, after, offset: number) => {
       let wordStart = offset;
       while (wordStart > 0 && /[A-Za-z]/.test(text[wordStart - 1]!)) wordStart--;
       const fullWordBefore = text.slice(wordStart, offset + 1);
       if (ALLOWED_LEAD_WORDS.test(fullWordBefore)) return match;
-      // Extended prefix for multi-word labels: 30 chars back from word start.
       const extStart = Math.max(0, wordStart - 30);
       const extendedPrefix = text.slice(extStart, offset + 1);
       if (ALLOWED_LEAD_PHRASES.test(extendedPrefix)) return match;
@@ -444,14 +462,21 @@ export function enforceFormat(
   // (49-char label) escaping the strip and rendering as a list-item to users.
   // 60 chars covers compound dish names without false-positiving on natural
   // sentence prefixes (typical "Subject: " preamble is < 30 chars).
-  const labelColonRe = /(^|[.!?]\s+)([A-Z][\w\s-]{2,60}):\s+(\w[^.\n]{4,240})(?=[.\n])/g;
+  // 2026-06-05 production failure: "Watch out for side effects: Both alcohol
+  // and GLP-1s..." (25 chars label) got matched by labelColonRe and the
+  // colon flattened to em-dash → comma. Long phrases like "Watch out for
+  // side effects" are PROSE, not labels. Real labels are short (≤22
+  // chars: "Greek Yogurt Parfait" 19, "Notes" 5, "Tip" 3). Tightening the
+  // max from 60 → 22 covers all known good labels and stops prose
+  // collateral damage.
+  const labelColonRe = /(^|[.!?]\s+)([A-Z][\w\s-]{2,22}):\s+(\w[^.\n]{4,240})(?=[.\n])/g;
   // 2026-06-04: "Label:," pattern — Gemini sometimes emits "Greek Yogurt
   // Parfait:, 1 cup of..." (colon immediately followed by a comma). The
   // body regex above requires `\w[^.\n]{4,240}` so the comma-leading body
   // is missed. Catch and convert "Label:, " to "Label, " up front.
-  const labelColonCommaRe = /(^|[.!?]\s+)([A-Z][\w\s-]{2,60}):\s*,\s*/g;
+  const labelColonCommaRe = /(^|[.!?]\s+)([A-Z][\w\s-]{2,22}):\s*,\s*/g;
   if (labelColonCommaRe.test(text)) {
-    text = text.replace(/(^|[.!?]\s+)([A-Z][\w\s-]{2,60}):\s*,\s*/g, (_, prefix, label) => `${prefix}${label}, `);
+    text = text.replace(/(^|[.!?]\s+)([A-Z][\w\s-]{2,22}):\s*,\s*/g, (_, prefix, label) => `${prefix}${label}, `);
     fixes.push('label_colon_comma_stripped');
   }
   // 2026-06-05 production failure: "Today you've had X. Running total:

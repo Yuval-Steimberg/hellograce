@@ -384,6 +384,59 @@ describe('production regressions — classifier never routes questions to food_l
   }
 });
 
+describe('production regressions — 2026-06-05 v3 screenshot fixes', () => {
+  // Bug 1: "wha t should i get for breakfast tommrrow?" — typo classifier miss
+  it('"wha t should i get for breakfast tommrrow?" routes to food_question (typo normalized)', () => {
+    expect(classifyMessage('wha t should i get for breakfast tommrrow?').type).toBe('food_question');
+  });
+
+  it('"wat should i eat" routes to food_question (typo)', () => {
+    expect(classifyMessage('wat should i eat for dinner').type).toBe('food_question');
+  });
+
+  it('"waht is my protein goal" classifies (typo)', () => {
+    const r = classifyMessage('waht is my protein goal');
+    expect(['food_question', 'knowledge', 'general']).toContain(r.type);
+  });
+
+  // Bug 2: "...might relate to muscles: 1." — trailing truncated list intro
+  it('strips trailing ": 1." truncated list marker', () => {
+    const r = enforceFormat('GLP-1 agonists are not typically known to directly harm muscle tissue. However, there are a few indirect ways they might relate to muscles: 1.', {});
+    expect(r.text).not.toMatch(/:\s*1\.\s*$/);
+    expect(r.text).toMatch(/muscles\.$/);
+  });
+
+  it('strips trailing ": First," / ": 2." patterns', () => {
+    expect(enforceFormat('Several reasons: First,', {}).text).not.toMatch(/:\s*first/i);
+    expect(enforceFormat('Three ways: 2.', {}).text).not.toMatch(/:\s*2\./);
+  });
+
+  // Bug 3: empty response shipped with RLHF appendage
+  // (tested at the webhook layer, not classify/format)
+
+  // Bug 4: "to keep in mind: Potential for" → "to keep in mind Potential for"
+  it('preserves "X: Capital Y" prose colons (case-sensitive stray-colon)', () => {
+    const r = enforceFormat(
+      'However, there are a few important things to keep in mind: Potential for increased side effects.',
+      {},
+    );
+    expect(r.text).toMatch(/keep in mind:\s+Potential/);
+  });
+
+  it('preserves "side effects: Both alcohol" prose colon', () => {
+    const r = enforceFormat(
+      'Watch out for side effects: Both alcohol and GLP-1s can cause nausea.',
+      {},
+    );
+    expect(r.text).toMatch(/side effects:\s+Both/);
+  });
+
+  it('still strips lowercase-lowercase stray colons ("foods that: are bland")', () => {
+    const r = enforceFormat('Look for foods that: are bland and easy to digest.', {});
+    expect(r.text).not.toMatch(/that:\s+are/);
+  });
+});
+
 describe('production regressions — knowledge regex completeness', () => {
   // Specific GLP-1 topics that should always route to knowledge
   const knowledgeTopics = [

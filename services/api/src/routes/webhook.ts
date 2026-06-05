@@ -327,23 +327,25 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         });
 
         const responseText = result?.text ?? '';
-        if (responseText.length > 0) {
-          // RLHF prompt appendage.
-          // 2026-06-05 fix: was always appending
-          //   "\n\nRate this: 👍 👎\nOr start your reply with # to share a thought."
-          // (~60 chars). For short responses like "Logged." (7 chars) the
-          // RLHF prompt was 8.5x longer than the response itself, making
-          // every message feel robotic and bloated.
-          //
-          // New rule:
-          //   1. Shorter wording: "👍 👎 to rate, # to share a thought"
-          //   2. Skip entirely on very short responses (<25 chars) — the
-          //      whole point of a brief reply is to feel light.
+        // 2026-06-05 production failure: empty response was being shipped
+        // along with the RLHF appendage, producing user-visible garbage:
+        //   "For 👍 👎 to rate · # to add a thought."
+        // (The "For" leftover from a prior appendage format suggests this
+        // path is shipping NOTHING + appendage.) Tight check: response must
+        // have actual word content (alphanumeric), not just punctuation /
+        // emoji / whitespace. If empty/junk, log + drop the send entirely.
+        const hasUsefulContent = /[A-Za-z0-9]{3,}/.test(responseText.trim());
+        if (responseText.trim().length > 0 && hasUsefulContent) {
           const isRlhfUser = user?.rlhf_enabled ?? false;
           const body = shouldAppendRlhfPrompt(responseText, isRlhfUser)
             ? `${responseText}\n\n👍 👎 to rate · # to add a thought`
             : responseText;
           await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
+        } else if (responseText.length > 0) {
+          app.log.warn(
+            { responseText: responseText.slice(0, 80), userId: normalized.userId },
+            'webhook.empty_response_blocked',
+          );
         }
       } catch (err) {
         req.log.error({ err }, 'webhook.ai.failed');

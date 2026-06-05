@@ -30,7 +30,17 @@ export interface FastPathResult {
     | 'love_it'
     | 'denial'
     | 'confirmation'
-    | 'identity';
+    | 'identity'
+    // 2026-06-05 — Phase B fast-path expansion. 8 more high-frequency
+    // message shapes that today fall through to the orchestrator.
+    | 'how_are_you'        // user asks Grace how she is
+    | 'help_capabilities'  // "what can you do" / "help me"
+    | 'presence_check'     // "are you there?" / "hello?"
+    | 'reengagement'       // "I'm back" / "sorry been busy"
+    | 'feeling_better'     // "feeling much better" / "way better today"
+    | 'feeling_worse'      // "feeling worse" / "much worse today"
+    | 'meal_skip'          // "skipped breakfast" / "didn't eat lunch"
+    | 'check_in_query';    // "how am I doing" / "where am I at"
 }
 
 // Pure greeting — no question, no follow-up content
@@ -107,6 +117,39 @@ const APPRECIATION_RE = /^(love\s+you|love\s+ya|i\s+love\s+you|you'?re\s+the\s+b
 
 // Generic positive reaction to Grace's previous message
 const LOVE_IT_RE = /^(love\s+it|love\s+that|love\s+this|like\s+it|like\s+that|that'?s\s+helpful|that'?s\s+great|that\s+helps|helpful|thats\s+great|that'?s\s+perfect|perfect)\s*[.!]?\s*$/i;
+
+// ── 2026-06-05 Phase B additions ────────────────────────────────────────────
+
+// User asks Grace how she is — meta question that today goes to orchestrator
+// and gets a generic "I'm here to help" reply. Allows '?' as an exception.
+const HOW_ARE_YOU_RE = /^(how\s+(are|r)\s+(you|u)|how'?s\s+(it\s+going|life|you|things|your\s+day)|hru|how\s+have\s+you\s+been|how\s+ya\s+doing|hows\s+everything|hows\s+it)\s*[?.!]?\s*$/i;
+
+// "What can you do" / "help" / "what do you offer" — meta capability question.
+const HELP_CAPABILITIES_RE = /^(help|help\s+me|what\s+(can|do)\s+you\s+do|what\s+do\s+you\s+offer|what\s+are\s+(you|your\s+features)|how\s+do(es)?\s+(this|grace)\s+work|how\s+does\s+this\s+work|what\s+is\s+this|how\s+can\s+you\s+help|how\s+can\s+i\s+use\s+(you|this))\s*[?.!]?\s*$/i;
+
+// "Are you there?" / "Hello?" — presence check.
+const PRESENCE_CHECK_RE = /^(are\s+you\s+there|you\s+there|grace\s*\??|hello\s*\?|hey\s*\?|anyone\s+there|still\s+there)\s*[?.!]?\s*$/i;
+
+// "I'm back" / "sorry been busy" — re-engagement after silence.
+const REENGAGEMENT_RE = /^(i'?m\s+back|im\s+back|i'?m\s+here(\s+now)?|back\s+now|been\s+(busy|away|gone|off\s+the\s+grid|crazy|swamped)|sorry\s+(i'?ve\s+been|for\s+(disappearing|the\s+silence|being\s+(quiet|gone))|i\s+disappeared)|hi\s+again|long\s+time)\s*[.!]?\s*$/i;
+
+// "Feeling much better" / "way better today" — improvement signal.
+const FEELING_BETTER_RE = /^(i'?m\s+)?(feeling\s+|doing\s+)?(much\s+|way\s+|so\s+much\s+|a\s+lot\s+|tons\s+|loads\s+)?(better|improved|recovering|on\s+the\s+mend|stronger\s+today|good\s+today|great\s+now|fine\s+now|back\s+to\s+normal|like\s+myself\s+again)\s*[.!]?\s*$/i;
+
+// "Feeling worse" / "much worse today" — deterioration signal that needs
+// real empathy + checking for safety. NOT fast-path replied directly —
+// instead returns a brief acknowledgment that doesn't trigger the slow
+// orchestrator path (Grace's emotional_direct handles the rest if user
+// follows up).
+const FEELING_WORSE_RE = /^(i'?m\s+)?(feeling\s+|doing\s+)?(much\s+|way\s+|so\s+much\s+|a\s+lot\s+|even\s+)?(worse|worsened|going\s+downhill|getting\s+worse|sicker|weaker|terrible\s+today|awful\s+today|the\s+worst)\s*[.!]?\s*$/i;
+
+// "Skipped breakfast" / "didn't eat lunch" — explicit non-meal log.
+// Acknowledges without trying to estimate macros (0g protein logged).
+const MEAL_SKIP_RE = /^(skipped|didn'?t\s+(eat|have)|no|missed)\s+(breakfast|lunch|dinner|snack|brunch|meals?|food|anything)(\s+today)?\s*[.!]?\s*$/i;
+
+// "How am I doing" / "where am I at" / "status check" — open-ended progress
+// query that today the orchestrator handles inconsistently.
+const CHECK_IN_QUERY_RE = /^(how\s+am\s+i\s+doing|how'?s\s+(my\s+)?progress|where\s+am\s+i(\s+at)?|status\s+(check|update)?|progress\s+(check|update)?|am\s+i\s+on\s+track|hows\s+today\s+going)\s*[?.!]?\s*$/i;
 
 // ── Response pools ──────────────────────────────────────────────────────────
 // Rotated by deterministic hash of (userId + text) so the same user doesn't
@@ -244,6 +287,62 @@ const LOVE_IT_REPLIES: readonly string[] = [
   'Awesome.',
 ] as const;
 
+// ── 2026-06-05 Phase B reply pools ──────────────────────────────────────────
+
+const HOW_ARE_YOU_REPLIES: readonly string[] = [
+  "I'm here and ready — how are you doing today?",
+  "Doing well — thanks for asking. How's your day?",
+  "All good on my end. How are you feeling?",
+  "I'm here, listening. What's on your mind?",
+] as const;
+
+const HELP_CAPABILITIES_REPLIES: readonly string[] = [
+  "I'm here for your GLP-1 journey — log food and weight, talk through side effects, answer questions about Ozempic / Wegovy / Mounjaro / Zepbound, and check in daily. Just send what's going on and I'll take it from there.",
+  "Send me what you ate and I'll estimate protein, tell me how you're feeling and I'll listen, ask anything about your medication. I check in with you most days too.",
+  "Daily check-ins, food logging (text or photo), weight tracking, side-effect support, and answers about your medication. Send anything — I'll handle it.",
+] as const;
+
+const PRESENCE_CHECK_REPLIES: readonly string[] = [
+  "Here. What's going on?",
+  "Yes, I'm here. How can I help?",
+  "Right here. What do you need?",
+  "Still here 🤍 What's up?",
+] as const;
+
+const REENGAGEMENT_REPLIES: readonly string[] = [
+  "Welcome back — good to hear from you. How have things been?",
+  "Glad you're back. What's been happening?",
+  "Hey, no worries. How are you doing right now?",
+  "Good to see you. How's the journey been lately?",
+] as const;
+
+const FEELING_BETTER_REPLIES: readonly string[] = [
+  "That's really good to hear. What's helped?",
+  "Glad you're feeling better 🤍",
+  "Love that. What feels different?",
+  "Really good news. Take it slow.",
+] as const;
+
+const FEELING_WORSE_REPLIES: readonly string[] = [
+  "That's hard. Tell me a bit more about what's going on.",
+  "Sorry — that's rough. What's the worst of it right now?",
+  "I'm here. What part is hitting the hardest today?",
+  "Ugh, that's a lot. What's going on?",
+] as const;
+
+const MEAL_SKIP_REPLIES: readonly string[] = [
+  "Got it. Try to grab some protein when you can — even 15–20g helps.",
+  "Noted. A small protein snack later helps keep muscle protected.",
+  "Logged. Aim for a protein-forward next meal when you're ready.",
+  "Okay. Greek yogurt, a protein shake, or a hard-boiled egg works when you can manage it.",
+] as const;
+
+const CHECK_IN_QUERY_REPLIES: readonly string[] = [
+  "Send me 'what I ate today' and I'll show your totals. Or tell me how you're feeling.",
+  "Tell me what you've eaten and I'll pull your numbers. Or share what's on your mind.",
+  "Type 'what I ate today' for your protein/calorie total, or just share how it's going.",
+] as const;
+
 // 2026-06-04 production failure: "are you real?" was routed to general intent,
 // generated a long meandering response, tripped behavioral guard, regen also
 // failed, served "What's on your mind?" canned fallback. Identity questions
@@ -280,13 +379,19 @@ export function tryFastPath(text: string, userId: string): FastPathResult | null
   // Normalize iOS smart-quote apostrophes (U+2019) so "I'm" with curly quote
   // matches `i'?m` with straight quote. Production failure 2026-06-05.
   const trimmed = normalizeUserText(text).trim();
-  // Hard length cap — anything longer than 40 chars almost certainly needs
-  // real processing.
-  if (trimmed.length === 0 || trimmed.length > 40) return null;
+  // Slightly higher cap to allow longer meta questions ("how does this work").
+  if (trimmed.length === 0 || trimmed.length > 60) return null;
   // Identity questions are the ONE exception to "no `?` allowed" — they're
   // deterministic and need a brief truthful response, not a full LLM pipeline.
+  // 2026-06-05 Phase B: same exception for how_are_you / help_capabilities /
+  // presence_check / check_in_query — they're deterministic meta questions.
   const isIdentity = IDENTITY_RE.test(trimmed);
-  if (!isIdentity) {
+  const isMetaQuestion =
+    HOW_ARE_YOU_RE.test(trimmed) ||
+    HELP_CAPABILITIES_RE.test(trimmed) ||
+    PRESENCE_CHECK_RE.test(trimmed) ||
+    CHECK_IN_QUERY_RE.test(trimmed);
+  if (!isIdentity && !isMetaQuestion) {
     // Any question mark → real pipeline (user is asking something)
     if (trimmed.includes('?')) return null;
   }
@@ -295,7 +400,13 @@ export function tryFastPath(text: string, userId: string): FastPathResult | null
   // Hash prefix is RLHF feedback comment — handled upstream
   if (trimmed.startsWith('#')) return null;
   // Defensive double-check — never fast-path medical/food/crisis content
-  if (NEVER_FAST_PATH_RE.test(trimmed)) return null;
+  // EXCEPTION: meal_skip ("skipped breakfast") and feeling_worse use the
+  // exclusion words but ARE valid fast-path categories.
+  if (NEVER_FAST_PATH_RE.test(trimmed)) {
+    if (!MEAL_SKIP_RE.test(trimmed) && !FEELING_WORSE_RE.test(trimmed) && !FEELING_BETTER_RE.test(trimmed)) {
+      return null;
+    }
+  }
 
   const seed = `${userId}|${trimmed.toLowerCase()}`;
 
@@ -353,6 +464,33 @@ export function tryFastPath(text: string, userId: string): FastPathResult | null
   }
   if (BRIEF_ACK_RE.test(trimmed)) {
     return { text: pickFromPool(BRIEF_ACK_REPLIES, seed), category: 'brief_ack' };
+  }
+  // ── 2026-06-05 Phase B additions ────────────────────────────────────────
+  // Meta questions (have '?' but are deterministic).
+  if (HOW_ARE_YOU_RE.test(trimmed)) {
+    return { text: pickFromPool(HOW_ARE_YOU_REPLIES, seed), category: 'how_are_you' };
+  }
+  if (HELP_CAPABILITIES_RE.test(trimmed)) {
+    return { text: pickFromPool(HELP_CAPABILITIES_REPLIES, seed), category: 'help_capabilities' };
+  }
+  if (PRESENCE_CHECK_RE.test(trimmed)) {
+    return { text: pickFromPool(PRESENCE_CHECK_REPLIES, seed), category: 'presence_check' };
+  }
+  if (CHECK_IN_QUERY_RE.test(trimmed)) {
+    return { text: pickFromPool(CHECK_IN_QUERY_REPLIES, seed), category: 'check_in_query' };
+  }
+  // Declarative new categories.
+  if (REENGAGEMENT_RE.test(trimmed)) {
+    return { text: pickFromPool(REENGAGEMENT_REPLIES, seed), category: 'reengagement' };
+  }
+  if (FEELING_BETTER_RE.test(trimmed)) {
+    return { text: pickFromPool(FEELING_BETTER_REPLIES, seed), category: 'feeling_better' };
+  }
+  if (FEELING_WORSE_RE.test(trimmed)) {
+    return { text: pickFromPool(FEELING_WORSE_REPLIES, seed), category: 'feeling_worse' };
+  }
+  if (MEAL_SKIP_RE.test(trimmed)) {
+    return { text: pickFromPool(MEAL_SKIP_REPLIES, seed), category: 'meal_skip' };
   }
   return null;
 }

@@ -2890,6 +2890,39 @@ Banned phrases must be exact lowercase substrings from Grace's actual response. 
   });
 
   /**
+   * GET /admin/production-issues/clusters
+   * 2026-06-05 Phase C: cluster pending production_issues by user-message
+   * similarity. Returns the top recurring failure patterns so we can grow
+   * fast-path coverage without manual log diving.
+   *
+   * Query params:
+   *   ?window=14         days back to include (default 14, max 90)
+   *   ?threshold=0.35    Jaccard similarity threshold (default 0.35)
+   *   ?max=20            max clusters returned (default 20)
+   *   ?min=2             min cluster size to surface (default 2)
+   */
+  app.get('/admin/production-issues/clusters', async (req) => {
+    const query = (req.query ?? {}) as Record<string, string | undefined>;
+    const windowDays = Math.min(90, Math.max(1, parseInt(query['window'] ?? '14', 10) || 14));
+    const threshold = (() => {
+      const t = parseFloat(query['threshold'] ?? '0.35');
+      return Number.isFinite(t) && t > 0 && t < 1 ? t : 0.35;
+    })();
+    const maxClusters = Math.min(100, Math.max(1, parseInt(query['max'] ?? '20', 10) || 20));
+    const minClusterSize = Math.max(1, parseInt(query['min'] ?? '2', 10) || 2);
+
+    const { ProductionIssuesClusterer } = await import('../services/production-issues-clusterer.js');
+    const clusterer = new ProductionIssuesClusterer(deps.pool, app.log as never);
+    const clusters = await clusterer.cluster({
+      windowDays,
+      similarityThreshold: threshold,
+      maxClusters,
+      minClusterSize,
+    });
+    return { window_days: windowDays, threshold, count: clusters.length, clusters };
+  });
+
+  /**
    * POST /admin/research/auto-fix
    * Manual trigger for the auto-fix pipeline.
    * Same engine as the every-3-days cron — useful for on-demand runs.

@@ -676,6 +676,130 @@ const COMMON_FOODS: Record<string, CommonMacros> = {
   'cold brew':               { food: 'cold brew (black)', protein_g: 0, calories: 5 },
   'matcha latte':            { food: 'matcha latte', protein_g: 7, calories: 130 },
   'kombucha':                { food: 'kombucha (16oz)', protein_g: 0, calories: 60 },
+
+  // ── 2026-06-05 cuisine + variant expansion ──────────────────────────────
+  // Pushes hit rate from ~60–70% toward 75–80%. Adds Mediterranean / Indian /
+  // Mexican / Italian / Asian variants + branded items + common compounds.
+
+  // Mediterranean / Middle Eastern
+  'falafel':                 { food: 'falafel (3 pieces)', protein_g: 10, calories: 280 },
+  'gyro':                    { food: 'gyro', protein_g: 25, calories: 500 },
+  'shawarma':                { food: 'chicken shawarma plate', protein_g: 35, calories: 600 },
+  'chicken shawarma':        { food: 'chicken shawarma plate', protein_g: 35, calories: 600 },
+  'hummus bowl':             { food: 'hummus bowl', protein_g: 12, calories: 380 },
+  'mediterranean bowl':      { food: 'Mediterranean bowl', protein_g: 28, calories: 520 },
+  'greek salad':             { food: 'Greek salad', protein_g: 7, calories: 220 },
+  'tabouli':                 { food: 'tabouli (1 cup)', protein_g: 3, calories: 120 },
+  'pita':                    { food: 'pita bread', protein_g: 5, calories: 165 },
+
+  // Indian
+  'dal':                     { food: 'dal (1 cup)', protein_g: 9, calories: 200 },
+  'tikka masala':            { food: 'chicken tikka masala (1 cup)', protein_g: 22, calories: 320 },
+  'chicken tikka masala':    { food: 'chicken tikka masala (1 cup)', protein_g: 22, calories: 320 },
+  'butter chicken':          { food: 'butter chicken (1 cup)', protein_g: 24, calories: 380 },
+  'chicken curry':           { food: 'chicken curry (1 cup)', protein_g: 22, calories: 300 },
+  'biryani':                 { food: 'biryani (1 cup)', protein_g: 12, calories: 290 },
+  'chicken biryani':         { food: 'chicken biryani (1 cup)', protein_g: 18, calories: 320 },
+  'naan':                    { food: 'naan (1 piece)', protein_g: 5, calories: 260 },
+  'samosa':                  { food: 'samosa (1)', protein_g: 4, calories: 250 },
+
+  // Mexican (beyond burrito bowl / Chipotle bowl)
+  'taco':                    { food: 'taco (1)', protein_g: 10, calories: 200 },
+  '2 tacos':                 { food: 'tacos (2)', protein_g: 20, calories: 400 },
+  'chicken tacos':           { food: 'chicken tacos (2)', protein_g: 22, calories: 380 },
+  'beef tacos':              { food: 'beef tacos (2)', protein_g: 18, calories: 400 },
+  'fish tacos':              { food: 'fish tacos (2)', protein_g: 20, calories: 380 },
+  'quesadilla':              { food: 'cheese quesadilla', protein_g: 16, calories: 470 },
+  'chicken quesadilla':      { food: 'chicken quesadilla', protein_g: 25, calories: 540 },
+  'fajitas':                 { food: 'chicken fajitas', protein_g: 28, calories: 480 },
+  'enchilada':               { food: 'enchilada (1)', protein_g: 12, calories: 250 },
+  'guacamole':               { food: 'guacamole (1/4 cup)', protein_g: 1, calories: 90 },
+
+  // Italian / pasta variants
+  'spaghetti':               { food: 'spaghetti with sauce (1 plate)', protein_g: 14, calories: 380 },
+  'spaghetti bolognese':     { food: 'spaghetti bolognese', protein_g: 25, calories: 480 },
+  'lasagna':                 { food: 'lasagna (1 piece)', protein_g: 22, calories: 410 },
+  'chicken parmesan':        { food: 'chicken parmesan', protein_g: 40, calories: 580 },
+  'meatballs':               { food: 'meatballs (4)', protein_g: 22, calories: 280 },
+  'risotto':                 { food: 'risotto (1 cup)', protein_g: 7, calories: 360 },
+  'mac and cheese':          { food: 'mac and cheese (1 cup)', protein_g: 14, calories: 380 },
+  'mac n cheese':            { food: 'mac and cheese (1 cup)', protein_g: 14, calories: 380 },
+
+  // Asian (beyond sushi / pad thai / pho / lo mein)
+  'dumplings':               { food: 'dumplings (6)', protein_g: 10, calories: 280 },
+  'pot stickers':            { food: 'pot stickers (6)', protein_g: 10, calories: 280 },
+  'ramen':                   { food: 'ramen (1 bowl)', protein_g: 14, calories: 480 },
+  'bibimbap':                { food: 'bibimbap (1 bowl)', protein_g: 22, calories: 560 },
+  'poke bowl':               { food: 'poke bowl', protein_g: 28, calories: 480 },
+  'salmon poke bowl':        { food: 'salmon poke bowl', protein_g: 28, calories: 480 },
+  'tuna poke bowl':          { food: 'tuna poke bowl', protein_g: 30, calories: 460 },
+  'spring rolls':            { food: 'spring rolls (2)', protein_g: 5, calories: 180 },
+  'edamame appetizer':       { food: 'edamame (1 cup pods)', protein_g: 11, calories: 120 },
+
+  // More fish
+  'cod':                     { food: 'cod (5oz)', protein_g: 28, calories: 130 },
+  'tilapia':                 { food: 'tilapia (5oz)', protein_g: 30, calories: 150 },
+  'halibut':                 { food: 'halibut (5oz)', protein_g: 30, calories: 175 },
+  'mahi':                    { food: 'mahi mahi (5oz)', protein_g: 30, calories: 150 },
+  'ahi tuna':                { food: 'seared ahi tuna (5oz)', protein_g: 32, calories: 170 },
+  'crab':                    { food: 'crab (4oz)', protein_g: 20, calories: 100 },
+  'lobster':                 { food: 'lobster (4oz)', protein_g: 22, calories: 100 },
+  'scallops':                { food: 'scallops (4oz)', protein_g: 23, calories: 110 },
+
+  // Plant-based burgers / proteins
+  'veggie burger':           { food: 'veggie burger', protein_g: 17, calories: 270 },
+  'beyond burger':           { food: 'Beyond Burger', protein_g: 20, calories: 230 },
+  'impossible burger':       { food: 'Impossible Burger', protein_g: 19, calories: 240 },
+  'seitan':                  { food: 'seitan (3oz)', protein_g: 21, calories: 100 },
+
+  // More breakfasts
+  'egg whites':              { food: 'egg whites (3)', protein_g: 11, calories: 60 },
+  'egg white omelet':        { food: 'egg white omelet', protein_g: 14, calories: 90 },
+  'egg bites':               { food: 'egg bites (2)', protein_g: 12, calories: 170 },
+  'smoothie bowl':           { food: 'smoothie bowl', protein_g: 10, calories: 380 },
+  'acai bowl':               { food: 'acai bowl', protein_g: 6, calories: 380 },
+  'chia pudding':            { food: 'chia pudding (1 cup)', protein_g: 6, calories: 220 },
+  'french toast':            { food: 'French toast (2 slices)', protein_g: 10, calories: 280 },
+  'breakfast burrito':       { food: 'breakfast burrito', protein_g: 20, calories: 450 },
+
+  // More snack pairings (high-frequency on WhatsApp)
+  'banana with peanut butter': { food: 'banana + peanut butter', protein_g: 9, calories: 290 },
+  'apple with peanut butter': { food: 'apple + peanut butter', protein_g: 8, calories: 290 },
+  'apple with almond butter': { food: 'apple + almond butter', protein_g: 7, calories: 295 },
+  'mixed nuts':              { food: 'mixed nuts (1 oz)', protein_g: 6, calories: 170 },
+  'trail mix':               { food: 'trail mix (1 oz)', protein_g: 5, calories: 140 },
+  'protein chips':           { food: 'protein chips (1 bag)', protein_g: 18, calories: 130 },
+  'quest chips':             { food: 'Quest protein chips', protein_g: 18, calories: 130 },
+  'popcorn':                 { food: 'popcorn (1 cup)', protein_g: 1, calories: 30 },
+  'rice cake':               { food: 'rice cake (1)', protein_g: 1, calories: 35 },
+
+  // Branded bars not yet covered
+  'barebells':               { food: 'Barebells protein bar', protein_g: 20, calories: 200 },
+  'aloha bar':               { food: 'Aloha protein bar', protein_g: 14, calories: 220 },
+  'gomacro':                 { food: 'GoMacro bar', protein_g: 10, calories: 270 },
+  'iq bar':                  { food: 'IQBAR', protein_g: 12, calories: 180 },
+  'power crunch':            { food: 'Power Crunch bar', protein_g: 14, calories: 220 },
+  'atkins bar':              { food: 'Atkins protein bar', protein_g: 15, calories: 170 },
+
+  // More proteins
+  'rotisserie chicken':      { food: 'rotisserie chicken (4oz)', protein_g: 30, calories: 200 },
+  'chicken thighs':          { food: 'chicken thigh (4oz)', protein_g: 26, calories: 220 },
+  'chicken wings':           { food: 'chicken wings (5)', protein_g: 30, calories: 430 },
+  'pulled pork':             { food: 'pulled pork (4oz)', protein_g: 22, calories: 220 },
+  'bbq chicken':             { food: 'BBQ chicken (4oz)', protein_g: 30, calories: 250 },
+  'lamb':                    { food: 'lamb (4oz)', protein_g: 28, calories: 280 },
+
+  // Beverages users actually log
+  'sparkling water':         { food: 'sparkling water', protein_g: 0, calories: 0 },
+  'la croix':                { food: 'LaCroix', protein_g: 0, calories: 0 },
+  'lemonade':                { food: 'lemonade (12oz)', protein_g: 0, calories: 110 },
+  'diet coke':               { food: 'diet coke', protein_g: 0, calories: 0 },
+  'diet soda':               { food: 'diet soda', protein_g: 0, calories: 0 },
+  'orange juice':            { food: 'orange juice (1 cup)', protein_g: 2, calories: 110 },
+  'bone broth':              { food: 'bone broth (1 cup)', protein_g: 9, calories: 50 },
+  'electrolyte drink':       { food: 'electrolyte drink', protein_g: 0, calories: 10 },
+  'lmnt':                    { food: 'LMNT electrolyte', protein_g: 0, calories: 10 },
+  'gatorade':                { food: 'Gatorade (12oz)', protein_g: 0, calories: 110 },
 };
 
 /**
@@ -813,7 +937,16 @@ const FOOD_TOKEN_SET: Set<string> = (() => {
                    'shake', 'smoothie', 'soup', 'sandwich', 'wrap',
                    'edamame', 'beans', 'lentils', 'chickpea', 'chickpeas',
                    'avocado', 'shrimp', 'turkey', 'bacon', 'sausage',
-                   'cottage', 'kefir', 'hummus', 'quinoa']) {
+                   'cottage', 'kefir', 'hummus', 'quinoa',
+                   // 2026-06-05 cuisine expansion
+                   'falafel', 'gyro', 'shawarma', 'naan', 'samosa',
+                   'dal', 'tikka', 'biryani',
+                   'taco', 'tacos', 'quesadilla', 'fajitas', 'enchilada',
+                   'spaghetti', 'lasagna', 'risotto', 'meatballs',
+                   'dumplings', 'ramen', 'bibimbap', 'poke', 'scallops',
+                   'cod', 'tilapia', 'halibut', 'mahi', 'ahi', 'crab', 'lobster',
+                   'seitan', 'popcorn', 'lamb',
+                   'lemonade', 'gatorade', 'broth']) {
     set.add(t);
   }
   return set;

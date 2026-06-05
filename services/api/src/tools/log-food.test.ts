@@ -131,6 +131,78 @@ describe('lookupCommonFoodMacros — Phase 16 expansion (2026-06-03)', () => {
     expect(lookupCommonFoodMacros('tuna packet')?.protein_g).toBe(17);
     expect(lookupCommonFoodMacros('I had a turkey jerky')?.protein_g).toBe(12);
   });
+
+  // 2026-06-05 cuisine expansion — verify broad coverage of newly added
+  // Mediterranean / Indian / Mexican / Italian / Asian variants.
+  it('hits mediterranean / middle eastern entries', () => {
+    expect(lookupCommonFoodMacros('falafel')?.protein_g).toBe(10);
+    expect(lookupCommonFoodMacros('chicken shawarma')?.protein_g).toBe(35);
+    expect(lookupCommonFoodMacros('gyro')?.protein_g).toBe(25);
+    expect(lookupCommonFoodMacros('hummus bowl')?.protein_g).toBe(12);
+    expect(lookupCommonFoodMacros('greek salad')?.protein_g).toBe(7);
+  });
+
+  it('hits indian entries', () => {
+    expect(lookupCommonFoodMacros('chicken tikka masala')?.protein_g).toBe(22);
+    expect(lookupCommonFoodMacros('butter chicken')?.protein_g).toBe(24);
+    expect(lookupCommonFoodMacros('biryani')?.protein_g).toBe(12);
+    expect(lookupCommonFoodMacros('dal')?.protein_g).toBe(9);
+    expect(lookupCommonFoodMacros('naan')?.protein_g).toBe(5);
+  });
+
+  it('hits mexican entries', () => {
+    expect(lookupCommonFoodMacros('chicken tacos')?.protein_g).toBe(22);
+    expect(lookupCommonFoodMacros('quesadilla')?.protein_g).toBe(16);
+    expect(lookupCommonFoodMacros('chicken quesadilla')?.protein_g).toBe(25);
+    expect(lookupCommonFoodMacros('fajitas')?.protein_g).toBe(28);
+  });
+
+  it('hits italian entries', () => {
+    expect(lookupCommonFoodMacros('lasagna')?.protein_g).toBe(22);
+    expect(lookupCommonFoodMacros('chicken parmesan')?.protein_g).toBe(40);
+    expect(lookupCommonFoodMacros('spaghetti bolognese')?.protein_g).toBe(25);
+    expect(lookupCommonFoodMacros('mac and cheese')?.protein_g).toBe(14);
+  });
+
+  it('hits more asian / poke entries', () => {
+    expect(lookupCommonFoodMacros('dumplings')?.protein_g).toBe(10);
+    expect(lookupCommonFoodMacros('ramen')?.protein_g).toBe(14);
+    expect(lookupCommonFoodMacros('salmon poke bowl')?.protein_g).toBe(28);
+    expect(lookupCommonFoodMacros('bibimbap')?.protein_g).toBe(22);
+  });
+
+  it('hits expanded fish list', () => {
+    expect(lookupCommonFoodMacros('cod')?.protein_g).toBe(28);
+    expect(lookupCommonFoodMacros('tilapia')?.protein_g).toBe(30);
+    expect(lookupCommonFoodMacros('halibut')?.protein_g).toBe(30);
+    expect(lookupCommonFoodMacros('scallops')?.protein_g).toBe(23);
+  });
+
+  it('hits plant-based burgers', () => {
+    expect(lookupCommonFoodMacros('beyond burger')?.protein_g).toBe(20);
+    expect(lookupCommonFoodMacros('impossible burger')?.protein_g).toBe(19);
+    expect(lookupCommonFoodMacros('veggie burger')?.protein_g).toBe(17);
+  });
+
+  it('hits common breakfast variants', () => {
+    expect(lookupCommonFoodMacros('egg whites')?.protein_g).toBe(11);
+    expect(lookupCommonFoodMacros('french toast')?.protein_g).toBe(10);
+    expect(lookupCommonFoodMacros('breakfast burrito')?.protein_g).toBe(20);
+    expect(lookupCommonFoodMacros('acai bowl')?.protein_g).toBe(6);
+  });
+
+  it('hits common snack pairings', () => {
+    expect(lookupCommonFoodMacros('apple with peanut butter')?.protein_g).toBe(8);
+    expect(lookupCommonFoodMacros('mixed nuts')?.protein_g).toBe(6);
+    expect(lookupCommonFoodMacros('trail mix')?.protein_g).toBe(5);
+  });
+
+  it('multi-food bail still fires on new cuisines', () => {
+    // "chicken tacos and rice" → tacos already include rice/tortilla; the
+    // matcher should bail because "rice" is a distinct food token.
+    const r = lookupCommonFoodMacros('chicken tacos and rice');
+    expect(r).toBeNull();
+  });
 });
 
 // ── Structured-output path (2026-06-04 Option B fix) ──────────────────────

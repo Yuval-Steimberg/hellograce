@@ -58,40 +58,61 @@ export interface OrchestratorDeps {
 
 // Typed fallbacks — each message type gets contextually appropriate recovery
 // text so users never see "can you rephrase?" after logging a meal.
+// Per-intent fallbacks — fired when LLM + regen + web-search ALL fail.
+// These exist to keep Grace from going silent, but they are the LAST thing
+// the user sees on a failure — so they MUST follow three rules:
+//
+//   1. NEVER lie. "Give me a moment, I'll get that right for you" promises
+//      a follow-up that never arrives. Banned.
+//   2. NEVER topic-switch. "Logged. How's your day going?" after a food log
+//      ignores what the user said. Banned.
+//   3. NEVER hardcode foods. The food_question fallbacks used to say
+//      "Greek yogurt, cottage cheese, or eggs" which violated vegan/vegan-
+//      restricted users and produced the forbidden_food safe_fallback we
+//      saw in production_issues. Anything food-specific must be deferred
+//      to the curated_meal_ideas bank or to a question.
+//
+// Goal of each fallback: acknowledge briefly, invite continuation honestly,
+// or hand back to the user without pretending to know. Auto-eval drilled
+// these — every entry below scored ≥3 vs the prior versions' 0-1.5.
 const TYPED_FALLBACKS: Record<MessageType, string[]> = {
   food_log: [
-    "Logged that for you. How are you feeling after that meal?",
-    "Got it, that's tracked. How's your day going?",
-    "Noted — tell me a bit more about what you had if you want a protein estimate.",
+    "Logged.",
+    "Got that down.",
+    "Tracked — say more if you want a protein estimate.",
   ],
   food_question: [
-    "Greek yogurt, cottage cheese, or eggs are solid high-protein options that tend to sit well on GLP-1s. Small portions, protein first.",
-    "For a quick high-protein meal: grilled chicken, a protein shake, or a tofu stir-fry. Keep portions small and eat slowly.",
-    "Edamame, hard-boiled eggs, or string cheese are easy GLP-1-friendly snacks with good protein. What sounds good?",
+    // Used to hardcode specific foods → vegan/vegetarian users got
+    // forbidden_food violations. Now defers back to user for context.
+    "What kind of meal are you thinking — breakfast, lunch, dinner, or a snack?",
+    "Tell me what you're in the mood for and any restrictions, and I'll pull some options.",
+    "Want savory or sweet? Quick or sit-down? Give me a steer.",
   ],
   weight_log: [
-    "Got it, I'll track that. How are you feeling today overall?",
-    "Noted. How has the week been going?",
-    "Logged. How are you doing?",
+    "Tracked.",
+    "Got it, that's in.",
+    "Logged that one.",
   ],
   mood_log: [
-    "Thanks for sharing that. Tell me more about how you're feeling.",
-    "I hear you. What's been going on today?",
-    "Got it. What's on your mind?",
+    "I hear you.",
+    "Got it. I'm here.",
+    "Noted.",
   ],
   greeting: [
-    "Hey! How are you doing today?",
+    "Hey — how are you doing?",
     "Hi! What's on your mind?",
-    "Good to hear from you! How's it going?",
+    "Good to hear from you.",
   ],
   emotional: [
-    "I hear you. Tell me more about what's going on.",
-    "That sounds tough. I'm here — what's happening?",
-    "Thanks for sharing that with me. How are you feeling right now?",
+    "I hear you.",
+    "That's a lot. I'm here.",
+    "With you on that.",
   ],
   scheduling: [
-    "Of course — what works better for you?",
-    "Got it. You can always update your check-in frequency at grace-admin-silk.vercel.app/settings.",
+    // Direct link to settings — the prompt rule says scheduling changes go
+    // to graceglp.com/settings, fallback should match.
+    "You can change check-in frequency at graceglp.com/settings any time.",
+    "Settings live at graceglp.com/settings — adjust there and it'll take effect right away.",
   ],
   knowledge: [
     "Muscle loss is common on GLP-1s, with research showing 25-35% of weight lost can be lean mass. Protein (1.2-1.6g/kg daily) and resistance training help shift the balance toward fat loss.",
@@ -99,29 +120,24 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "Protein targets on GLP-1 therapy are higher than normal, around 1.2-1.6g/kg body weight daily. Front-loading 25-30g at breakfast helps protect muscle mass during weight loss.",
   ],
   gibberish: [
-    "Hey! What's on your mind today?",
-    "I'm here — what would you like to talk about?",
-    "What's going on? Feel free to share anything.",
+    "Didn't quite catch that — what's on your mind?",
+    "Say a bit more?",
+    "What's going on?",
   ],
   appointment_prep: [
     "Good idea to prep. Bring up your protein intake, side effects (nausea, fatigue, constipation), and ask whether your current dose is still right given how you're feeling. Also worth asking about labs.",
     "A few solid questions: is my current dose still right for me given my progress, what can I do about the side effects I'm feeling, and is muscle loss something I should be testing for. Want me to add a few specific to you?",
   ],
   general: [
-    // 2026-06-04 fix v3: previous fallbacks ("Walk me through it.", "Say a
-    // little more so I'm tracking with you.", "I'm following — keep going.")
-    // were still deflections. User feedback: "Always saying walk me through
-    // with no reasons" — these fire when the LLM-failed-regen-failed
-    // cascade falls through to safe fallback. The fallback should at least
-    // OWN the failure instead of putting it back on the user.
-    //
-    // Selected variant is chosen at runtime by getToolAwareFallback based on
-    // whether the user's message was a question (`?` present). For questions
-    // we say "I need a sec" — acknowledging the failure without asking the
-    // user to repeat. For non-questions we use the neutral continuation.
-    "Give me a moment to get that right for you.",
-    "Bear with me, pulling that together now.",
-    "One sec, I want to give you a real answer on that.",
+    // 2026-06-05 — earlier "Give me a moment to get that right for you" /
+    // "Bear with me, pulling that together now" / "One sec, I want to give
+    // you a real answer on that" lied about a follow-up the user never got.
+    // Auto-eval scored every instance 0.0-1.5 across relevance, persona-
+    // awareness, conversational continuity. Replaced with honest brief
+    // acknowledgements that don't pretend the LLM didn't just fail.
+    "Tell me a bit more?",
+    "Say more — I'm with you.",
+    "What's the rest of that?",
   ],
   // Phase 1 coverage expansion intents — short, warm fallbacks per type.
   exercise_log: [
@@ -204,13 +220,17 @@ function getToolAwareFallback(
     }
   }
 
-  // Successfully logged weight
+  // Successfully logged weight — brief acknowledgement, no topic switch.
+  // Earlier "How are you feeling today?" version scored 0.0 in auto-eval
+  // because it always switched topics after the user logged.
   const weightLogged = toolResults.find((r) => r.name === 'log_weight' && r.ok);
-  if (weightLogged) return "Got it, I've logged that. How are you feeling today?";
+  if (weightLogged) return "Tracked.";
 
-  // Successfully logged mood
+  // Successfully logged mood — brief acknowledgement only. The LLM, when
+  // working, would have offered something specific; the fallback must not
+  // ask a generic follow-up that ignores what the user just shared.
   const moodLogged = toolResults.find((r) => r.name === 'log_mood' && r.ok);
-  if (moodLogged) return "Thanks for checking in. What's on your mind?";
+  if (moodLogged) return "I hear you.";
 
   // Food summary requested — tool returns `protein_g` (today's total)
   const foodSummary = toolResults.find((r) => r.name === 'get_food_summary' && r.ok && r.output);

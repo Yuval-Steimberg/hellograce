@@ -538,7 +538,7 @@ export class AIService {
         try {
           const stage = `${directIntent}_direct`;
           lat.mark(stage);
-          const direct = await this.runDirectPath(directIntent, input.text);
+          const direct = await this.runDirectPath(directIntent, input.text, input.userId);
           if (direct) {
             const stageTimings = lat.snapshot();
             const totalMs = Date.now() - t0;
@@ -714,7 +714,12 @@ NEVER (any of these mean refusal — banned):
 - Ask "what kind of meal are you thinking?" — they already told you (or didn't, you suggest anyway).
 - Use parenthetical brand-name dumps.
 
-If you don't know specifics, name standard GLP-1 friendly options and move on.`;
+If you don't know specifics, name standard GLP-1 friendly options and move on.
+
+CRITICAL RULE — answer scope:
+- Your response MUST answer ONLY the user's most recent message.
+- NEVER quote, restate, or reference any part of your previous responses.
+- NEVER answer a question from an earlier turn — just the current one.`;
 
     let resp;
     try {
@@ -737,7 +742,18 @@ If you don't know specifics, name standard GLP-1 friendly options and move on.`;
     const raw = resp.text?.trim() ?? '';
     if (raw.length === 0) return null;
 
-    const formatted = enforceFormat(raw, { userMessage: userText });
+    // Pass lastAssistantMessage so the format-enforcer can strip any
+    // verbatim-repeat prefix from previous responses.
+    let lastAssistantMessage: string | undefined;
+    try {
+      const recentTurns = await this.deps.memory.getRecentTurns(input.userId, 4);
+      const lastAsst = [...recentTurns].reverse().find((t) => t.role === 'assistant');
+      if (lastAsst?.content) lastAssistantMessage = lastAsst.content;
+    } catch { /* non-fatal */ }
+    const formatted = enforceFormat(raw, {
+      userMessage: userText,
+      ...(lastAssistantMessage ? { lastAssistantMessage } : {}),
+    });
     const violations = checkContent(formatted.text, { userMessage: userText });
     if (violations.some((v) => v.severity === 'block' || v.severity === 'regen')) {
       this.deps.logger.info(
@@ -749,15 +765,41 @@ If you don't know specifics, name standard GLP-1 friendly options and move on.`;
     return formatted.text;
   }
 
-  private async runDirectPath(intent: string, userText: string): Promise<string | null> {
+  private async runDirectPath(intent: string, userText: string, userId?: string): Promise<string | null> {
     const config = DIRECT_PATH_CONFIGS[intent];
     if (!config) return null;
+
+    // Fetch the last assistant message so the format-enforcer can strip
+    // any verbatim-repeat prefix (production failure 2026-06-05: response
+    // started with "Your injection day is Sunday." copied from previous
+    // turn before continuing with the muscle-question answer).
+    let lastAssistantMessage: string | undefined;
+    if (userId) {
+      try {
+        const recentTurns = await this.deps.memory.getRecentTurns(userId, 4);
+        const lastAsst = [...recentTurns].reverse().find((t) => t.role === 'assistant');
+        if (lastAsst?.content) lastAssistantMessage = lastAsst.content;
+      } catch {
+        // Memory miss is non-fatal — proceed without the strip.
+      }
+    }
+
+    // The system prompt for every intent gets a "ANSWER ONLY THE CURRENT
+    // MESSAGE" suffix appended below to prevent Gemini from including
+    // answers to previous turns (production failure 2026-06-05).
+    const ANSWER_ONLY_CURRENT_SUFFIX = `
+
+CRITICAL RULE — answer scope:
+- Your response MUST answer ONLY the user's most recent message.
+- NEVER quote, restate, or reference any part of your previous responses.
+- NEVER answer a question from an earlier turn — just the current one.`;
+    const systemWithRule = config.system + ANSWER_ONLY_CURRENT_SUFFIX;
 
     let resp;
     try {
       resp = await this.deps.llm.generate({
         messages: [
-          { role: 'system', content: config.system },
+          { role: 'system', content: systemWithRule },
           { role: 'user', content: userText },
         ],
         temperature: config.temperature,
@@ -774,8 +816,12 @@ If you don't know specifics, name standard GLP-1 friendly options and move on.`;
     const raw = resp.text?.trim() ?? '';
     if (raw.length === 0) return null;
 
-    // Format-enforce: strip markdown, em-dashes, label-colons, list intros.
-    const formatted = enforceFormat(raw, { userMessage: userText });
+    // Format-enforce: strip markdown, em-dashes, label-colons, list intros,
+    // AND duplicate previous-message prefix.
+    const formatted = enforceFormat(raw, {
+      userMessage: userText,
+      ...(lastAssistantMessage ? { lastAssistantMessage } : {}),
+    });
 
     // Content-check: drop on banned-phrase or block violations. Regen-
     // severity → fall through to orchestrator (which has the regen

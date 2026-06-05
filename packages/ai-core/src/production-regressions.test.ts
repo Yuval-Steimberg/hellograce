@@ -384,6 +384,58 @@ describe('production regressions — classifier never routes questions to food_l
   }
 });
 
+describe('production regressions — duplicate-prev-message prefix stripping', () => {
+  // Screenshot: previous Grace = "Your injection day is Sunday." (29 chars)
+  // New response = "Your injection day is Sunday. Regarding how GLP-1
+  // medications can affect your muscles GLP-1 agonists..."
+  // The 29-char prev was under the old 40-char threshold so the strip
+  // never fired. Lowered to allow exact full-prefix match at ≥10 chars.
+
+  it('strips short previous Grace reply when response starts with it verbatim', () => {
+    const r = enforceFormat(
+      'Your injection day is Sunday. Regarding how GLP-1 medications can affect your muscles, GLP-1 agonists are not typically known to directly harm muscle tissue.',
+      { lastAssistantMessage: 'Your injection day is Sunday.' },
+    );
+    expect(r.text).not.toMatch(/^Your injection day is Sunday/);
+    expect(r.text.toLowerCase()).toMatch(/^regarding/);
+  });
+
+  it('strips "You\'re at 60g today." prefix when response starts with it', () => {
+    const r = enforceFormat(
+      "You're at 60g today. Want me to help you plan dinner to reach your goal?",
+      { lastAssistantMessage: "You're at 60g today." },
+    );
+    expect(r.text).not.toMatch(/^You're at 60g today/);
+  });
+
+  it('does NOT strip if response starts differently from previous message', () => {
+    const r = enforceFormat(
+      'Coffee on an empty stomach can amplify nausea on GLP-1s.',
+      { lastAssistantMessage: 'Your injection day is Sunday.' },
+    );
+    expect(r.text).toMatch(/^Coffee/);
+  });
+
+  it('strips long prefix (40+ chars) as before', () => {
+    const prev = 'Tofu stir-fry, lentil dal, or chickpea curry are all great choices.';
+    const r = enforceFormat(
+      'Tofu stir-fry, lentil dal, or chickpea curry are all great choices. They sit well on a GLP-1.',
+      { lastAssistantMessage: prev },
+    );
+    expect(r.text).not.toMatch(/Tofu stir-fry, lentil dal/);
+  });
+
+  it('does NOT strip if remainder is too short (<20 chars)', () => {
+    const r = enforceFormat(
+      'Your injection day is Sunday. Yes.',
+      { lastAssistantMessage: 'Your injection day is Sunday.' },
+    );
+    // Remainder "Yes." is only 4 chars — keep original to avoid losing
+    // meaningful content.
+    expect(r.text).toMatch(/Yes/);
+  });
+});
+
 describe('production regressions — 2026-06-05 v3 screenshot fixes', () => {
   // Bug 1: "wha t should i get for breakfast tommrrow?" — typo classifier miss
   it('"wha t should i get for breakfast tommrrow?" routes to food_question (typo normalized)', () => {

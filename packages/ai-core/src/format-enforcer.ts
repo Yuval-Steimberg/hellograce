@@ -183,7 +183,26 @@ export function enforceFormat(
   // as a final sentence. Detect the overlap and strip the repeated prefix.
   if (opts?.lastAssistantMessage) {
     const prev = opts.lastAssistantMessage.trim();
-    if (prev.length >= 40) {
+    // 2026-06-05 production failure: response began with "Your injection
+    // day is Sunday. Regarding how GLP-1 medications..." — the 29-char
+    // previous response ("Your injection day is Sunday.") was below the
+    // 40-char threshold, so the strip didn't fire. Two-pronged detection:
+    //
+    // 1. EXACT FULL-PREFIX match: if the response starts with the entire
+    //    previous message verbatim (case-insensitive) and has ≥20 chars
+    //    of new content after, strip the full prefix. Catches short
+    //    prev-replies like "Your injection day is Sunday."
+    // 2. PARTIAL OVERLAP (original): for longer prev messages (≥40 chars)
+    //    where Gemini "continues" mid-sentence. Catches long context.
+    const textLower = text.toLowerCase();
+    const prevLower = prev.toLowerCase();
+    if (prev.length >= 10 && textLower.startsWith(prevLower)) {
+      const remainder = text.slice(prev.length).trim();
+      if (remainder.length >= 20) {
+        text = remainder.charAt(0).toUpperCase() + remainder.slice(1);
+        fixes.push('duplicate_prev_message_stripped');
+      }
+    } else if (prev.length >= 40) {
       let overlap = 0;
       const minLen = Math.min(text.length, prev.length);
       while (overlap < minLen && text[overlap] === prev[overlap]) {

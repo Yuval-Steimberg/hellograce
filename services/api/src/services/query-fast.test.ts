@@ -123,4 +123,32 @@ describe('tryQueryFast', () => {
     const r = await tryQueryFast("what's my protein goal", { users, logger: noopLogger, userId: 'u1' });
     expect(r).toBeNull();
   });
+
+  // Production failure 2026-06-05: iPhone auto-corrected the straight
+  // apostrophe to U+2019; the regex used U+0027; the message fell through to
+  // the orchestrator and shipped the "Give me a moment to get that right for
+  // you." safe-fallback. Normalization is now at every matcher entry point.
+  it('matches "What’s my week number" with iOS curly apostrophe', async () => {
+    const users = {
+      getById: vi.fn().mockResolvedValue({
+        // Three full weeks before "today" — week 4 of the journey.
+        glp1_start_date: new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+      getTodaysFoodSummary: vi.fn(),
+    } as unknown as UserService;
+    const curly = 'What’s my week number';
+    const r = await tryQueryFast(curly, { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('week_number');
+    expect(r!.text).toMatch(/week 4 of your GLP-1 journey/);
+  });
+
+  it('matches "I’m at" / "what’s" / "don’t" with curly apostrophes', () => {
+    // Direct regex check after the same normalization the function applies.
+    const normalize = (s: string) =>
+      s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+    expect(__testing.PROTEIN_GOAL_RE.test(normalize('What’s my protein goal'))).toBe(true);
+    expect(__testing.CALORIE_GOAL_RE.test(normalize('What’s my calorie target'))).toBe(true);
+    expect(__testing.WEIGHT_GOAL_RE.test(normalize('What’s my goal weight'))).toBe(true);
+  });
 });

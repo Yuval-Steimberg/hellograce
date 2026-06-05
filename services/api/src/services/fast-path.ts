@@ -1,3 +1,5 @@
+import { normalizeUserText } from '@grace/ai-core';
+
 // Fast-path responder for trivial messages — bypasses the full pipeline
 // (no LLM call, no RAG, no tools, no guards). Used for greetings, brief
 // positive feelings, brief acks, and simple thanks where a warm one-liner
@@ -275,7 +277,9 @@ function pickFromPool(pool: readonly string[], seed: string): string {
 const NEVER_FAST_PATH_RE = /\b(nauseous|nausea|sick|throwing up|vomit|dizzy|faint|chest pain|hurts|hurting|in pain|pain|cramp|cramping|diarrhea|constipated|bleeding|fever|swollen|allergic|injection|shot|dose|dosage|hungry|starving|appetite|eat|ate|had|drank|drink|breakfast|lunch|dinner|snack|meal|food|protein|weight|lbs|kg|kilo|pound|scale|workout|exercise|reminder|stop|cancel|unsubscribe|pause|kill|die|suicide|hurt myself|harm)\b/i;
 
 export function tryFastPath(text: string, userId: string): FastPathResult | null {
-  const trimmed = text.trim();
+  // Normalize iOS smart-quote apostrophes (U+2019) so "I'm" with curly quote
+  // matches `i'?m` with straight quote. Production failure 2026-06-05.
+  const trimmed = normalizeUserText(text).trim();
   // Hard length cap — anything longer than 40 chars almost certainly needs
   // real processing.
   if (trimmed.length === 0 || trimmed.length > 40) return null;

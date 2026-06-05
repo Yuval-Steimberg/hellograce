@@ -541,7 +541,11 @@ const FOOD_LOG_SKIP_RE = /^(?:(?:i|just)\s+(?:ate|had|drank|made)|ate|had|drank|
 const COALESCE_SKIP_KNOWLEDGE_RE = /^(?:what|how|why|is|are|can|could|do|does|did|when|where|should|will|would|any\b)\b[^?]{4,118}\?$/i;
 
 export function shouldSkipCoalesce(text: string): boolean {
-  const t = text.trim();
+  // Normalize iOS smart-quote apostrophes (U+2019) → ASCII before matching.
+  const t = text
+    .replace(/[‘’‚‛′]/g, "'")
+    .replace(/[“”„‟″]/g, '"')
+    .trim();
   if (t.length === 0) return false;
   // Greetings / acks / thanks / etc. — original short list
   if (t.length <= 40 && COALESCE_SKIP_RE.test(t)) return true;

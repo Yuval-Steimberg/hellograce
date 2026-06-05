@@ -327,7 +327,13 @@ function matches(text: string, patterns: RegExp[]): boolean {
 
 // ─── Public API ────────────────────────────────────────────────────────────────
 
-export function classifyMessage(text: string): ClassifyResult {
+export function classifyMessage(rawText: string): ClassifyResult {
+  // Normalize iOS smart-quote apostrophes (U+2019) → ASCII before any pattern
+  // matching, so "what's", "I'm", "can't" all hit the regexes. Without this,
+  // mobile-typed messages fall through to 'general' and the wrong path runs.
+  const text = rawText
+    .replace(/[‘’‚‛′]/g, "'")
+    .replace(/[“”„‟″]/g, '"');
   if (isGibberish(text)) return { type: 'gibberish', confidence: 0.9 };
   if (matches(text, GREETING)) return { type: 'greeting', confidence: 0.95 };
   // Appointment prep MUST come BEFORE knowledge / general, since "Help me write

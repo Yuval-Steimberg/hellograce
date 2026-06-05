@@ -18,6 +18,7 @@
  */
 
 import type { Logger } from 'pino';
+import { normalizeUserText } from '@grace/ai-core';
 import type { UserService } from '../user/user.service.js';
 
 export interface QueryFastResult {
@@ -126,7 +127,9 @@ export async function tryQueryFast(
   text: string,
   deps: QueryFastDeps,
 ): Promise<QueryFastResult | null> {
-  const t = text.trim().replace(/[!.]+$/, '').trim();
+  // Normalize iOS smart-quote apostrophes (U+2019) → ASCII before regex match.
+  // See packages/ai-core/src/text-normalize.ts.
+  const t = normalizeUserText(text).trim().replace(/[!.]+$/, '').trim();
   if (t.length === 0 || t.length > 80) return null;
 
   // Cheap regex tests first — bail before any DB read if no pattern matches.

@@ -11,3 +11,4 @@ export * from './relevance-check.js';
 export * from './orchestrator.js';
 export * from './tools/registry.js';
 export { enforceFormat } from './format-enforcer.js';
+export { normalizeUserText } from './text-normalize.js';

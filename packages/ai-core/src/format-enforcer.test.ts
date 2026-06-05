@@ -9,9 +9,16 @@ describe('enforceFormat', () => {
       expect(fixes).toContain('em_dash_replaced');
     });
 
-    it('replaces en dash with comma', () => {
+    it('replaces non-numeric en dash with comma', () => {
+      const { text } = enforceFormat('chicken – protein-dense option');
+      expect(text).toBe('chicken, protein-dense option');
+    });
+
+    it('preserves NUMERIC en-dash range as hyphen (2026-06-05 fix)', () => {
+      // Production failure: "64–80 ounces" got converted to "64, 80
+      // ounces" — incomprehensible. Ranges must stay readable.
       const { text } = enforceFormat('Range is 1.2–1.6g/kg.');
-      expect(text).toBe('Range is 1.2, 1.6g/kg.');
+      expect(text).toBe('Range is 1.2-1.6g/kg.');
     });
 
     it('replaces double dash with comma', () => {

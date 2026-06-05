@@ -10,6 +10,8 @@ import {
   classifyMessage as classifyIntent,
   checkContent,
   enforceFormat,
+  endsMidWord,
+  trimToLastCompleteSentence,
   detectTopicSwitch,
   detectReasoningRequest,
   FOOD_HISTORY_QUESTION,
@@ -779,13 +781,41 @@ If you don't know specifics, name standard GLP-1 friendly options and move on.`;
       return null;
     }
 
+    // 2026-06-05 production failure: knowledge_direct shipped truncated
+    // text "GLP-1 medications, while effective for weight loss, can " when
+    // Gemini hit maxOutputTokens mid-sentence. The text then concatenated
+    // with the RLHF appendage producing "...can 👍 👎 to rate..." mid-word
+    // garbage. Defense: if the response ends mid-word, iteratively trim
+    // back to a complete sentence boundary; if no usable complete sentence
+    // remains, fall through to orchestrator instead of shipping garbage.
+    let candidate = formatted.text;
+    if (endsMidWord(candidate)) {
+      let cleaned = false;
+      for (let i = 0; i < 6; i++) {
+        const { trimmed, wasTrimmed } = trimToLastCompleteSentence(candidate);
+        if (!wasTrimmed || trimmed.length < 40) break;
+        candidate = trimmed;
+        if (!endsMidWord(candidate)) {
+          cleaned = true;
+          break;
+        }
+      }
+      if (!cleaned) {
+        this.deps.logger.info(
+          { intent, originalLength: formatted.text.length },
+          'direct_path.unrecoverable_truncation',
+        );
+        return null;
+      }
+    }
+
     // Final length sanity check — direct replies must be under the intent's
     // hard cap. If still over, trim to the first N sentences.
-    if (formatted.text.length > config.hardCharCap) {
-      const sentences = formatted.text.split(/(?<=[.!?])\s+/);
+    if (candidate.length > config.hardCharCap) {
+      const sentences = candidate.split(/(?<=[.!?])\s+/);
       return sentences.slice(0, config.maxSentencesOnTrim).join(' ').trim();
     }
-    return formatted.text.trim();
+    return candidate.trim();
   }
 
   // Full message processing flow: (1) parallel I/O (user profile, history, media

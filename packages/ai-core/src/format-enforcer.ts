@@ -239,6 +239,14 @@ export function enforceFormat(
   // ─── Em dash (—) and en dash (–) → comma ───────────────────────────────
   // Used as punctuation only. We collapse surrounding whitespace so we
   // don't leave "word , word" with a leading space.
+  //
+  // 2026-06-05 production failure: numeric range "64–80 ounces" got
+  // converted to "64, 80 ounces" because en-dash between digits also
+  // matched. Preserve digit-en-dash-digit and digit-em-dash-digit by
+  // converting to a hyphen (canonical range form).
+  if (/\d\s*[—–]\s*\d/.test(text)) {
+    text = text.replace(/(\d)\s*[—–]\s*(\d)/g, '$1-$2');
+  }
   if (/[—–]/.test(text)) {
     text = text.replace(/\s*[—–]\s*/g, ', ');
     fixes.push('em_dash_replaced');
@@ -298,10 +306,26 @@ export function enforceFormat(
   // ─── Stray colons in mid-sentence ("foods that: are bland" → "foods that are bland")
   // Gemini sometimes inserts colons before clauses where none is needed.
   // Only strip colons NOT preceded by a known label pattern (e.g. "Rate this:").
+  //
+  // 2026-06-05 production failure: "A few options: Tofu stir-fry" got the
+  // colon stripped to space, producing "A few options Tofu stir-fry"
+  // because the prior 15-char-prefix check looked at "A few option" (15
+  // chars before "s: T") which doesn't end with "options" plural. Now we
+  // look at the full word ending right before the colon, plus an extended
+  // multi-word prefix.
   if (/[a-z]\s*:\s+[a-z]/i.test(text)) {
-    text = text.replace(/([a-z])\s*:\s+([a-z])/gi, (match, before, after) => {
-      const prefix = text.slice(Math.max(0, text.indexOf(match) - 15), text.indexOf(match));
-      if (/\b(example|note|tip|here|ideas|try|options|include|such as|like|e\.g)\s*$/i.test(prefix)) return match;
+    const ALLOWED_LEAD_WORDS = /\b(example|note|tip|here|ideas|tries|try|options?|include|such|like|background|summary|total|totals|breakdown)$/i;
+    const ALLOWED_LEAD_PHRASES = /\b(a few options|a few ideas|some options|some ideas|running total|daily total|today'?s total|protein today|calories today)$/i;
+    text = text.replace(/([a-z])\s*:\s+([a-z])/gi, (match, before, after, offset: number) => {
+      // Find the start of the word ending at `offset + 1` (immediately before ':').
+      let wordStart = offset;
+      while (wordStart > 0 && /[A-Za-z]/.test(text[wordStart - 1]!)) wordStart--;
+      const fullWordBefore = text.slice(wordStart, offset + 1);
+      if (ALLOWED_LEAD_WORDS.test(fullWordBefore)) return match;
+      // Extended prefix for multi-word labels: 30 chars back from word start.
+      const extStart = Math.max(0, wordStart - 30);
+      const extendedPrefix = text.slice(extStart, offset + 1);
+      if (ALLOWED_LEAD_PHRASES.test(extendedPrefix)) return match;
       return `${before} ${after}`;
     });
     fixes.push('stray_colon_cleaned');
@@ -373,6 +397,16 @@ export function enforceFormat(
     fixes.push('bullet_list_flattened');
   }
 
+  // 2026-06-05 production failure: "Your protein goal is 60 grams per day.
+  // Why? * Satiety and Hunger Control GLP-1 medications..." — a SINGLE
+  // bullet marker (not a list) sneaked through because bulletListRegex
+  // requires 2+ consecutive items. Strip lone leading "* " / "- " markers
+  // at the start of any sentence or line.
+  if (/(?:^|[.!?]\s+|\n\s*)[*-]\s+[A-Z]/.test(text)) {
+    text = text.replace(/((?:^|[.!?]\s+|\n\s*))[*-]\s+(?=[A-Z])/g, '$1');
+    fixes.push('lone_bullet_stripped');
+  }
+
   // ─── Greeting exclamation ("Good morning!" → "Good morning.") ──────────
   // The prompt forbids "!" on greetings. Auto-strip the offender.
   const greetingPattern = /^(Good morning|Good afternoon|Good evening|Good night|Morning|Afternoon|Evening|Hi|Hello|Hey)([,\s]+[A-Z][a-zA-Z]*)?!/m;
@@ -425,7 +459,12 @@ export function enforceFormat(
   // flattened the colon to an em-dash (then turned into a comma later),
   // producing "Running total, 140g protein, 2610 kcal." Allow-list the
   // specific summary labels Grace uses so their colons survive.
-  const SUMMARY_LABEL_RE = /^(running total|total|daily total|today'?s total|protein today|calories today|breakdown|summary)$/i;
+  //
+  // 2026-06-05 v2: "A few options: Tofu stir-fry..." → labelColonRe also
+  // stripped this colon, producing "A few options Tofu stir-fry..." (no
+  // comma either since the em-dash → comma rule ran later). Add the
+  // direct-path opener labels to the allow-list.
+  const SUMMARY_LABEL_RE = /^(running total|total|daily total|today'?s total|protein today|calories today|breakdown|summary|a few options|options|some options|ideas|some ideas|a few ideas)$/i;
   let labelHits = 0;
   text.replace(labelColonRe, (_match, _prefix, label: string) => {
     if (!SUMMARY_LABEL_RE.test(label.trim())) labelHits++;

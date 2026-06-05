@@ -268,14 +268,26 @@ const KNOWLEDGE: RegExp[] = [
   // "How X can|will|might affect" pattern to catch generic causation
   // questions about the medication.
   /\bhow\s+(?:does|do|can|will|might|would|could|should)\b/i,
+  // 2026-06-05 v2: "How GLP can affect my muscles" — "how" then "GLP"
+  // (1 word in between) then "can". Allow 1-3 words between "how" and the
+  // verb so multi-token subjects ("how GLP-1 can", "how Wegovy will",
+  // "how this drug might") still classify as knowledge.
+  /\bhow\s+(?:[A-Za-z][\w-]*\s+){1,3}(?:does|do|can|will|might|would|could|should|affect|impact|cause|change|help|hurt)\b/i,
+  // 2026-06-05 v2: "Can drink alcohol" / "Can I have wine" — modal-led
+  // questions about consumables and lifestyle that should be knowledge,
+  // not food_log or general.
+  /\b(can|could|should|may|will|might)\s+(?:i\s+)?(drink|eat|have|take|use|do|skip|stop|miss|combine|mix)\b/i,
   /\bwhat (is|are|does|causes?|happens? (to|when|if))\b.{5,}/i,
   /\b(ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|rybelsus)\b/i,
   /\bglp[.\s-]?1?\b/i,
   // 2026-06-05: was `\bmuscle\b` (singular only) — "How GLP can affect my
   // muscles" missed because "muscles" has a trailing 's' breaking the word
   // boundary. Use `muscles?` for both singular and plural.
-  /\b(side effect|nausea|vomiting|constipation|diarrhea|hair loss|muscles?|plateau|stall|fatigue|headache|reflux)\b/i,
-  /\b(is it normal|is this normal|should i be worried|does this happen)\b/i,
+  // 2026-06-05 v2: added alcohol, coffee, caffeine, sugar, carbs, sodium,
+  // hydration, water, sleep, exercise, vitamins, supplements — common
+  // GLP-1 question topics that were falling to general.
+  /\b(side effect|nausea|vomiting|constipation|diarrhea|hair loss|muscles?|plateau|stall|fatigue|headache|reflux|heartburn|bloating|alcohol|wine|beer|caffeine|coffee|sugar|carbs|carbohydrates|sodium|salt|hydration|water intake|sleep|exercise|workout|vitamins?|supplements?|fiber)\b/i,
+  /\b(is it normal|is this normal|should i be worried|does this happen|is that ok|is this ok|is that safe)\b/i,
   /\b(missed (my |a )?(dose|shot|injection)|forgot (to take|my) (pill|shot|injection))\b/i,
   /\binjection (site|day|schedule|timing|rotation)\b/i,
   /\b(how does (it|this) work|mechanism|explain)\b/i,
@@ -412,6 +424,24 @@ export function classifyMessage(rawText: string): ClassifyResult {
   // Medication-specific question — placed BEFORE food_log/knowledge so dose
   // timing / storage / travel-with-pen questions land in the dedicated handler.
   if (matches(text, MEDICATION_QUESTION)) return { type: 'medication_question', confidence: 0.9 };
+
+  // 2026-06-05 production failure: "How GLP-1 can affect my muscles" got
+  // food_log because "1" in "GLP-1" was treated by quantity patterns, and
+  // "Can I drink alcohol" got food_question because "can i drink" matched
+  // FOOD_QUESTION's recommendation regex. Knowledge shortcut: signature
+  // drug names + causation verbs, AND "can/should drink/eat/take X" where
+  // X is non-food (alcohol, coffee, etc.) — both reach knowledge before
+  // food_log / food_question.
+  const KNOWLEDGE_SHORTCUT: RegExp[] = [
+    // Drug name + "can/will affect/impact/cause/help/work"
+    /\b(ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|rybelsus|glp[.\s-]?1?)\b[^.?!]{0,40}\b(affect|impact|cause|change|help|hurt|work|do|make|lead)\b/i,
+    // "How X can/will/might verb" — multi-token subject
+    /\bhow\s+(?:[A-Za-z][\w-]*\s+){1,3}(?:can|will|might|would|could)\s+(?:affect|impact|cause|change|help|hurt)\b/i,
+    // "Can/should/may I drink/eat/take ALCOHOL/COFFEE/CAFFEINE/MEDS/etc."
+    /\b(can|could|should|may|will|might)\s+(?:i\s+)?(drink|eat|have|take|use|combine|mix)\s+(?:alcohol|wine|beer|coffee|caffeine|sugar|salt|sodium|water|tea|vitamins?|supplements?|carbs?|fiber|protein\s+(?:bars?|shakes?))/i,
+  ];
+  if (matches(text, KNOWLEDGE_SHORTCUT)) return { type: 'knowledge', confidence: 0.92 };
+
 
   // 2026-06-05 production failure (second batch): user said "I'm feeling
   // good. But my stomach hurts. I had 2 cups of coffee" → classifier picked

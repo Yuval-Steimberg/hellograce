@@ -313,9 +313,21 @@ export function enforceFormat(
     text = text.replace(trailingTruncatedListRe, '.');
     fixes.push('trailing_truncated_list_stripped');
   }
-  // Pattern 1c (2026-06-05): parenthetical brand-name dumps
-  // "(Ozempic, Wegovy, Mounjaro, Saxenda, Victoza)" — banned by prompt but
-  // model still emits them. Collapse to a single drug or remove entirely.
+  // 2026-06-05 production failure: "Your protein goal of 60g is set for a
+  // few important reasons, especially in the context of using GLP-1
+  // medications and focusing on health and weight management: Muscle
+  // Preservation: When you lose weight..." — "Muscle Preservation:" is a
+  // Title-Case header (2 words) followed by a colon and body. labelColonRe
+  // only fires at sentence boundaries (^|[.!?]\s+) so this mid-sentence
+  // header escaped. titleCaseHeaderRe required 3+ words. Add a 2-word
+  // Title-Case header stripper that fires AFTER a colon (catches double-
+  // colon patterns: "X: Y Z: Body" → "X: body" with Y Z + colon stripped).
+  const midSentenceTitleHeaderRe = /([:.!?,]\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*:\s+(?=[A-Z])/g;
+  if (midSentenceTitleHeaderRe.test(text)) {
+    text = text.replace(midSentenceTitleHeaderRe, '$1');
+    fixes.push('mid_sentence_title_header_stripped');
+  }
+
   const brandDumpRe = /\s*\((?:[A-Z][a-z]+(?:[ -][A-Z][a-z]+)?(?:,\s*)?){3,}\)/g;
   if (brandDumpRe.test(text)) {
     text = text.replace(brandDumpRe, '');

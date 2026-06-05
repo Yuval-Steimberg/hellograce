@@ -91,6 +91,11 @@ export const PROTEIN_TARGET_QUESTION: RegExp[] = [
   // protein-amount questions.
   /\bhow (much|many) (protein|proteins|calorie|calories|grams? of protein|carbs)\b/i,
   /\b(protein|calorie) (target|goal|requirement|needs?|recommend(ation|ed)|amount)\b/i,
+  // 2026-06-05 v3: "How many grams of proteins should have based on
+  // research" — "grams of proteins" (plural) with extra middle word
+  // ("should have based on research"). Looser pattern allows for
+  // intermediate words.
+  /\bhow (much|many) grams? of (protein|proteins)\b/i,
 ];
 
 // Past-day queries — ROUTE to food_question, but the AI service force-calls

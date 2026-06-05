@@ -384,6 +384,56 @@ describe('production regressions — classifier never routes questions to food_l
   }
 });
 
+describe('production regressions — 2026-06-05 v4 critical fixes', () => {
+  // Bug 1: "GLP-1 medications can sometimes lead to a loss" shipped as
+  // a response — missing terminal punctuation, mid-sentence truncation.
+  it('endsMidWord catches "lacks terminal punctuation" for long replies', () => {
+    expect(endsMidWord('GLP-1 medications can sometimes lead to a loss')).toBe(true);
+  });
+
+  it('endsMidWord passes short replies WITH terminator (period/emoji)', () => {
+    expect(endsMidWord('Got it.')).toBe(false);
+    expect(endsMidWord('Logged.')).toBe(false);
+    expect(endsMidWord('Tracked.')).toBe(false);
+    expect(endsMidWord('Got it 🤍')).toBe(false);
+  });
+
+  it('endsMidWord still passes long replies WITH terminator', () => {
+    expect(endsMidWord('GLP-1 medications can sometimes lead to a loss of muscle mass.')).toBe(false);
+    expect(endsMidWord('Anything sound good?')).toBe(false);
+  });
+
+  // Bug 2: "Muscle Preservation:" Title-Case header followed by colon
+  // appeared mid-sentence and was not stripped.
+  it('strips mid-sentence "Title Case:" header', () => {
+    const input = '...weight management: Muscle Preservation: When you lose weight, it matters.';
+    const r = enforceFormat(input, {});
+    expect(r.text).not.toMatch(/Muscle Preservation:/);
+  });
+
+  it('strips "Hunger Control:" mid-sentence label', () => {
+    const input = 'A few benefits explained: Hunger Control: Reduced appetite helps you eat less.';
+    const r = enforceFormat(input, {});
+    expect(r.text).not.toMatch(/Hunger Control:/);
+  });
+
+  it('does NOT strip Title-Case word in normal prose (no colon)', () => {
+    const input = 'GLP-1 medications help with Muscle Preservation when combined with protein.';
+    const r = enforceFormat(input, {});
+    expect(r.text).toMatch(/Muscle Preservation/);
+  });
+
+  // Bug 3: "How many grams of proteins should have based on research"
+  // missed PROTEIN_TARGET_QUESTION regex
+  it('"How many grams of proteins should have based on research" → food_question', () => {
+    expect(classifyMessage('How many grams of proteins should have based on research').type).toBe('food_question');
+  });
+
+  it('"How many grams of protein per day" → food_question', () => {
+    expect(classifyMessage('How many grams of protein per day').type).toBe('food_question');
+  });
+});
+
 describe('production regressions — duplicate-prev-message prefix stripping', () => {
   // Screenshot: previous Grace = "Your injection day is Sunday." (29 chars)
   // New response = "Your injection day is Sunday. Regarding how GLP-1

@@ -788,6 +788,35 @@ CRITICAL CONTEXT RULES — apply on every turn:
     const config = DIRECT_PATH_CONFIGS[intent];
     if (!config) return null;
 
+    // 2026-06-05 user feedback: "why is my protein goal X" should use the
+    // user's actual numbers (current weight, goal weight, GLP-1 week, etc.)
+    // not a generic 1.2-1.6g/kg explanation. Fetch the user's profile +
+    // today's totals and inject as a YOUR USER block so Gemini can be
+    // specific. Memory miss is non-fatal.
+    let userContextBlock = '';
+    if (userId) {
+      try {
+        const u = await this.deps.users.getById(userId);
+        if (u) {
+          const lines: string[] = [];
+          if (u.current_weight) lines.push(`Current weight: ${u.current_weight} lbs`);
+          if (u.goal_weight) lines.push(`Goal weight: ${u.goal_weight} lbs`);
+          if (u.protein_goal_grams) lines.push(`Daily protein target: ${u.protein_goal_grams}g`);
+          if (u.calorie_goal_kcal) lines.push(`Daily calorie target: ${u.calorie_goal_kcal} kcal`);
+          if (u.medication) lines.push(`Medication: ${u.medication}${u.dose_mg ? ` ${u.dose_mg} mg` : ''}`);
+          if (u.injection_day) lines.push(`Injection day: ${u.injection_day}`);
+          if (u.glp1_start_date) {
+            const weeks = Math.floor((Date.now() - new Date(u.glp1_start_date).getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
+            if (weeks > 0) lines.push(`GLP-1 week: ${weeks}`);
+          }
+          if (u.dietary_pattern) lines.push(`Dietary pattern: ${u.dietary_pattern}`);
+          if (lines.length > 0) {
+            userContextBlock = `\n\nUSER PROFILE (use for specifics, don't restate verbatim):\n${lines.join('\n')}\n`;
+          }
+        }
+      } catch { /* non-fatal */ }
+    }
+
     // 2026-06-05 architectural rule: Grace ALWAYS has conversation history
     // for context, NEVER repeats herself, and ALWAYS answers only the most
     // recent user message. Three rules, all enforced together below.
@@ -820,7 +849,7 @@ CRITICAL CONTEXT RULES — apply on every turn:
 - You ALWAYS have the user's recent conversation history above. Use it to remember context, preferences, prior side effects, weight changes, mood, what they ate, and what you've discussed.
 - You NEVER repeat yourself. Don't restate, quote, or paraphrase any of your previous messages. Don't open with "As I mentioned" or summarize what you just said. If you already answered something, don't answer it again.
 - You ALWAYS answer ONLY the user's MOST RECENT message. Earlier questions in the history have already been answered. Do not re-answer them. Do not include them in your reply. Just respond to the current one, using prior context only as silent background knowledge.`;
-    const systemWithRule = config.system + CONTEXT_RULES_SUFFIX;
+    const systemWithRule = config.system + userContextBlock + CONTEXT_RULES_SUFFIX;
 
     // Build the multi-turn message list: system → history → current user.
     // History is capped at ~8 turns (16 messages max) to avoid prompt bloat.

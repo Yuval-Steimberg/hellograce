@@ -366,12 +366,27 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         // have actual word content (alphanumeric), not just punctuation /
         // emoji / whitespace. If empty/junk, log + drop the send entirely.
         const hasUsefulContent = /[A-Za-z0-9]{3,}/.test(responseText.trim());
-        if (responseText.trim().length > 0 && hasUsefulContent) {
+        // 2026-06-05 production failure: "GLP-1 medications can sometimes
+        // lead to a loss" shipped (truncated mid-sentence) because the
+        // direct-path's endsMidWord check caught it and the path returned
+        // null, but the orchestrator fallback shipped truncated text
+        // anyway. Final sender-level gate: any response over 40 chars must
+        // end with terminal punctuation or emoji. If not, drop the send.
+        const trimmedResp = responseText.trim();
+        const looksTruncated = trimmedResp.length > 40 &&
+          !/[.!?…"')\]}]\s*$/.test(trimmedResp) &&
+          !/\p{Extended_Pictographic}\s*$/u.test(trimmedResp);
+        if (responseText.trim().length > 0 && hasUsefulContent && !looksTruncated) {
           const isRlhfUser = user?.rlhf_enabled ?? false;
           const body = shouldAppendRlhfPrompt(responseText, isRlhfUser)
             ? `${responseText}\n\n👍 👎 to rate · # to add a thought`
             : responseText;
           await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
+        } else if (looksTruncated) {
+          app.log.warn(
+            { responseText: trimmedResp.slice(-80), userId: normalized.userId },
+            'webhook.truncated_response_blocked',
+          );
         } else if (responseText.length > 0) {
           app.log.warn(
             { responseText: responseText.slice(0, 80), userId: normalized.userId },

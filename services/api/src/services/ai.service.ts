@@ -9,6 +9,7 @@ import {
   ToolRegistry,
   classifyMessage as classifyIntent,
   checkContent,
+  enforceFormat,
   detectTopicSwitch,
   detectReasoningRequest,
   FOOD_HISTORY_QUESTION,
@@ -322,6 +323,50 @@ export class AIService {
       }
     }
 
+    // ── Knowledge direct path (2026-06-05) ───────────────────────────────
+    // For knowledge intents (GLP-1 questions, side-effect questions, "is X
+    // normal" patterns), skip the heavy orchestrator (2500-line system
+    // prompt + planner + tools + 7 guards + regen). The full pipeline has
+    // been producing bad knowledge responses in production (muscle-loss
+    // typed fallback for unrelated questions, truncated bullet lists, AI
+    // disclaimer babble). A direct Gemini call with Google Search grounding
+    // produces a substantive answer in 2-4 sentences for ~1.5-2s.
+    //
+    // Flow: minimal system prompt → Gemini + grounding → format-enforce →
+    // content-check → ship. If anything trips a block-severity violation or
+    // produces empty output, fall through to the regular orchestrator.
+    {
+      const earlyIntent = classifyIntent(input.text);
+      if (earlyIntent.type === 'knowledge') {
+        try {
+          lat.mark('knowledge_direct');
+          const direct = await this.handleKnowledgeDirect(input.text);
+          if (direct) {
+            const stageTimings = lat.snapshot();
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info(
+              { userId: input.userId, latencyMs: totalMs, stageTimings },
+              'ai.knowledge_direct.served',
+            );
+            this.persistLatency(input.userId, 'knowledge_direct', totalMs, stageTimings, input.text, direct);
+            return {
+              text: direct,
+              confidence: 'high',
+              intent: 'knowledge_direct',
+              toolResults: [],
+              usedRetrieval: true,
+              latencyMs: totalMs,
+            };
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.knowledge_direct.error',
+          );
+        }
+      }
+    }
+
     try {
       return await this.handleMessageInner(input, t0, lat);
     } catch (outerErr) {
@@ -383,6 +428,85 @@ export class AIService {
       }
       throw outerErr;
     }
+  }
+
+  /**
+   * Knowledge direct path — for GLP-1 / side-effect / "is X normal" questions.
+   * Skips the heavy orchestrator entirely. Minimal Grace system prompt + Google
+   * Search grounding → Gemini → format-enforce → content-check → ship.
+   *
+   * Returns null when: empty Gemini output, block-severity content violation,
+   * or network error. Caller falls through to the regular pipeline.
+   *
+   * Why this exists (2026-06-05): production produced consistently bad
+   * knowledge responses through the orchestrator — muscle-loss typed fallback
+   * for unrelated questions, truncated bullet-list responses ending in
+   * "1.", AI-disclaimer babble ("I cannot provide personalized medical
+   * advice..."). The orchestrator's 2,500-line system prompt has so many
+   * conflicting rules that the model picks the safest path and refuses or
+   * truncates. A direct call with a focused 20-line prompt produces clean
+   * 2-4 sentence answers.
+   */
+  private async handleKnowledgeDirect(userText: string): Promise<string | null> {
+    const KNOWLEDGE_SYSTEM = `You are Grace, a warm and direct GLP-1 medication companion. The user is on a GLP-1 (Ozempic, Wegovy, Mounjaro, Zepbound, or similar) and just asked a question.
+
+ANSWER STYLE:
+- 2 to 4 sentences total. Never longer.
+- Direct factual answer first, brief nuance second.
+- Prose only. NO bullet points, NO numbered lists, NO dashes, NO section headers.
+- NO colons used to introduce a list ("Here's how:" / "Common causes:" — BANNED).
+- Cite research framing where useful ("research shows", "studies suggest").
+- If it needs a doctor's input, say so in one sentence and move on.
+
+NEVER:
+- Say "I cannot provide personalized medical advice" or any AI-disclaimer phrase.
+- Use parenthetical brand-name dumps "(Ozempic, Wegovy, Mounjaro, Saxenda, Victoza)".
+- Use markdown asterisks for bold or italic.
+- End with a clarifying question.
+- Hallucinate doses, percentages, or studies — if unsure, say "around X" or skip the number.
+
+Answer the user's exact question, calmly and human.`;
+
+    let resp;
+    try {
+      resp = await this.deps.llm.generate({
+        messages: [
+          { role: 'system', content: KNOWLEDGE_SYSTEM },
+          { role: 'user', content: userText },
+        ],
+        temperature: 0.35,
+        maxOutputTokens: 350,
+        useGoogleSearch: true,
+      });
+    } catch (err) {
+      this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'knowledge_direct.gemini_failed');
+      return null;
+    }
+    const raw = resp.text?.trim() ?? '';
+    if (raw.length === 0) return null;
+
+    // Format-enforce: strip markdown, em-dashes, label-colons, list intros.
+    const formatted = enforceFormat(raw, { userMessage: userText });
+
+    // Content-check: drop on banned-phrase or block violations. If anything
+    // trips regen-severity, fall through to orchestrator (which has the
+    // regen machinery to fix it). If clean, ship.
+    const violations = checkContent(formatted.text, { userMessage: userText });
+    if (violations.some((v) => v.severity === 'block' || v.severity === 'regen')) {
+      this.deps.logger.info(
+        { codes: violations.map((v) => v.code).slice(0, 5) },
+        'knowledge_direct.content_violations',
+      );
+      return null;
+    }
+
+    // Final length sanity check — knowledge replies must be under 800 chars.
+    // If still over, take the first 3 sentences.
+    const trimmed = formatted.text.length > 800
+      ? formatted.text.split(/(?<=[.!?])\s+/).slice(0, 3).join(' ')
+      : formatted.text;
+
+    return trimmed.trim();
   }
 
   // Full message processing flow: (1) parallel I/O (user profile, history, media

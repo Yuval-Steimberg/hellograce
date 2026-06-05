@@ -364,7 +364,19 @@ export function classifyMessage(rawText: string): ClassifyResult {
   // Medication-specific question — placed BEFORE food_log/knowledge so dose
   // timing / storage / travel-with-pen questions land in the dedicated handler.
   if (matches(text, MEDICATION_QUESTION)) return { type: 'medication_question', confidence: 0.9 };
-  if (matches(text, FOOD_LOG)) return { type: 'food_log', confidence: 0.85 };
+  // 2026-06-05 production failure: classifier was routing questions like
+  // "Why does protein matter so much on GLP-1s? Everyone says aim for 100g
+  // but I can barely eat 50g a day" and "Got my first injection yesterday
+  // and woke up with terrible heartburn at 3am. Is this a side effect?"
+  // into food_log because food verbs ("drank", "got", "had") and quantity
+  // patterns ("100g", "50g") match FOOD_LOG even though these are
+  // questions. The forced log_food tool call then hallucinated macros for
+  // non-food content, drove the 100% regen rate on food_log intent, and
+  // produced safe-fallbacks. Logs are ALWAYS declarative — never questions.
+  // If the message contains a '?', skip FOOD_LOG and let the classifier
+  // continue down to FOOD_QUESTION / KNOWLEDGE / general.
+  const isQuestion = text.includes('?');
+  if (!isQuestion && matches(text, FOOD_LOG)) return { type: 'food_log', confidence: 0.85 };
   if (matches(text, FOOD_QUESTION)) return { type: 'food_question', confidence: 0.85 };
   // Social situation — placed AFTER food_log/food_question because eating-out
   // questions can match food patterns; the more specific event/social signals

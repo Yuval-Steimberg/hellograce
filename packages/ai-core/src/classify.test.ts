@@ -261,3 +261,49 @@ describe('classifyMessage — pause_request (Phase 1 coverage expansion)', () =>
     expect(classifyMessage("don't text me for a week").type).toBe('pause_request');
   });
 });
+
+describe('classifyMessage — questions are never food_log (2026-06-05 fix)', () => {
+  // Auto-eval / coverage corpus surfaced 4 distinct production failures where
+  // the classifier routed questions into food_log because food verbs +
+  // quantity patterns matched FOOD_LOG. The forced log_food tool call then
+  // hallucinated macros for non-food content. Rule: '?' → never food_log.
+
+  it('routes "Why does protein matter so much on GLP-1s? Everyone says aim for 100g but I can barely eat 50g a day" to knowledge', () => {
+    const result = classifyMessage(
+      "Why does protein matter so much on GLP-1s? Everyone says aim for 100g but I can barely eat 50g a day with the appetite suppression.",
+    );
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('routes "Got my first injection yesterday and woke up with terrible heartburn at 3am. Is this a side effect?" to knowledge', () => {
+    const result = classifyMessage(
+      "Got my first injection yesterday and woke up with terrible heartburn at 3am. Is this a side effect?",
+    );
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('routes "I take Rybelsus daily. Today I drank coffee 20 minutes after my pill. Did I just waste my dose?" to knowledge', () => {
+    const result = classifyMessage(
+      "I take Rybelsus daily. Today I drank coffee 20 minutes after my pill. Did I just waste my dose?",
+    );
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('still routes "I just ate 2 eggs" to food_log (declarative — no question mark)', () => {
+    const result = classifyMessage("I just ate 2 eggs");
+    expect(result.type).toBe('food_log');
+  });
+
+  it('still routes "Lunch: chicken salad with rice" to food_log (declarative)', () => {
+    const result = classifyMessage("Lunch: chicken salad with rice");
+    expect(result.type).toBe('food_log');
+  });
+
+  it('"Did I have eggs today?" is NEVER classified as food_log (the key invariant)', () => {
+    // Has '?' so the new rule prevents food_log routing. Whatever it falls
+    // through to (food_question / general / knowledge) is fine — the goal
+    // here is "never log a question as a food log".
+    const result = classifyMessage("Did I have eggs today?");
+    expect(result.type).not.toBe('food_log');
+  });
+});

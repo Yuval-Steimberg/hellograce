@@ -180,9 +180,40 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           }
 
           // RLHF feedback signal — intercept before AI for opted-in users.
+          // 2026-06-05 production failure: "yes" was being parsed as positive
+          // feedback EVEN WHEN Grace had just asked a yes/no question
+          // ("want me to walk you through the numbers?"). User said "yes"
+          // meaning "yes, walk me through" → got "Glad that landed well."
+          //
+          // Tight gate: a bare-word signal (yes/no/good/bad/etc.) only counts
+          // as feedback if the previous Grace message contained the RLHF
+          // prompt (👍 👎 emoji or "to rate" text). Without that prompt,
+          // "yes" is a conversational reply. Emoji thumbs and explicit
+          // "#"/"FEEDBACK:" prefixes always count.
           if (user?.rlhf_enabled) {
             const fbResult = parseFeedbackSignal(normalized.text);
+            let shouldProcessAsFeedback = fbResult !== null;
             if (fbResult) {
+              const isBareWordSignal = /^(yes|good|helpful|great|positive|no|bad|not\s+helpful|negative|thumbs[\s-]?(up|down))$/i
+                .test(normalized.text.trim());
+              if (isBareWordSignal) {
+                // Verify the previous Grace message contained the RLHF prompt.
+                const recentTurns = await deps.ai.getRecentTurnsForUser?.(normalized.userId, 2).catch(() => []) ?? [];
+                const lastAssistant = [...recentTurns].reverse().find((t: { role: string }) => t.role === 'assistant');
+                const lastContent = lastAssistant && typeof (lastAssistant as { content?: unknown }).content === 'string'
+                  ? (lastAssistant as { content: string }).content
+                  : '';
+                const lastHadRlhfPrompt = /👍|👎|to rate|rate this|share a thought/i.test(lastContent);
+                if (!lastHadRlhfPrompt) {
+                  app.log.info(
+                    { userId: normalized.userId, text: normalized.text.slice(0, 40) },
+                    'webhook.feedback_signal_rejected_no_prompt',
+                  );
+                  shouldProcessAsFeedback = false;
+                }
+              }
+            }
+            if (fbResult && shouldProcessAsFeedback) {
               await deps.users.recordUserFeedback(user.phone, fbResult.rating, fbResult.comment).catch(() => null);
               // Phase 5: feed reward to the contextual bandit. The user's `id`
               // is the bandit key (matches user_bandit_state.user_id). Fire-

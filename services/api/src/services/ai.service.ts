@@ -262,6 +262,14 @@ export class AIService {
     this.deps.logger.info({ hasPrompt: !!prompt }, 'system_prompt.updated');
   }
 
+  /**
+   * Exposed for the webhook layer to check the previous assistant message
+   * before treating "yes" / "no" as RLHF feedback. See webhook.ts:182.
+   */
+  async getRecentTurnsForUser(userId: string, limit: number): Promise<ChatTurn[]> {
+    return this.deps.memory.getRecentTurns(userId, limit).catch(() => [] as ChatTurn[]);
+  }
+
   async handleMessage(input: InboundMessage): Promise<OrchestratorOutput> {
     const lat = new LatencyTracker();
     const t0 = Date.now();

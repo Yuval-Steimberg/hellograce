@@ -31,6 +31,7 @@ export interface QueryFastResult {
     | 'protein_today'
     | 'calorie_today'
     | 'progress_today'
+    | 'food_summary_today'
     | 'start_date'
     | 'week_number'
     | 'medication'
@@ -71,6 +72,13 @@ const PROTEIN_TODAY_RE =
 
 const CALORIE_TODAY_RE =
   /^(?:how (?:many|much)\s+(?:calories|cal|kcal)\s+(?:have i\s+(?:had|eaten|consumed|logged)|did i\s+(?:have|eat))|what(?:'?s| is)\s+my\s+(?:calorie|cal|kcal)\s+(?:total\s+)?(?:today|so far))(?:\s+today)?\??$/i;
+
+// Food summary list — "what I ate today" / "show my food" / "my food today" /
+// "what did I have" / "today's log". Production failure 2026-06-05: "What I
+// ate today" went through the orchestrator → ship "Tell me a bit more?"
+// instead of listing the day's food. Deterministic: list the foods today.
+const FOOD_SUMMARY_LIST_RE =
+  /^(?:what (?:i|did i) ate(?:\s+today)?|what (?:have )?i (?:had|eaten|logged)(?:\s+today)?|(?:show|list|tell me)(?:\s+me)? my (?:food|meals?|logs?|food log)(?:\s+today)?|(?:today'?s|my today'?s) (?:food|meals?|log|logs?|intake|eating)|food i (?:had|ate|logged) today|my (?:food )?(?:totals?|log)(?:\s+today)?)\s*\??$/i;
 
 // "How am I doing today" / "how am I doing on protein" / "progress check"
 const PROGRESS_TODAY_RE =
@@ -140,6 +148,7 @@ export async function tryQueryFast(
     : PROTEIN_TODAY_RE.test(t) ? 'protein_today'
     : CALORIE_TODAY_RE.test(t) ? 'calorie_today'
     : PROGRESS_TODAY_RE.test(t) ? 'progress_today'
+    : FOOD_SUMMARY_LIST_RE.test(t) ? 'food_summary_today'
     : START_DATE_RE.test(t) ? 'start_date'
     : WEEK_NUMBER_RE.test(t) ? 'week_number'
     : MEDICATION_RE.test(t) ? 'medication'
@@ -286,6 +295,38 @@ export async function tryQueryFast(
         return {
           text: `You're at ${parts.join(' and ')} today.`,
           category: 'progress_today',
+        };
+      }
+
+      case 'food_summary_today': {
+        // 2026-06-05 production failure: "What I ate today" → orchestrator
+        // shipped "Tell me a bit more?". Now we list the day's items in a
+        // single sentence with running totals. Deterministic, ~250ms.
+        const summary = await deps.users.getTodaysFoodSummary(deps.userId).catch(() => null);
+        if (!summary) return null;
+        const proteinTotal = Math.round(summary.protein_g);
+        const calTotal = Math.round(summary.calories);
+        const items = summary.items.filter((s) => s && s.trim().length > 0);
+        if (items.length === 0) {
+          return {
+            text: `Nothing logged yet today. Send me what you've eaten and I'll track it.`,
+            category: 'food_summary_today',
+          };
+        }
+        // Human-friendly comma list with "and" before the last item.
+        const displayItems = items.slice(0, 8);
+        const moreCount = items.length - displayItems.length;
+        const last = displayItems.pop()!;
+        const list = displayItems.length === 0
+          ? last
+          : `${displayItems.join(', ')}, and ${last}`;
+        const tailing = moreCount > 0 ? ` and ${moreCount} more` : '';
+        const tot = calTotal > 0
+          ? `${proteinTotal}g protein, ${calTotal} kcal`
+          : `${proteinTotal}g protein`;
+        return {
+          text: `Today you've had ${list}${tailing}. Running total: ${tot}.`,
+          category: 'food_summary_today',
         };
       }
 

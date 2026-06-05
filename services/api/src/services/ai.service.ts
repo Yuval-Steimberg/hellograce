@@ -17,6 +17,144 @@ import {
   FOOD_REMOVAL_QUESTION,
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
+
+// ─── Direct-path config (2026-06-05 architectural inversion) ─────────────────
+// One focused prompt + budget per intent. Each prompt is intentionally short
+// (~15-20 lines vs the 2,500-line orchestrator system prompt) so Gemini can
+// actually follow every rule. Each bans the specific failure mode observed in
+// production for that intent.
+const DIRECT_PATH_CONFIGS: Record<string, {
+  system: string;
+  temperature: number;
+  maxTokens: number;
+  useSearch: boolean;
+  hardCharCap: number;
+  maxSentencesOnTrim: number;
+}> = {
+  knowledge: {
+    system: `You are Grace, a warm and direct GLP-1 medication companion. The user is on a GLP-1 (Ozempic, Wegovy, Mounjaro, Zepbound, or similar) and just asked a question.
+
+ANSWER STYLE:
+- 2 to 4 sentences total. Never longer.
+- Direct factual answer first, brief nuance second.
+- Prose only. NO bullet points, NO numbered lists, NO dashes, NO section headers.
+- NO colons used to introduce a list ("Here's how:" / "Common causes:" — BANNED).
+- Cite research framing where useful ("research shows", "studies suggest").
+- If it needs a doctor's input, say so in one sentence and move on.
+
+NEVER:
+- Say "I cannot provide personalized medical advice" or any AI-disclaimer phrase.
+- Use parenthetical brand-name dumps "(Ozempic, Wegovy, Mounjaro, Saxenda, Victoza)".
+- Use markdown asterisks for bold or italic.
+- End with a clarifying question.
+- Hallucinate doses, percentages, or studies — if unsure, say "around X" or skip the number.
+
+Answer the user's exact question, calmly and human.`,
+    temperature: 0.35,
+    maxTokens: 350,
+    useSearch: true,
+    hardCharCap: 800,
+    maxSentencesOnTrim: 3,
+  },
+
+  emotional: {
+    system: `You are Grace, a warm GLP-1 companion. The user just shared something emotional — frustration, fear, sadness, defeat, exhaustion, anxiety, or self-doubt.
+
+ANSWER STYLE:
+- 1 to 3 sentences. Often 1 is best.
+- Lead with acknowledging the feeling using their words or a close synonym.
+- Then ONE small grounding fact, brief reassurance, or quiet support sentence.
+- Do NOT pivot to advice, action items, food logging, or questions about meals.
+- Do NOT topic-switch ("How's your day?" / "What's on your mind?" — BANNED).
+- Prose only. No bullets, no lists, no headers.
+- Warm but never gushing. No "Wow!" / "Oh sweetie" / "You poor thing".
+
+NEVER:
+- Open with "Great!" / "Wonderful!" / "Amazing!" — they just told you something hard.
+- Use the phrase "I hear you" twice in a row in a session.
+- Promise things ("It will get better", "You'll be fine") — keep it grounded.
+- Cite research unless directly relevant to the feeling.
+- End with "tell me more" — they decide if they want to say more.
+
+Acknowledge their feeling honestly and quietly. That's the whole job.`,
+    temperature: 0.5,
+    maxTokens: 200,
+    useSearch: false,
+    hardCharCap: 400,
+    maxSentencesOnTrim: 2,
+  },
+
+  appointment_prep: {
+    system: `You are Grace, a GLP-1 companion. The user has a doctor / endocrinologist / provider appointment coming up and wants help preparing.
+
+ANSWER STYLE:
+- 3 to 5 SPECIFIC questions or topics they should raise.
+- Tied to GLP-1 care: dose right for current weight + side effects, muscle/protein checking, labs (A1C, lipids, kidney), side-effect timing, dose escalation plan.
+- Phrased as questions Grace is suggesting they ASK their doctor, not generic advice.
+- Prose, comma-separated within one sentence per topic. NO bullets, NO numbered lists.
+- Brief context (one phrase) per topic when needed.
+
+NEVER:
+- Use "1." / "2." / dashes / asterisks for list formatting.
+- Open with "To give you the best questions, I need to know..." — give the questions.
+- Ask the user for more info first.
+- Be longer than 5 sentences total.
+
+Give them a clear ready-to-go set of questions to bring.`,
+    temperature: 0.3,
+    maxTokens: 300,
+    useSearch: false,
+    hardCharCap: 700,
+    maxSentencesOnTrim: 5,
+  },
+
+  medication_question: {
+    system: `You are Grace, a GLP-1 companion. The user just asked a question about their GLP-1 medication — dose timing, storage, switching meds, refills, what to do after missed/late doses, pen handling, travel, injection-site rotation.
+
+ANSWER STYLE:
+- 2 to 4 sentences. Direct answer first.
+- Anchor to general GLP-1 guidance, not personalized prescribing advice.
+- Prose only. NO bullets, NO numbered lists, NO headers.
+- If a specific dose decision is needed, end with one short sentence pointing them to their prescriber.
+
+NEVER:
+- Give a specific dose or escalation schedule — that's the prescriber's call.
+- Say "I cannot provide medical advice" or any AI disclaimer.
+- Use parenthetical brand-name dumps.
+- Open with "Great question!" / "Excellent question!".
+
+Answer practically with the standard guidance, end with a clear next step if needed.`,
+    temperature: 0.3,
+    maxTokens: 300,
+    useSearch: true,
+    hardCharCap: 600,
+    maxSentencesOnTrim: 4,
+  },
+
+  social_situation: {
+    system: `You are Grace, a GLP-1 companion. The user is asking about a social situation involving food — restaurants, weddings, holidays, travel, family events, gatherings, work meals.
+
+ANSWER STYLE:
+- 2 to 3 sentences. Practical and warm.
+- Concrete strategies: protein first, slow pace, pick foods they actually want, skip pressure foods without guilt.
+- No moralizing language ("bad foods", "cheating", "indulgence").
+- Prose only. NO bullets, NO numbered lists.
+
+NEVER:
+- Lecture about willpower or restriction.
+- Make the user feel anxious about the event.
+- Open with "Great question!" / "Oh, what an exciting event!".
+- End with "Have fun!" or similar generic well-wishing.
+
+Give them a quick practical plan and move on.`,
+    temperature: 0.4,
+    maxTokens: 200,
+    useSearch: false,
+    hardCharCap: 500,
+    maxSentencesOnTrim: 3,
+  },
+};
+
 import { tryFoodLogFastResponse } from './food-log-fast.js';
 import { tryWeightLogFastResponse } from './weight-log-fast.js';
 import { tryQueryFast } from './query-fast.js';
@@ -323,45 +461,53 @@ export class AIService {
       }
     }
 
-    // ── Knowledge direct path (2026-06-05) ───────────────────────────────
-    // For knowledge intents (GLP-1 questions, side-effect questions, "is X
-    // normal" patterns), skip the heavy orchestrator (2500-line system
-    // prompt + planner + tools + 7 guards + regen). The full pipeline has
-    // been producing bad knowledge responses in production (muscle-loss
-    // typed fallback for unrelated questions, truncated bullet lists, AI
-    // disclaimer babble). A direct Gemini call with Google Search grounding
-    // produces a substantive answer in 2-4 sentences for ~1.5-2s.
+    // ── Direct paths (2026-06-05 architectural inversion) ─────────────────
+    // For 5 high-volume intents (knowledge / emotional / appointment_prep /
+    // medication_question / social_situation), skip the heavy orchestrator
+    // (2,500-line prompt + planner + tools + 7 guards + regen). The full
+    // pipeline has been producing consistently bad responses on these
+    // intents in production. A direct Gemini call with a focused 20-line
+    // prompt produces clean 2-4 sentence answers in ~1.5-2s vs 15-30s.
     //
-    // Flow: minimal system prompt → Gemini + grounding → format-enforce →
-    // content-check → ship. If anything trips a block-severity violation or
-    // produces empty output, fall through to the regular orchestrator.
+    // Each path: focused prompt → Gemini (grounding for knowledge/medication)
+    // → format-enforce → content-check → ship. Block/regen violation or
+    // empty output → return null → fall through to orchestrator. Net safety
+    // unchanged; worst case is the same as today.
     {
       const earlyIntent = classifyIntent(input.text);
-      if (earlyIntent.type === 'knowledge') {
+      const directIntent = earlyIntent.type;
+      const wantsDirect =
+        directIntent === 'knowledge' ||
+        directIntent === 'emotional' ||
+        directIntent === 'appointment_prep' ||
+        directIntent === 'medication_question' ||
+        directIntent === 'social_situation';
+      if (wantsDirect) {
         try {
-          lat.mark('knowledge_direct');
-          const direct = await this.handleKnowledgeDirect(input.text);
+          const stage = `${directIntent}_direct`;
+          lat.mark(stage);
+          const direct = await this.runDirectPath(directIntent, input.text);
           if (direct) {
             const stageTimings = lat.snapshot();
             const totalMs = Date.now() - t0;
             this.deps.logger.info(
-              { userId: input.userId, latencyMs: totalMs, stageTimings },
-              'ai.knowledge_direct.served',
+              { userId: input.userId, intent: directIntent, latencyMs: totalMs, stageTimings },
+              'ai.direct_path.served',
             );
-            this.persistLatency(input.userId, 'knowledge_direct', totalMs, stageTimings, input.text, direct);
+            this.persistLatency(input.userId, stage, totalMs, stageTimings, input.text, direct);
             return {
               text: direct,
               confidence: 'high',
-              intent: 'knowledge_direct',
+              intent: stage,
               toolResults: [],
-              usedRetrieval: true,
+              usedRetrieval: directIntent === 'knowledge' || directIntent === 'medication_question',
               latencyMs: totalMs,
             };
           }
         } catch (err) {
           this.deps.logger.warn(
-            { err: err instanceof Error ? err.message : String(err) },
-            'ai.knowledge_direct.error',
+            { err: err instanceof Error ? err.message : String(err), intent: directIntent },
+            'ai.direct_path.error',
           );
         }
       }
@@ -431,55 +577,40 @@ export class AIService {
   }
 
   /**
-   * Knowledge direct path — for GLP-1 / side-effect / "is X normal" questions.
-   * Skips the heavy orchestrator entirely. Minimal Grace system prompt + Google
-   * Search grounding → Gemini → format-enforce → content-check → ship.
+   * Direct paths — for 5 intents that produce consistently bad responses
+   * through the heavy orchestrator. Skip the 2,500-line system prompt +
+   * planner + 7 guards + regen loop. One focused Gemini call → enforce →
+   * check → ship.
    *
-   * Returns null when: empty Gemini output, block-severity content violation,
-   * or network error. Caller falls through to the regular pipeline.
+   * Returns null when: empty Gemini output, block/regen content violation,
+   * or network error. Caller falls through to the regular pipeline so net
+   * safety is unchanged; worst case is identical to pre-direct behavior.
    *
-   * Why this exists (2026-06-05): production produced consistently bad
-   * knowledge responses through the orchestrator — muscle-loss typed fallback
-   * for unrelated questions, truncated bullet-list responses ending in
-   * "1.", AI-disclaimer babble ("I cannot provide personalized medical
-   * advice..."). The orchestrator's 2,500-line system prompt has so many
-   * conflicting rules that the model picks the safest path and refuses or
-   * truncates. A direct call with a focused 20-line prompt produces clean
-   * 2-4 sentence answers.
+   * Why per-intent prompts (not a single shared one): the failure modes
+   * differ. Knowledge needs grounding + brevity. Emotional needs warmth
+   * without sycophancy. Appointment_prep needs concrete questions. The
+   * prompts below each address the dominant failure pattern for their intent.
    */
-  private async handleKnowledgeDirect(userText: string): Promise<string | null> {
-    const KNOWLEDGE_SYSTEM = `You are Grace, a warm and direct GLP-1 medication companion. The user is on a GLP-1 (Ozempic, Wegovy, Mounjaro, Zepbound, or similar) and just asked a question.
-
-ANSWER STYLE:
-- 2 to 4 sentences total. Never longer.
-- Direct factual answer first, brief nuance second.
-- Prose only. NO bullet points, NO numbered lists, NO dashes, NO section headers.
-- NO colons used to introduce a list ("Here's how:" / "Common causes:" — BANNED).
-- Cite research framing where useful ("research shows", "studies suggest").
-- If it needs a doctor's input, say so in one sentence and move on.
-
-NEVER:
-- Say "I cannot provide personalized medical advice" or any AI-disclaimer phrase.
-- Use parenthetical brand-name dumps "(Ozempic, Wegovy, Mounjaro, Saxenda, Victoza)".
-- Use markdown asterisks for bold or italic.
-- End with a clarifying question.
-- Hallucinate doses, percentages, or studies — if unsure, say "around X" or skip the number.
-
-Answer the user's exact question, calmly and human.`;
+  private async runDirectPath(intent: string, userText: string): Promise<string | null> {
+    const config = DIRECT_PATH_CONFIGS[intent];
+    if (!config) return null;
 
     let resp;
     try {
       resp = await this.deps.llm.generate({
         messages: [
-          { role: 'system', content: KNOWLEDGE_SYSTEM },
+          { role: 'system', content: config.system },
           { role: 'user', content: userText },
         ],
-        temperature: 0.35,
-        maxOutputTokens: 350,
-        useGoogleSearch: true,
+        temperature: config.temperature,
+        maxOutputTokens: config.maxTokens,
+        useGoogleSearch: config.useSearch,
       });
     } catch (err) {
-      this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'knowledge_direct.gemini_failed');
+      this.deps.logger.warn(
+        { err: err instanceof Error ? err.message : String(err), intent },
+        'direct_path.gemini_failed',
+      );
       return null;
     }
     const raw = resp.text?.trim() ?? '';
@@ -488,25 +619,25 @@ Answer the user's exact question, calmly and human.`;
     // Format-enforce: strip markdown, em-dashes, label-colons, list intros.
     const formatted = enforceFormat(raw, { userMessage: userText });
 
-    // Content-check: drop on banned-phrase or block violations. If anything
-    // trips regen-severity, fall through to orchestrator (which has the
-    // regen machinery to fix it). If clean, ship.
+    // Content-check: drop on banned-phrase or block violations. Regen-
+    // severity → fall through to orchestrator (which has the regen
+    // machinery). Clean → ship.
     const violations = checkContent(formatted.text, { userMessage: userText });
     if (violations.some((v) => v.severity === 'block' || v.severity === 'regen')) {
       this.deps.logger.info(
-        { codes: violations.map((v) => v.code).slice(0, 5) },
-        'knowledge_direct.content_violations',
+        { codes: violations.map((v) => v.code).slice(0, 5), intent },
+        'direct_path.content_violations',
       );
       return null;
     }
 
-    // Final length sanity check — knowledge replies must be under 800 chars.
-    // If still over, take the first 3 sentences.
-    const trimmed = formatted.text.length > 800
-      ? formatted.text.split(/(?<=[.!?])\s+/).slice(0, 3).join(' ')
-      : formatted.text;
-
-    return trimmed.trim();
+    // Final length sanity check — direct replies must be under the intent's
+    // hard cap. If still over, trim to the first N sentences.
+    if (formatted.text.length > config.hardCharCap) {
+      const sentences = formatted.text.split(/(?<=[.!?])\s+/);
+      return sentences.slice(0, config.maxSentencesOnTrim).join(' ').trim();
+    }
+    return formatted.text.trim();
   }
 
   // Full message processing flow: (1) parallel I/O (user profile, history, media

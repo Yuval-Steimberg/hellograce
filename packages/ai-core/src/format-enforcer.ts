@@ -258,10 +258,30 @@ export function enforceFormat(
   // from later in the function to fire here (2026-06-04 production failure).
   //
   // Pattern 1: "Here's why X, Y, and Z:" / "Here's a breakdown of...:" / etc.
-  const listIntroEarlyRe = /\b(here'?s (?:a |the |my )?(?:breakdown|summary|explanation|overview)[^.:!?\n]{0,80}|here'?s why[^.:!?\n]{0,120}|here'?s what[^.:!?\n]{0,120}|here are (?:[^\n.:!?]{0,80}?)(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?|meals?|dinners?|lunches|breakfasts|snacks|foods?|recipes?|examples?)[^.:!?\n]{0,120})\s*:\s*/gi;
+  const listIntroEarlyRe = /\b(here'?s (?:a |the |my )?(?:breakdown|summary|explanation|overview)[^.:!?\n]{0,80}|here'?s why[^.:!?\n]{0,120}|here'?s what[^.:!?\n]{0,120}|here'?s how[^.:!?\n]{0,120}|here are (?:[^\n.:!?]{0,80}?)(?:points?|tips?|things?|options?|suggestions?|ideas?|steps?|reasons?|causes?|ways?|meals?|dinners?|lunches|breakfasts|snacks|foods?|recipes?|examples?)[^.:!?\n]{0,120})\s*:\s*/gi;
   if (listIntroEarlyRe.test(text)) {
     text = text.replace(listIntroEarlyRe, '');
     fixes.push('list_intro_stripped');
+  }
+
+  // Pattern 1b (2026-06-05 production failure): "How GLP can affect my
+  // muscles" → response ended with "Here's how GLP-1 can affect your
+  // muscles: 1." — list intro that wasn't caught by Pattern 1, and the
+  // dangling "1." remained. Add a catch-all for "Here's X:" at end of
+  // response, plus strip dangling list markers ("1.", "1)", "First,") at
+  // the END of the response after the colon-strip.
+  const trailingListIntroRe = /\b(here'?s\s+(?:how|why|what)\s+[^.!?\n]{0,150}):\s*\d+\.\s*$/gi;
+  if (trailingListIntroRe.test(text)) {
+    text = text.replace(trailingListIntroRe, '$1.');
+    fixes.push('trailing_list_intro_stripped');
+  }
+  // Pattern 1c (2026-06-05): parenthetical brand-name dumps
+  // "(Ozempic, Wegovy, Mounjaro, Saxenda, Victoza)" — banned by prompt but
+  // model still emits them. Collapse to a single drug or remove entirely.
+  const brandDumpRe = /\s*\((?:[A-Z][a-z]+(?:[ -][A-Z][a-z]+)?(?:,\s*)?){3,}\)/g;
+  if (brandDumpRe.test(text)) {
+    text = text.replace(brandDumpRe, '');
+    fixes.push('brand_dump_stripped');
   }
 
   // Pattern 2: Generalized Title-Case Header followed by Colon. 3+ Title Case

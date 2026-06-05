@@ -434,8 +434,10 @@ export class Scheduler {
 
     try {
       const message = await this.deps.generator.generate(type, user, opts);
-      const body = user.rlhf_enabled
-        ? `${message}\n\nRate this: 👍 👎\nOr start your reply with # to share a thought.`
+      // 2026-06-05 — shortened from the 60-char "Rate this:..." appendage
+      // that was 8.5x longer than short replies like "Logged."
+      const body = user.rlhf_enabled && message.trim().length >= 25
+        ? `${message}\n\n👍 👎 to rate · # to add a thought`
         : message;
       await this.deps.sender.send({ to: user.phone, body, channel: 'whatsapp' });
       await this.deps.users.recordCheckIn({

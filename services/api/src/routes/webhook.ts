@@ -308,8 +308,8 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             // handler path. Lets users 👎 a refusal that felt off (e.g. too
             // curt, missed an in-scope follow-up) so we can tune the guard.
             const isRlhfUser = user?.rlhf_enabled ?? false;
-            const body = isRlhfUser
-              ? `${scope.response!}\n\nRate this: 👍 👎\nOr start your reply with # to share a thought.`
+            const body = shouldAppendRlhfPrompt(scope.response!, isRlhfUser)
+              ? `${scope.response!}\n\n👍 👎 to rate · # to add a thought`
               : scope.response!;
             await deps.sender.send({
               to: normalized.userId,
@@ -328,12 +328,20 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
 
         const responseText = result?.text ?? '';
         if (responseText.length > 0) {
-          // RLHF prompt is appended for ALL replies (including safe fallbacks)
-          // so users can flag bad fallbacks too — that signal is the most
-          // valuable for tuning the safe-fallback trigger thresholds.
+          // RLHF prompt appendage.
+          // 2026-06-05 fix: was always appending
+          //   "\n\nRate this: 👍 👎\nOr start your reply with # to share a thought."
+          // (~60 chars). For short responses like "Logged." (7 chars) the
+          // RLHF prompt was 8.5x longer than the response itself, making
+          // every message feel robotic and bloated.
+          //
+          // New rule:
+          //   1. Shorter wording: "👍 👎 to rate, # to share a thought"
+          //   2. Skip entirely on very short responses (<25 chars) — the
+          //      whole point of a brief reply is to feel light.
           const isRlhfUser = user?.rlhf_enabled ?? false;
-          const body = isRlhfUser
-            ? `${responseText}\n\nRate this: 👍 👎\nOr start your reply with # to share a thought.`
+          const body = shouldAppendRlhfPrompt(responseText, isRlhfUser)
+            ? `${responseText}\n\n👍 👎 to rate · # to add a thought`
             : responseText;
           await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
         }
@@ -554,6 +562,17 @@ export function shouldSkipCoalesce(text: string): boolean {
   // Clear knowledge / recommendation questions — single-turn, ends with '?'
   if (t.length <= 120 && COALESCE_SKIP_KNOWLEDGE_RE.test(t)) return true;
   return false;
+}
+
+// 2026-06-05 — was always appending a 60-char "Rate this: 👍 👎 Or start
+// your reply with # to share a thought." regardless of how long Grace's
+// reply was. For "Logged." that's 8.5x the response itself. The rule
+// now: only append on substantive replies AND for opted-in users.
+const RLHF_MIN_RESPONSE_CHARS = 25;
+export function shouldAppendRlhfPrompt(responseText: string, isRlhfUser: boolean): boolean {
+  if (!isRlhfUser) return false;
+  if (responseText.trim().length < RLHF_MIN_RESPONSE_CHARS) return false;
+  return true;
 }
 
 // ─── Message coalescing ───────────────────────────────────────────────────────

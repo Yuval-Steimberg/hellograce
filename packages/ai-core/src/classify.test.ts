@@ -307,3 +307,57 @@ describe('classifyMessage — questions are never food_log (2026-06-05 fix)', ()
     expect(result.type).not.toBe('food_log');
   });
 });
+
+describe('classifyMessage — symptoms take priority over food_log (2026-06-05 fix v2)', () => {
+  // Production failure: user said "I'm feeling good. But my stomach hurts.
+  // I had 2 cups of coffee" → classifier picked food_log → Grace responded
+  // "Logged." and IGNORED the stomach pain.
+
+  it('"I had 2 cups of coffee. My stomach hurts." routes to knowledge (symptom wins)', () => {
+    const result = classifyMessage("I had 2 cups of coffee. My stomach hurts.");
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('"I\'m feeling good. But my stomach hurts. I had 2 cups of coffee" routes to knowledge', () => {
+    const result = classifyMessage("I'm feeling good. But my stomach hurts. I had 2 cups of coffee");
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('"Just ate breakfast. Feeling nauseous." routes to knowledge', () => {
+    const result = classifyMessage("Just ate breakfast. Feeling nauseous.");
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('"Stomach cramps after my shake" routes to knowledge', () => {
+    const result = classifyMessage("Stomach cramps after my shake");
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('"I have terrible heartburn since the dose increase" routes to knowledge', () => {
+    const result = classifyMessage("I have terrible heartburn since the dose increase");
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('"Threw up after eating" routes to knowledge', () => {
+    const result = classifyMessage("Threw up after eating");
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('"So dizzy this morning, had a protein shake" routes to knowledge', () => {
+    const result = classifyMessage("So dizzy this morning, had a protein shake");
+    expect(result.type).toBe('knowledge');
+  });
+
+  it('does not trip on neutral "stomach" mentions: "I ate something filling, my stomach is full"', () => {
+    // "full" is not in the symptom set — should still classify as food_log.
+    const result = classifyMessage("I ate something filling, my stomach is full");
+    expect(result.type).toBe('food_log');
+  });
+
+  it('does not trip on "tired of this" emotional phrase', () => {
+    // The "exhausted/tired" pattern uses (?!\s+of\b) negative lookahead so
+    // "tired of this medication" stays in emotional, not knowledge.
+    const result = classifyMessage("I'm so tired of this whole thing");
+    expect(result.type).not.toBe('knowledge');
+  });
+});

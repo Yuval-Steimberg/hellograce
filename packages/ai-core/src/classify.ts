@@ -220,6 +220,40 @@ const APPOINTMENT_PREP: RegExp[] = [
   /\b(help me? (write|draft|prepare|prep|preparing|drafting|writing)|prepare me|prep me|help (?:me )?(?:preparing|prepping|drafting|writing)) (?:my |some |the |a (?:list of |few )?)?questions?\b/i,
 ];
 
+// Side-effect / symptom signals — body sensations that on a GLP-1 deserve
+// acknowledgement BEFORE any co-occurring food log gets routed. Runs after
+// the explicit log/question intents (so "I just had nausea after my shot"
+// can still match medication_question if that fits better) but BEFORE
+// food_log so messages like "I had 2 cups of coffee. My stomach hurts."
+// don't get reduced to "Logged."
+const SYMPTOM_SIGNAL: RegExp[] = [
+  // Stomach / GI
+  /\b(stomach|tummy|belly|gut|abdomen)\s+(hurts?|aches?|ache|aching|pain|painful|sore|cramping|cramp|upset|burning|tight|twisted|in knots)\b/i,
+  /\b(my )?(stomach|tummy|belly|gut)\s+(is|feels?)\s+(killing|hurting|aching|cramping|upset|in pain|on fire|terrible|awful|bad)\b/i,
+  /\b(stomach ?ache|tummy ?ache|belly ?ache|gut ?ache)\b/i,
+  /\b(cramps?|cramping)\b/i,
+  // Nausea / vomiting
+  /\b(nauseous|nauseated|nausea|queasy|sick to my stomach)\b/i,
+  /\b(throwing up|threw up|vomiting|vomited|puking|puked|gagging|dry heaving)\b/i,
+  // Reflux / heartburn / burping
+  /\b(heartburn|acid reflux|reflux|gerd|indigestion)\b/i,
+  /\b(burping|belching|burps)\b/i,
+  // Head
+  /\b(headache|migraine|head hurts?|head is pounding|head pounding)\b/i,
+  /\b(dizzy|lightheaded|light.headed|spinning|vertigo|woozy)\b/i,
+  // Bowel
+  /\b(constipated|constipation|haven'?t (been able to )?go|can'?t poop|backed up)\b/i,
+  /\b(diarrhea|the runs|loose stool|loose stools)\b/i,
+  // Fatigue / energy as body symptom (not emotional "tired of this")
+  /\b(exhausted|wiped out|drained|so tired)\b(?!\s+of\b)/i,
+  // Hair / face / body change (GLP-1 specific concerns)
+  /\b(hair (loss|falling out|thinning|shedding))\b/i,
+  // Tachycardia / palpitations (less common but reported)
+  /\b(heart racing|heart pounding|palpitations|racing heart)\b/i,
+  // General body pain that often signals a side-effect
+  /\b(injection site (hurts?|pain|red|swollen|sore|bruised|itchy))\b/i,
+];
+
 const KNOWLEDGE: RegExp[] = [
   /\bwhy (is|does|do|am|are)\b.{5,}/i,
   /\bhow (does|do|long|often|much|come)\b.{5,}/i,
@@ -364,6 +398,19 @@ export function classifyMessage(rawText: string): ClassifyResult {
   // Medication-specific question — placed BEFORE food_log/knowledge so dose
   // timing / storage / travel-with-pen questions land in the dedicated handler.
   if (matches(text, MEDICATION_QUESTION)) return { type: 'medication_question', confidence: 0.9 };
+
+  // 2026-06-05 production failure (second batch): user said "I'm feeling
+  // good. But my stomach hurts. I had 2 cups of coffee" → classifier picked
+  // food_log because "had 2 cups of coffee" matched FOOD_LOG quantity +
+  // drinks patterns → Grace responded with "Logged." and IGNORED the
+  // stomach pain. A symptom signal must always take precedence over a
+  // co-occurring food log: the side-effect dimension is medically more
+  // important and the user wants acknowledgement of the pain.
+  //
+  // We route symptom-containing messages to 'knowledge' (the side-effect
+  // handler) instead of food_log. The knowledge fallback has substantive
+  // GLP-1 facts about common side effects.
+  if (matches(text, SYMPTOM_SIGNAL)) return { type: 'knowledge', confidence: 0.9 };
   // 2026-06-05 production failure: classifier was routing questions like
   // "Why does protein matter so much on GLP-1s? Everyone says aim for 100g
   // but I can barely eat 50g a day" and "Got my first injection yesterday

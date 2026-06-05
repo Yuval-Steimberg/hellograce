@@ -179,10 +179,16 @@ function getTypedFallback(type: MessageType): string {
  * we have real data — use it instead of a generic "got it, what else?"
  * which makes Grace look like she ignored what the user just did.
  */
+// Detects a body-symptom signal in the user's message. When present, the
+// food-log fallback MUST acknowledge the symptom before saying "Logged."
+// Production failure 2026-06-05: user said "I had 2 cups of coffee. My
+// stomach hurts." → Grace replied "Logged." and ignored the pain.
+const SYMPTOM_IN_USER_MSG_RE = /\b(stomach|tummy|belly|gut)\s+(hurts?|aches?|ache|cramping|cramp|upset|sore|burning|in pain)\b|\b(nauseous|nausea|queasy|sick to my stomach|throwing up|threw up|vomiting|vomited)\b|\b(heartburn|acid reflux|reflux|indigestion)\b|\b(headache|migraine|dizzy|lightheaded|woozy)\b|\b(constipated|diarrhea|cramps?)\b/i;
+
 function getToolAwareFallback(
   type: MessageType,
   toolResults: ToolResult[],
-  opts?: { isReasoningRequest?: boolean; lastAssistantMessage?: string },
+  opts?: { isReasoningRequest?: boolean; lastAssistantMessage?: string; userMessage?: string },
 ): string {
   // 2026-06-04 CRITICAL RULE: reasoning requests ("Why?" / "How is that
   // calculated?" / "Where did that come from?") must NEVER fall back to
@@ -212,11 +218,23 @@ function getToolAwareFallback(
     const out = foodLogged.output as Record<string, unknown>;
     const proteinG = Math.round(out['protein_g'] as number);
     const dailyG = typeof out['daily_protein_g'] === 'number' ? Math.round(out['daily_protein_g'] as number) : null;
+    // Symptom-aware: if the user mentioned a body symptom alongside the
+    // food log, acknowledge the symptom FIRST before reporting the macros.
+    // Otherwise the user feels ignored on the medically more important
+    // signal. Production failure 2026-06-05: "stomach hurts. I had 2 cups
+    // of coffee" → Grace shipped "Logged." silently.
+    const hasSymptom = opts?.userMessage ? SYMPTOM_IN_USER_MSG_RE.test(opts.userMessage) : false;
     if (proteinG > 0) {
-      if (dailyG != null && dailyG !== proteinG) {
-        return `Got it — about ${proteinG}g protein for that. You're at ${dailyG}g for today.`;
+      const base = dailyG != null && dailyG !== proteinG
+        ? `about ${proteinG}g protein for that, you're at ${dailyG}g for today`
+        : `about ${proteinG}g protein for that`;
+      if (hasSymptom) {
+        return `That sounds rough — I hear you. Logged ${base}. Hydration and a small bland snack often help if the discomfort sticks around.`;
       }
-      return `Got it — about ${proteinG}g protein for that.`;
+      return `Got it — ${base.charAt(0).toUpperCase() + base.slice(1)}.`;
+    }
+    if (hasSymptom) {
+      return "That sounds rough — I hear you. Logged what you mentioned. Hydration and a small bland snack often help if the discomfort sticks around.";
     }
   }
 
@@ -1007,7 +1025,7 @@ export class AIOrchestrator {
     const blockViolations = contentViolations.filter((v) => v.severity === 'block');
     if (blockViolations.length > 0) {
       return {
-        text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}) }),
+        text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}), ...(input.text ? { userMessage: input.text } : {}) }),
         confidence: 'low',
         intent: plan.intent,
         toolResults,
@@ -1549,7 +1567,7 @@ export class AIOrchestrator {
             critic = retryCritic;
           } else {
             validated = {
-              text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}) }),
+              text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}), ...(input.text ? { userMessage: input.text } : {}) }),
               confidence: 'low',
               flags: ['safe_fallback'],
             };
@@ -1587,7 +1605,7 @@ export class AIOrchestrator {
       if (cleaned) {
         finalText = candidate;
       } else {
-        finalText = getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}) });
+        finalText = getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}), ...(input.text ? { userMessage: input.text } : {}) });
         usedSafeFallback = true;
       }
     }

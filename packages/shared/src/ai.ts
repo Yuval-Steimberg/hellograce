@@ -112,6 +112,20 @@ export interface OrchestratorOutput {
    *  behavioral_violation, relevance_check_failed, etc). Used by the
    *  production-issue capture loop to label what kind of failure happened. */
   regenTriggerCodes?: string[];
+  /** Detailed violation entries from the FINAL attempt (initial gen or
+   *  regen — whichever was last). Includes the literal matched text so we
+   *  can see WHICH banned phrase / forbidden food / db rule actually fired.
+   *  Surfaced to production_issues.context for offline analysis. */
+  regenViolationDetails?: Array<{
+    code: string;
+    match?: string;
+    message?: string;
+  }>;
+  /** The text Gemini originally produced on the FIRST attempt before any
+   *  regen. When usedSafeFallback is true, this is the text that was
+   *  rejected. Without this we can't tell from production_issues what
+   *  Gemini actually wanted to say. */
+  originalAttemptText?: string;
   /** Internal stage timing (set by AIOrchestrator.run). Surfaced so the API
    *  layer can record per-stage breakdowns to messages.stage_timings JSONB. */
   internalTimings?: {

@@ -1245,6 +1245,13 @@ export class AIOrchestrator {
       precheck.unsupported.length > 0 ||
       shouldRunCriticEarly;
 
+    // Snapshot the FIRST attempt's text and violations BEFORE regen reassigns
+    // `validated.text`. Surfaced via OrchestratorOutput so production_issues
+    // can store both the failed text AND the literal matched offending tokens.
+    // Without this we're flying blind on WHY Gemini's output was rejected.
+    const originalAttemptText = validated.text;
+    const originalAttemptViolations = regenViolations.slice();
+
     // Step 7: If any check failed, regenerate with targeted feedback appended
     // to the system prompt so the LLM knows exactly what to fix.
     let reviewMs = 0;
@@ -1561,6 +1568,19 @@ export class AIOrchestrator {
       // production-issue capture loop with the actual cause. Empty array
       // when nothing fired (clean response, no regen).
       regenTriggerCodes: regenViolations.map((v) => v.code),
+      // Full violation detail (code + literal matched text + reason). Without
+      // this, production_issues only tells us "banned_phrase fired" but not
+      // WHICH banned phrase — making targeted fixes impossible.
+      regenViolationDetails: (regenerated ? originalAttemptViolations : regenViolations)
+        .map((v) => ({
+          code: v.code,
+          ...(v.match ? { match: v.match } : {}),
+          ...(v.message ? { message: v.message } : {}),
+        })),
+      // First-attempt text — preserved across regen so we can see what
+      // Gemini originally wanted to say when the final output is a safe
+      // fallback or a re-written regen.
+      ...(regenerated || usedSafeFallback ? { originalAttemptText } : {}),
     };
   }
 

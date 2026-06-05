@@ -1321,7 +1321,18 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
           graceResponse: result.text,
           trigger: 'safe_fallback',
           violationCodes: result.regenTriggerCodes,
-          context: { intent: result.intent, confidence: result.confidence, regenerated: result.regenerated },
+          context: {
+            intent: result.intent,
+            confidence: result.confidence,
+            regenerated: result.regenerated,
+            // Diagnostic data â€” see WHY the response was rejected.
+            ...(result.regenViolationDetails && result.regenViolationDetails.length > 0
+              ? { violation_details: result.regenViolationDetails }
+              : {}),
+            ...(result.originalAttemptText
+              ? { original_attempt_text: result.originalAttemptText.slice(0, 800) }
+              : {}),
+          },
         });
       } else if (result.regenerated && result.regenTriggerCodes && result.regenTriggerCodes.length > 0) {
         const codes = result.regenTriggerCodes;
@@ -1338,7 +1349,16 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
           graceResponse: result.text,
           trigger: primary,
           violationCodes: codes,
-          context: { intent: result.intent, confidence: result.confidence },
+          context: {
+            intent: result.intent,
+            confidence: result.confidence,
+            ...(result.regenViolationDetails && result.regenViolationDetails.length > 0
+              ? { violation_details: result.regenViolationDetails }
+              : {}),
+            ...(result.originalAttemptText
+              ? { original_attempt_text: result.originalAttemptText.slice(0, 800) }
+              : {}),
+          },
         });
       }
     }

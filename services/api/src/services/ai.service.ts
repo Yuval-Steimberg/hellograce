@@ -716,18 +716,37 @@ NEVER (any of these mean refusal — banned):
 
 If you don't know specifics, name standard GLP-1 friendly options and move on.
 
-CRITICAL RULE — answer scope:
-- Your response MUST answer ONLY the user's most recent message.
-- NEVER quote, restate, or reference any part of your previous responses.
-- NEVER answer a question from an earlier turn — just the current one.`;
+CRITICAL CONTEXT RULES — apply on every turn:
+- You ALWAYS have the user's recent conversation history above. Use it to remember context, preferences, prior side effects, weight changes, mood, what they ate, and what you've discussed.
+- You NEVER repeat yourself. Don't restate, quote, or paraphrase any of your previous messages. Don't open with "As I mentioned" or summarize what you just said. If you already answered something, don't answer it again.
+- You ALWAYS answer ONLY the user's MOST RECENT message. Earlier questions in the history have already been answered. Do not re-answer them. Do not include them in your reply. Just respond to the current one, using prior context only as silent background knowledge.`;
+
+    // Build multi-turn messages with conversation history so Grace can use
+    // context but doesn't repeat herself. Same pattern as runDirectPath.
+    let history: ChatTurn[] = [];
+    try {
+      const fetched = await this.deps.memory.getRecentTurns(input.userId, 8);
+      history = fetched.filter((t) => typeof t?.content === 'string' && t.content.trim().length > 0);
+    } catch {
+      // Memory miss is non-fatal — proceed without history.
+    }
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: FOOD_QUESTION_SYSTEM },
+    ];
+    for (const turn of history) {
+      if (turn.role === 'user' || turn.role === 'assistant') {
+        messages.push({
+          role: turn.role,
+          content: turn.content.length > 600 ? turn.content.slice(0, 600) + '...' : turn.content,
+        });
+      }
+    }
+    messages.push({ role: 'user', content: userText });
 
     let resp;
     try {
       resp = await this.deps.llm.generate({
-        messages: [
-          { role: 'system', content: FOOD_QUESTION_SYSTEM },
-          { role: 'user', content: userText },
-        ],
+        messages,
         temperature: 0.4,
         maxOutputTokens: 300,
         useGoogleSearch: false,
@@ -769,39 +788,61 @@ CRITICAL RULE — answer scope:
     const config = DIRECT_PATH_CONFIGS[intent];
     if (!config) return null;
 
-    // Fetch the last assistant message so the format-enforcer can strip
-    // any verbatim-repeat prefix (production failure 2026-06-05: response
-    // started with "Your injection day is Sunday." copied from previous
-    // turn before continuing with the muscle-question answer).
+    // 2026-06-05 architectural rule: Grace ALWAYS has conversation history
+    // for context, NEVER repeats herself, and ALWAYS answers only the most
+    // recent user message. Three rules, all enforced together below.
+    //
+    // Fetch ~8 recent turns to give Gemini context for follow-ups ("yes",
+    // "why", "more please", "tell me more"). Trim if very long. Pass as
+    // proper multi-turn messages so the model uses them as conversation
+    // memory, not as inline content to echo.
+    let history: ChatTurn[] = [];
     let lastAssistantMessage: string | undefined;
     if (userId) {
       try {
-        const recentTurns = await this.deps.memory.getRecentTurns(userId, 4);
-        const lastAsst = [...recentTurns].reverse().find((t) => t.role === 'assistant');
+        const fetched = await this.deps.memory.getRecentTurns(userId, 8);
+        history = fetched.filter((t) => typeof t?.content === 'string' && t.content.trim().length > 0);
+        const lastAsst = [...history].reverse().find((t) => t.role === 'assistant');
         if (lastAsst?.content) lastAssistantMessage = lastAsst.content;
       } catch {
-        // Memory miss is non-fatal — proceed without the strip.
+        // Memory miss is non-fatal — proceed without history.
       }
     }
 
-    // The system prompt for every intent gets a "ANSWER ONLY THE CURRENT
-    // MESSAGE" suffix appended below to prevent Gemini from including
-    // answers to previous turns (production failure 2026-06-05).
-    const ANSWER_ONLY_CURRENT_SUFFIX = `
+    // The system prompt for every intent gets a HISTORY + NO REPEAT + LAST
+    // MESSAGE ONLY rule block appended. Three rules together so the model
+    // sees them as a unit (production failure 2026-06-05: response began
+    // by quoting the previous Grace reply verbatim before answering the
+    // current question).
+    const CONTEXT_RULES_SUFFIX = `
 
-CRITICAL RULE — answer scope:
-- Your response MUST answer ONLY the user's most recent message.
-- NEVER quote, restate, or reference any part of your previous responses.
-- NEVER answer a question from an earlier turn — just the current one.`;
-    const systemWithRule = config.system + ANSWER_ONLY_CURRENT_SUFFIX;
+CRITICAL CONTEXT RULES — apply on every turn:
+- You ALWAYS have the user's recent conversation history above. Use it to remember context, preferences, prior side effects, weight changes, mood, what they ate, and what you've discussed.
+- You NEVER repeat yourself. Don't restate, quote, or paraphrase any of your previous messages. Don't open with "As I mentioned" or summarize what you just said. If you already answered something, don't answer it again.
+- You ALWAYS answer ONLY the user's MOST RECENT message. Earlier questions in the history have already been answered. Do not re-answer them. Do not include them in your reply. Just respond to the current one, using prior context only as silent background knowledge.`;
+    const systemWithRule = config.system + CONTEXT_RULES_SUFFIX;
+
+    // Build the multi-turn message list: system → history → current user.
+    // History is capped at ~8 turns (16 messages max) to avoid prompt bloat.
+    // Each turn's content is trimmed to 600 chars max so a single long
+    // historical message can't blow the token budget.
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: systemWithRule },
+    ];
+    for (const turn of history) {
+      if (turn.role === 'user' || turn.role === 'assistant') {
+        messages.push({
+          role: turn.role,
+          content: turn.content.length > 600 ? turn.content.slice(0, 600) + '...' : turn.content,
+        });
+      }
+    }
+    messages.push({ role: 'user', content: userText });
 
     let resp;
     try {
       resp = await this.deps.llm.generate({
-        messages: [
-          { role: 'system', content: systemWithRule },
-          { role: 'user', content: userText },
-        ],
+        messages,
         temperature: config.temperature,
         maxOutputTokens: config.maxTokens,
         useGoogleSearch: config.useSearch,

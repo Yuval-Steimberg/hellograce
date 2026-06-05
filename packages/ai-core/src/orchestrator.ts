@@ -292,6 +292,35 @@ function getToolAwareFallback(
     }
   }
 
+  // Context-aware food_question fallback. The generic "what kind of meal"
+  // typed fallback is tone-deaf when the user asked about protein/calorie
+  // targets specifically. Production failure 2026-06-05: "How many proteins
+  // should have based on research" → "What kind of meal are you thinking,
+  // breakfast, lunch, dinner, or a snack?" — completely off-topic.
+  if (type === 'food_question' && opts?.userMessage) {
+    const msg = opts.userMessage.toLowerCase();
+    if (/\b(protein|calorie|kcal|grams?)\b/.test(msg) && /\b(how (much|many)|target|goal|need|aim|should|recommend)/.test(msg)) {
+      return "Research on GLP-1s suggests 1.2-1.6g of protein per kg of body weight daily, with calories supporting a gentle deficit. Want me to estimate yours from your stats?";
+    }
+  }
+
+  // Context-aware knowledge fallback. The hard-coded knowledge fallbacks
+  // are GENERIC GLP-1 facts (muscle loss, mechanism, protein targets).
+  // Production failure 2026-06-05: user asked "What is my injection day"
+  // → user.injection_day was null → query_fast returned null → classifier
+  // picked knowledge → orchestrator failed → shipped the FIRST knowledge
+  // fact ("Muscle loss is common on GLP-1s, with research showing 25-35%
+  // of weight lost can be lean mass...") — completely unrelated.
+  //
+  // If the user message is a profile lookup ("what is my X"), don't ship
+  // random GLP-1 facts. Redirect to settings, which is honest and useful.
+  if (type === 'knowledge' && opts?.userMessage) {
+    const msg = opts.userMessage.toLowerCase();
+    if (/\bwhat (?:is|'?s)\s+my\b/.test(msg) || /\bdo you know\s+my\b/.test(msg) || /\btell me\s+my\b/.test(msg)) {
+      return "I don't have that detail on file yet. You can set it at graceglp.com/settings.";
+    }
+  }
+
   return getTypedFallback(type);
 }
 
@@ -409,6 +438,23 @@ export function detectMultiPartMessage(userText: string | undefined): boolean {
   // two distinct sentences with a continuation cue.
   if (/[.?!]\s+(also|and what about|by the way|another (thing|question)|one more thing|plus|oh and)\b/i.test(trimmed)) {
     return true;
+  }
+  // 2026-06-05 production failure: "I'm feeling good. But my stomach hurts.
+  // I had 2 cups of coffee" — 3 distinct sentences, no '?', no explicit
+  // conjunction. Classifier picked food_log, ignored mood + symptom.
+  // New rule: 3+ sentences each ≥ 10 chars → multi-part. The user has
+  // packed multiple distinct messages into one turn and Grace must
+  // address all of them, not just whatever intent the regex matches first.
+  const sentences = trimmed
+    .split(/[.!?]+\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 10);
+  if (sentences.length >= 3) return true;
+  // 2-sentence case where the two sentences look semantically distinct
+  // ("But" / "However" / "And" at the start of the second).
+  if (sentences.length === 2) {
+    const second = sentences[1]!.toLowerCase();
+    if (/^(but|however|though|although|and|also|plus)\b/.test(second)) return true;
   }
   return false;
 }

@@ -156,7 +156,14 @@ export async function tryQueryFast(
     switch (matchedCategory) {
       case 'protein_goal': {
         const g = user.protein_goal_grams;
-        if (!g || g <= 0) return null; // unset → let LLM explain
+        if (!g || g <= 0) {
+          // 2026-06-05 — was returning null → fallback shipped tone-deaf
+          // "what kind of meal?" reply. Now ships research-backed default.
+          return {
+            text: `Your personalized target isn't set yet, but research suggests 1.2-1.6g of protein per kg of body weight daily on GLP-1s. Set your exact target at graceglp.com/settings.`,
+            category: 'protein_goal',
+          };
+        }
         return {
           text: `Your daily protein target is ${g}g.`,
           category: 'protein_goal',
@@ -165,7 +172,12 @@ export async function tryQueryFast(
 
       case 'calorie_goal': {
         const k = user.calorie_goal_kcal;
-        if (!k || k <= 0) return null;
+        if (!k || k <= 0) {
+          return {
+            text: `Your personalized calorie target isn't set yet. You can configure it at graceglp.com/settings.`,
+            category: 'calorie_goal',
+          };
+        }
         return {
           text: `Your daily calorie target is ${k} kcal.`,
           category: 'calorie_goal',
@@ -174,7 +186,12 @@ export async function tryQueryFast(
 
       case 'weight_goal': {
         const w = user.goal_weight;
-        if (!w || w <= 0) return null;
+        if (!w || w <= 0) {
+          return {
+            text: `I don't have your goal weight on file yet. You can set it at graceglp.com/settings.`,
+            category: 'weight_goal',
+          };
+        }
         const cw = user.current_weight;
         if (cw && cw > w) {
           const toLose = Math.round((cw - w) * 10) / 10;
@@ -274,7 +291,18 @@ export async function tryQueryFast(
 
       case 'start_date': {
         const d = user.glp1_start_date;
-        if (!d) return null; // unset → let LLM handle (e.g. "I don't have that on file")
+        if (!d) {
+          // 2026-06-05 production failure: returning null let the message fall
+          // through to the orchestrator, which produced a generic knowledge
+          // fallback ("Muscle loss is common on GLP-1s...") that had NOTHING
+          // to do with the start date question. Returning a helpful "I don't
+          // have it" message ships in <300ms and tells the user exactly what
+          // to do — no guard can produce a worse response.
+          return {
+            text: `I don't have your GLP-1 start date on file yet. You can set it at graceglp.com/settings.`,
+            category: 'start_date',
+          };
+        }
         const start = new Date(d);
         const formatted = start.toLocaleDateString('en-US', {
           year: 'numeric', month: 'long', day: 'numeric',
@@ -293,7 +321,12 @@ export async function tryQueryFast(
 
       case 'week_number': {
         const d = user.glp1_start_date;
-        if (!d) return null;
+        if (!d) {
+          return {
+            text: `I don't have your GLP-1 start date on file yet, so I can't pin the week number. Set it at graceglp.com/settings.`,
+            category: 'week_number',
+          };
+        }
         const start = new Date(d);
         const weekNum = Math.floor((Date.now() - start.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
         if (weekNum <= 0) return null;
@@ -305,7 +338,12 @@ export async function tryQueryFast(
 
       case 'medication': {
         const med = user.medication;
-        if (!med || med.trim().length === 0) return null;
+        if (!med || med.trim().length === 0) {
+          return {
+            text: `I don't have your medication on file yet. You can set it at graceglp.com/settings.`,
+            category: 'medication',
+          };
+        }
         const dose = user.dose_mg ? ` at ${user.dose_mg} mg` : '';
         return {
           text: `You're on ${med}${dose}.`,
@@ -315,7 +353,16 @@ export async function tryQueryFast(
 
       case 'injection_day': {
         const day = user.injection_day;
-        if (!day || day.trim().length === 0) return null;
+        if (!day || day.trim().length === 0) {
+          // 2026-06-05 production failure: user asked "What is my injection
+          // day", we returned null, orchestrator routed via knowledge match
+          // → typed fallback shipped muscle-loss research. Now we ship an
+          // honest pointer to settings instead.
+          return {
+            text: `I don't have your injection day on file yet. You can set it at graceglp.com/settings.`,
+            category: 'injection_day',
+          };
+        }
         return {
           text: `Your injection day is ${day}.`,
           category: 'injection_day',
@@ -324,7 +371,12 @@ export async function tryQueryFast(
 
       case 'current_weight': {
         const w = user.current_weight;
-        if (!w || w <= 0) return null;
+        if (!w || w <= 0) {
+          return {
+            text: `I don't have a recent weight on file. Send me your current weight in lbs and I'll log it.`,
+            category: 'current_weight',
+          };
+        }
         const goal = user.goal_weight;
         if (goal && goal > 0 && w > goal) {
           const toGo = Math.round((w - goal) * 10) / 10;
@@ -341,7 +393,12 @@ export async function tryQueryFast(
 
       case 'age': {
         const a = user.age;
-        if (!a || a <= 0) return null;
+        if (!a || a <= 0) {
+          return {
+            text: `I don't have your age on file. You can set it at graceglp.com/settings.`,
+            category: 'age',
+          };
+        }
         return {
           text: `You're ${a}.`,
           category: 'age',

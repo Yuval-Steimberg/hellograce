@@ -118,10 +118,16 @@ describe('tryQueryFast', () => {
     expect(r).toBeNull();
   });
 
-  it('returns null when goal is unset (lets LLM explain)', async () => {
+  it('returns a helpful default when protein goal is unset (no orchestrator fallthrough)', async () => {
+    // 2026-06-05: was returning null and letting the LLM explain, which in
+    // production shipped tone-deaf typed fallbacks ("what kind of meal are
+    // you thinking?"). Now ships a research-backed default + settings link.
     const users = mockUsers({ protein_goal_grams: null });
     const r = await tryQueryFast("what's my protein goal", { users, logger: noopLogger, userId: 'u1' });
-    expect(r).toBeNull();
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('protein_goal');
+    expect(r!.text).toMatch(/1\.2-1\.6g/);
+    expect(r!.text).toMatch(/graceglp\.com\/settings/);
   });
 
   // Production failure 2026-06-05: iPhone auto-corrected the straight

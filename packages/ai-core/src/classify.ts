@@ -85,6 +85,12 @@ export const PROTEIN_TARGET_QUESTION: RegExp[] = [
   // "is 60g of protein enough" — my/the are optional since user may say "is 60g..."
   /\b(is|are) (my |the )?(\d+ ?g|target|goal) (of )?(protein|calorie)? ?(right|enough|correct|too (much|low|high))/i,
   /\bwhy (so much|so little|that much) (protein|calorie)/i,
+  // 2026-06-05 production failure: "How many proteins should have based on
+  // research" missed every pattern above — "proteins" plural, no "I",
+  // ends with "research" instead of "day". Broader catch-all for generic
+  // protein-amount questions.
+  /\bhow (much|many) (protein|proteins|calorie|calories|grams? of protein|carbs)\b/i,
+  /\b(protein|calorie) (target|goal|requirement|needs?|recommend(ation|ed)|amount)\b/i,
 ];
 
 // Past-day queries — ROUTE to food_question, but the AI service force-calls

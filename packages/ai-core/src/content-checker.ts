@@ -834,6 +834,39 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bto\s+get\s+accurate\s+information\s+about\s+your\b/i, reason: 'AI deflection — "to get accurate information about your X, consult Y"' },
   { pattern: /\bunderstanding\s+your\s+individual\s+(?:dietary\s+)?(?:needs|preferences|health\s+conditions|goals)\b/i, reason: 'AI deflection phrasing about needing to understand individual needs' },
 
+  // 2026-06-05 production failures (week of screenshots audit). These exact
+  // strings were typed fallbacks earlier today, removed because they LIED
+  // about producing a follow-up that never came. Ban them globally so even
+  // if the LLM emits the same phrasing (or a rotated typed fallback re-
+  // introduces it), the content-checker rejects.
+  { pattern: /\bgive\s+me\s+a\s+(?:moment|sec|minute|second)\s+to\s+(?:get|figure|pull|grab|look)\b/i, reason: 'Lying fallback — promises to look something up but never does' },
+  { pattern: /\bbear\s+with\s+me,?\s+(?:pulling|getting|grabbing|looking|figuring)\b/i, reason: 'Lying fallback — promises action that never completes' },
+  { pattern: /\bone\s+sec,?\s+(?:i\s+want\s+to\s+give|let\s+me\s+(?:give|get|pull|look)|pulling|getting)\b/i, reason: 'Lying fallback — "one sec, let me…" never delivers' },
+  { pattern: /\bof\s+course\s+[—\-,]\s+what\s+works\s+better\s+for\s+you\b/i, reason: 'Settings-question deflection — should redirect to graceglp.com/settings, not ask' },
+  { pattern: /\bof\s+course!?\s+(?:happy|glad)\s+to\s+(?:help|adjust)\b/i, reason: 'AI assistant opener' },
+
+  // Topic-switching follow-up questions after a log — the user told you what
+  // they ate / weighed / did. Don't pivot to a generic "how's your day?"
+  // question that ignores what they just shared. Allow up to ~40 chars
+  // between the log acknowledgement and the pivot question so we catch
+  // "Got it, that's tracked. How's your day going?" etc.
+  { pattern: /\b(?:logged|got it|tracked|noted)\b[^.?!]{0,40}[.!?]?\s+how\s+(?:are\s+you\s+feeling|'?s\s+your\s+(?:day|week|night)|is\s+your\s+(?:day|week|night)|('?s|is)\s+(?:everything|things)|are\s+things)\b/i, reason: 'Topic-switching after a log — pivots away from what user just said' },
+  { pattern: /\blogged\s+that\s+for\s+you\b/i, reason: 'Patronizing acknowledgement — just "Logged." or with the macros is enough' },
+  // 2026-06-05: also ban the standalone trailing "How's your day going?" /
+  // "How are you feeling today?" when they appear at the END of a response
+  // (after a period) — these are the topic-switch pattern in any form.
+  { pattern: /[.!]\s+how'?s\s+your\s+(?:day|week|night)\s+(?:going|been)\s*\??\s*$/i, reason: 'Ends with topic-switching "How\'s your day going?"' },
+  { pattern: /[.!]\s+how\s+are\s+you\s+feeling\s+(?:today|now|after that)\s*\??\s*$/i, reason: 'Ends with topic-switching "How are you feeling today?"' },
+
+  // Sycophantic / ChatGPT-style template openers
+  { pattern: /\bto\s+give\s+you\s+the\s+best\s+(?:recommendations?|suggestions?|advice|answer|guidance)\b/i, reason: 'ChatGPT-style "to give you the best X, I need to know Y" preamble' },
+  { pattern: /\bi\s+need\s+a\s+little\s+more\s+information\s+about\s+you\b/i, reason: 'AI clarification stalling — answer with what you have' },
+  { pattern: /\bwhat\s+kind\s+of\s+meal\s+are\s+you\s+thinking,?\s+breakfast,?\s+lunch,?\s+dinner,?\s+or\s+a?\s*snack\b/i, reason: 'Tone-deaf food fallback — echoes back what user already said (often they named the meal)' },
+
+  // Bullet/numbered prose leak — Gemini occasionally types out a list as
+  // prose like "1. Foo. 2. Bar. 3. Baz." Strip the visible numbering.
+  { pattern: /\b\d+\.\s+[A-Z][a-z]+\s+[a-z]+\.?\s+\d+\.\s+[A-Z]/i, reason: 'Numbered list in prose ("1. Foo. 2. Bar.")' },
+
   // Asking for clarification on food logs instead of just logging — generalized
   { pattern: /\bhow much (protein|calories?|carbs?|fat|fiber|sugar) (was |were |is )?in (your |the |that )/i, reason: 'Asking macro detail — just estimate and log' },
   { pattern: /\b(what|which|what kind of|what type of|what brand) (was |were |is )?in (your |the |that )/i, reason: 'Asking what was in the food — just estimate and log with best guess' },

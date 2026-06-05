@@ -183,13 +183,20 @@ const GREETING: RegExp[] = [
 
 const EMOTIONAL: RegExp[] = [
   /\b(struggling|hard day|rough day|bad day|not (a )?(great|good) day)\b/i,
-  /\bfeel (so |really |very )?(bad|sad|down|depressed|anxious|overwhelmed|stressed|hopeless|defeated)\b/i,
+  /\bfeel (so |really |very )?(bad|sad|down|depressed|anxious|overwhelmed|stressed|hopeless|defeated|frustrated|angry|annoyed|defeated|stuck|lost|broken)\b/i,
   /\b(want to (give up|quit|stop)|not sure (if )?this is working)\b/i,
   /\b(lost (my |the )?motivation|can't (do this|keep going|stick to this))\b/i,
   /\b(really (tired|exhausted|drained|burned out) of)\b/i,
   /\b(having a (hard|tough|rough) (time|day|week|moment))\b/i,
   /\b(feel (like a failure|terrible|awful|hopeless|worthless))\b/i,
   /\b(cry|crying|sobbing|broke down)\b/i,
+  // 2026-06-05 production failures: "Ugh, I'm just so incredibly frustrated
+  // right now" and "It's just this stupid scale, Grace. I've been stuck at
+  // 155 for like" — neither matched the regexes above.
+  /\b(?:i'?m|im|i am)\s+(?:just |so |really |incredibly |super |totally |absolutely )*(?:frustrated|annoyed|fed up|done|over it|exhausted|drained|defeated|hopeless|stuck|angry|upset|sad|miserable|miserable)\b/i,
+  /\bUgh\b[,.!]?\s+/i,
+  /\b(?:stupid|damn|fucking|frigging)\s+(?:scale|number|weight|body|food|plateau|nausea)\b/i,
+  /\bstuck\s+at\s+\d+\s+for\s+(?:like\s+)?(?:weeks?|months?|days?)/i,
 ];
 
 const SCHEDULING: RegExp[] = [

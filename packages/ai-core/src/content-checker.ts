@@ -821,6 +821,18 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bmy\s+(?:interactions?|conversations?|responses?)\s+(?:happen|occur|take\s+place|are)\s+(?:across|on|in|over)\s+(?:many|multiple|various|different|several)\b/i, reason: 'Platform-spread leak — Grace exists only as Grace, not across platforms' },
   { pattern: /\b(?:across|on|in|over)\s+(?:many|multiple|various|several)\s+(?:different\s+)?(?:applications?|apps?|services?|platforms?|products?)\b/i, reason: 'Platform-spread leak — never describe being deployed across platforms' },
   { pattern: /\bi'?(?:m| am)\s+(?:an?\s+)?(?:ai\s+|virtual\s+|digital\s+)?(?:assistant|model|bot|program|system|tool)\s+(?:developed|built|created|made|trained|powered|designed|operated)\b/i, reason: 'AI self-description leak — Grace is Grace, not "an AI assistant developed by…"' },
+  // 2026-06-05 production failures — Gemini emitted AI refusal disclaimers
+  // ("I cannot provide personalized dietary advice", "My purpose is to help
+  // with tasks like summarizing information") despite the system prompt
+  // forbidding them. Banning every form so they never reach the user.
+  { pattern: /\bi\s+cannot\s+provide\s+(?:you\s+(?:with\s+)?)?(?:personalized|specific|individual|tailored|medical|dietary|health|nutrition(?:al)?|professional)\b/i, reason: 'AI refusal disclaimer — Grace must answer, not refuse with "I cannot provide personalized X"' },
+  { pattern: /\bi\s+(?:am|'m)\s+(?:an\s+)?ai\s+and\s+(?:do\s+not|don'?t|cannot|can'?t)\s+have\s+access\b/i, reason: 'AI assistant disclaimer — refuses access to user data' },
+  { pattern: /\bmy\s+purpose\s+is\s+to\s+(?:help|assist)\s+with\s+(?:tasks|questions|things)\b/i, reason: 'Generic chatbot purpose statement — Grace is a specific GLP-1 companion, not a generic helper' },
+  { pattern: /\bi\s+am\s+not\s+equipped\s+to\b/i, reason: 'Refusal phrase — Grace answers what she can with what she knows' },
+  { pattern: /\bi\s+do\s+not\s+have\s+access\s+to\s+your\s+(?:personal|medical|health|individual)\b/i, reason: 'AI disclaimer about user data access' },
+  { pattern: /\bconsult\s+(?:with\s+)?(?:your\s+)?(?:doctor|healthcare\s+provider|physician|registered\s+dietitian)\s+(?:or\s+(?:a\s+)?(?:registered\s+dietitian|healthcare\s+provider|doctor))\b/i, reason: 'Double-redirect to professionals — generic AI deflection rather than substantive help' },
+  { pattern: /\bto\s+get\s+accurate\s+information\s+about\s+your\b/i, reason: 'AI deflection — "to get accurate information about your X, consult Y"' },
+  { pattern: /\bunderstanding\s+your\s+individual\s+(?:dietary\s+)?(?:needs|preferences|health\s+conditions|goals)\b/i, reason: 'AI deflection phrasing about needing to understand individual needs' },
 
   // Asking for clarification on food logs instead of just logging — generalized
   { pattern: /\bhow much (protein|calories?|carbs?|fat|fiber|sugar) (was |were |is )?in (your |the |that )/i, reason: 'Asking macro detail — just estimate and log' },

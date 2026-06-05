@@ -17,6 +17,7 @@ import {
   FOOD_REMOVAL_QUESTION,
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
+import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
 
 // ─── Direct-path config (2026-06-05 architectural inversion) ─────────────────
 // One focused prompt + budget per intent. Each prompt is intentionally short
@@ -424,10 +425,15 @@ export class AIService {
       }
 
       // ── Profile-query fast-path ───────────────────────────────────────────
-      // "What's my protein goal?" / "How much have I had today?" /
+      // "What's my protein goal?" / "What is my injection day?" /
       // "How am I doing?" — single DB read + template render. ~3s → ~250ms.
-      // Gated to food_question + general intents (where these questions land).
-      if (intentClass.type === 'food_question' || intentClass.type === 'general') {
+      // 2026-06-05: was gated to food_question + general only, but "What is
+      // my injection day" classifies as KNOWLEDGE (because "injection day"
+      // matches the side-effect keyword), so query_fast never ran and the
+      // user got muscle-loss research instead of the helpful default. All
+      // query_fast patterns are anchored (^...$) and high-precision, so
+      // they're safe to try unconditionally on every message.
+      {
         try {
           lat.mark('query_fast');
           const qf = await tryQueryFast(input.text, {
@@ -476,6 +482,42 @@ export class AIService {
     {
       const earlyIntent = classifyIntent(input.text);
       const directIntent = earlyIntent.type;
+
+      // 2026-06-05 production failure: "what should I eat for breakfast
+      // tomorrow?" → orchestrator → Gemini refused with AI disclaimer
+      // "I cannot provide personalized dietary advice." Route food_question
+      // through a dedicated path that hits the curated meal idea bank
+      // FIRST (deterministic, no LLM), falls back to a focused Gemini
+      // call only when curated returns nothing.
+      if (directIntent === 'food_question') {
+        try {
+          lat.mark('food_question_direct');
+          const direct = await this.handleFoodQuestionDirect(input);
+          if (direct) {
+            const stageTimings = lat.snapshot();
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info(
+              { userId: input.userId, latencyMs: totalMs, stageTimings },
+              'ai.food_question_direct.served',
+            );
+            this.persistLatency(input.userId, 'food_question_direct', totalMs, stageTimings, input.text, direct);
+            return {
+              text: direct,
+              confidence: 'high',
+              intent: 'food_question_direct',
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.food_question_direct.error',
+          );
+        }
+      }
+
       const wantsDirect =
         directIntent === 'knowledge' ||
         directIntent === 'emotional' ||
@@ -591,6 +633,112 @@ export class AIService {
    * without sycophancy. Appointment_prep needs concrete questions. The
    * prompts below each address the dominant failure pattern for their intent.
    */
+  /**
+   * Food-question direct path — 2026-06-05.
+   *
+   * Routes "what should I eat for X" type questions away from the
+   * orchestrator (which has been refusing with AI disclaimers) into the
+   * curated meal idea bank first, then a focused Gemini call as backup.
+   *
+   * Returns null on: curated bank miss + Gemini failure, or block/regen
+   * content violation. Caller falls through to the regular pipeline.
+   */
+  private async handleFoodQuestionDirect(input: InboundMessage): Promise<string | null> {
+    const userText = input.text;
+
+    // Extract meal type and try the curated bank deterministically first.
+    const lower = userText.toLowerCase();
+    const mealType =
+      /\bbreakfast\b/.test(lower) ? 'breakfast'
+      : /\blunch\b/.test(lower) ? 'lunch'
+      : /\bdinner\b|supper/.test(lower) ? 'dinner'
+      : /\bsnack/.test(lower) ? 'snack'
+      : 'general';
+
+    // Fetch user profile for dietary restriction + dislikes.
+    let user;
+    try {
+      user = await this.deps.users.getById(input.userId);
+    } catch {
+      user = null;
+    }
+    const dietaryRestriction = user?.dietary_pattern
+      ? buildRestrictionFromLabel(user.dietary_pattern)
+      : null;
+    const dislikes = (user?.food_dislikes ?? [])
+      .map((d) => (d ?? '').trim().replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+      .filter((d) => d.length > 0);
+
+    const curated = getCuratedFoodIdeas({
+      userId: input.userId,
+      query: userText,
+      mealType,
+      dietaryRestriction,
+      foodDislikes: dislikes,
+    });
+    if (curated && curated.length >= 3) {
+      const names = curated.map((c) => c.name).slice(0, 4);
+      const last = names.pop()!;
+      const list = names.length > 0 ? `${names.join(', ')}, or ${last}` : last;
+      const reply = `A few options: ${list}. Anything sound good?`;
+      // Run through format-enforce + content-check for consistency.
+      const formatted = enforceFormat(reply, { userMessage: userText });
+      const violations = checkContent(formatted.text, { userMessage: userText });
+      if (violations.some((v) => v.severity === 'block' || v.severity === 'regen')) return null;
+      return formatted.text;
+    }
+
+    // Curated miss → focused Gemini call with strong refusal-language ban.
+    const FOOD_QUESTION_SYSTEM = `You are Grace, a warm GLP-1 companion. The user is asking what to eat or for food recommendations.
+
+ANSWER STYLE:
+- 2 to 4 sentences total. Name 3 to 5 SPECIFIC foods.
+- Lead with the foods, then one brief reason they work on GLP-1s (small, protein-dense, easy to digest).
+- Prose only. NO bullet points, NO numbered lists, NO section headers.
+- Be concrete: name actual foods like "Greek yogurt with hemp seeds, a two-egg veggie omelet, smoked salmon on rye", not categories like "high-protein options".
+
+NEVER (any of these mean refusal — banned):
+- Say "I cannot provide personalized dietary advice" or any refusal phrase.
+- Say "My purpose is to..." or "I am an AI and...".
+- Say "consult your doctor / registered dietitian" — that's deflection for a meal question.
+- Ask "what kind of meal are you thinking?" — they already told you (or didn't, you suggest anyway).
+- Use parenthetical brand-name dumps.
+
+If you don't know specifics, name standard GLP-1 friendly options and move on.`;
+
+    let resp;
+    try {
+      resp = await this.deps.llm.generate({
+        messages: [
+          { role: 'system', content: FOOD_QUESTION_SYSTEM },
+          { role: 'user', content: userText },
+        ],
+        temperature: 0.4,
+        maxOutputTokens: 300,
+        useGoogleSearch: false,
+      });
+    } catch (err) {
+      this.deps.logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        'food_question_direct.gemini_failed',
+      );
+      return null;
+    }
+    const raw = resp.text?.trim() ?? '';
+    if (raw.length === 0) return null;
+
+    const formatted = enforceFormat(raw, { userMessage: userText });
+    const violations = checkContent(formatted.text, { userMessage: userText });
+    if (violations.some((v) => v.severity === 'block' || v.severity === 'regen')) {
+      this.deps.logger.info(
+        { codes: violations.map((v) => v.code).slice(0, 5) },
+        'food_question_direct.content_violations',
+      );
+      return null;
+    }
+    return formatted.text;
+  }
+
   private async runDirectPath(intent: string, userText: string): Promise<string | null> {
     const config = DIRECT_PATH_CONFIGS[intent];
     if (!config) return null;

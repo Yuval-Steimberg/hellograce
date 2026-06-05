@@ -263,10 +263,18 @@ const SYMPTOM_SIGNAL: RegExp[] = [
 const KNOWLEDGE: RegExp[] = [
   /\bwhy (is|does|do|am|are)\b.{5,}/i,
   /\bhow (does|do|long|often|much|come)\b.{5,}/i,
+  // 2026-06-05 production failure: "How GLP can affect my muscles" was
+  // missed by the regex above (no "does/do/long/etc" after "how"). Adding
+  // "How X can|will|might affect" pattern to catch generic causation
+  // questions about the medication.
+  /\bhow\s+(?:does|do|can|will|might|would|could|should)\b/i,
   /\bwhat (is|are|does|causes?|happens? (to|when|if))\b.{5,}/i,
   /\b(ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|rybelsus)\b/i,
-  /\bglp.?1\b/i,
-  /\b(side effect|nausea|vomiting|constipation|diarrhea|hair loss|muscle|plateau|stall|fatigue|headache|reflux)\b/i,
+  /\bglp[.\s-]?1?\b/i,
+  // 2026-06-05: was `\bmuscle\b` (singular only) — "How GLP can affect my
+  // muscles" missed because "muscles" has a trailing 's' breaking the word
+  // boundary. Use `muscles?` for both singular and plural.
+  /\b(side effect|nausea|vomiting|constipation|diarrhea|hair loss|muscles?|plateau|stall|fatigue|headache|reflux)\b/i,
   /\b(is it normal|is this normal|should i be worried|does this happen)\b/i,
   /\b(missed (my |a )?(dose|shot|injection)|forgot (to take|my) (pill|shot|injection))\b/i,
   /\binjection (site|day|schedule|timing|rotation)\b/i,

@@ -420,10 +420,22 @@ export function enforceFormat(
     text = text.replace(/(^|[.!?]\s+)([A-Z][\w\s-]{2,60}):\s*,\s*/g, (_, prefix, label) => `${prefix}${label}, `);
     fixes.push('label_colon_comma_stripped');
   }
+  // 2026-06-05 production failure: "Today you've had X. Running total:
+  // 140g protein, 2610 kcal." — labelColonRe matched "Running total:" and
+  // flattened the colon to an em-dash (then turned into a comma later),
+  // producing "Running total, 140g protein, 2610 kcal." Allow-list the
+  // specific summary labels Grace uses so their colons survive.
+  const SUMMARY_LABEL_RE = /^(running total|total|daily total|today'?s total|protein today|calories today|breakdown|summary)$/i;
   let labelHits = 0;
-  text.replace(labelColonRe, () => { labelHits++; return ''; });
+  text.replace(labelColonRe, (_match, _prefix, label: string) => {
+    if (!SUMMARY_LABEL_RE.test(label.trim())) labelHits++;
+    return '';
+  });
   if (labelHits >= 1) {
-    text = text.replace(labelColonRe, (_, prefix, label, body) => `${prefix}${label} — ${body}`);
+    text = text.replace(labelColonRe, (match, prefix, label: string, body) => {
+      if (SUMMARY_LABEL_RE.test(label.trim())) return match;
+      return `${prefix}${label} — ${body}`;
+    });
     fixes.push('label_colon_flattened');
   }
 

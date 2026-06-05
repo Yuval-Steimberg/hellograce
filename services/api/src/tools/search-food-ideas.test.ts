@@ -51,7 +51,10 @@ describe('search_food_ideas — cache key (Phase 16 latency)', () => {
     expect(__testing.hourBucket(new Date('2026-06-03T19:00:00Z'))).toBe(3);
   });
 
-  it('returns ok with cached ideas when Redis has a hit', async () => {
+  // Curated bank is the fastest path; cache only handles requests the
+  // curated bank doesn't cover. Use mealType='general' / 'dessert'
+  // queries to exercise the cache path.
+  it('returns ok with cached ideas when Redis has a hit (mealType=general)', async () => {
     const cached = [
       { name: 'Greek yogurt with hemp seeds', protein_g: 18, why: 'fast prep' },
     ];
@@ -68,14 +71,15 @@ describe('search_food_ideas — cache key (Phase 16 latency)', () => {
       dietaryRestriction: { label: 'none' } as never,
       foodDislikes: [],
     });
-    const res = await tool.execute({ query: 'what should I eat for lunch' });
+    // 'what should I eat' (no meal-type keyword) → mealType=general →
+    // curated bank skipped, cache path runs.
+    const res = await tool.execute({ query: 'what should I eat' });
     expect(res.ok).toBe(true);
     expect((res as { ideas: unknown }).ideas).toEqual(cached);
-    // LLM must NOT have been called on a cache hit
     expect(llm.generate).not.toHaveBeenCalled();
   });
 
-  it('falls through to the LLM call when Redis misses', async () => {
+  it('falls through to the LLM call when Redis misses (mealType=general)', async () => {
     const redis = {
       get: vi.fn().mockResolvedValue(null),
       set: vi.fn().mockResolvedValue('OK'),
@@ -93,8 +97,29 @@ describe('search_food_ideas — cache key (Phase 16 latency)', () => {
       dietaryRestriction: { label: 'vegan' } as never,
       foodDislikes: [],
     });
-    const res = await tool.execute({ query: 'what should I eat for lunch' });
+    // 'food ideas right now' → mealType=general → curated skipped, LLM runs.
+    const res = await tool.execute({ query: 'food ideas right now' });
     expect(res.ok).toBe(true);
     expect(llm.generate).toHaveBeenCalledOnce();
+  });
+
+  // 2026-06-05 curated bank — fastest path. Skips cache + LLM entirely.
+  it('curated bank returns 4 ideas for omnivore + lunch, never touches cache or LLM', async () => {
+    const redis = { get: vi.fn(), set: vi.fn() } as never;
+    const llm = { generate: vi.fn() };
+    const tool = makeSearchFoodIdeasTool({
+      llm: llm as never,
+      logger: stubLogger,
+      userId: 'u-curated-1',
+      redis,
+      dietaryRestriction: null as never,
+      foodDislikes: [],
+    });
+    const res = await tool.execute({ query: 'what should I eat for lunch' });
+    expect(res.ok).toBe(true);
+    expect((res as { ideas: unknown[] }).ideas.length).toBe(4);
+    // Curated bank path bypasses BOTH Redis and Gemini.
+    expect(redis.get).not.toHaveBeenCalled();
+    expect(llm.generate).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import type { Redis } from 'ioredis';
 import type { Tool } from '@grace/ai-core';
 import type { LLMProvider, DietaryRestriction } from '@grace/shared';
+import { getCuratedFoodIdeas } from './curated-meal-ideas.js';
 
 export interface FoodIdea {
   name: string;
@@ -69,6 +70,27 @@ export function makeSearchFoodIdeasTool(deps: SearchFoodIdeasDeps): Tool {
     async execute(args) {
       const query = typeof args['query'] === 'string' ? args['query'].trim() : '';
       if (!query) return { ok: false, error: 'empty_query' };
+
+      // Curated bank — fastest path. Returns 4 hand-picked GLP-1 ideas in
+      // ~5–15 ms for the most common (diet × meal-type) combinations.
+      // Skips Redis lookup, skips Gemini, skips Google Search. Falls
+      // through to the cache+LLM path when the meal type or post-dislike
+      // filter isn't covered.
+      const mealType = extractMealType(query);
+      const curated = getCuratedFoodIdeas({
+        userId: deps.userId,
+        query,
+        mealType,
+        dietaryRestriction: deps.dietaryRestriction ?? null,
+        foodDislikes: deps.foodDislikes ?? [],
+      });
+      if (curated && curated.length >= 3) {
+        deps.logger.info(
+          { userId: deps.userId, query, count: curated.length, mealType },
+          'tool.search_food_ideas.curated_hit',
+        );
+        return { ok: true, ideas: curated };
+      }
 
       const cacheKey = deps.redis
         ? buildCacheKey(query, deps.dietaryRestriction ?? null, deps.foodDislikes)

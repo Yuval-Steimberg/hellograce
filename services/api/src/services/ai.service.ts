@@ -839,6 +839,55 @@ export class AIService {
             };
           }
         }
+
+        // 2026-06-06 v4 — production latency audit:
+        // emotional / social_situation / appointment_prep direct paths were
+        // falling through to the orchestrator at high rates (Gemini emits
+        // a one-line ack → content guard rejects → runDirectPath returns
+        // null). The orchestrator then ran the full pipeline (3-5s of
+        // generate + guards + regen) and shipped the typed fallback
+        // ANYWAY because regen also produced a flagged response.
+        //
+        // The TYPED_FALLBACKS for these intents are the rich 4-step
+        // framework replies shipped in d3998fa — they're the SAME shape
+        // the orchestrator usually ends up at. Skip the 3-5s detour.
+        //
+        // Knowledge / medication_question are intentionally excluded —
+        // they CAN benefit from the orchestrator's KB retrieval + critic
+        // grounding pass on factual content.
+        if (
+          directIntent === 'emotional' ||
+          directIntent === 'social_situation' ||
+          directIntent === 'appointment_prep'
+        ) {
+          const { getToolAwareFallback } = await import('@grace/ai-core');
+          // dietaryRestriction + foodDislikes are not yet computed at this
+          // point in the flow (they're built later in handleMessageInner).
+          // The Level 2 ladder + dead-end-aware typed fallbacks don't need
+          // them — they only care about userMessage.
+          const fallback = getToolAwareFallback(
+            directIntent === 'social_situation' ? 'social_situation' :
+            directIntent === 'appointment_prep' ? 'appointment_prep' : 'emotional',
+            [],
+            { userMessage: input.text },
+          );
+          const stageTimings = lat.snapshot();
+          const totalMs = Date.now() - t0;
+          const stageName = `${directIntent}_typed_fallback`;
+          this.deps.logger.info(
+            { userId: input.userId, latencyMs: totalMs, stageTimings, intent: stageName },
+            'ai.direct_path.typed_fallback',
+          );
+          this.persistLatency(input.userId, stageName, totalMs, stageTimings, input.text, fallback);
+          return {
+            text: fallback,
+            confidence: 'medium',
+            intent: stageName,
+            toolResults: [],
+            usedRetrieval: false,
+            latencyMs: totalMs,
+          };
+        }
       }
     }
 

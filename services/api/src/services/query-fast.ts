@@ -37,7 +37,9 @@ export interface QueryFastResult {
     | 'medication'
     | 'injection_day'
     | 'current_weight'
-    | 'age';
+    | 'age'
+    | 'is_protein_enough'
+    | 'is_calorie_enough';
 }
 
 export interface QueryFastDeps {
@@ -118,6 +120,39 @@ const CURRENT_WEIGHT_RE =
 const AGE_RE =
   /^(?:how old am i|what(?:'?s| is)?\s+(?:my\s+)?age)\s*\??$/i;
 
+// 2026-06-06 production failure: "Is 80g of protein enough?" routed to
+// knowledge_direct → Gemini shipped generic muscle-loss explanation
+// instead of comparing 80g to the user's actual 60g target and weight-
+// based 1.2-1.6g/kg formula. Deterministic personalized comparison:
+//
+//   "is 80g of protein enough"  → captures 80
+//   "is 80 grams of protein enough" → captures 80
+//   "is 80g enough"             → captures 80 (assume protein from context)
+//   "is 80g protein too much"   → captures 80
+const IS_PROTEIN_ENOUGH_PATTERNS: RegExp[] = [
+  /^is\s+(\d+)\s*g(?:rams?)?\s*(?:of\s+)?protein\s+(enough|right|adequate|sufficient|too\s+(?:much|low|little|high)|ok(?:ay)?|fine|on\s+track)\s*\??$/i,
+  /^is\s+(\d+)\s+grams?\s+(?:of\s+)?protein\s+(enough|right|adequate|sufficient|too\s+(?:much|low|little|high)|ok(?:ay)?|fine|on\s+track)\s*\??$/i,
+  /^is\s+(\d+)\s*g(?:rams?)?\s+(enough|right|adequate|sufficient|too\s+(?:much|low|little|high)|ok(?:ay)?|fine|on\s+track)\s*\??$/i,
+];
+const IS_CALORIE_ENOUGH_PATTERNS: RegExp[] = [
+  /^is\s+(\d+)\s*(?:kcal|cal|calories?)\s+(enough|right|adequate|sufficient|too\s+(?:much|low|little|high)|ok(?:ay)?|fine|on\s+track)\s*\??$/i,
+];
+
+function matchProteinEnough(t: string): { proposed: number; verdict: string } | null {
+  for (const re of IS_PROTEIN_ENOUGH_PATTERNS) {
+    const m = re.exec(t);
+    if (m) return { proposed: parseInt(m[1]!, 10), verdict: m[2]!.toLowerCase() };
+  }
+  return null;
+}
+function matchCalorieEnough(t: string): { proposed: number; verdict: string } | null {
+  for (const re of IS_CALORIE_ENOUGH_PATTERNS) {
+    const m = re.exec(t);
+    if (m) return { proposed: parseInt(m[1]!, 10), verdict: m[2]!.toLowerCase() };
+  }
+  return null;
+}
+
 /**
  * Attempt to answer the message as a deterministic profile/progress query.
  * Returns null when the message doesn't qualify — caller falls through to the
@@ -155,6 +190,8 @@ export async function tryQueryFast(
     : INJECTION_DAY_RE.test(t) ? 'injection_day'
     : CURRENT_WEIGHT_RE.test(t) ? 'current_weight'
     : AGE_RE.test(t) ? 'age'
+    : matchProteinEnough(t) ? 'is_protein_enough'
+    : matchCalorieEnough(t) ? 'is_calorie_enough'
     : null;
   if (!matchedCategory) return null;
 
@@ -173,8 +210,12 @@ export async function tryQueryFast(
             category: 'protein_goal',
           };
         }
+        // 2026-06-06: append the walkthrough offer so when the user
+        // replies "why" / "how was that calculated" / "is X enough",
+        // followup_walkthrough (ai.service.ts) anchors on the offer
+        // and ships the deterministic personalized math.
         return {
-          text: `Your daily protein target is ${g}g.`,
+          text: `Your daily protein target is ${g}g. Want me to walk through the math?`,
           category: 'protein_goal',
         };
       }
@@ -188,7 +229,7 @@ export async function tryQueryFast(
           };
         }
         return {
-          text: `Your daily calorie target is ${k} kcal.`,
+          text: `Your daily calorie target is ${k} kcal. Want me to walk through the math?`,
           category: 'calorie_goal',
         };
       }
@@ -451,6 +492,92 @@ export async function tryQueryFast(
         return {
           text: `You're ${a}.`,
           category: 'age',
+        };
+      }
+
+      case 'is_protein_enough': {
+        const match = matchProteinEnough(t);
+        if (!match) return null;
+        const proposedG = match.proposed;
+        const goalG = user.protein_goal_grams;
+        const weightLbs = user.current_weight;
+
+        // Build a personalized comparison from whatever data we have.
+        const parts: string[] = [];
+
+        // Layer 1: comparison to the user's stored target.
+        if (goalG && goalG > 0) {
+          if (proposedG >= goalG) {
+            const above = proposedG - goalG;
+            parts.push(
+              above === 0
+                ? `${proposedG}g hits your ${goalG}g target exactly`
+                : `${proposedG}g is ${above}g above your ${goalG}g target`,
+            );
+          } else {
+            const gap = goalG - proposedG;
+            parts.push(`${proposedG}g is ${gap}g below your ${goalG}g target`);
+          }
+        }
+
+        // Layer 2: comparison to the weight-based 1.2-1.6 g/kg formula.
+        if (weightLbs && weightLbs > 0) {
+          const kg = weightLbs / 2.205;
+          const lowG = Math.round(kg * 1.2);
+          const highG = Math.round(kg * 1.6);
+          const range = `${lowG}-${highG}g`;
+          if (proposedG >= highG) {
+            parts.push(`for ${weightLbs} lbs the muscle-preservation range is ${range}, so ${proposedG}g sits above the upper end`);
+          } else if (proposedG >= lowG) {
+            parts.push(`for ${weightLbs} lbs the muscle-preservation range is ${range}, so ${proposedG}g lands inside it`);
+          } else {
+            parts.push(`for ${weightLbs} lbs the muscle-preservation range is ${range}, so ${proposedG}g is below the floor`);
+          }
+        }
+
+        // Layer 3: nothing on file → general formula + ask.
+        if (parts.length === 0) {
+          return {
+            text: `${proposedG}g fits the GLP-1 protein range (1.2-1.6g per kg) when your weight is roughly ${Math.round(proposedG / 1.4 * 2.205)} lbs. Share your weight and I can be precise. Want me to walk through the math?`,
+            category: 'is_protein_enough',
+          };
+        }
+
+        return {
+          text: `${parts.join('. ').replace(/(^|\.\s+)([a-z])/g, (_m, p, c) => p + c.toUpperCase())}. Want me to walk through the math?`,
+          category: 'is_protein_enough',
+        };
+      }
+
+      case 'is_calorie_enough': {
+        const match = matchCalorieEnough(t);
+        if (!match) return null;
+        const proposedKcal = match.proposed;
+        const goalKcal = user.calorie_goal_kcal;
+
+        const parts: string[] = [];
+        if (goalKcal && goalKcal > 0) {
+          if (proposedKcal >= goalKcal) {
+            const above = proposedKcal - goalKcal;
+            parts.push(
+              above === 0
+                ? `${proposedKcal} kcal hits your ${goalKcal} kcal target exactly`
+                : `${proposedKcal} kcal is ${above} kcal above your ${goalKcal} kcal target`,
+            );
+          } else {
+            const gap = goalKcal - proposedKcal;
+            parts.push(`${proposedKcal} kcal is ${gap} kcal below your ${goalKcal} kcal target`);
+          }
+        }
+        if (parts.length === 0) {
+          return {
+            text: `It depends on your weight, goal, and activity level. Set your personalized calorie target at graceglp.com/settings and I can compare. Want me to walk through the math?`,
+            category: 'is_calorie_enough',
+          };
+        }
+        return {
+          text: `${parts.join('. ').replace(/(^|\.\s+)([a-z])/g, (_m, p, c) => p + c.toUpperCase())}. Want me to walk through the math?`,
+          category: 'is_calorie_enough',
         };
       }
     }

@@ -72,13 +72,16 @@ describe('tryQueryFast', () => {
   it('returns the protein goal in lbs', async () => {
     const users = mockUsers({ protein_goal_grams: 90 });
     const r = await tryQueryFast("what's my protein goal", { users, logger: noopLogger, userId: 'u1' });
-    expect(r).toEqual({ text: 'Your daily protein target is 90g.', category: 'protein_goal' });
+    expect(r).toEqual({
+      text: 'Your daily protein target is 90g. Want me to walk through the math?',
+      category: 'protein_goal',
+    });
   });
 
   it('returns the calorie goal', async () => {
     const users = mockUsers({ calorie_goal_kcal: 1900 });
     const r = await tryQueryFast("what's my calorie goal", { users, logger: noopLogger, userId: 'u1' });
-    expect(r?.text).toBe('Your daily calorie target is 1900 kcal.');
+    expect(r?.text).toBe('Your daily calorie target is 1900 kcal. Want me to walk through the math?');
     expect(r?.category).toBe('calorie_goal');
   });
 
@@ -211,5 +214,85 @@ describe('food_summary_today: multi-item label splitting (2026-06-06)', () => {
     expect(r!.text).toBe(
       "Today you've had Greek yogurt with hemp seeds, and apple. Running total: 30g protein, 450 kcal.",
     );
+  });
+});
+
+describe('is_protein_enough / is_calorie_enough (2026-06-06)', () => {
+  // Production failure: "Is 80g of protein enough?" routed to knowledge_direct
+  // → generic muscle-loss explanation, no comparison to user's 60g target or
+  // weight-based formula. Deterministic personalized comparison now ships.
+  it('"Is 80g of protein enough?" with goal=60g and weight=180lbs compares to both', async () => {
+    const users = mockUsers({ protein_goal_grams: 60, current_weight: 180 });
+    const r = await tryQueryFast('Is 80g of protein enough?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('is_protein_enough');
+    expect(r!.text).toMatch(/80g is 20g above your 60g target/);
+    expect(r!.text).toMatch(/180 lbs/);
+    expect(r!.text).toMatch(/98-131g/);
+    expect(r!.text).toMatch(/Want me to walk through the math\?$/);
+  });
+
+  it('"Is 80g enough?" (no "protein" word, still classifies)', async () => {
+    const users = mockUsers({ protein_goal_grams: 60, current_weight: 180 });
+    const r = await tryQueryFast('Is 80g enough?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('is_protein_enough');
+    expect(r!.text).toMatch(/80g is 20g above your 60g target/);
+  });
+
+  it('"Is 50g of protein enough?" (below goal) frames the gap', async () => {
+    const users = mockUsers({ protein_goal_grams: 60, current_weight: 180 });
+    const r = await tryQueryFast('Is 50g of protein enough?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toMatch(/50g is 10g below your 60g target/);
+  });
+
+  it('"Is 60g of protein enough?" (exact match) → hits target exactly', async () => {
+    const users = mockUsers({ protein_goal_grams: 60, current_weight: 180 });
+    const r = await tryQueryFast('Is 60g of protein enough?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toMatch(/60g hits your 60g target exactly/);
+  });
+
+  it('"Is 80g protein enough?" without weight on file uses only goal', async () => {
+    const users = mockUsers({ protein_goal_grams: 60, current_weight: null });
+    const r = await tryQueryFast('Is 80g protein enough?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toMatch(/80g is 20g above your 60g target/);
+    expect(r!.text).not.toMatch(/lbs/);
+  });
+
+  it('"Is 80g of protein enough?" with no goal and no weight → general answer', async () => {
+    const users = mockUsers({ protein_goal_grams: null, current_weight: null });
+    const r = await tryQueryFast('Is 80g of protein enough?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toMatch(/Share your weight and I can be precise/);
+  });
+
+  it('"Is 1800 kcal enough?" with calorie goal=1800 hits target exactly', async () => {
+    const users = mockUsers({ calorie_goal_kcal: 1800 });
+    const r = await tryQueryFast('Is 1800 kcal enough?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('is_calorie_enough');
+    expect(r!.text).toMatch(/1800 kcal hits your 1800 kcal target exactly/);
+  });
+
+  it('"Is 1500 calories enough?" with calorie goal=1800 → below target', async () => {
+    const users = mockUsers({ calorie_goal_kcal: 1800 });
+    const r = await tryQueryFast('Is 1500 calories enough?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toMatch(/1500 kcal is 300 kcal below your 1800 kcal target/);
+  });
+
+  it('does NOT match "is it enough" (no number)', async () => {
+    const users = mockUsers({ protein_goal_grams: 60, current_weight: 180 });
+    const r = await tryQueryFast('is it enough', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).toBeNull();
+  });
+
+  it('does NOT match "is 80 enough" (no unit — ambiguous)', async () => {
+    const users = mockUsers({ protein_goal_grams: 60, current_weight: 180 });
+    const r = await tryQueryFast('is 80 enough', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).toBeNull();
   });
 });

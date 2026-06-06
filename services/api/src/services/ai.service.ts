@@ -623,19 +623,27 @@ export class AIService {
       // media-check scope and isn't visible here.
       const followupTurns = await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
       const followupLastAssistant = [...followupTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
-      if (isShortFollowUp && /\?\s*$/.test(followupLastAssistant.trim())) {
-        // 2026-06-06 production failure: "why" → Grace offered "want me to
-        // walk you through the numbers?" → user "yes" → runDirectPath
-        // (knowledge) hit Gemini, Gemini returned something the guards
-        // rejected → null → orchestrator → typed fallback "Tell me a bit
-        // more?". Add a DETERMINISTIC walkthrough for the affirmative
-        // response to a "walk you through" / "break it down" / "show you
-        // the math" / "want me to explain" offer. Zero LLM call, ~80ms,
-        // grounded in the user's actual numbers.
-        const isAffirmative = /^(?:yes|yep|yeah|yup|sure|ok|okay|please|please do|go ahead|do it|alright|absolutely)$/i.test(trimmedLower);
-        const lastLower = followupLastAssistant.toLowerCase();
-        const offeredWalkthrough = /\b(walk you through|break it down|break that down|break the (?:numbers?|math|math down)|show you the math|show the math|run you through|run the (?:numbers?|math)|do the math|want me to (?:explain|show|calculate))\b/.test(lastLower);
-        if (isAffirmative && offeredWalkthrough) {
+      // 2026-06-06 v2 production failure: "What's my protein goal?" →
+      // "Your daily protein target is 60g." (ends with '.', not '?') →
+      // user "why" → previously skipped this whole block, fell through to
+      // orchestrator → generic muscle/satiety paragraph. Now we ALSO fire
+      // on curiosity follow-ups ("why" / "how come" / "where did that
+      // come from" / "explain") when the previous Grace message stated a
+      // numeric target — even when it ended with '.'.
+      const lastLower = followupLastAssistant.toLowerCase();
+      const prevStatedNumericTarget = /\b\d+\s*g\b|\b\d+\s*kcal\b/.test(followupLastAssistant);
+      const isAffirmative = /^(?:yes|yep|yeah|yup|sure|ok|okay|please|please do|go ahead|do it|alright|absolutely)$/i.test(trimmedLower);
+      const isCuriosityFollowUp = /^(?:why|why\??|how(?:\s+come|\s+so)?|how\s+is\s+that\s+(?:calculated|computed|figured)|how\s+was\s+that\s+(?:calculated|computed|figured)|how\s+did\s+you\s+(?:get|figure|calculate|compute)\s+that|where(?:\s+did\s+that|\s+does\s+it|\s+does\s+that|'?s\s+that)\s+(?:come\s+)?from|explain\s+that|explain|tell\s+me\s+more|how\s+do\s+you\s+know)\s*\??$/i.test(trimmedLower);
+      const offeredWalkthrough = /\b(walk you through|walk through (?:the|that)|break it down|break that down|break the (?:numbers?|math|math down)|show you the math|show the math|run you through|run the (?:numbers?|math)|do the math|want me to (?:explain|show|calculate))\b/.test(lastLower);
+      const shouldWalkthrough =
+        (isAffirmative && (offeredWalkthrough || prevStatedNumericTarget)) ||
+        (isCuriosityFollowUp && prevStatedNumericTarget);
+      if (isShortFollowUp && (shouldWalkthrough || /\?\s*$/.test(followupLastAssistant.trim()))) {
+        // Deterministic walkthrough only fires when (a) the user signaled
+        // they want the math AND (b) the previous Grace turn anchored on
+        // a target number. Otherwise we fall through to runDirectPath
+        // (knowledge_direct) for the LLM-handled follow-up.
+        if (shouldWalkthrough) {
           const u = await this.deps.users.getById(input.userId).catch(() => null);
           const walkthrough = buildProteinTargetWalkthrough(u);
           if (walkthrough) {

@@ -458,17 +458,25 @@ export class AIService {
       // to that action, not a generic ack. Fast-path would return
       // "Glad that landed well." — wrong. Skip fast-path in this case
       // so the orchestrator can deliver the promised content.
-      const recentTurns = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
-      const lastAssistant = [...recentTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
-      const lastWasOfferQuestion = /\?\s*$/.test(lastAssistant.trim()) &&
-        /\b(want me to|would you (?:like|want)|should i|can i|may i|how about|do you want|interested in|let me know if you'?d like|let me know if you want|i can (?:walk you|show you|share|give|explain|break|go through|run through))\b/i.test(lastAssistant);
+      //
+      // 2026-06-06 v3 latency optimization: the recent-turns DB read was
+      // firing on EVERY inbound message (~150-180ms wasted on the ~95% of
+      // turns where the message clearly isn't an affirmation). Only fetch
+      // recent turns when the text shape actually matches an affirmation.
       const isAffirmation = /^(?:yes|yep|yeah|yup|sure|ok|okay|sounds good|please do|please|alright|go ahead|do it|let'?s do it|yes please|absolutely)[!.?]?\s*$/i.test(input.text.trim());
-      const skipFastPathDueToOffer = lastWasOfferQuestion && isAffirmation;
-      if (skipFastPathDueToOffer) {
-        this.deps.logger.info(
-          { userId: input.userId, last: lastAssistant.slice(0, 80), text: input.text },
-          'ai.fast_path.skipped_offer_followthrough',
-        );
+      let skipFastPathDueToOffer = false;
+      if (isAffirmation) {
+        const recentTurns = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
+        const lastAssistant = [...recentTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+        const lastWasOfferQuestion = /\?\s*$/.test(lastAssistant.trim()) &&
+          /\b(want me to|would you (?:like|want)|should i|can i|may i|how about|do you want|interested in|let me know if you'?d like|let me know if you want|i can (?:walk you|show you|share|give|explain|break|go through|run through))\b/i.test(lastAssistant);
+        skipFastPathDueToOffer = lastWasOfferQuestion;
+        if (skipFastPathDueToOffer) {
+          this.deps.logger.info(
+            { userId: input.userId, last: lastAssistant.slice(0, 80), text: input.text },
+            'ai.fast_path.skipped_offer_followthrough',
+          );
+        }
       }
       const fast = skipFastPathDueToOffer ? null : tryFastPath(input.text, input.userId);
       if (fast) {

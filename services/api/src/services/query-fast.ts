@@ -223,7 +223,7 @@ export async function tryQueryFast(
           // 2026-06-05 — was returning null → fallback shipped tone-deaf
           // "what kind of meal?" reply. Now ships research-backed default.
           return {
-            text: `Your personalized target isn't set yet, but research suggests 1.2-1.6g of protein per kg of body weight daily on GLP-1s. Set your exact target at graceglp.com/settings.`,
+            text: `Your personalized target isn't set yet, but research suggests 1.2-1.6g of protein per kg of body weight daily on GLP-1s. Set your exact target at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.`,
             category: 'protein_goal',
           };
         }
@@ -241,7 +241,7 @@ export async function tryQueryFast(
         const k = user.calorie_goal_kcal;
         if (!k || k <= 0) {
           return {
-            text: `Your personalized calorie target isn't set yet. You can configure it at graceglp.com/settings.`,
+            text: `Your personalized calorie target isn't set yet. You can configure it at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.`,
             category: 'calorie_goal',
           };
         }
@@ -255,7 +255,7 @@ export async function tryQueryFast(
         const w = user.goal_weight;
         if (!w || w <= 0) {
           return {
-            text: `I don't have your goal weight on file yet. You can set it at graceglp.com/settings.`,
+            text: `I don't have your goal weight on file yet. You can set it at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.`,
             category: 'weight_goal',
           };
         }
@@ -406,7 +406,7 @@ export async function tryQueryFast(
           // have it" message ships in <300ms and tells the user exactly what
           // to do — no guard can produce a worse response.
           return {
-            text: `I don't have your GLP-1 start date on file yet. You can set it at graceglp.com/settings.`,
+            text: `I don't have your GLP-1 start date on file yet. You can set it at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.`,
             category: 'start_date',
           };
         }
@@ -430,7 +430,7 @@ export async function tryQueryFast(
         const d = user.glp1_start_date;
         if (!d) {
           return {
-            text: `I don't have your GLP-1 start date on file yet, so I can't pin the week number. Set it at graceglp.com/settings.`,
+            text: `I don't have your GLP-1 start date on file yet, so I can't pin the week number. Set it at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.`,
             category: 'week_number',
           };
         }
@@ -447,7 +447,7 @@ export async function tryQueryFast(
         const med = user.medication;
         if (!med || med.trim().length === 0) {
           return {
-            text: `I don't have your medication on file yet. You can set it at graceglp.com/settings.`,
+            text: `I don't have your medication on file yet. You can set it at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.`,
             category: 'medication',
           };
         }
@@ -466,7 +466,7 @@ export async function tryQueryFast(
           // → typed fallback shipped muscle-loss research. Now we ship an
           // honest pointer to settings instead.
           return {
-            text: `I don't have your injection day on file yet. You can set it at graceglp.com/settings.`,
+            text: `I don't have your injection day on file yet. You can set it at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.`,
             category: 'injection_day',
           };
         }
@@ -505,7 +505,7 @@ export async function tryQueryFast(
         const sw = user.starting_weight;
         if (!sw || sw <= 0) {
           return {
-            text: `I don't have your starting weight on file. You can set it at https://graceglp.com/settings — or send me "set my starting weight to ___ lbs".`,
+            text: `I don't have your starting weight on file. You can set it at https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings — or send me "set my starting weight to ___ lbs".`,
             category: 'starting_weight',
           };
         }
@@ -522,7 +522,7 @@ export async function tryQueryFast(
         const cw = user.current_weight;
         if (!sw || sw <= 0) {
           return {
-            text: `I'd love to tell you, but your starting weight isn't on file yet. Set it at https://graceglp.com/settings and I can calculate your total loss.`,
+            text: `I'd love to tell you, but your starting weight isn't on file yet. Set it at https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings and I can calculate your total loss.`,
             category: 'weight_progress',
           };
         }
@@ -564,7 +564,7 @@ export async function tryQueryFast(
         const a = user.age;
         if (!a || a <= 0) {
           return {
-            text: `I don't have your age on file. You can set it at graceglp.com/settings.`,
+            text: `I don't have your age on file. You can set it at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.`,
             category: 'age',
           };
         }
@@ -650,7 +650,7 @@ export async function tryQueryFast(
         }
         if (parts.length === 0) {
           return {
-            text: `It depends on your weight, goal, and activity level. Set your personalized calorie target at graceglp.com/settings and I can compare. Want me to walk through the math?`,
+            text: `It depends on your weight, goal, and activity level. Set your personalized calorie target at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings and I can compare. Want me to walk through the math?`,
             category: 'is_calorie_enough',
           };
         }

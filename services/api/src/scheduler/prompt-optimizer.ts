@@ -18,7 +18,7 @@ const MIN_ADDITIONS_LENGTH = 20;
 const REQUIRED_SAFETY_PHRASES = ['988', '911', 'doctor'];
 const REQUIRED_BEHAVIOR_PHRASES = [
   'BANNED',
-  'graceglp.com/settings',
+  'grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings',
   'GLP-1',
 ];
 

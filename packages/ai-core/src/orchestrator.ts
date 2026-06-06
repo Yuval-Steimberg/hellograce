@@ -110,9 +110,9 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
   ],
   scheduling: [
     // Direct link to settings — the prompt rule says scheduling changes go
-    // to graceglp.com/settings, fallback should match.
-    "You can change check-in frequency at graceglp.com/settings any time.",
-    "Settings live at graceglp.com/settings — adjust there and it'll take effect right away.",
+    // to grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings, fallback should match.
+    "You can change check-in frequency at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings any time.",
+    "Settings live at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings — adjust there and it'll take effect right away.",
   ],
   knowledge: [
     "Muscle loss is common on GLP-1s, with research showing 25-35% of weight lost can be lean mass. Protein (1.2-1.6g/kg daily) and resistance training help shift the balance toward fat loss.",
@@ -550,7 +550,7 @@ export function getToolAwareFallback(
   if (type === 'knowledge' && opts?.userMessage) {
     const msg = opts.userMessage.toLowerCase();
     if (/\bwhat (?:is|'?s)\s+my\b/.test(msg) || /\bdo you know\s+my\b/.test(msg) || /\btell me\s+my\b/.test(msg)) {
-      return "I don't have that detail on file yet. You can set it at graceglp.com/settings.";
+      return "I don't have that detail on file yet. You can set it at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.";
     }
     // 2026-06-05 production failure: "how much water?" got the muscle-loss
     // typed fallback (first array entry) because the knowledge typed
@@ -648,6 +648,23 @@ export function getToolAwareFallback(
       /\bsnack/.test(msg) ? 'snack' : 'general';
     const suggestion = buildDietAwareSuggestion(mealType, opts.dietaryRestriction, opts.foodDislikes);
     if (suggestion) return suggestion;
+  }
+
+  // 2026-06-06 v2 — coverage audit Area 6: Level 2 mood-ladder fallback.
+  // Production screenshot 2026-06-06: "want to give up on everything" →
+  // "I hear you." (emotional typed fallback). Validates the feeling but
+  // doesn't include the Level 2 ladder's "gently suggest professional help"
+  // line. When the user message matches Level 2 hopelessness keywords AND
+  // we're falling back, ship the ladder-aware reply instead of the bare
+  // "I hear you." line — same structure as the Phase 13 prompts.ts rule.
+  // No 988 push (no self-harm signaled; safety guard handles those).
+  if (type === 'emotional' && opts?.userMessage) {
+    const msg = opts.userMessage.toLowerCase();
+    const isLevel2 =
+      /\b(?:give up on everything|giving up on everything|give up on (?:my )?life|done with everything|over (?:all of )?(?:this|it)|nothing matters|no point|what'?s the point|hopeless|i'?m hopeless|feel(?:ing)? hopeless|no hope|cant shake (?:this|it)|can'?t shake (?:this|it)|so down|really down for (?:a )?while|no motivation for weeks|too tired to (?:keep|even) (?:going|trying)|burnt out completely)\b/.test(msg);
+    if (isLevel2) {
+      return "I hear you. That sounds heavy — talking to your doctor or a therapist can help carry some of this. You don't have to do it alone.";
+    }
   }
 
   return getTypedFallback(type);

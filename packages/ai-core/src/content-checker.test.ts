@@ -213,7 +213,7 @@ describe('checkLinkPlaceholder', () => {
   });
 
   it('does not flag real URL', () => {
-    const v = checkLinkPlaceholder('https://graceglp.com/settings');
+    const v = checkLinkPlaceholder('https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings');
     expect(v).toHaveLength(0);
   });
 });

@@ -734,3 +734,31 @@ describe('getToolAwareFallback — food log formatting (2026-06-06)', () => {
     expect(reply).toMatch(/^That sounds rough/);
   });
 });
+
+describe('getToolAwareFallback — Level 2 mood-ladder (2026-06-06)', () => {
+  it('"want to give up on everything" → validate + suggest professional help', async () => {
+    // Production screenshot 2026-06-06: this exact phrase shipped "I hear
+    // you." which validates but skips the Level 2 ladder's professional-
+    // help line. The audit's Area 6 requires both pieces.
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const reply = getToolAwareFallback('emotional', [], {
+      userMessage: 'want to give up on everything',
+    });
+    expect(reply).toMatch(/heavy|hear you/i);
+    expect(reply.toLowerCase()).toMatch(/doctor|therapist|professional|talk/);
+    expect(reply).not.toMatch(/988|911/);
+  });
+
+  it('"I feel hopeless" → Level 2 ladder fallback', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const reply = getToolAwareFallback('emotional', [], { userMessage: "I'm hopeless" });
+    expect(reply.toLowerCase()).toMatch(/doctor|therapist|professional/);
+  });
+
+  it('Mild "I had a rough day" does NOT get Level 2 fallback (stays generic)', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const reply = getToolAwareFallback('emotional', [], { userMessage: 'I had a rough day' });
+    // Should be one of the 3 generic emotional typed fallbacks
+    expect(reply).toMatch(/^(I hear you\.|That's a lot\. I'm here\.|With you on that\.)$/);
+  });
+});

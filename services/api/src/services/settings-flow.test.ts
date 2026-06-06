@@ -169,7 +169,7 @@ describe('settings-flow READ', () => {
     const reply = await tryHandleSettings('What is my timezone?', user, { users: svc, redis: redis as any, logger: noopLogger });
     expect(reply).not.toBeNull();
     expect(reply).toContain('Your timezone is Asia/Jerusalem (Jerusalem)');
-    expect(reply).toContain('https://graceglp.com/settings');
+    expect(reply).toContain('https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings');
   });
 
   it('"What is my injection day?" returns the stored day', async () => {
@@ -194,7 +194,7 @@ describe('settings-flow READ', () => {
     const redis = makeRedis();
     const reply = await tryHandleSettings("What's my goal weight?", user, { users: svc, redis: redis as any, logger: noopLogger });
     expect(reply).toContain("haven't set your goal weight yet");
-    expect(reply).toContain('graceglp.com/settings');
+    expect(reply).toContain('grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings');
   });
 
   it('unrelated message returns null (falls through to AI)', async () => {
@@ -373,7 +373,7 @@ describe('settings-flow UPDATE → confirm → apply', () => {
   it('unparseable value returns a helpful error', async () => {
     const reply = await tryHandleSettings('change my timezone to Mars', user, deps);
     expect(reply).toContain("I didn't catch the new timezone");
-    expect(reply).toContain('graceglp.com/settings');
+    expect(reply).toContain('grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings');
   });
 
   // ─── Confirmation idempotence ──────────────────────────────────────────────

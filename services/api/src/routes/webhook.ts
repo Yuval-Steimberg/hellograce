@@ -9,7 +9,9 @@ import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { UnauthorizedError, UpstreamError } from '../errors.js';
 import { classifyScope } from '../safety/scope-guard.js';
-import { classifyMessage as classifySafety } from '../safety/guard.js';
+import { classifyMessage as classifySafety, classifySymptomCategory } from '../safety/guard.js';
+import { recordSymptom, shouldEscalate, clearStack } from '../safety/symptom-stack.js';
+import { getCrisisResourcesForUser, buildSafetyResponse } from '../safety/crisis-resources.js';
 import { tryHandleSettings } from '../services/settings-flow.js';
 
 const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
@@ -277,8 +279,59 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           const safety = classifySafety(normalized.text);
           if (safety.class !== 'safe') {
             req.log.warn({ phone: user?.phone, class: safety.class, matched: safety.matched }, 'webhook.safety.short_circuit');
-            await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: safety.response! });
+            // Record emergencies into the symptom stack (so a future-fired
+            // mild signal in a different category still adds context) and
+            // clear the stack so we don't escalate twice in a row on the
+            // same conversation. Best-effort — never blocks the safety reply.
+            if (user && deps.redis && safety.class === 'emergency' && safety.symptomCategory) {
+              try {
+                await recordSymptom(user.phone, safety.symptomCategory, { redis: deps.redis, logger: app.log });
+                await clearStack(user.phone, { redis: deps.redis, logger: app.log });
+              } catch { /* non-fatal */ }
+            }
+            // Crisis-resource localization gate (2026-06-06). When
+            // CRISIS_RESOURCES_REVIEWED is false (default), the resolver
+            // returns US_DEFAULT and buildSafetyResponse produces the
+            // exact verbatim US text — byte-identical to the previous
+            // hard-coded SAFETY_RESPONSE constant. Only flips behavior
+            // for non-US users when the env flag is true AND the user
+            // has a country_code (or inferable timezone).
+            const resources = getCrisisResourcesForUser(user ?? null, { reviewed: deps.env.CRISIS_RESOURCES_REVIEWED });
+            const localizedResponse = buildSafetyResponse(resources);
+            // Crisis classification + medical-advice use their own dedicated
+            // wording, not the safety hotline template — preserve those.
+            const bodyToSend = safety.class === 'medical_advice' ? safety.response! : localizedResponse;
+            await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: bodyToSend });
             return;
+          }
+
+          // ── Cross-turn symptom-stack accumulator (2026-06-06) ─────────
+          // The message didn't trigger a standalone emergency. If it carries
+          // a sub-emergency-threshold symptom signal AND the user has already
+          // mentioned a DIFFERENT-category symptom within the last 2 hours,
+          // force-escalate to SAFETY_RESPONSE. Mitigates the "three turns
+          // describing one escalating emergency" gap flagged in the audit.
+          if (user && deps.redis) {
+            const subCategory = classifySymptomCategory(normalized.text);
+            if (subCategory) {
+              try {
+                const stack = await recordSymptom(user.phone, subCategory, { redis: deps.redis, logger: app.log });
+                if (shouldEscalate(stack)) {
+                  req.log.warn(
+                    { phone: user.phone, categories: stack.categories, count: stack.count },
+                    'webhook.symptom_stack.escalate',
+                  );
+                  await clearStack(user.phone, { redis: deps.redis, logger: app.log });
+                  const stackResources = getCrisisResourcesForUser(user, { reviewed: deps.env.CRISIS_RESOURCES_REVIEWED });
+                  await deps.sender.send({
+                    to: normalized.userId,
+                    channel: normalized.channel,
+                    body: buildSafetyResponse(stackResources),
+                  });
+                  return;
+                }
+              } catch { /* non-fatal — fall through to normal pipeline */ }
+            }
           }
 
           // ── In-chat pause intent (Phase 1 coverage expansion) ─────────

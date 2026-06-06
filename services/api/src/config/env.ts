@@ -61,6 +61,15 @@ const EnvSchema = z.object({
   FAQ_CACHE_ENABLED: z.coerce.boolean().default(false),
   FAQ_CACHE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.92),
 
+  /** Crisis-resource localization gate (2026-06-06 coverage audit, Area 6).
+   *  When FALSE (default), SAFETY_RESPONSE always ships the US-only 988/911
+   *  text exactly as today. When TRUE, the per-country lookup in
+   *  services/api/src/safety/crisis-resources.ts is used.
+   *
+   *  PRE-LAUNCH GATE: do NOT set TRUE until clinical + legal review of every
+   *  entry in COUNTRY_MAP is signed off. See docs/PRE_LAUNCH_GATES.md. */
+  CRISIS_RESOURCES_REVIEWED: z.coerce.boolean().default(false),
+
   /** Phase 5: USDA FoodData Central API key. When unset, log_food falls back
    *  to the legacy LLM-only macro estimate. Free signup at
    *  https://fdc.nal.usda.gov/api-key-signup.html (1000 requests/hour). */

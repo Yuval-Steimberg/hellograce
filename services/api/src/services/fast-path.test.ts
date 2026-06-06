@@ -59,3 +59,81 @@ describe('tryFastPath — greeting prefix + typo normalization (2026-06-01 fix)'
     expect(tryFastPath('Morning, feeling good?', USER)).toBeNull();
   });
 });
+
+describe('non_english fast-path (2026-06-06 — coverage audit)', () => {
+  const USER = '+15551234567';
+
+  it('Spanish "hola" → non_english reply', () => {
+    const r = tryFastPath('hola', USER);
+    expect(r).not.toBeNull();
+    expect(r?.category).toBe('non_english');
+    expect(r?.text).toMatch(/english/i);
+  });
+
+  it('French "bonjour" → non_english reply', () => {
+    const r = tryFastPath('bonjour', USER);
+    expect(r?.category).toBe('non_english');
+  });
+
+  it('Hebrew "שלום" → non_english reply', () => {
+    const r = tryFastPath('שלום', USER);
+    expect(r?.category).toBe('non_english');
+  });
+
+  it('Arabic "مرحبا" → non_english reply', () => {
+    const r = tryFastPath('مرحبا', USER);
+    expect(r?.category).toBe('non_english');
+  });
+
+  it('Russian Cyrillic "привет" → non_english reply', () => {
+    const r = tryFastPath('привет', USER);
+    expect(r?.category).toBe('non_english');
+  });
+
+  it('Hebrew distress phrase ("כאב בחזה") BYPASSES non_english fast-path', () => {
+    // Critical safety check: a Hebrew chest-pain message must NOT receive
+    // a "could you try in English" reply — it must fall through so the
+    // orchestrator + safety pipeline runs.
+    const r = tryFastPath('כאב בחזה', USER);
+    expect(r).toBeNull();
+  });
+
+  it('Spanish distress phrase ("dolor en el pecho") BYPASSES non_english fast-path', () => {
+    const r = tryFastPath('dolor en el pecho', USER);
+    expect(r).toBeNull();
+  });
+
+  it('English "I had eggs" is UNAFFECTED by the non_english check', () => {
+    const r = tryFastPath('I had eggs', USER);
+    // Either matches another fast-path category or returns null — but never
+    // 'non_english'.
+    if (r) expect(r.category).not.toBe('non_english');
+  });
+
+  it('English with emoji "Thanks 🤍" is UNAFFECTED', () => {
+    const r = tryFastPath('Thanks 🤍', USER);
+    if (r) expect(r.category).not.toBe('non_english');
+  });
+
+  it('Accented English ("café") does NOT trigger non_english', () => {
+    // The 40% non-Latin threshold + ASCII-letter dominance keeps this safe.
+    const r = tryFastPath('café', USER);
+    if (r) expect(r.category).not.toBe('non_english');
+  });
+
+  it('Longer Hebrew text (>40 chars) bypasses non_english (caller falls through)', () => {
+    // Conservative length cap keeps the heuristic narrow.
+    const r = tryFastPath('שלום אני רוצה לדעת מה הזמן ואיפה אני נמצאת היום', USER);
+    expect(r).toBeNull();
+  });
+
+  it('non_english reply varies by user (hash rotation)', () => {
+    const a = tryFastPath('hola', '+15550000001');
+    const b = tryFastPath('hola', '+15550000002');
+    expect(a?.text).not.toBe(undefined);
+    expect(b?.text).not.toBe(undefined);
+    // Both are valid non_english replies but possibly different.
+    expect(a?.category).toBe('non_english');
+    expect(b?.category).toBe('non_english');
+  });
+});

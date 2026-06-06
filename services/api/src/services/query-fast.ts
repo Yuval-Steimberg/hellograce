@@ -37,6 +37,8 @@ export interface QueryFastResult {
     | 'medication'
     | 'injection_day'
     | 'current_weight'
+    | 'starting_weight'
+    | 'weight_progress'
     | 'age'
     | 'is_protein_enough'
     | 'is_calorie_enough';
@@ -116,6 +118,19 @@ const INJECTION_DAY_RE =
 const CURRENT_WEIGHT_RE =
   /^(?:what(?:'?s| is)?\s+(?:my\s+)?(?:current\s+)?weight|how much do i weigh|what do i weigh)\s*\??$/i;
 
+// 2026-06-06: "What's my starting weight?" — added per coverage audit.
+// Grace must NEVER fabricate this; read it directly from the column or say
+// "I don't have your starting weight on file."
+const STARTING_WEIGHT_RE =
+  /^(?:what(?:'?s| is)?\s+(?:my\s+)?(?:starting|start|initial|baseline|original)\s+weight|what did i (?:start|begin) (?:at|with))\s*\??$/i;
+
+// "How much have I lost?" / "weight loss so far" / "total loss"
+// Requires BOTH starting_weight and current_weight to compute. When either
+// is missing, ships an honest "no baseline on file" response — no estimate,
+// no fabrication.
+const WEIGHT_PROGRESS_RE =
+  /^(?:how much (?:weight )?have i lost|how much have i lost|how much weight did i lose|what(?:'?s| is)?\s+my (?:total\s+|overall\s+)?weight loss|weight loss so far|total (?:weight )?loss|how (?:far|much) (?:have i come|down (?:am i|have i (?:come|gotten)))|am i down (?:any|much) (?:weight)?)\s*\??$/i;
+
 // "How old am I" / "what's my age"
 const AGE_RE =
   /^(?:how old am i|what(?:'?s| is)?\s+(?:my\s+)?age)\s*\??$/i;
@@ -189,6 +204,8 @@ export async function tryQueryFast(
     : MEDICATION_RE.test(t) ? 'medication'
     : INJECTION_DAY_RE.test(t) ? 'injection_day'
     : CURRENT_WEIGHT_RE.test(t) ? 'current_weight'
+    : STARTING_WEIGHT_RE.test(t) ? 'starting_weight'
+    : WEIGHT_PROGRESS_RE.test(t) ? 'weight_progress'
     : AGE_RE.test(t) ? 'age'
     : matchProteinEnough(t) ? 'is_protein_enough'
     : matchCalorieEnough(t) ? 'is_calorie_enough'
@@ -478,6 +495,68 @@ export async function tryQueryFast(
         return {
           text: `You're at ${w} lbs.`,
           category: 'current_weight',
+        };
+      }
+
+      case 'starting_weight': {
+        // 2026-06-06: Grace must NEVER fabricate a baseline. If
+        // starting_weight isn't on file, say so directly and offer the
+        // settings route. No inferring from current_weight, no estimate.
+        const sw = user.starting_weight;
+        if (!sw || sw <= 0) {
+          return {
+            text: `I don't have your starting weight on file. You can set it at https://graceglp.com/settings — or send me "set my starting weight to ___ lbs".`,
+            category: 'starting_weight',
+          };
+        }
+        return {
+          text: `Your starting weight is ${sw} lbs.`,
+          category: 'starting_weight',
+        };
+      }
+
+      case 'weight_progress': {
+        // 2026-06-06: total loss = starting_weight - current_weight. When
+        // either is missing, honest message — never fabricate progress.
+        const sw = user.starting_weight;
+        const cw = user.current_weight;
+        if (!sw || sw <= 0) {
+          return {
+            text: `I'd love to tell you, but your starting weight isn't on file yet. Set it at https://graceglp.com/settings and I can calculate your total loss.`,
+            category: 'weight_progress',
+          };
+        }
+        if (!cw || cw <= 0) {
+          return {
+            text: `Your starting weight is ${sw} lbs but I don't have a recent weight on file. Send me your current weight in lbs and I'll calculate the change.`,
+            category: 'weight_progress',
+          };
+        }
+        const diff = Math.round((sw - cw) * 10) / 10;
+        if (diff > 0) {
+          const goal = user.goal_weight;
+          if (goal && goal > 0 && cw > goal) {
+            const toGo = Math.round((cw - goal) * 10) / 10;
+            return {
+              text: `You're down ${diff} lbs from ${sw} lbs — you're at ${cw} lbs now, ${toGo} lbs to your ${goal} lbs goal.`,
+              category: 'weight_progress',
+            };
+          }
+          return {
+            text: `You're down ${diff} lbs from ${sw} lbs — you're at ${cw} lbs now.`,
+            category: 'weight_progress',
+          };
+        }
+        if (diff === 0) {
+          return {
+            text: `You're at ${cw} lbs — same as your starting weight. Tell me what's been hardest and I can help with the next step.`,
+            category: 'weight_progress',
+          };
+        }
+        const up = Math.abs(diff);
+        return {
+          text: `You're at ${cw} lbs, which is ${up} lbs above your ${sw} lbs starting weight. Tell me what's been going on and we can take it step by step.`,
+          category: 'weight_progress',
         };
       }
 

@@ -5,6 +5,10 @@ interface AboutYouData {
   sex?: string;
   currentWeight?: string;
   goalWeight?: string;
+  /** Optional baseline weight at start of GLP-1 journey. Added 2026-06-06
+   *  per the coverage audit (Area 8). Empty string = leave NULL — Grace
+   *  must never fabricate a baseline. */
+  startingWeight?: string;
   heightCm?: string;
   age?: string;
   activityLevel?: string;
@@ -14,6 +18,7 @@ interface AboutYouProps {
   sex: string;
   currentWeight: string;
   goalWeight: string;
+  startingWeight?: string;
   heightCm: string;
   age: string;
   activityLevel: string;
@@ -45,6 +50,7 @@ const WeightStep = ({
   sex,
   currentWeight,
   goalWeight,
+  startingWeight = '',
   heightCm,
   age,
   activityLevel,
@@ -76,6 +82,16 @@ const WeightStep = ({
     if (a < 13 || a > 120) { setError("Age should be between 13 and 120"); return; }
     if (cw < 50 || cw > 700) { setError("Please enter a valid current weight"); return; }
     if (gw < 50 || gw > 700) { setError("Please enter a valid goal weight"); return; }
+    // Starting weight is optional — only validate if provided. Empty string
+    // = leave the column NULL; Grace will say "not on file" rather than
+    // fabricate. Per coverage audit 2026-06-06.
+    if (startingWeight && startingWeight.trim().length > 0) {
+      const sw = Number(startingWeight);
+      if (!Number.isFinite(sw) || sw < 50 || sw > 700) {
+        setError("Please enter a valid starting weight, or leave it blank");
+        return;
+      }
+    }
     setError("");
     onNext();
   };
@@ -180,6 +196,25 @@ const WeightStep = ({
               />
             </label>
           </div>
+
+          {/* Optional starting weight — added 2026-06-06 per coverage audit.
+              Defaults to empty; Grace will never invent a baseline if left blank. */}
+          <label className="flex flex-col gap-2">
+            <span className="font-medium text-sm px-1 text-foreground">
+              Starting weight (lbs) <span className="text-muted-foreground text-xs ml-1">— optional</span>
+            </span>
+            <input
+              type="number"
+              inputMode="numeric"
+              placeholder="The weight you started at, if you remember"
+              value={startingWeight}
+              onChange={(e) => { onChange({ startingWeight: e.target.value }); setError(""); }}
+              className={inputClass}
+            />
+            <span className="text-xs text-muted-foreground/70 px-1">
+              I'll use this to show your total loss. Leave blank if you'd rather not — I won't guess.
+            </span>
+          </label>
 
           <div className="flex flex-col gap-3">
             <span className={`font-medium text-sm px-1 ${showFieldError("activity level") ? "text-destructive" : "text-foreground"}`}>

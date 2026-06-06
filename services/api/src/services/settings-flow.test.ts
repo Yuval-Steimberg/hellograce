@@ -25,6 +25,7 @@ function makeUser(overrides: Partial<GraceUser> = {}): GraceUser {
     wake_time: '07:00',
     sleep_time: '23:00',
     current_weight: 180,
+    starting_weight: null,
     goal_weight: 160,
     height_cm: 175,
     age: 35,
@@ -286,6 +287,26 @@ describe('settings-flow UPDATE → confirm → apply', () => {
     expect(reply1).toBe('Change your current weight to 175 lbs? Reply yes to confirm.');
     await tryHandleSettings('yes', user, deps);
     expect(svcObj.updates).toEqual([{ current_weight: 175 }]);
+  });
+
+  it('updates starting weight ("set my starting weight to 220 lbs")', async () => {
+    // 2026-06-06 — added per coverage audit Area 8.
+    const reply1 = await tryHandleSettings('set my starting weight to 220 lbs', user, deps);
+    expect(reply1).toBe('Change your starting weight to 220 lbs? Reply yes to confirm.');
+    await tryHandleSettings('yes', user, deps);
+    expect(svcObj.updates).toEqual([{ starting_weight: 220 }]);
+  });
+
+  it('updates starting weight ("I started at 230")', async () => {
+    const reply1 = await tryHandleSettings('I started at 230', user, deps);
+    expect(reply1).toBe('Change your starting weight to 230 lbs? Reply yes to confirm.');
+    await tryHandleSettings('yes', user, deps);
+    expect(svcObj.updates).toEqual([{ starting_weight: 230 }]);
+  });
+
+  it('reads starting weight: "what is my starting weight?" unset → null-aware reply', async () => {
+    const reply = await tryHandleSettings('what is my starting weight?', user, deps);
+    expect(reply).toContain("haven't set your starting weight yet");
   });
 
   it('updates height ("my height is 175 cm")', async () => {

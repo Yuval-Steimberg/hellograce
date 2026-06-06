@@ -9,6 +9,7 @@ function mockUsers(overrides: Partial<{
   calorie_goal_kcal: number | null;
   goal_weight: number | null;
   current_weight: number | null;
+  starting_weight: number | null;
   todayProtein: number;
   todayCalories: number;
 }> = {}): UserService {
@@ -21,6 +22,7 @@ function mockUsers(overrides: Partial<{
       calorie_goal_kcal: 'calorie_goal_kcal' in overrides ? overrides.calorie_goal_kcal : 1800,
       goal_weight: 'goal_weight' in overrides ? overrides.goal_weight : 160,
       current_weight: 'current_weight' in overrides ? overrides.current_weight : 180,
+      starting_weight: 'starting_weight' in overrides ? overrides.starting_weight : null,
     }),
     getTodaysFoodSummary: vi.fn().mockResolvedValue({
       protein_g: overrides.todayProtein ?? 45,
@@ -294,5 +296,74 @@ describe('is_protein_enough / is_calorie_enough (2026-06-06)', () => {
     const users = mockUsers({ protein_goal_grams: 60, current_weight: 180 });
     const r = await tryQueryFast('is 80 enough', { users, logger: noopLogger, userId: 'u1' });
     expect(r).toBeNull();
+  });
+});
+
+describe('starting_weight + weight_progress (2026-06-06 — coverage audit)', () => {
+  it('"What is my starting weight?" with value returns it', async () => {
+    const users = mockUsers({ starting_weight: 200 });
+    const r = await tryQueryFast('What is my starting weight?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('starting_weight');
+    expect(r!.text).toBe('Your starting weight is 200 lbs.');
+  });
+
+  it('"What is my starting weight?" without value says "not on file"', async () => {
+    const users = mockUsers({ starting_weight: null });
+    const r = await tryQueryFast("What's my starting weight?", { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('starting_weight');
+    expect(r!.text).toMatch(/don't have your starting weight on file/);
+    expect(r!.text).toMatch(/graceglp\.com\/settings/);
+  });
+
+  it('"How much have I lost?" with both weights computes the loss', async () => {
+    const users = mockUsers({ starting_weight: 200, current_weight: 180, goal_weight: 160 });
+    const r = await tryQueryFast('How much have I lost?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('weight_progress');
+    expect(r!.text).toMatch(/down 20 lbs from 200 lbs/);
+    expect(r!.text).toMatch(/180 lbs now/);
+    expect(r!.text).toMatch(/20 lbs to your 160 lbs goal/);
+  });
+
+  it('"How much have I lost?" without starting_weight is HONEST, never fabricates', async () => {
+    const users = mockUsers({ starting_weight: null, current_weight: 180 });
+    const r = await tryQueryFast('How much have I lost?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('weight_progress');
+    expect(r!.text).toMatch(/your starting weight isn't on file/);
+    expect(r!.text).toMatch(/graceglp\.com\/settings/);
+    // Sanity: no fabricated number.
+    expect(r!.text).not.toMatch(/down \d+ lbs/);
+  });
+
+  it('"Weight loss so far" without current_weight asks for it', async () => {
+    const users = mockUsers({ starting_weight: 200, current_weight: null });
+    const r = await tryQueryFast('Weight loss so far', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toMatch(/Your starting weight is 200 lbs but I don't have a recent weight/);
+  });
+
+  it('"Am I down any weight?" with equal weights says same, no fabrication', async () => {
+    const users = mockUsers({ starting_weight: 180, current_weight: 180 });
+    const r = await tryQueryFast('Am I down any weight?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toMatch(/same as your starting weight/);
+  });
+
+  it('"How much have I lost?" when current is HIGHER than starting handles gracefully', async () => {
+    const users = mockUsers({ starting_weight: 180, current_weight: 195 });
+    const r = await tryQueryFast('How much have I lost?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toMatch(/195 lbs, which is 15 lbs above your 180 lbs starting weight/);
+  });
+
+  it('"What did I start at?" matches starting_weight read pattern', async () => {
+    const users = mockUsers({ starting_weight: 220 });
+    const r = await tryQueryFast('what did I start at?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('starting_weight');
+    expect(r!.text).toBe('Your starting weight is 220 lbs.');
   });
 });

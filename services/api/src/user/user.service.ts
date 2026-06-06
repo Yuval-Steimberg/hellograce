@@ -14,10 +14,19 @@ export interface GraceUser {
   goals: string[];
   food_dislikes: string[];
   timezone: string;
+  /** ISO-3166-1 alpha-2 (US, IL, GB, CA, AU, etc.). Nullable. Used by the
+   *  crisis-resources lookup for localized SAFETY hotline numbers.
+   *  Effective only when CRISIS_RESOURCES_REVIEWED env flag is true.
+   *  Added 2026-06-06 (migration 20260606000002_user_country_code.sql). */
+  country_code: string | null;
   wake_time: string;
   sleep_time: string;
   current_weight: number | null;
   goal_weight: number | null;
+  /** User-provided baseline weight in lbs at start of GLP-1 journey.
+   *  Nullable. Grace must NEVER fabricate or infer this value when absent.
+   *  Added 2026-06-06 (migration 20260606000001_starting_weight.sql). */
+  starting_weight: number | null;
   height_cm: number | null;
   age: number | null;
   sex: string | null;

@@ -1063,6 +1063,7 @@ CRITICAL CONTEXT RULES â€” apply on every turn:
         const u = await this.deps.users.getById(userId);
         if (u) {
           const lines: string[] = [];
+          if (u.starting_weight) lines.push(`Starting weight: ${u.starting_weight} lbs`);
           if (u.current_weight) lines.push(`Current weight: ${u.current_weight} lbs`);
           if (u.goal_weight) lines.push(`Goal weight: ${u.goal_weight} lbs`);
           if (u.protein_goal_grams) lines.push(`Daily protein target: ${u.protein_goal_grams}g`);
@@ -2611,6 +2612,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
           else injStatus = `in ${diff} days (${user.injection_day})`;
         }
         lines.push(`INJECTION DAY STATUS: ${injStatus}`);
+      }
+      if (user.starting_weight) {
+        lines.push(`Starting weight: ${user.starting_weight} lbs`);
       }
       if (user.current_weight && user.goal_weight) {
         const gap = Math.abs(user.current_weight - user.goal_weight);

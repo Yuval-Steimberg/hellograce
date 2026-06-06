@@ -307,6 +307,30 @@ const FIELDS: FieldDef[] = [
     },
     format: (u) => (u.current_weight ? `${u.current_weight} lbs` : null),
   },
+  // Starting weight (2026-06-06 — added per coverage audit Area 8)
+  {
+    key: 'starting_weight',
+    label: 'starting weight',
+    readPatterns: [
+      /^what(?:'?s| is)\s+my\s+(?:starting|start|initial|baseline|original)\s+weight\??$/i,
+      /^what did i (?:start|begin) (?:at|with)\??$/i,
+    ],
+    updatePatterns: [
+      /^(?:change|update|set)\s+my\s+(?:starting|start|initial|baseline|original)\s+weight\s+to\s+(.+?)\s*[.!?]?$/i,
+      /^my\s+(?:starting|start|initial|baseline|original)\s+weight\s+(?:was|is)\s+(.+?)\s*[.!?]?$/i,
+      /^i\s+started\s+at\s+(\d+(?:\.\d+)?\s*(?:lbs?|pounds?|kg|kilos?)?)\s*[.!?]?$/i,
+    ],
+    parse: (raw) => {
+      const m = /(\d+(?:\.\d+)?)\s*(lbs?|pounds?|kg|kilos?)?/i.exec(raw);
+      if (!m) return null;
+      let n = parseFloat(m[1]!);
+      const unit = (m[2] ?? '').toLowerCase();
+      if (unit.startsWith('kg') || unit.startsWith('kilo')) n = Math.round(n * 2.205 * 10) / 10;
+      if (!Number.isFinite(n) || n < 60 || n > 700) return null;
+      return { value: n, display: `${n} lbs` };
+    },
+    format: (u) => (u.starting_weight ? `${u.starting_weight} lbs` : null),
+  },
   // Goal weight
   {
     key: 'goal_weight',

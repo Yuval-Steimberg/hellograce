@@ -40,7 +40,11 @@ export interface FastPathResult {
     | 'feeling_better'     // "feeling much better" / "way better today"
     | 'feeling_worse'      // "feeling worse" / "much worse today"
     | 'meal_skip'          // "skipped breakfast" / "didn't eat lunch"
-    | 'check_in_query';    // "how am I doing" / "where am I at"
+    | 'check_in_query'     // "how am I doing" / "where am I at"
+    // 2026-06-06 — Coverage audit. Non-English short messages get a warm
+    // English-ask reply (no LLM, no translation). Distress keywords in the
+    // supported scripts bypass this and reach the orchestrator + safety.
+    | 'non_english';
 }
 
 // Pure greeting — no question, no follow-up content
@@ -375,6 +379,44 @@ function pickFromPool(pool: readonly string[], seed: string): string {
 // by the safety classifier upstream but double-check defensively here.
 const NEVER_FAST_PATH_RE = /\b(nauseous|nausea|sick|throwing up|vomit|dizzy|faint|chest pain|hurts|hurting|in pain|pain|cramp|cramping|diarrhea|constipated|bleeding|fever|swollen|allergic|injection|shot|dose|dosage|hungry|starving|appetite|eat|ate|had|drank|drink|breakfast|lunch|dinner|snack|meal|food|protein|weight|lbs|kg|kilo|pound|scale|workout|exercise|reminder|stop|cancel|unsubscribe|pause|kill|die|suicide|hurt myself|harm)\b/i;
 
+// ── Non-English handler (2026-06-06) ────────────────────────────────────────
+// Per the coverage audit: non-English messages must be handled gracefully,
+// not refused. Detect by either (a) ≥40% of letter chars in non-Latin
+// scripts (Hebrew/Arabic/Cyrillic/Devanagari/CJK), or (b) a short whitelist
+// of common non-English greetings. SAFETY-CRITICAL: any non-English symptom
+// keyword (chest pain / can't breathe / suicide / etc. in supported scripts)
+// short-circuits this path so the safety guard still sees the message.
+const NON_LATIN_RE = /[֐-׿؀-ۿЀ-ӿऀ-ॿ一-鿿぀-ヿ㐀-䶿]/u;
+const NON_ENGLISH_GREETING_RE = /^(?:hola|bonjour|salut|guten\s+tag|hallo|ciao|salve|namaste|merhaba|здравствуйте|привет|שלום|سلام|مرحبا|你好|こんにちは|안녕하세요)[\s.,!?]*$/iu;
+// Non-English distress / symptom / safety triggers — when present, the
+// non_english fast-path MUST bail out so the message falls through to the
+// orchestrator (and through the safety classifier on the way).
+const NON_ENGLISH_DISTRESS_RE = /(?:כאב|חזה|נושם|להתאבד|התאבדות|אנפלקסיס|התקף|חירום|عذر|صدر|تنفس|انتحار|طوارئ|ألم|болит|боль|задыхаюсь|самоуб|skon|skonu|dolor|pecho|respirar|suicid|ayuda|emergencia|douleur|poitrine|respirer|urgence|sangue|Schmerz|Brust|atmen|Notfall)/iu;
+
+function countNonLatinLetters(text: string): { nonLatin: number; total: number } {
+  let nonLatin = 0;
+  let total = 0;
+  for (const ch of text) {
+    if (/[A-Za-z]/.test(ch)) total++;
+    else if (NON_LATIN_RE.test(ch)) { nonLatin++; total++; }
+  }
+  return { nonLatin, total };
+}
+
+function looksNonEnglish(text: string): boolean {
+  if (NON_ENGLISH_GREETING_RE.test(text.trim())) return true;
+  const { nonLatin, total } = countNonLatinLetters(text);
+  if (total === 0) return false;
+  return nonLatin / total >= 0.4;
+}
+
+const NON_ENGLISH_REPLIES: readonly string[] = [
+  "I'm best in English right now — could you try in English? 🤍",
+  "English only for now — could you send that again in English?",
+  "I work in English so far — try again in English and I'm here.",
+  "I can only really help in English right now — could you rephrase in English?",
+];
+
 export function tryFastPath(text: string, userId: string): FastPathResult | null {
   // Normalize iOS smart-quote apostrophes (U+2019) so "I'm" with curly quote
   // matches `i'?m` with straight quote. Production failure 2026-06-05.
@@ -409,6 +451,15 @@ export function tryFastPath(text: string, userId: string): FastPathResult | null
   }
 
   const seed = `${userId}|${trimmed.toLowerCase()}`;
+
+  // ── Non-English handler (2026-06-06) ────────────────────────────────────
+  // Runs AFTER NEVER_FAST_PATH_RE so symptom keywords still bail. ALSO
+  // checks NON_ENGLISH_DISTRESS_RE for symptom/safety words in supported
+  // non-English scripts — if any match, bail to the orchestrator + safety
+  // classifier path. Cap message length to keep this conservative.
+  if (trimmed.length <= 40 && looksNonEnglish(trimmed) && !NON_ENGLISH_DISTRESS_RE.test(trimmed)) {
+    return { text: pickFromPool(NON_ENGLISH_REPLIES, seed), category: 'non_english' };
+  }
 
   if (isIdentity) {
     return { text: pickFromPool(IDENTITY_REPLIES, seed), category: 'identity' };

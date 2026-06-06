@@ -62,6 +62,9 @@ const Onboarding = () => {
   const [foodDislikes, setFoodDislikes] = useState("");
   const [currentWeight, setCurrentWeight] = useState("");
   const [goalWeight, setGoalWeight] = useState("");
+  /** Optional baseline weight at start of GLP-1 journey. Added 2026-06-06
+   *  per coverage audit. Empty string = leave NULL in the DB. */
+  const [startingWeight, setStartingWeight] = useState("");
   const [heightCm, setHeightCm] = useState("");
   const [age, setAge] = useState("");
   const [activityLevel, setActivityLevel] = useState("");
@@ -124,6 +127,7 @@ const Onboarding = () => {
         foodDislikes: foodDislikes.trim() || null,
         currentWeight: currentWeight ? Number(currentWeight) : null,
         goalWeight: goalWeight ? Number(goalWeight) : null,
+        startingWeight: startingWeight ? Number(startingWeight) : null,
         heightCm: heightCm ? Number(heightCm) : null,
         age: age ? Number(age) : null,
         activityLevel: activityLevel || null,
@@ -209,6 +213,7 @@ const Onboarding = () => {
             sex={sex}
             currentWeight={currentWeight}
             goalWeight={goalWeight}
+            startingWeight={startingWeight}
             heightCm={heightCm}
             age={age}
             activityLevel={activityLevel}
@@ -216,6 +221,7 @@ const Onboarding = () => {
               if (d.sex !== undefined) setSex(d.sex);
               if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
               if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
+              if (d.startingWeight !== undefined) setStartingWeight(d.startingWeight);
               if (d.heightCm !== undefined) setHeightCm(d.heightCm);
               if (d.age !== undefined) setAge(d.age);
               if (d.activityLevel !== undefined) setActivityLevel(d.activityLevel);

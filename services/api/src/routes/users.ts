@@ -25,6 +25,9 @@ const OnboardSchema = z.object({
   foodDislikes: z.string().max(1000).optional().nullable(),
   currentWeight: z.number().finite().positive().optional().nullable(),
   goalWeight: z.number().finite().positive().optional().nullable(),
+  /** Baseline weight at start of GLP-1 journey. Optional onboarding field
+   *  added 2026-06-06. Grace will never fabricate a baseline when null. */
+  startingWeight: z.number().finite().positive().optional().nullable(),
   heightCm: z.number().finite().positive().max(260).optional().nullable(),
   age: z.number().int().min(13).max(120).optional().nullable(),
   activityLevel: z.enum(['sedentary', 'lightly_active', 'moderate', 'very_active']).optional().nullable(),
@@ -120,6 +123,7 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       food_dislikes: foodDislikesArr,
       current_weight: b.currentWeight ?? undefined,
       goal_weight: b.goalWeight ?? undefined,
+      starting_weight: b.startingWeight ?? undefined,
       height_cm: b.heightCm ?? undefined,
       goals: b.goals,
       timezone: b.timezone,

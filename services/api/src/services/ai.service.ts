@@ -1495,6 +1495,24 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       // misclassified breakfast question that landed in 'general'. Knowledge
       // queries STILL hit RAG because they classify as 'knowledge' / 'medication_question'.
       'general',
+      // 2026-06-06 v3 — production latency audit:
+      //   - emotional: P95 12s, with rag_planner_memory burning 500-700ms
+      //     per message. The emotional direct-path system prompt is a
+      //     focused 4-step framework with worked examples — it never
+      //     reads input.retrieved. RAG was pure dead weight on this
+      //     intent. The orchestrator-fallthrough case is also fine
+      //     because the emotional typed fallbacks + Level 2 ladder
+      //     pattern don't reference KB content either.
+      //   - appointment_prep: response is 3-5 prescriber questions
+      //     tied to the user's medication/dose/journey. The direct-path
+      //     prompt provides the structure; KB chunks aren't used.
+      //   - social_situation: same — template-style advice driven by
+      //     prompt rules, not KB facts.
+      // medication_question and knowledge remain RAG-eligible — they
+      // can genuinely benefit from KB chunks.
+      'emotional',
+      'appointment_prep',
+      'social_situation',
     ]);
     const ragSkippedForIntent = RAG_SKIP_INTENTS.has(intentClass.type);
 

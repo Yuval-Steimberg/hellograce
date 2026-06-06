@@ -22,6 +22,61 @@ import { tryFastPath } from './fast-path.js';
 import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
 
 // ─── Direct-path config (2026-06-05 architectural inversion) ─────────────────
+// 2026-06-05 v4: when knowledge_direct fails (33% hit rate in prod), we'd
+// otherwise spend 15-40s in the orchestrator. For known topics we have
+// curated GLP-1-accurate fallbacks ready — ship them immediately instead.
+// Mirrors the orchestrator's getToolAwareFallback topic checks but runs
+// BEFORE the orchestrator so we save the latency entirely.
+function pickKnowledgeTopicFallback(userMessage: string): string | null {
+  const msg = userMessage.toLowerCase();
+  if (/\bwater|hydration|fluid\b/.test(msg) && !/\balcohol|caffeine|coffee\b/.test(msg)) {
+    return "Aim for around 64-80 oz of water daily on GLP-1, sipped throughout the day rather than gulped — large amounts at once can amplify nausea.";
+  }
+  if (/\balcohol\b/.test(msg)) {
+    return "Moderation is the general guidance — alcohol can amplify GLP-1 nausea, low blood sugar, and dehydration. A drink or two with food is usually fine for most people, but cut back if you're feeling rough.";
+  }
+  if (/\bsleep|insomnia\b/.test(msg)) {
+    return "GLP-1s can disrupt sleep for some people — common causes are nighttime nausea, blood sugar swings, and vivid dreams. A small protein snack 1-2 hours before bed often helps.";
+  }
+  if (/\bcoffee|caffeine\b/.test(msg)) {
+    return "Coffee is generally fine on GLP-1s but can amplify stomach upset, especially on an empty stomach. Try having it with food, or switch to half-caf for a few days if it's hitting hard.";
+  }
+  if (/\bexercise|workout|gym|cardio|lift|train\b/.test(msg)) {
+    return "Resistance training a few times a week is the strongest protector against muscle loss on GLP-1, alongside hitting your protein target. Start light if appetite is suppressed and build up.";
+  }
+  if (/\bhair\s+(loss|fall|shed|thin)\b/.test(msg)) {
+    return "Hair shedding (telogen effluvium) is common with significant weight loss, including GLP-1 weight loss. It's typically temporary — protein, iron, and ferritin levels are worth checking with your doctor if it persists.";
+  }
+  if (/\bmuscles?\b/.test(msg) && /\b(affect|impact|lose|losing|loss|protect|maintain|keep|preserve|build|GLP)\b/i.test(userMessage)) {
+    return "GLP-1s don't directly damage muscle, but rapid weight loss without enough protein or resistance training can cost you lean mass — research shows 25-35% of weight lost on GLP-1s can be muscle. Hitting 1.2-1.6g of protein per kg of body weight daily and lifting 2-3x a week shifts the balance toward fat loss.";
+  }
+  if (/\b(protein|grams)\b/.test(msg) && /\b(man|woman|men|women|male|female|guy|girl)\b/.test(msg)) {
+    return "On GLP-1 therapy the target is 1.2-1.6g of protein per kg of body weight daily — for an average adult that's roughly 90-130g. Front-load 25-30g at breakfast to protect muscle and reduce muscle loss during weight reduction.";
+  }
+  if (/\b(how (much|many)\s+(protein|grams of protein)|protein\s+(target|goal|amount|requirement|need))\b/.test(msg)) {
+    return "On a GLP-1 the target is 1.2-1.6g of protein per kg of body weight daily — typically 90-130g for an average adult. Front-load 25-30g at breakfast to protect muscle.";
+  }
+  if (/\b(nausea|side effects?|symptoms?)\b/.test(msg) && /\b(how long|when|going away|stop|end|last|persist)\b/.test(msg)) {
+    return "Most GLP-1 side effects peak in the first 4-8 weeks and improve as your body adjusts. If nausea is severe past week 8 or your dose just changed, mention it to your prescriber — they can pause the next escalation.";
+  }
+  if (/\bplateau|stall|stuck|not losing|stopped losing\b/.test(msg)) {
+    return "Plateaus on GLP-1s are common — your body adapts to the calorie deficit. Things that often break a plateau: making sure you're hitting your protein target, adding resistance training, checking your sleep, and giving your body 2-3 weeks at the same calorie level before adjusting.";
+  }
+  if (/\bconstipation|constipated|bowel|poop\b/.test(msg)) {
+    return "Constipation is one of the most common GLP-1 side effects — slowed digestion is the cause. Aim for 25-30g of fiber daily, 64-80 oz of water, and a 10-15 minute walk after meals. Magnesium citrate at night helps if those aren't enough.";
+  }
+  if (/\bdiarrhea|loose stool|runs\b/.test(msg)) {
+    return "Diarrhea on GLP-1s usually shows up in the first few weeks or after a dose escalation. Bland foods (rice, banana, toast), small frequent meals, and electrolytes help. If it lasts more than 48 hours, call your prescriber.";
+  }
+  if (/\bheartburn|reflux|acid\b/.test(msg)) {
+    return "Heartburn is common on GLP-1s because slowed digestion means food sits in the stomach longer. Smaller meals, no eating within 2 hours of bed, and avoiding triggers (alcohol, coffee, spicy food) helps. Mention persistent heartburn to your prescriber.";
+  }
+  if (/\binjection (site|pain|bruise|swelling|red)/i.test(msg)) {
+    return "Mild injection-site soreness, redness, or a small bruise is common and usually resolves in a day or two. Rotate sites (belly, thigh, upper arm) and let the pen warm up for a few minutes before injecting. Persistent swelling or pus warrants a call to your prescriber.";
+  }
+  return null;
+}
+
 // One focused prompt + budget per intent. Each prompt is intentionally short
 // (~15-20 lines vs the 2,500-line orchestrator system prompt) so Gemini can
 // actually follow every rule. Each bans the specific failure mode observed in
@@ -565,6 +620,35 @@ export class AIService {
             { err: err instanceof Error ? err.message : String(err), intent: directIntent },
             'ai.direct_path.error',
           );
+        }
+
+        // 2026-06-05 v4 architectural fix: when knowledge_direct fails
+        // and we have a topic-aware fallback ready, ship the fallback
+        // IMMEDIATELY instead of running the orchestrator. Production
+        // data showed knowledge_direct hit rate at 33%; when it fails,
+        // the orchestrator path adds 15-40 seconds. For known topics
+        // (water, alcohol, muscle, protein, sleep, coffee, exercise,
+        // hair loss, side effects, plateau) the fallback IS the best
+        // answer Grace can ship.
+        if (directIntent === 'knowledge') {
+          const topicFallback = pickKnowledgeTopicFallback(input.text);
+          if (topicFallback) {
+            const stageTimings = lat.snapshot();
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info(
+              { userId: input.userId, latencyMs: totalMs, stageTimings, intent: 'knowledge_topic_fallback' },
+              'ai.knowledge_topic_fallback.served',
+            );
+            this.persistLatency(input.userId, 'knowledge_topic_fallback', totalMs, stageTimings, input.text, topicFallback);
+            return {
+              text: topicFallback,
+              confidence: 'medium',
+              intent: 'knowledge_topic_fallback',
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
+          }
         }
       }
     }

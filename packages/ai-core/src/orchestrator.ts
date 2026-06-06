@@ -407,7 +407,7 @@ export function buildDietAwareSuggestion(
   return `A few options: ${list}. ${FOLLOWUP_BY_MEAL[mealType]}`;
 }
 
-function getToolAwareFallback(
+export function getToolAwareFallback(
   type: MessageType,
   toolResults: ToolResult[],
   opts?: {
@@ -459,7 +459,12 @@ function getToolAwareFallback(
       if (hasSymptom) {
         return `That sounds rough — I hear you. Logged ${base}. Hydration and a small bland snack often help if the discomfort sticks around.`;
       }
-      return `Got it — ${base.charAt(0).toUpperCase() + base.slice(1)}.`;
+      // 2026-06-06: was `Got it — ${base.charAt(0).toUpperCase() + base.slice(1)}.`
+      // After format-enforcer's em-dash → comma rule that became "Got it, About
+      // 45g protein for that." — a stray capital A mid-sentence. Lowercase
+      // version reads correctly both as "Got it — about 45g..." and after
+      // conversion to "Got it, about 45g..."
+      return `Got it — ${base}.`;
     }
     if (hasSymptom) {
       return "That sounds rough — I hear you. Logged what you mentioned. Hydration and a small bland snack often help if the discomfort sticks around.";

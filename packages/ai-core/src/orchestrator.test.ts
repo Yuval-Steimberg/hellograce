@@ -711,3 +711,26 @@ describe('buildDietAwareSuggestion — diet + allergy filter (2026-06-06)', () =
     expect(out).toMatch(/Front-load 25-30g of protein to set the day up well\.$/);
   });
 });
+
+describe('getToolAwareFallback — food log formatting (2026-06-06)', () => {
+  it('produces "Got it — about Xg protein for that." (lowercase after em-dash)', async () => {
+    // Production failure: shipped "Got it, About 45g protein for that."
+    // (stray capital A) after format-enforcer flattened em-dash to comma.
+    // Now uses lowercase "about" so the post-conversion output reads as
+    // grammatical "Got it, about 45g protein for that."
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const reply = getToolAwareFallback('food_log', [
+      { name: 'log_food', ok: true, output: { ok: true, protein_g: 45 }, latencyMs: 100 },
+    ]);
+    expect(reply).toBe('Got it — about 45g protein for that.');
+    expect(reply).not.toMatch(/, About\b/);
+  });
+
+  it('still uppercases the symptom-acknowledgement branch', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const reply = getToolAwareFallback('food_log', [
+      { name: 'log_food', ok: true, output: { ok: true, protein_g: 45 }, latencyMs: 100 },
+    ], { userMessage: 'I had eggs but my stomach hurts' });
+    expect(reply).toMatch(/^That sounds rough/);
+  });
+});

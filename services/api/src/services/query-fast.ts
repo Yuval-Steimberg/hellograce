@@ -306,7 +306,15 @@ export async function tryQueryFast(
         if (!summary) return null;
         const proteinTotal = Math.round(summary.protein_g);
         const calTotal = Math.round(summary.calories);
-        const items = summary.items.filter((s) => s && s.trim().length > 0);
+        // 2026-06-06: log_food.sumItemized joins multi-item meals with " + "
+        // for a clean internal label, but that label leaks into the user-
+        // facing summary as "3 eggs + salad + 1 can tuna + 1 cup rice".
+        // Split on " + " so the natural comma-and-"and" list reads cleanly:
+        // "3 eggs, salad, 1 can tuna, and 1 cup rice."
+        const items = summary.items
+          .flatMap((s) => (s ?? '').split(/\s*\+\s*/))
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
         if (items.length === 0) {
           return {
             text: `Nothing logged yet today. Send me what you've eaten and I'll track it.`,

@@ -20,6 +20,38 @@ import {
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
 import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
+import type { GraceUser } from '../user/user.service.js';
+
+/**
+ * Deterministic protein-target walkthrough. Fires when the user replies
+ * "yes" / "please" / "sure" to a Grace offer like "want me to walk you
+ * through the numbers?" — ships the clinical math grounded in the user's
+ * stored profile (or the general formula when profile is incomplete).
+ *
+ * Zero LLM call, ~80ms end-to-end vs ~3s for the knowledge_direct path.
+ * Returns null when even a generic explanation wouldn't help (no
+ * meaningful starting point).
+ */
+function buildProteinTargetWalkthrough(user: GraceUser | null): string | null {
+  if (!user) return null;
+  const weightLbs = user.current_weight;
+  const goalG = user.protein_goal_grams;
+  // We have weight → compute the actual target range from formula.
+  if (weightLbs && weightLbs > 0) {
+    const kg = weightLbs / 2.205;
+    const lowG = Math.round(kg * 1.2);
+    const highG = Math.round(kg * 1.6);
+    if (goalG && goalG > 0) {
+      return `Your ${goalG}g target comes from your current weight (${weightLbs} lbs ≈ ${Math.round(kg)} kg) × 1.2g per kg — the clinical GLP-1 floor. The upper end (1.6g/kg) puts you closer to ${highG}g, which protects muscle better when calorie intake drops. Around ${lowG}-${highG}g daily is the safe range.`;
+    }
+    return `Quick math: at ${weightLbs} lbs (≈${Math.round(kg)} kg), the GLP-1 protein range is 1.2-1.6g per kg, which works out to ${lowG}-${highG}g per day. The upper end protects muscle better since 25-35% of weight lost on GLP-1 can be lean mass without enough protein.`;
+  }
+  // No weight on file → ship the general formula + ask for weight.
+  if (goalG && goalG > 0) {
+    return `Your ${goalG}g target follows the GLP-1 protein guideline of 1.2-1.6g per kg of body weight daily. If you tell me your current weight I can show you exactly where ${goalG}g lands in your personal range.`;
+  }
+  return `The GLP-1 protein guideline is 1.2-1.6g per kg of body weight daily. For an average adult that's 90-130g a day, with 25-30g front-loaded at breakfast. Share your current weight and I'll calculate your exact target.`;
+}
 
 // ─── Direct-path config (2026-06-05 architectural inversion) ─────────────────
 // 2026-06-05 v4: when knowledge_direct fails (33% hit rate in prod), we'd
@@ -592,6 +624,39 @@ export class AIService {
       const followupTurns = await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
       const followupLastAssistant = [...followupTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
       if (isShortFollowUp && /\?\s*$/.test(followupLastAssistant.trim())) {
+        // 2026-06-06 production failure: "why" → Grace offered "want me to
+        // walk you through the numbers?" → user "yes" → runDirectPath
+        // (knowledge) hit Gemini, Gemini returned something the guards
+        // rejected → null → orchestrator → typed fallback "Tell me a bit
+        // more?". Add a DETERMINISTIC walkthrough for the affirmative
+        // response to a "walk you through" / "break it down" / "show you
+        // the math" / "want me to explain" offer. Zero LLM call, ~80ms,
+        // grounded in the user's actual numbers.
+        const isAffirmative = /^(?:yes|yep|yeah|yup|sure|ok|okay|please|please do|go ahead|do it|alright|absolutely)$/i.test(trimmedLower);
+        const lastLower = followupLastAssistant.toLowerCase();
+        const offeredWalkthrough = /\b(walk you through|break it down|break that down|break the (?:numbers?|math|math down)|show you the math|show the math|run you through|run the (?:numbers?|math)|do the math|want me to (?:explain|show|calculate))\b/.test(lastLower);
+        if (isAffirmative && offeredWalkthrough) {
+          const u = await this.deps.users.getById(input.userId).catch(() => null);
+          const walkthrough = buildProteinTargetWalkthrough(u);
+          if (walkthrough) {
+            lat.mark('followup_walkthrough');
+            const totalMs = Date.now() - t0;
+            const stageTimings = lat.snapshot();
+            this.deps.logger.info(
+              { userId: input.userId, latencyMs: totalMs, stageTimings, intent: 'followup_walkthrough' },
+              'ai.followup_walkthrough.served',
+            );
+            this.persistLatency(input.userId, 'followup_walkthrough', totalMs, stageTimings, input.text, walkthrough);
+            return {
+              text: walkthrough,
+              confidence: 'high',
+              intent: 'followup_walkthrough',
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
+          }
+        }
         try {
           lat.mark('followup_direct');
           const direct = await this.runDirectPath('knowledge', input.text, input.userId);

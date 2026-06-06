@@ -158,3 +158,58 @@ describe('tryQueryFast', () => {
     expect(__testing.WEIGHT_GOAL_RE.test(normalize('What’s my goal weight'))).toBe(true);
   });
 });
+
+describe('food_summary_today: multi-item label splitting (2026-06-06)', () => {
+  it('splits "3 eggs + salad + 1 can tuna + 1 cup rice" into a natural comma list', async () => {
+    // Production failure: log_food.sumItemized joins multi-item meals with
+    // " + " for an internal label; that label leaked into the user-facing
+    // summary as "Today you've had 3 eggs + salad + 1 can tuna + 1 cup
+    // rice. Running total: 45g protein, 680 kcal." Now we split on " + "
+    // so the items read naturally.
+    const users = {
+      getById: vi.fn().mockResolvedValue({
+        protein_goal_grams: 80,
+        calorie_goal_kcal: 1800,
+        goal_weight: 160,
+        current_weight: 180,
+      }),
+      getTodaysFoodSummary: vi.fn().mockResolvedValue({
+        protein_g: 45,
+        calories: 680,
+        items: ['3 eggs + salad + 1 can tuna + 1 cup rice'],
+        items_detailed: [],
+      }),
+    } as unknown as UserService;
+    const r = await tryQueryFast('what i ate today?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('food_summary_today');
+    // Each item appears as a standalone comma-separated entry with "and"
+    // before the last one. The " + " label is gone.
+    expect(r!.text).toBe(
+      "Today you've had 3 eggs, salad, 1 can tuna, and 1 cup rice. Running total: 45g protein, 680 kcal.",
+    );
+    expect(r!.text).not.toMatch(/\+/);
+  });
+
+  it('handles already-split items (single-item food_logs rows)', async () => {
+    const users = {
+      getById: vi.fn().mockResolvedValue({
+        protein_goal_grams: 80,
+        calorie_goal_kcal: 1800,
+        goal_weight: 160,
+        current_weight: 180,
+      }),
+      getTodaysFoodSummary: vi.fn().mockResolvedValue({
+        protein_g: 30,
+        calories: 450,
+        items: ['Greek yogurt with hemp seeds', 'apple'],
+        items_detailed: [],
+      }),
+    } as unknown as UserService;
+    const r = await tryQueryFast('what i ate today', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toBe(
+      "Today you've had Greek yogurt with hemp seeds, and apple. Running total: 30g protein, 450 kcal.",
+    );
+  });
+});

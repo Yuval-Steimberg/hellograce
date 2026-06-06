@@ -552,6 +552,49 @@ export class AIService {
       const earlyIntent = classifyIntent(input.text);
       const directIntent = earlyIntent.type;
 
+      // 2026-06-06 production failure: user "Yes" after Grace asked "want
+      // me to walk you through the numbers?" → got "Tell me a bit more?".
+      // "Yes" classifies as 'general' so it doesn't hit any direct path,
+      // and the orchestrator without history doesn't know what "Yes"
+      // refers to. Route short follow-ups (yes/why/more/no/sure/please)
+      // through knowledge_direct which has the followUpContext injection
+      // that uses the previous Grace message.
+      const trimmedLower = input.text.trim().toLowerCase();
+      const isShortFollowUp = trimmedLower.length <= 25 &&
+        /^(?:yes|yep|yeah|yup|sure|ok|okay|please|please do|go ahead|do it|alright|absolutely|no|nope|why|why\??|how come|how so|more|more please|tell me more|continue|go on|really\??|what do you mean|like what)$/i.test(trimmedLower);
+      // Re-fetch last assistant message — the earlier fetch lives inside the
+      // media-check scope and isn't visible here.
+      const followupTurns = await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
+      const followupLastAssistant = [...followupTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+      if (isShortFollowUp && /\?\s*$/.test(followupLastAssistant.trim())) {
+        try {
+          lat.mark('followup_direct');
+          const direct = await this.runDirectPath('knowledge', input.text, input.userId);
+          if (direct) {
+            const stageTimings = lat.snapshot();
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info(
+              { userId: input.userId, latencyMs: totalMs, stageTimings, intent: 'followup_direct' },
+              'ai.followup_direct.served',
+            );
+            this.persistLatency(input.userId, 'followup_direct', totalMs, stageTimings, input.text, direct);
+            return {
+              text: direct,
+              confidence: 'high',
+              intent: 'followup_direct',
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.followup_direct.error',
+          );
+        }
+      }
+
       // 2026-06-05 production failure: "what should I eat for breakfast
       // tomorrow?" → orchestrator → Gemini refused with AI disclaimer
       // "I cannot provide personalized dietary advice." Route food_question

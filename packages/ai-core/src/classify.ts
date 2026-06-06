@@ -193,7 +193,11 @@ const GREETING: RegExp[] = [
 
 const EMOTIONAL: RegExp[] = [
   /\b(struggling|hard day|rough day|bad day|not (a )?(great|good) day)\b/i,
-  /\bfeel (so |really |very )?(bad|sad|down|depressed|anxious|overwhelmed|stressed|hopeless|defeated|frustrated|angry|annoyed|defeated|stuck|lost|broken)\b/i,
+  /\bfeel (so |really |very )?(bad|sad|down|depressed|anxious|nervous|scared|afraid|worried|overwhelmed|stressed|hopeless|defeated|frustrated|angry|annoyed|defeated|stuck|lost|broken)\b/i,
+  // 2026-06-06 production failure: "I'm nervous" → "What's the rest of that?"
+  // because EMOTIONAL didn't include nervous/scared/worried/anxious in any
+  // pattern. Add a dedicated "I'm <feeling>" matcher for these states.
+  /\b(?:i'?m|im|i am)\s+(?:just |so |really |kind of |a bit |very |super )*(?:nervous|scared|afraid|worried|anxious|terrified|panicking|panicked|on edge|jittery|uneasy|apprehensive|fearful)\b/i,
   /\b(want to (give up|quit|stop)|not sure (if )?this is working)\b/i,
   /\b(lost (my |the )?motivation|can't (do this|keep going|stick to this))\b/i,
   /\b(really (tired|exhausted|drained|burned out) of)\b/i,

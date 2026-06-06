@@ -882,7 +882,7 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bgive\s+me\s+a\s+(?:moment|sec|minute|second)\s+to\s+(?:get|figure|pull|grab|look)\b/i, reason: 'Lying fallback — promises to look something up but never does' },
   { pattern: /\bbear\s+with\s+me,?\s+(?:pulling|getting|grabbing|looking|figuring)\b/i, reason: 'Lying fallback — promises action that never completes' },
   { pattern: /\bone\s+sec,?\s+(?:i\s+want\s+to\s+give|let\s+me\s+(?:give|get|pull|look)|pulling|getting)\b/i, reason: 'Lying fallback — "one sec, let me…" never delivers' },
-  { pattern: /\bof\s+course\s+[—\-,]\s+what\s+works\s+better\s+for\s+you\b/i, reason: 'Settings-question deflection — should redirect to grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings, not ask' },
+  { pattern: /\bof\s+course\s+[—\-,]\s+what\s+works\s+better\s+for\s+you\b/i, reason: 'Settings-question deflection — should redirect to graceglp.com/settings, not ask' },
   { pattern: /\bof\s+course!?\s+(?:happy|glad)\s+to\s+(?:help|adjust)\b/i, reason: 'AI assistant opener' },
 
   // Topic-switching follow-up questions after a log — the user told you what
@@ -1221,7 +1221,7 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\b(would you like|want) me to send you a (message|reminder|notification) at\b/i, reason: 'Grace cannot schedule one-off reminders for a specific clock time; never offer this' },
   { pattern: /\bi (can|will|could) (send you a reminder|remind you) at\b/i, reason: 'same — no clock-time reminder tool exists' },
   { pattern: /\bi (can|will) set (a |an )?(reminder|alarm|alert) for\b/i, reason: 'no reminder-setting tool; do not promise this' },
-  { pattern: /\bjust tell me the new date\b.{0,30}(treatment|start)/i, reason: 'no natural-language date-edit tool; direct user to grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings' },
+  { pattern: /\bjust tell me the new date\b.{0,30}(treatment|start)/i, reason: 'no natural-language date-edit tool; direct user to graceglp.com/settings' },
 ];
 
 export function checkBannedPhrases(text: string): ContentViolation[] {
@@ -1241,20 +1241,20 @@ export function checkBannedPhrases(text: string): ContentViolation[] {
 
 /**
  * Detects the literal "[link]" placeholder, "<link>", "[settings link]", etc.
- * The prompt requires Grace to emit the real URL (https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings).
+ * The prompt requires Grace to emit the real URL (https://graceglp.com/settings).
  */
 export function checkLinkPlaceholder(text: string): ContentViolation[] {
   if (/\[(link|settings link|url|here)\]/i.test(text)) {
     return [{
       code: 'link_placeholder',
-      message: 'emitted a "[link]" placeholder instead of the real URL https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings',
+      message: 'emitted a "[link]" placeholder instead of the real URL https://graceglp.com/settings',
       match: text.match(/\[[^\]]+\]/)?.[0],
     }];
   }
   if (/<link>/i.test(text)) {
     return [{
       code: 'link_placeholder',
-      message: 'emitted a "<link>" placeholder instead of the real URL https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings',
+      message: 'emitted a "<link>" placeholder instead of the real URL https://graceglp.com/settings',
       match: '<link>',
     }];
   }
@@ -1472,7 +1472,7 @@ export function buildContentRegenInstruction(
   const linkHits = violations.filter((v) => v.code === 'link_placeholder');
   if (linkHits.length > 0) {
     parts.push(
-      `Your draft used a "[link]" placeholder. Replace it with the literal URL https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings — never write a placeholder.`,
+      `Your draft used a "[link]" placeholder. Replace it with the literal URL https://graceglp.com/settings — never write a placeholder.`,
     );
   }
 

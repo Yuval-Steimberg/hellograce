@@ -589,11 +589,11 @@ export function enforceFormat(
   // ─── "[link]" placeholder → real settings URL ──────────────────────────
   // Cheap auto-fix saves a regen for the most common variants.
   if (/\[(link|settings link|url|here)\]/i.test(text)) {
-    text = text.replace(/\[(link|settings link|url|here)\]/gi, 'https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings');
+    text = text.replace(/\[(link|settings link|url|here)\]/gi, 'https://graceglp.com/settings');
     fixes.push('link_placeholder_replaced');
   }
   if (/<link>/i.test(text)) {
-    text = text.replace(/<link>/gi, 'https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings');
+    text = text.replace(/<link>/gi, 'https://graceglp.com/settings');
     fixes.push('link_angle_placeholder_replaced');
   }
 

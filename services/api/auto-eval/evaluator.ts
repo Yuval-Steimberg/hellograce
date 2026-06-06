@@ -45,7 +45,7 @@ Grace's behavioral rules:
 - Never suggest disliked foods
 - Medical boundary: "Research shows..." framing, defer to doctor for doses/interactions
 - Non-judgmental stance: never shame, never "at least", never conditional praise
-- Settings changes → redirect to grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings
+- Settings changes → redirect to graceglp.com/settings
 - Medication type matters: don't say "injection day" to a pill user
 
 Return your evaluation as JSON.`;

@@ -372,3 +372,102 @@ describe('classifyMessage — symptoms take priority over food_log (2026-06-05 f
     expect(result.type).not.toBe('knowledge');
   });
 });
+
+describe('classifyMessage — imperative recommendation requests (2026-06-06 production fix)', () => {
+  // Production failure: user sent "Give me high-protein snacks" → Grace
+  // replied "Say more, I'm with you." This was the orchestrator's typed
+  // fallback for 'general' intent — classification missed every existing
+  // FOOD_QUESTION pattern (no "what should I", "any X ideas", etc.).
+
+  it('matches the exact production failure "Give me high-protein snacks"', () => {
+    const result = classifyMessage('Give me high-protein snacks');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "Give me some snack ideas"', () => {
+    const result = classifyMessage('Give me some snack ideas');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "Show me lunch options"', () => {
+    const result = classifyMessage('Show me lunch options');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "List a few breakfast ideas"', () => {
+    const result = classifyMessage('List a few breakfast ideas');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "I want high-protein snacks"', () => {
+    const result = classifyMessage('I want high-protein snacks');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "I need some dinner ideas"', () => {
+    const result = classifyMessage('I need some dinner ideas');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "Looking for low-carb meals"', () => {
+    const result = classifyMessage('Looking for low-carb meals');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "any snack ideas"', () => {
+    const result = classifyMessage('any snack ideas');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "any protein options"', () => {
+    const result = classifyMessage('any protein options');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "keto breakfast ideas"', () => {
+    const result = classifyMessage('keto breakfast ideas');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "vegan dinner options"', () => {
+    const result = classifyMessage('vegan dinner options');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "high-fiber breakfast options"', () => {
+    const result = classifyMessage('high-fiber breakfast options');
+    expect(result.type).toBe('food_question');
+  });
+
+  it('matches "snack recommendations please"', () => {
+    const result = classifyMessage('snack recommendations please');
+    expect(result.type).toBe('food_question');
+  });
+
+  // ─── Negative cases: imperative patterns should NOT match non-food requests ──
+
+  it('does NOT match "Give me a minute" (no food noun)', () => {
+    const result = classifyMessage('Give me a minute');
+    expect(result.type).not.toBe('food_question');
+  });
+
+  it('does NOT match "Show me my weight" (no food noun)', () => {
+    const result = classifyMessage('Show me my weight');
+    expect(result.type).not.toBe('food_question');
+  });
+
+  it('does NOT match "I want to lose weight" (no food noun)', () => {
+    const result = classifyMessage('I want to lose weight');
+    expect(result.type).not.toBe('food_question');
+  });
+
+  it('does NOT match "Tell me about side effects" (knowledge)', () => {
+    const result = classifyMessage('Tell me about side effects');
+    expect(result.type).not.toBe('food_question');
+  });
+
+  it('does NOT match "I need a break" (pause request)', () => {
+    const result = classifyMessage('I need a break');
+    expect(result.type).not.toBe('food_question');
+  });
+});

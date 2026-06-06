@@ -176,8 +176,27 @@ const FOOD_QUESTION: RegExp[] = [
   /\bhow much protein (in|is|does|for)\b/i,
   /\bcan i (eat|have|drink)\b/i,
   /\b(hungry).{0,50}(what|any|suggest|recommend)/i,
-  /\bany (food|meal|snack|dinner|lunch|breakfast) (ideas?|suggestions?|recommendations?)\b/i,
+  /\bany (food|meal|snack|dinner|lunch|breakfast|protein) (ideas?|suggestions?|recommendations?|options?)\b/i,
   /\bwhat('?s| is) (a )?(good|healthy|high.protein|filling|light) (meal|snack|option|food|breakfast|lunch|dinner)/i,
+  // 2026-06-06 production failure: "Give me high-protein snacks" was
+  // classified as 'general' → orchestrator failed → typed fallback shipped
+  // "Say more — I'm with you." None of the patterns above catch the
+  // imperative request form ("Give me X", "Show me X", "List X") or the
+  // descriptive noun form ("high-protein snacks", "low-carb meals"). The
+  // four patterns below close those gaps without firing on non-food
+  // imperatives ("give me a minute", "show me the weight"): each requires
+  // a concrete food/recommendation noun in the same sentence.
+  // Imperative recommendation request: "Give/Show/List/Tell me ... <food-noun>"
+  // "sides?" intentionally NOT in the noun list — "side" matched "side
+  // effects" in the user message "Tell me about side effects" (a knowledge
+  // question, not a food request).
+  /^(give|show|list|find|suggest|name|tell|share|throw|send|bring|hit)\s+me\s+(?:some\s+|a\s+(?:few|list\s+of|couple|bunch)\s+|more\s+|new\s+)?[^.?!]{0,60}\b(snacks?|meals?|breakfasts?|lunches?|dinners?|brunches?|foods?|ideas?|options?|recipes?|recommendations?|bars?|drinks?|smoothies?|shakes?|desserts?|treats?|protein\s+(?:bars?|shakes?|options?))\b/i,
+  // "I want/need/looking for ... <food-noun>"
+  /^(?:i\s+)?(?:want|need|am\s+looking\s+for|looking\s+for|would\s+like|could\s+use)\s+(?:some\s+|a\s+(?:few|list\s+of|couple)\s+|more\s+|new\s+)?[^.?!]{0,60}\b(snacks?|meals?|breakfasts?|lunches?|dinners?|brunches?|foods?|ideas?|options?|recipes?|bars?|drinks?|smoothies?|shakes?|protein\s+(?:bars?|shakes?|options?))\b/i,
+  // Descriptive noun phrase: "high-protein snacks", "low-carb meals", "keto breakfast"
+  /\b(?:high[-\s]protein|low[-\s](?:carb|calorie|fat|sodium|sugar|cal)|protein[-\s]rich|fiber[-\s]rich|whole[-\s]food|plant[-\s]based|keto|vegan|vegetarian|paleo|mediterranean|low[-\s]glycemic|gluten[-\s]free|dairy[-\s]free|sugar[-\s]free|high[-\s]fiber|nutrient[-\s]dense)\s+(snacks?|meals?|breakfasts?|lunches?|dinners?|brunches?|foods?|ideas?|options?|recipes?|bars?|drinks?|smoothies?|shakes?|desserts?)\b/i,
+  // "<meal-type> ideas/options/suggestions/recommendations/recipes"
+  /\b(snack|meal|breakfast|lunch|dinner|brunch|food|protein|smoothie|shake|recipe|dessert|treat)\s+(ideas?|options?|suggestions?|recommendations?|recipes?)\b/i,
 ];
 
 const WEIGHT_LOG: RegExp[] = [

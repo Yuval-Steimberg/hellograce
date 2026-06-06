@@ -368,6 +368,48 @@ function getToolAwareFallback(
     }
   }
 
+  // 2026-06-06 production failure: "Give me high-protein snacks" classified
+  // as 'general' → orchestrator failed → typed fallback rotated to
+  // "Say more — I'm with you." A direct request must never become a generic
+  // engagement prompt. If the user's message is recommendation-shaped — an
+  // imperative ("Give/Show/List me X"), a want statement ("I want X"), or
+  // a descriptive food noun ("high-protein snacks") — ship concrete ideas
+  // here as a last line of defense, even when classified 'general' or
+  // 'food_question'. The classifier fix in classify.ts catches this case
+  // upstream; this fallback covers any future near-misses.
+  if ((type === 'general' || type === 'food_question') && opts?.userMessage) {
+    const msg = opts.userMessage.toLowerCase();
+    const isRecRequest =
+      /^(give|show|list|find|suggest|name|tell|share|throw|send|bring|hit)\s+me\b/.test(msg) ||
+      /^(?:i\s+)?(want|need|am looking for|looking for|would like|could use)\b/.test(msg) ||
+      /\b(high[-\s]protein|low[-\s](?:carb|calorie|fat|sodium|sugar)|protein[-\s]rich|fiber[-\s]rich|plant[-\s]based|keto|vegan|vegetarian|paleo|mediterranean|gluten[-\s]free)\s+(snacks?|meals?|breakfasts?|lunches?|dinners?|foods?|ideas?|options?|recipes?|bars?|drinks?|smoothies?|shakes?)\b/.test(msg) ||
+      /\b(snack|meal|breakfast|lunch|dinner|brunch|food|protein|smoothie|shake|recipe|dessert)\s+(ideas?|options?|suggestions?|recommendations?|recipes?)\b/.test(msg);
+    if (isRecRequest) {
+      const mealType =
+        /\bbreakfast\b/.test(msg) ? 'breakfast' :
+        /\blunch\b/.test(msg) ? 'lunch' :
+        /\bdinner\b|supper/.test(msg) ? 'dinner' :
+        /\bsnack/.test(msg) ? 'snack' : 'option';
+      // Generic GLP-1-friendly defaults that work for any diet. Specific
+      // names beat categories — the user wanted snack ideas, not "consider
+      // high-protein options".
+      if (mealType === 'snack') {
+        return "A few options: Greek yogurt with hemp seeds, cottage cheese with berries, a hard-boiled egg with a slice of cheese, or a tuna packet with cucumber. All protein-forward and easy on slowed digestion.";
+      }
+      if (mealType === 'breakfast') {
+        return "A few options: Greek yogurt with hemp seeds, a two-egg veggie omelet, cottage cheese with berries, or smoked salmon on rye. Front-load 25-30g of protein to set the day up well.";
+      }
+      if (mealType === 'lunch') {
+        return "A few options: grilled chicken over greens, a tuna and avocado bowl, lentil soup with feta, or turkey and hummus wrap. Aim for 25-35g of protein at lunch.";
+      }
+      if (mealType === 'dinner') {
+        return "A few options: salmon with roasted veg, chicken stir-fry with edamame, lentil curry with yogurt, or steak strips with quinoa. Keep the portion modest — slowed digestion fills you faster.";
+      }
+      // Generic recommendation — covers "give me high-protein options" with no meal type
+      return "A few options: Greek yogurt with hemp seeds, a two-egg omelet, cottage cheese with berries, or a tuna packet. Protein-forward, easy on slowed digestion, and quick to put together.";
+    }
+  }
+
   return getTypedFallback(type);
 }
 

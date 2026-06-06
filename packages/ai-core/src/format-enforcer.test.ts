@@ -114,13 +114,13 @@ describe('enforceFormat', () => {
   describe('[link] placeholder', () => {
     it('replaces "[link]" with the real settings URL', () => {
       const { text, fixes } = enforceFormat('Update it here: [link]');
-      expect(text).toBe('Update it here: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings');
+      expect(text).toBe('Update it here: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings');
       expect(fixes).toContain('link_placeholder_replaced');
     });
 
     it('replaces "[settings link]" with the URL', () => {
       const { text } = enforceFormat('Use [settings link] to change it.');
-      expect(text).toBe('Use https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings to change it.');
+      expect(text).toBe('Use https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings to change it.');
     });
   });
 

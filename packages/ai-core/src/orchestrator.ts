@@ -119,9 +119,9 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
   ],
   scheduling: [
     // Direct link to settings — the prompt rule says scheduling changes go
-    // to grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings, fallback should match.
-    "You can change check-in frequency at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings any time.",
-    "Settings live at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings — adjust there and it'll take effect right away.",
+    // to grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings, fallback should match.
+    "You can change check-in frequency at grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings any time.",
+    "Settings live at grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings — adjust there and it'll take effect right away.",
   ],
   knowledge: [
     "Muscle loss is common on GLP-1s, with research showing 25-35% of weight lost can be lean mass. Protein (1.2-1.6g/kg daily) and resistance training help shift the balance toward fat loss.",
@@ -559,7 +559,7 @@ export function getToolAwareFallback(
   if (type === 'knowledge' && opts?.userMessage) {
     const msg = opts.userMessage.toLowerCase();
     if (/\bwhat (?:is|'?s)\s+my\b/.test(msg) || /\bdo you know\s+my\b/.test(msg) || /\btell me\s+my\b/.test(msg)) {
-      return "I don't have that detail on file yet. You can set it at grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.";
+      return "I don't have that detail on file yet. You can set it at grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings.";
     }
     // 2026-06-05 production failure: "how much water?" got the muscle-loss
     // typed fallback (first array entry) because the knowledge typed

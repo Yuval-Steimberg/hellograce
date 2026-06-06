@@ -22,7 +22,7 @@
  *
  *   user: "what is my timezone?"
  *   Grace: "Your timezone is Asia/Jerusalem (Jerusalem).
- *           You can change it at https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings"
+ *           You can change it at https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings"
  *
  * The FIELDS registry below is the single source of truth — adding a new
  * settable field is one entry: key + label + readPatterns + updatePatterns
@@ -52,7 +52,7 @@ interface MinimalLogger {
   error: (obj: object, msg?: string) => void;
 }
 
-const SETTINGS_URL = 'https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings';
+const SETTINGS_URL = 'https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings';
 const PENDING_TTL_SECONDS = 600; // 10 minutes
 const PENDING_KEY_PREFIX = 'settings:pending:';
 

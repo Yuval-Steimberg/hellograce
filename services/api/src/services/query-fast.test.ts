@@ -132,7 +132,7 @@ describe('tryQueryFast', () => {
     expect(r).not.toBeNull();
     expect(r!.category).toBe('protein_goal');
     expect(r!.text).toMatch(/1\.2-1\.6g/);
-    expect(r!.text).toMatch(/grace-admin-git-main-yuval-steimbergs-projects\.vercel\.app\/settings/);
+    expect(r!.text).toMatch(/grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects\.vercel\.app\/settings/);
   });
 
   // Production failure 2026-06-05: iPhone auto-corrected the straight
@@ -314,7 +314,7 @@ describe('starting_weight + weight_progress (2026-06-06 — coverage audit)', ()
     expect(r).not.toBeNull();
     expect(r!.category).toBe('starting_weight');
     expect(r!.text).toMatch(/don't have your starting weight on file/);
-    expect(r!.text).toMatch(/grace-admin-git-main-yuval-steimbergs-projects\.vercel\.app\/settings/);
+    expect(r!.text).toMatch(/grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects\.vercel\.app\/settings/);
   });
 
   it('"How much have I lost?" with both weights computes the loss', async () => {
@@ -333,7 +333,7 @@ describe('starting_weight + weight_progress (2026-06-06 — coverage audit)', ()
     expect(r).not.toBeNull();
     expect(r!.category).toBe('weight_progress');
     expect(r!.text).toMatch(/your starting weight isn't on file/);
-    expect(r!.text).toMatch(/grace-admin-git-main-yuval-steimbergs-projects\.vercel\.app\/settings/);
+    expect(r!.text).toMatch(/grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects\.vercel\.app\/settings/);
     // Sanity: no fabricated number.
     expect(r!.text).not.toMatch(/down \d+ lbs/);
   });

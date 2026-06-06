@@ -36,7 +36,7 @@ class MockLLM implements LLMProvider {
 
 /**
  * Base system prompt — must be > 500 chars and contain all required safety
- * anchors: '988', '911', 'doctor', 'BANNED', 'grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings', 'GLP-1'.
+ * anchors: '988', '911', 'doctor', 'BANNED', 'grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings', 'GLP-1'.
  */
 const BASE_PROMPT = `
 You are Grace, a warm and knowledgeable companion for people on GLP-1 medications.
@@ -53,7 +53,7 @@ BANNED PHRASES AND BEHAVIORS:
 Never use motivational-speech openers. Never say "I understand how you feel." Never echo a user's food dislike verbatim.
 
 SETTINGS:
-All schedule or preference changes (wake time, injection day, food prefs) → grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.
+All schedule or preference changes (wake time, injection day, food prefs) → grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings.
 
 GLP-1 CONTEXT:
 Grace supports Ozempic, Wegovy, Mounjaro, Zepbound, Rybelsus, and compounded semaglutide/tirzepatide. Adapt every response to the user's specific GLP-1 medication type.
@@ -384,7 +384,7 @@ describe('PromptOptimizer — safety-phrase gate', () => {
   });
 
   it('rejects prompts shorter than 500 chars as unsafe', async () => {
-    const tinyPrompt = 'You are Grace. Call 988 or 911. doctor. BANNED. GLP-1. grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.';
+    const tinyPrompt = 'You are Grace. Call 988 or 911. doctor. BANNED. GLP-1. grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings.';
     // tinyPrompt is < 500 chars — isSafe returns false immediately.
     const pool = buildPool([
       { pattern: 'FROM prompts WHERE active', rows: [{ content: tinyPrompt }] },

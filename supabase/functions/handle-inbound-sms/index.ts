@@ -1310,13 +1310,13 @@ Grace MUST:
 • Redirect to the settings section via link
 • NOT attempt to update or confirm changes in conversation
 
-When sharing the settings link, ALWAYS use the literal URL: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings
+When sharing the settings link, ALWAYS use the literal URL: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings
 NEVER write "[link]" or any placeholder — write the full URL.
 
 Example responses:
-"Easy fix — you can update that right here: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings"
-"That's something you can change in your settings: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings"
-"I've got you — head here and it takes two seconds: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings"
+"Easy fix — you can update that right here: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings"
+"That's something you can change in your settings: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings"
+"I've got you — head here and it takes two seconds: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MESSAGE TYPES
@@ -1905,13 +1905,13 @@ in their own words — "I don't want messages anymore",
 Grace responds warmly, no guilt, no retention attempt,
 and gives them the settings link:
 
-"Of course — you can manage your preferences here: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings.
+"Of course — you can manage your preferences here: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings.
 And if you ever want to come back, I'll be here."
 
 OR
 
 "No problem at all — here's where you can update
-everything: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings. Take care of yourself."
+everything: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings. Take care of yourself."
 
 Never ask why. Never try to keep them. Just warmth and the link.
 
@@ -3387,7 +3387,7 @@ Reply with only the single word YES or NO. Nothing else.`,
           "Your 3-day free trial has ended. " +
           "To keep chatting with me, choose a plan " +
           "that works for you: " +
-          "https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings 🧡";
+          "https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings 🧡";
         await sendSMS(from, paywallMsg);
         await supabase.from("check_ins").insert({
           user_id: user.id,
@@ -3435,7 +3435,7 @@ Reply with only the single word YES or NO. Nothing else.`,
             "on the base plan. I'll still send your " +
             "check-ins today. For unlimited replies, " +
             "upgrade to Grace Pro: " +
-            "https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings";
+            "https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings";
           await sendSMS(from, upgradeMsg);
           await supabase.from("check_ins").insert({
             user_id: user.id,
@@ -4043,10 +4043,10 @@ Reply with only the single word YES or NO. Nothing else.`,
       const tz = user.timezone || null;
       let reply: string;
       if (!tz) {
-        reply = "I don't have your timezone saved yet. You can set it here: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings";
+        reply = "I don't have your timezone saved yet. You can set it here: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings";
       } else {
         const city = tz.split("/").pop()?.replace(/_/g, " ") || tz;
-        reply = `Your timezone is set to ${city} (${tz}). You can change it here: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings`;
+        reply = `Your timezone is set to ${city} (${tz}). You can change it here: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings`;
       }
       await logDirectReply("timezone_reply", reply);
       return twimlResponse("");
@@ -4056,7 +4056,7 @@ Reply with only the single word YES or NO. Nothing else.`,
     if (asksInjectionDay) {
       let reply: string;
       if (!injectionInfo.day) {
-        reply = "I don't have your injection day saved yet. You can set it here: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings";
+        reply = "I don't have your injection day saved yet. You can set it here: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings";
       } else if (injectionInfo.diff === 0) {
         reply = `Your injection day is ${injectionInfo.day} — that's today.`;
       } else if (injectionInfo.diff === 1) {
@@ -4074,7 +4074,7 @@ Reply with only the single word YES or NO. Nothing else.`,
     if (asksInjectionToday) {
       let reply: string;
       if (!injectionInfo.day) {
-        reply = "I don't have your injection day saved yet. You can set it here: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings";
+        reply = "I don't have your injection day saved yet. You can set it here: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings";
       } else if (injectionInfo.diff === 0) {
         reply = "Today is your injection day. If you're unsure whether to take it, your doctor should guide that call.";
       } else if (injectionInfo.diff === 1) {
@@ -4587,7 +4587,7 @@ Reply with only the single word YES or NO. Nothing else.`,
       ])
     ) {
       const reply =
-        "Of course, you can update your reminder schedule and timing here: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings";
+        "Of course, you can update your reminder schedule and timing here: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings";
       await sendSMS(from, reply);
       await supabase.from("check_ins").insert({
         user_id: user.id,
@@ -4627,7 +4627,7 @@ Reply with only the single word YES or NO. Nothing else.`,
         "downgrade",
       ])
     ) {
-      const reply = "You can manage all that here: https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings";
+      const reply = "You can manage all that here: https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings";
       await sendSMS(from, reply);
       await supabase.from("check_ins").insert({
         user_id: user.id,
@@ -4736,7 +4736,7 @@ If nothing was logged for that period: say honestly "I don't have anything logge
 
 Never say "I don't have access." You always have access.
 Never make up information that isn't in the context.
-When sharing any link, always write the full URL https://grace-admin-git-main-yuval-steimbergs-projects.vercel.app/settings — NEVER "[link]".
+When sharing any link, always write the full URL https://grace-admin-git-claude-gemini-c34cfe-yuval-steimbergs-projects.vercel.app/settings — NEVER "[link]".
 Do NOT use markdown formatting (no asterisks, no underscores, no brackets) — this is plain SMS.
 Keep it to 1-2 sentences. No question unless it genuinely helps.
 

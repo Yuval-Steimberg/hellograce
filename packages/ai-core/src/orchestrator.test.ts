@@ -620,3 +620,94 @@ describe('trimToLastCompleteSentence — final safety net', () => {
     expect(r.trimmed).toBe("Take your time…");
   });
 });
+
+describe('buildDietAwareSuggestion — diet + allergy filter (2026-06-06)', () => {
+  it('returns omnivore options when no restriction given', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    const out = buildDietAwareSuggestion('snack', null, []);
+    expect(out).not.toBeNull();
+    expect(out).toContain('A few options:');
+    // Omnivore snacks include animal-based options.
+    expect(out!.toLowerCase()).toMatch(/yogurt|tuna|egg|cheese/);
+  });
+
+  it('vegan user: never suggests chicken / yogurt / eggs / fish', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    const vegan = { label: 'VEGAN' as const, forbidden: ['chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna', 'dairy', 'milk', 'cheese', 'yogurt', 'eggs'], allowed: ['tofu', 'lentils'] };
+    const out = buildDietAwareSuggestion('snack', vegan, []);
+    expect(out).not.toBeNull();
+    const lower = out!.toLowerCase();
+    expect(lower).not.toMatch(/\b(chicken|yogurt|egg|cheese|tuna|salmon|beef|pork)\b/);
+    // Should suggest plant options instead.
+    expect(lower).toMatch(/edamame|hummus|chickpea|tofu|hemp/);
+  });
+
+  it('vegetarian user: suggests eggs/cheese but NEVER fish or chicken', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    const vegetarian = { label: 'VEGETARIAN' as const, forbidden: ['chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna', 'turkey'], allowed: ['eggs', 'yogurt', 'lentils'] };
+    const out = buildDietAwareSuggestion('lunch', vegetarian, []);
+    expect(out).not.toBeNull();
+    const lower = out!.toLowerCase();
+    expect(lower).not.toMatch(/\b(chicken|turkey|fish|salmon|tuna|beef)\b/);
+  });
+
+  it('pescatarian user: fish OK, chicken/beef NOT', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    const pescatarian = { label: 'PESCATARIAN' as const, forbidden: ['chicken', 'beef', 'pork', 'turkey'], allowed: ['fish', 'salmon', 'tuna'] };
+    const out = buildDietAwareSuggestion('dinner', pescatarian, []);
+    expect(out).not.toBeNull();
+    const lower = out!.toLowerCase();
+    expect(lower).not.toMatch(/\b(chicken|turkey|beef|pork)\b/);
+  });
+
+  it('user with fish allergy: omnivore options but no salmon/tuna', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    const out = buildDietAwareSuggestion('snack', null, ['fish', 'salmon', 'tuna']);
+    expect(out).not.toBeNull();
+    const lower = out!.toLowerCase();
+    expect(lower).not.toMatch(/\b(salmon|tuna|fish)\b/);
+  });
+
+  it('user with allergy phrased as "allergic to nuts": strips qualifier + filters', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    // "almonds" should be filtered because "nuts" stem matches the food list
+    // implicitly via tokenization. (Stem match is tokenized — won't catch
+    // "almonds" unless the dislike list contains "almonds". Test the literal.)
+    const out = buildDietAwareSuggestion('snack', null, ['allergic to almonds', 'allergic to peanuts']);
+    expect(out).not.toBeNull();
+    const lower = out!.toLowerCase();
+    expect(lower).not.toMatch(/\b(almond|peanut)s?\b/);
+  });
+
+  it('user dislikes "no eggs": filters out anything with eggs', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    const out = buildDietAwareSuggestion('breakfast', null, ['no eggs']);
+    expect(out).not.toBeNull();
+    const lower = out!.toLowerCase();
+    expect(lower).not.toMatch(/\beggs?\b/);
+  });
+
+  it('returns null when too few options survive (vegan + heavy allergy load)', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    const vegan = { label: 'VEGAN' as const, forbidden: ['chicken', 'beef', 'pork', 'fish', 'salmon', 'tuna', 'dairy', 'milk', 'cheese', 'yogurt', 'eggs'], allowed: [] };
+    const out = buildDietAwareSuggestion('snack', vegan, ['edamame', 'hummus', 'chickpeas', 'hemp', 'apples', 'peanuts', 'almonds']);
+    // Most or all options stripped → returns null so caller can pick a
+    // user-guidance line instead of risking a forbidden food.
+    expect(out).toBeNull();
+  });
+
+  it('builds the line with comma list + final "or" + meal-specific follow-up', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    const out = buildDietAwareSuggestion('lunch', null, []);
+    expect(out).not.toBeNull();
+    expect(out).toMatch(/^A few options: /);
+    expect(out).toMatch(/, or /);
+    expect(out).toMatch(/Aim for 25-35g of protein at lunch\.$/);
+  });
+
+  it('breakfast meal type adds the breakfast-specific follow-up', async () => {
+    const { buildDietAwareSuggestion } = await import('./orchestrator.js');
+    const out = buildDietAwareSuggestion('breakfast', null, []);
+    expect(out).toMatch(/Front-load 25-30g of protein to set the day up well\.$/);
+  });
+});

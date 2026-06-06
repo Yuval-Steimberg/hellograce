@@ -854,6 +854,23 @@ export class AIService {
       return formatted.text;
     }
 
+    // 2026-06-06: Build a DIETARY CONTEXT block from the user's profile so
+    // Gemini can never recommend a forbidden food. Allergies live in
+    // food_dislikes (Grace stores "allergic to fish" / "no shellfish" there
+    // alongside taste dislikes), so the same field covers both.
+    const dietLabel = dietaryRestriction?.label?.toLowerCase() ?? null;
+    const forbiddenWords = [
+      ...(dietaryRestriction?.forbidden ?? []),
+      ...dislikes,
+    ].map((w) => w.trim()).filter(Boolean);
+    const dietaryContextBlock = (dietLabel || forbiddenWords.length > 0)
+      ? `\n\nDIETARY CONTEXT — apply to every suggestion:
+${dietLabel ? `- The user follows a ${dietLabel} diet. Never suggest a food that contains a non-${dietLabel} ingredient.` : ''}
+${forbiddenWords.length > 0 ? `- The user dislikes or is allergic to: ${forbiddenWords.join(', ')}. Never suggest a dish that contains any of these.` : ''}
+- If a dish has both safe and forbidden versions (e.g. "yogurt" with dairy vs coconut), name the safe variant explicitly.
+- If you can't think of 3 safe options, ask the user what usually sits well — don't risk suggesting a forbidden food.`
+      : '';
+
     // Curated miss → focused Gemini call with strong refusal-language ban.
     const FOOD_QUESTION_SYSTEM = `You are Grace, a warm GLP-1 companion. The user is asking what to eat or for food recommendations.
 
@@ -870,7 +887,7 @@ NEVER (any of these mean refusal — banned):
 - Ask "what kind of meal are you thinking?" — they already told you (or didn't, you suggest anyway).
 - Use parenthetical brand-name dumps.
 
-If you don't know specifics, name standard GLP-1 friendly options and move on.
+If you don't know specifics, name standard GLP-1 friendly options and move on.${dietaryContextBlock}
 
 CRITICAL CONTEXT RULES — apply on every turn:
 - You ALWAYS have the user's recent conversation history above. Use it to remember context, preferences, prior side effects, weight changes, mood, what they ate, and what you've discussed.
@@ -922,6 +939,37 @@ CRITICAL CONTEXT RULES — apply on every turn:
       );
       return null;
     }
+    // 2026-06-06: post-generation diet/allergy filter. Belt-and-suspenders
+    // against Gemini ignoring the DIETARY CONTEXT block. If the response
+    // mentions a forbidden food word, drop to null so the orchestrator's
+    // diet-aware fallback runs.
+    if (forbiddenWords.length > 0 || dietaryRestriction) {
+      const responseLower = formatted.text.toLowerCase();
+      const tripped: string[] = [];
+      const checkWord = (word: string) => {
+        const w = word.toLowerCase().trim();
+        if (w.length < 3) return;
+        // Whole-word match — \b on either side.
+        const re = new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}s?\\b`, 'i');
+        if (re.test(responseLower)) tripped.push(w);
+      };
+      for (const w of dietaryRestriction?.forbidden ?? []) checkWord(w);
+      for (const raw of dislikes) {
+        // Allergies stored as dislikes — strip qualifier prefix.
+        const cleaned = raw
+          .replace(/^(?:i'?m\s+)?allergic\s+to\s+/i, '')
+          .replace(/^(?:i\s+(?:don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(?:like\s+)?|no\s+|avoid\s+)/i, '')
+          .trim();
+        for (const tok of cleaned.split(/[\s,]+/).filter(Boolean)) checkWord(tok);
+      }
+      if (tripped.length > 0) {
+        this.deps.logger.warn(
+          { tripped, userId: input.userId },
+          'food_question_direct.forbidden_food_leak',
+        );
+        return null;
+      }
+    }
     return formatted.text;
   }
 
@@ -935,6 +983,8 @@ CRITICAL CONTEXT RULES — apply on every turn:
     // today's totals and inject as a YOUR USER block so Gemini can be
     // specific. Memory miss is non-fatal.
     let userContextBlock = '';
+    let directDietaryRestriction: DietaryRestriction | null = null;
+    let directDislikes: string[] = [];
     if (userId) {
       try {
         const u = await this.deps.users.getById(userId);
@@ -950,7 +1000,26 @@ CRITICAL CONTEXT RULES — apply on every turn:
             const weeks = Math.floor((Date.now() - new Date(u.glp1_start_date).getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
             if (weeks > 0) lines.push(`GLP-1 week: ${weeks}`);
           }
-          if (u.dietary_pattern) lines.push(`Dietary pattern: ${u.dietary_pattern}`);
+          // 2026-06-06: diet + allergies/dislikes injected verbatim so Gemini
+          // can never recommend a forbidden food on a knowledge / medication
+          // / appointment-prep question. Same post-gen filter as
+          // handleFoodQuestionDirect catches any model leak.
+          if (u.dietary_pattern) {
+            lines.push(`Dietary pattern: ${u.dietary_pattern}`);
+            directDietaryRestriction = buildRestrictionFromLabel(u.dietary_pattern);
+          }
+          directDislikes = (u.food_dislikes ?? [])
+            .map((d) =>
+              (d ?? '')
+                .trim()
+                .replace(/^(?:i'?m\s+)?allergic\s+to\s+/i, '')
+                .replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '')
+                .trim(),
+            )
+            .filter((d) => d.length > 0);
+          if (directDislikes.length > 0) {
+            lines.push(`Avoid / disliked / allergic to: ${directDislikes.join(', ')}`);
+          }
           if (lines.length > 0) {
             userContextBlock = `\n\nUSER PROFILE (use for specifics, don't restate verbatim):\n${lines.join('\n')}\n`;
           }
@@ -1038,6 +1107,32 @@ CRITICAL RULES:
         'direct_path.content_violations',
       );
       return null;
+    }
+
+    // 2026-06-06: forbidden-food post-gen filter for diet + allergies.
+    // Gemini sometimes lists a meat/dairy example even after the USER
+    // PROFILE block says "Dietary pattern: vegan". Belt-and-suspenders
+    // drop to null so the orchestrator's diet-aware fallback runs.
+    if (directDietaryRestriction || directDislikes.length > 0) {
+      const responseLower = formatted.text.toLowerCase();
+      const tripped: string[] = [];
+      const checkWord = (word: string) => {
+        const w = word.toLowerCase().trim();
+        if (w.length < 3) return;
+        const re = new RegExp(`\\b${w.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}s?\\b`, 'i');
+        if (re.test(responseLower)) tripped.push(w);
+      };
+      for (const w of directDietaryRestriction?.forbidden ?? []) checkWord(w);
+      for (const raw of directDislikes) {
+        for (const tok of raw.split(/[\s,]+/).filter(Boolean)) checkWord(tok);
+      }
+      if (tripped.length > 0) {
+        this.deps.logger.warn(
+          { tripped, intent, userId },
+          'direct_path.forbidden_food_leak',
+        );
+        return null;
+      }
     }
 
     // 2026-06-05 production failure: knowledge_direct shipped truncated

@@ -185,10 +185,238 @@ function getTypedFallback(type: MessageType): string {
 // stomach hurts." → Grace replied "Logged." and ignored the pain.
 const SYMPTOM_IN_USER_MSG_RE = /\b(stomach|tummy|belly|gut)\s+(hurts?|aches?|ache|cramping|cramp|upset|sore|burning|in pain)\b|\b(nauseous|nausea|queasy|sick to my stomach|throwing up|threw up|vomiting|vomited)\b|\b(heartburn|acid reflux|reflux|indigestion)\b|\b(headache|migraine|dizzy|lightheaded|woozy)\b|\b(constipated|diarrhea|cramps?)\b/i;
 
+// ─── Diet-aware suggestion banks (2026-06-06) ─────────────────────────────────
+// GLP-1 friendly foods tagged by which diets they fit, indexed by meal type.
+// Used by every fallback that ships food suggestions (TYPED_FALLBACKS food_
+// question, recommendation safety net) so a vegan never gets chicken/salmon
+// recommended and a tree-nut-allergic user never gets almonds.
+//
+// Each entry is filtered through `foodDislikes` (which is also where allergies
+// land — Grace stores "allergic to fish" as a dislike). Forbidden-word check
+// uses whole-word matching against the food name.
+type DietKey = 'omnivore' | 'vegetarian' | 'vegan' | 'pescatarian';
+type MealKey = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'general';
+
+const DIET_AWARE_FALLBACK_FOODS: Record<DietKey, Record<MealKey, string[]>> = {
+  omnivore: {
+    breakfast: [
+      'Greek yogurt with hemp seeds',
+      'a two-egg veggie omelet',
+      'cottage cheese with berries',
+      'smoked salmon on rye',
+    ],
+    lunch: [
+      'grilled chicken over greens',
+      'a tuna and avocado bowl',
+      'turkey and hummus wrap',
+      'lentil soup with feta',
+    ],
+    dinner: [
+      'salmon with roasted veg',
+      'chicken stir-fry with edamame',
+      'steak strips with quinoa',
+      'turkey chili',
+    ],
+    snack: [
+      'Greek yogurt with hemp seeds',
+      'cottage cheese with berries',
+      'a hard-boiled egg with cheese',
+      'a tuna packet with cucumber',
+    ],
+    general: [
+      'Greek yogurt with hemp seeds',
+      'a two-egg omelet',
+      'cottage cheese with berries',
+      'a tuna packet',
+    ],
+  },
+  vegetarian: {
+    breakfast: [
+      'Greek yogurt with hemp seeds',
+      'a two-egg veggie omelet',
+      'cottage cheese with berries',
+      'overnight oats with chia and protein powder',
+    ],
+    lunch: [
+      'lentil soup with feta',
+      'paneer and chickpea bowl',
+      'a cheese and bean burrito',
+      'caprese salad with white beans',
+    ],
+    dinner: [
+      'lentil curry with yogurt',
+      'paneer tikka with quinoa',
+      'eggplant parmesan with a side of beans',
+      'halloumi with roasted veg',
+    ],
+    snack: [
+      'Greek yogurt with hemp seeds',
+      'cottage cheese with cucumber',
+      'a hard-boiled egg with cheese',
+      'edamame with sea salt',
+    ],
+    general: [
+      'Greek yogurt with hemp seeds',
+      'cottage cheese with berries',
+      'a two-egg omelet',
+      'edamame',
+    ],
+  },
+  vegan: {
+    breakfast: [
+      'tofu scramble with veg',
+      'chia pudding with hemp seeds',
+      'overnight oats with pea protein',
+      'coconut yogurt with berries and almonds',
+    ],
+    lunch: [
+      'a tofu poke bowl',
+      'chickpea salad with tahini',
+      'a tempeh and avocado wrap',
+      'lentil soup with whole-grain bread',
+    ],
+    dinner: [
+      'tofu stir-fry with broccoli',
+      'lentil curry with brown rice',
+      'tempeh tacos with black beans',
+      'a chickpea and spinach stew',
+    ],
+    snack: [
+      'edamame with sea salt',
+      'hummus with veggie sticks',
+      'roasted chickpeas',
+      'a hemp-seed-topped apple',
+    ],
+    general: [
+      'edamame',
+      'a tofu poke bowl',
+      'hummus with veggie sticks',
+      'lentil soup',
+    ],
+  },
+  pescatarian: {
+    breakfast: [
+      'Greek yogurt with hemp seeds',
+      'smoked salmon on rye',
+      'a two-egg veggie omelet',
+      'cottage cheese with berries',
+    ],
+    lunch: [
+      'a tuna and avocado bowl',
+      'a salmon poke bowl',
+      'lentil soup with feta',
+      'a shrimp salad',
+    ],
+    dinner: [
+      'salmon with roasted veg',
+      'shrimp stir-fry with edamame',
+      'baked cod with quinoa',
+      'tuna steak with greens',
+    ],
+    snack: [
+      'a tuna packet with cucumber',
+      'cottage cheese with berries',
+      'smoked salmon roll-ups',
+      'Greek yogurt with hemp seeds',
+    ],
+    general: [
+      'Greek yogurt with hemp seeds',
+      'a tuna packet',
+      'salmon with veg',
+      'cottage cheese with berries',
+    ],
+  },
+};
+
+const FOLLOWUP_BY_MEAL: Record<MealKey, string> = {
+  breakfast: 'Front-load 25-30g of protein to set the day up well.',
+  lunch: 'Aim for 25-35g of protein at lunch.',
+  dinner: 'Keep the portion modest — slowed digestion fills you faster.',
+  snack: 'All protein-forward and easy on slowed digestion.',
+  general: 'Protein-forward and easy on slowed digestion.',
+};
+
+function pickDietKey(restriction: DietaryRestrictionLite | undefined | null): DietKey {
+  if (!restriction) return 'omnivore';
+  switch (restriction.label) {
+    case 'VEGAN': return 'vegan';
+    case 'VEGETARIAN': return 'vegetarian';
+    case 'PESCATARIAN': return 'pescatarian';
+    default: return 'omnivore';
+  }
+}
+
+/** Lightweight subset of DietaryRestriction to avoid an import cycle. */
+interface DietaryRestrictionLite {
+  label: 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN';
+  forbidden: string[];
+  allowed: string[];
+}
+
+/** Tokenizes user dislikes/allergies into a forbidden word set with sing/plural
+ *  variants, so "allergic to nuts" filters out "almonds" via the stem match
+ *  on `nut/nuts`. */
+function buildForbiddenSet(
+  restriction: DietaryRestrictionLite | undefined | null,
+  dislikes: string[] | undefined,
+): Set<string> {
+  const forbidden = new Set<string>();
+  const add = (raw: string) => {
+    const w = raw.toLowerCase().trim();
+    if (w.length < 2) return;
+    forbidden.add(w);
+    if (w.endsWith('s')) forbidden.add(w.slice(0, -1));
+    else forbidden.add(w + 's');
+  };
+  for (const w of restriction?.forbidden ?? []) add(w);
+  for (const raw of dislikes ?? []) {
+    // Allergies are stored as dislikes — "allergic to nuts" / "no shellfish".
+    // Strip the leading qualifier so we tokenize the food itself.
+    const cleaned = raw
+      .toLowerCase()
+      .replace(/^(?:i'?m\s+)?allergic\s+to\s+/, '')
+      .replace(/^(?:i\s+(?:don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(?:like\s+)?|no\s+|avoid\s+|allergy\s+to\s+)/, '')
+      .trim();
+    for (const tok of cleaned.split(/[\s,]+/).filter(Boolean)) add(tok);
+  }
+  return forbidden;
+}
+
+function foodContainsForbidden(food: string, forbidden: Set<string>): boolean {
+  if (forbidden.size === 0) return false;
+  const tokens = food.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  return tokens.some((t) => forbidden.has(t));
+}
+
+/** Builds a diet-and-allergy-safe recommendation line. Returns at least 3
+ *  options (after filtering) or null when not enough survive — caller should
+ *  fall back to a "tell me what works for you" style line in that case. */
+export function buildDietAwareSuggestion(
+  mealType: MealKey,
+  restriction: DietaryRestrictionLite | undefined | null,
+  dislikes: string[] | undefined,
+): string | null {
+  const dietKey = pickDietKey(restriction);
+  const candidates = DIET_AWARE_FALLBACK_FOODS[dietKey][mealType] ?? DIET_AWARE_FALLBACK_FOODS[dietKey].general;
+  const forbidden = buildForbiddenSet(restriction, dislikes);
+  const survivors = candidates.filter((c) => !foodContainsForbidden(c, forbidden));
+  if (survivors.length < 3) return null;
+  const picks = survivors.slice(0, 4);
+  const last = picks.pop()!;
+  const list = picks.length > 0 ? `${picks.join(', ')}, or ${last}` : last;
+  return `A few options: ${list}. ${FOLLOWUP_BY_MEAL[mealType]}`;
+}
+
 function getToolAwareFallback(
   type: MessageType,
   toolResults: ToolResult[],
-  opts?: { isReasoningRequest?: boolean; lastAssistantMessage?: string; userMessage?: string },
+  opts?: {
+    isReasoningRequest?: boolean;
+    lastAssistantMessage?: string;
+    userMessage?: string;
+    dietaryRestriction?: DietaryRestrictionLite | null;
+    foodDislikes?: string[];
+  },
 ): string {
   // 2026-06-04 CRITICAL RULE: reasoning requests ("Why?" / "How is that
   // calculated?" / "Where did that come from?") must NEVER fall back to
@@ -377,6 +605,10 @@ function getToolAwareFallback(
   // here as a last line of defense, even when classified 'general' or
   // 'food_question'. The classifier fix in classify.ts catches this case
   // upstream; this fallback covers any future near-misses.
+  //
+  // 2026-06-06 v2: every food suggestion goes through buildDietAwareSuggestion
+  // so vegan/vegetarian/pescatarian users + anyone with food dislikes or
+  // allergies never sees a forbidden food.
   if ((type === 'general' || type === 'food_question') && opts?.userMessage) {
     const msg = opts.userMessage.toLowerCase();
     const isRecRequest =
@@ -385,29 +617,32 @@ function getToolAwareFallback(
       /\b(high[-\s]protein|low[-\s](?:carb|calorie|fat|sodium|sugar)|protein[-\s]rich|fiber[-\s]rich|plant[-\s]based|keto|vegan|vegetarian|paleo|mediterranean|gluten[-\s]free)\s+(snacks?|meals?|breakfasts?|lunches?|dinners?|foods?|ideas?|options?|recipes?|bars?|drinks?|smoothies?|shakes?)\b/.test(msg) ||
       /\b(snack|meal|breakfast|lunch|dinner|brunch|food|protein|smoothie|shake|recipe|dessert)\s+(ideas?|options?|suggestions?|recommendations?|recipes?)\b/.test(msg);
     if (isRecRequest) {
-      const mealType =
+      const mealType: MealKey =
         /\bbreakfast\b/.test(msg) ? 'breakfast' :
         /\blunch\b/.test(msg) ? 'lunch' :
         /\bdinner\b|supper/.test(msg) ? 'dinner' :
-        /\bsnack/.test(msg) ? 'snack' : 'option';
-      // Generic GLP-1-friendly defaults that work for any diet. Specific
-      // names beat categories — the user wanted snack ideas, not "consider
-      // high-protein options".
-      if (mealType === 'snack') {
-        return "A few options: Greek yogurt with hemp seeds, cottage cheese with berries, a hard-boiled egg with a slice of cheese, or a tuna packet with cucumber. All protein-forward and easy on slowed digestion.";
-      }
-      if (mealType === 'breakfast') {
-        return "A few options: Greek yogurt with hemp seeds, a two-egg veggie omelet, cottage cheese with berries, or smoked salmon on rye. Front-load 25-30g of protein to set the day up well.";
-      }
-      if (mealType === 'lunch') {
-        return "A few options: grilled chicken over greens, a tuna and avocado bowl, lentil soup with feta, or turkey and hummus wrap. Aim for 25-35g of protein at lunch.";
-      }
-      if (mealType === 'dinner') {
-        return "A few options: salmon with roasted veg, chicken stir-fry with edamame, lentil curry with yogurt, or steak strips with quinoa. Keep the portion modest — slowed digestion fills you faster.";
-      }
-      // Generic recommendation — covers "give me high-protein options" with no meal type
-      return "A few options: Greek yogurt with hemp seeds, a two-egg omelet, cottage cheese with berries, or a tuna packet. Protein-forward, easy on slowed digestion, and quick to put together.";
+        /\bsnack/.test(msg) ? 'snack' : 'general';
+      const suggestion = buildDietAwareSuggestion(mealType, opts.dietaryRestriction, opts.foodDislikes);
+      if (suggestion) return suggestion;
+      // Not enough diet-safe candidates survived — ask the user to guide
+      // instead of risking a forbidden food.
+      return "Tell me what usually sits well for you and I'll suggest a few that fit.";
     }
+  }
+
+  // 2026-06-06: also intercept the bare-bones TYPED_FALLBACKS.food_question
+  // line ("Greek yogurt, cottage cheese, or eggs...") when type is
+  // food_question AND no other branch returned. Ship a diet-aware
+  // suggestion instead of the hardcoded list.
+  if (type === 'food_question' && opts && (opts.dietaryRestriction || (opts.foodDislikes?.length ?? 0) > 0)) {
+    const msg = opts.userMessage?.toLowerCase() ?? '';
+    const mealType: MealKey =
+      /\bbreakfast\b/.test(msg) ? 'breakfast' :
+      /\blunch\b/.test(msg) ? 'lunch' :
+      /\bdinner\b|supper/.test(msg) ? 'dinner' :
+      /\bsnack/.test(msg) ? 'snack' : 'general';
+    const suggestion = buildDietAwareSuggestion(mealType, opts.dietaryRestriction, opts.foodDislikes);
+    if (suggestion) return suggestion;
   }
 
   return getTypedFallback(type);
@@ -1160,7 +1395,7 @@ export class AIOrchestrator {
     const blockViolations = contentViolations.filter((v) => v.severity === 'block');
     if (blockViolations.length > 0) {
       return {
-        text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}), ...(input.text ? { userMessage: input.text } : {}) }),
+        text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}), ...(input.text ? { userMessage: input.text } : {}), ...(input.dietaryRestriction ? { dietaryRestriction: input.dietaryRestriction } : {}), ...(input.foodDislikes && input.foodDislikes.length > 0 ? { foodDislikes: input.foodDislikes } : {}) }),
         confidence: 'low',
         intent: plan.intent,
         toolResults,
@@ -1702,7 +1937,7 @@ export class AIOrchestrator {
             critic = retryCritic;
           } else {
             validated = {
-              text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}), ...(input.text ? { userMessage: input.text } : {}) }),
+              text: getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}), ...(input.text ? { userMessage: input.text } : {}), ...(input.dietaryRestriction ? { dietaryRestriction: input.dietaryRestriction } : {}), ...(input.foodDislikes && input.foodDislikes.length > 0 ? { foodDislikes: input.foodDislikes } : {}) }),
               confidence: 'low',
               flags: ['safe_fallback'],
             };
@@ -1740,7 +1975,7 @@ export class AIOrchestrator {
       if (cleaned) {
         finalText = candidate;
       } else {
-        finalText = getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}), ...(input.text ? { userMessage: input.text } : {}) });
+        finalText = getToolAwareFallback(classification.type, toolResults, { isReasoningRequest, ...(lastAssistantMessage ? { lastAssistantMessage } : {}), ...(input.text ? { userMessage: input.text } : {}), ...(input.dietaryRestriction ? { dietaryRestriction: input.dietaryRestriction } : {}), ...(input.foodDislikes && input.foodDislikes.length > 0 ? { foodDislikes: input.foodDislikes } : {}) });
         usedSafeFallback = true;
       }
     }

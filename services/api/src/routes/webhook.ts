@@ -10,6 +10,7 @@ import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { UnauthorizedError, UpstreamError } from '../errors.js';
 import { classifyScope } from '../safety/scope-guard.js';
 import { classifyMessage as classifySafety } from '../safety/guard.js';
+import { tryHandleSettings } from '../services/settings-flow.js';
 
 const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 
@@ -176,6 +177,37 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
                 body: `Done — your injection day is now set to ${injDay}.`,
               });
               return;
+            }
+          }
+
+          // ── Settings & Profile Update Flow (2026-06-06).
+          // Centralized read/update handler for every other profile field
+          // — timezone, medication, dose, weight, goal weight, height, sex,
+          // food dislikes, name, age, primary goal. Update requests stage
+          // a Redis-backed pending update and ask for confirmation; the
+          // user's "yes" applies it, "no" cancels it. Runs AFTER the
+          // existing short-circuits above so their immediate-update UX
+          // for injection day / frequency / opt-out stays unchanged.
+          if (user && deps.users && deps.redis) {
+            try {
+              const settingsReply = await tryHandleSettings(normalized.text, user, {
+                users: deps.users,
+                redis: deps.redis,
+                logger: app.log,
+              });
+              if (settingsReply) {
+                await deps.sender.send({
+                  to: normalized.userId,
+                  channel: normalized.channel,
+                  body: settingsReply,
+                });
+                return;
+              }
+            } catch (err) {
+              app.log.warn(
+                { err: err instanceof Error ? err.message : String(err), userId: normalized.userId },
+                'settings_flow.unexpected_error',
+              );
             }
           }
 

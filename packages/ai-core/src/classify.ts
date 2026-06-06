@@ -46,8 +46,12 @@ export interface ClassifyResult {
 // downstream behaviour: force get_food_summary so Grace answers from the
 // actual food_logs rows instead of hallucinating or asking for clarification.
 const FOOD_SUMMARY_QUESTION: RegExp[] = [
-  /\bhow (much|many)\s+(protein|calorie|carb|gram|kcal)/i,
-  /\b(what'?s|whats) my (protein|calorie|total)/i,
+  // 2026-06-06: tightened to require today/so-far/eaten anchors. The old
+  // generic "how much protein" matched REQUIREMENT questions ("how much
+  // protein should I eat per day") which should route to knowledge with
+  // clinical target answers (1.2-1.6g/kg), not food summary.
+  /\bhow (much|many)\s+(protein|calorie|carb|gram|kcal)\b[^.?!]{0,40}\b(have i|did i|today|so far|left|remaining|consumed|eaten|logged|right now|currently)\b/i,
+  /\b(what'?s|whats) my (protein|calorie|total)\b[^.?!]{0,40}\b(today|so far|right now|count|total|currently)\b/i,
   /\bhow (much|many) did i (eat|have|consume) (today|this (week|day))/i,
   /\b(my|today'?s) (protein|calorie) (count|total|so far)/i,
   /\b(at|on) (how much|how many|what)\b.{0,30}(today|so far)/i,
@@ -452,7 +456,15 @@ export function classifyMessage(rawText: string): ClassifyResult {
   // The AI service inspects the verbatim regex match to decide which tool
   // to force-call (get_protein_history vs get_food_summary vs get_user_profile).
   if (matches(text, FOOD_HISTORY_QUESTION)) return { type: 'food_question', confidence: 0.95 };
-  if (matches(text, PROTEIN_TARGET_QUESTION)) return { type: 'food_question', confidence: 0.92 };
+  // 2026-06-06 production failure: "What is the recommended proteins for a
+  // man?" was classified as food_question → food_question_direct → curated
+  // bank shipped FOOD IDEAS ("grilled chicken breast, baked cod, cottage
+  // cheese..."). User asked about REQUIREMENTS (grams/kg), not foods.
+  //
+  // Protein-target questions are CLINICAL/KNOWLEDGE questions. Route to
+  // knowledge intent so knowledge_direct OR pickKnowledgeTopicFallback
+  // ships the actual target (1.2-1.6g/kg, 90-130g, breakfast front-load).
+  if (matches(text, PROTEIN_TARGET_QUESTION)) return { type: 'knowledge', confidence: 0.92 };
   if (matches(text, FOOD_REMOVAL_QUESTION)) return { type: 'food_question', confidence: 0.92 };
   // Pause request — explicit + short. Must come BEFORE scheduling since
   // "stop sending messages" overlaps with scheduling-frequency phrasing.

@@ -425,12 +425,17 @@ describe('production regressions — 2026-06-05 v4 critical fixes', () => {
 
   // Bug 3: "How many grams of proteins should have based on research"
   // missed PROTEIN_TARGET_QUESTION regex
-  it('"How many grams of proteins should have based on research" → food_question', () => {
-    expect(classifyMessage('How many grams of proteins should have based on research').type).toBe('food_question');
+  // 2026-06-06: routing changed from food_question → knowledge for these
+  // protein-requirement questions. They ask for clinical targets in
+  // grams/kg, not food ideas. knowledge_direct + pickKnowledgeTopicFallback
+  // ship "1.2-1.6g/kg = 90-130g for an average adult" instead of "consider
+  // grilled chicken, eggs, cottage cheese."
+  it('"How many grams of proteins should have based on research" → knowledge', () => {
+    expect(classifyMessage('How many grams of proteins should have based on research').type).toBe('knowledge');
   });
 
-  it('"How many grams of protein per day" → food_question', () => {
-    expect(classifyMessage('How many grams of protein per day').type).toBe('food_question');
+  it('"How many grams of protein per day" → knowledge', () => {
+    expect(classifyMessage('How many grams of protein per day').type).toBe('knowledge');
   });
 });
 

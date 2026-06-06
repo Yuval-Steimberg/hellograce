@@ -116,25 +116,36 @@ describe('classifyMessage — past-day / history queries (protein audit)', () =>
   });
 });
 
-describe('classifyMessage — target/goal explanation queries (protein audit)', () => {
+describe('classifyMessage — target/goal explanation queries (now route to knowledge for clinical answers)', () => {
+  // 2026-06-06: routing changed from food_question → knowledge. Reason:
+  // PROTEIN_TARGET_QUESTION patterns are CLINICAL/REQUIREMENT questions
+  // ("how much protein should I eat", "what's my target"). Routing to
+  // food_question shipped curated food ideas (grilled chicken, eggs)
+  // instead of the actual quantitative target (1.2-1.6g/kg). Now routed
+  // to knowledge where knowledge_direct + pickKnowledgeTopicFallback ship
+  // clinical answers with grams/kg targets.
   it('matches "why is my protein target 60g?"', () => {
-    expect(classifyMessage('why is my protein target 60g?').type).toBe('food_question');
+    expect(classifyMessage('why is my protein target 60g?').type).toBe('knowledge');
   });
 
   it('matches "how was my protein goal calculated?"', () => {
-    expect(classifyMessage('how was my protein goal calculated?').type).toBe('food_question');
+    expect(classifyMessage('how was my protein goal calculated?').type).toBe('knowledge');
   });
 
   it('matches "what\'s my protein target?"', () => {
-    expect(classifyMessage("what's my protein target?").type).toBe('food_question');
+    expect(classifyMessage("what's my protein target?").type).toBe('knowledge');
   });
 
   it('matches "is 60g of protein enough?"', () => {
-    expect(classifyMessage('is 60g of protein enough?').type).toBe('food_question');
+    expect(classifyMessage('is 60g of protein enough?').type).toBe('knowledge');
   });
 
   it('matches "how much protein should I eat per day?"', () => {
-    expect(classifyMessage('how much protein should I eat per day?').type).toBe('food_question');
+    expect(classifyMessage('how much protein should I eat per day?').type).toBe('knowledge');
+  });
+
+  it('matches "What is the recommended protein for a man?"', () => {
+    expect(classifyMessage('What is the recommended protein for a man?').type).toBe('knowledge');
   });
 });
 

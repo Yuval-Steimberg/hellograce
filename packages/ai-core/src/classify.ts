@@ -96,6 +96,11 @@ export const PROTEIN_TARGET_QUESTION: RegExp[] = [
   // ("should have based on research"). Looser pattern allows for
   // intermediate words.
   /\bhow (much|many) grams? of (protein|proteins)\b/i,
+  // 2026-06-05 v4: "What is the recommended proteins for a man?" /
+  // "What is the protein for someone my size?" — recommendation-asking
+  // patterns that don't lead with "how much" but ask about protein.
+  /\b(what (is|are) (the )?recommended\s+(protein|proteins|grams of protein)|recommended\s+protein\s+(for|target|amount))\b/i,
+  /\b(daily|recommended|suggested)\s+(protein|calorie)\s+(intake|amount|target|goal|for)\b/i,
 ];
 
 // Past-day queries — ROUTE to food_question, but the AI service force-calls

@@ -342,6 +342,30 @@ function getToolAwareFallback(
     if (/\bhair\s+(loss|fall|shed|thin)\b/.test(msg)) {
       return "Hair shedding (telogen effluvium) is common with significant weight loss, including GLP-1 weight loss. It's typically temporary — protein, iron, and ferritin levels are worth checking with your doctor if it persists.";
     }
+    // 2026-06-05 v4: muscle-specific fallback. Question "How GLP affect my
+    // muscles?" was shipping the protein-target typed fallback. Now ships
+    // a muscle-preservation-focused answer.
+    if (/\bmuscles?\b/.test(msg) && /\b(affect|impact|lose|losing|loss|protect|maintain|keep|preserve|build)\b/.test(msg)) {
+      return "GLP-1s don't directly damage muscle, but rapid weight loss without enough protein or resistance training can cost you lean mass — research shows 25-35% of weight lost on GLP-1s can be muscle. Hitting 1.2-1.6g of protein per kg of body weight daily and lifting 2-3x a week shifts the balance toward fat loss.";
+    }
+    // 2026-06-05 v4: gendered protein-target fallback. "Recommended proteins
+    // for a man" / "for a woman" / "for someone my size" was shipping the
+    // generic muscle-loss fallback. Now ships a specific protein target.
+    if (/\b(protein|grams)\b/.test(msg) && /\b(man|woman|men|women|male|female|guy|girl|someone)\b/.test(msg)) {
+      return "On GLP-1 therapy the target is 1.2-1.6g of protein per kg of body weight daily — for an average adult that's roughly 90-130g. Front-load 25-30g at breakfast to protect muscle and reduce muscle loss during weight reduction.";
+    }
+    // Generic "how much protein" / "protein target" without gender qualifier
+    if (/\b(how (much|many)\s+(protein|grams of protein)|protein\s+(target|goal|amount|requirement|need))\b/.test(msg)) {
+      return "On a GLP-1 the target is 1.2-1.6g of protein per kg of body weight daily — typically 90-130g for an average adult. Front-load 25-30g at breakfast to protect muscle.";
+    }
+    // Side-effect duration question
+    if (/\b(nausea|side effects?|symptoms?)\b/.test(msg) && /\b(how long|when|going away|stop|end|last|persist)\b/.test(msg)) {
+      return "Most GLP-1 side effects peak in the first 4-8 weeks and improve as your body adjusts. If nausea is severe past week 8 or your dose just changed, mention it to your prescriber — they can pause the next escalation.";
+    }
+    // Plateau / stalled weight
+    if (/\bplateau|stall|stuck|not losing|stopped losing\b/.test(msg)) {
+      return "Plateaus on GLP-1s are common — your body adapts to the calorie deficit. Things that often break a plateau: making sure you're hitting your protein target, adding resistance training, checking your sleep, and giving your body 2-3 weeks at the same calorie level before adjusting.";
+    }
   }
 
   return getTypedFallback(type);

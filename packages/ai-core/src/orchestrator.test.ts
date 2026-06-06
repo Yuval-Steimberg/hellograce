@@ -755,10 +755,56 @@ describe('getToolAwareFallback — Level 2 mood-ladder (2026-06-06)', () => {
     expect(reply.toLowerCase()).toMatch(/doctor|therapist|professional/);
   });
 
-  it('Mild "I had a rough day" does NOT get Level 2 fallback (stays generic)', async () => {
+  it('Mild "I had a rough day" does NOT get Level 2 fallback (stays generic, but engaging)', async () => {
     const { getToolAwareFallback } = await import('./orchestrator.js') as any;
     const reply = getToolAwareFallback('emotional', [], { userMessage: 'I had a rough day' });
-    // Should be one of the 3 generic emotional typed fallbacks
-    expect(reply).toMatch(/^(I hear you\.|That's a lot\. I'm here\.|With you on that\.)$/);
+    // 2026-06-06 v2 — emotional typed fallbacks now include a gentle open
+    // door (per the 4-step framework) — should NOT be a bare one-liner.
+    expect(reply).not.toMatch(/^(I hear you\.|That's a lot\. I'm here\.|With you on that\.)$/);
+    // Should invite the user to share more — either a soft question or
+    // language that opens the conversation.
+    expect(reply).toMatch(/\?$|piece|underneath|put words/i);
+    // Must not push 988/911 — no self-harm signaled.
+    expect(reply).not.toMatch(/988|911/);
+  });
+});
+
+describe('Emotional engagement — 4-step framework (2026-06-06 v2)', () => {
+  it('emotional typed fallbacks always invite further conversation', async () => {
+    // Pull each of the 3 emotional fallbacks in sequence and confirm none
+    // dead-end on a bare ack.
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const seen = new Set<string>();
+    for (let i = 0; i < 6; i++) {
+      const r = getToolAwareFallback('emotional', [], { userMessage: 'hard day' });
+      seen.add(r);
+    }
+    for (const r of seen) {
+      // Every reply must include either a question OR a "share / put words /
+      // underneath" invitation.
+      expect(r).toMatch(/\?$|piece|underneath|put words|specifically/i);
+    }
+  });
+
+  it('mood_log typed fallback also includes a soft invitation', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const r = getToolAwareFallback('mood_log', [], { userMessage: 'feeling okay' });
+    // Every mood_log fallback now ends with a soft conversation door.
+    expect(r).toMatch(/\?$/);
+  });
+
+  it('Level 2 fallback follows the 4-step framework (recognize + context + question + no 988)', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const reply = getToolAwareFallback('emotional', [], {
+      userMessage: 'want to give up on everything',
+    });
+    // Step 1: recognize the feeling
+    expect(reply).toMatch(/heavy|hear/i);
+    // Step 2/3: invites the user to share more
+    expect(reply).toMatch(/\?$/);
+    // Step 3: doctor/therapist nudge (Level 2 — NOT 988 push)
+    expect(reply.toLowerCase()).toMatch(/doctor|therapist/);
+    // No 988/911 — that's safety-guard territory
+    expect(reply).not.toMatch(/988|911/);
   });
 });

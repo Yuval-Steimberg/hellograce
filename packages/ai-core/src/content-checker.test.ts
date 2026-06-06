@@ -968,3 +968,55 @@ describe('skipStaleContextEcho — FAQ cache hit exemption', () => {
     expect(violations.length).toBeGreaterThan(0);
   });
 });
+
+describe('Emotional dead-end guard (2026-06-06 v2)', () => {
+  it('"I hear you." alone in response to "I\'m nervous" → regen', () => {
+    const v = checkContent('I hear you.', { userMessage: "I'm nervous" });
+    const codes = v.map(x => x.code);
+    expect(codes).toContain('emotional_dead_end');
+    expect(v.find(x => x.code === 'emotional_dead_end')?.severity).toBe('regen');
+  });
+
+  it('"Got it." alone in response to "I\'m frustrated" → regen', () => {
+    const v = checkContent('Got it.', { userMessage: "I'm frustrated" });
+    expect(v.map(x => x.code)).toContain('emotional_dead_end');
+  });
+
+  it('"Noted." alone in response to "I\'m excited!" → regen', () => {
+    const v = checkContent('Noted.', { userMessage: "I'm excited!" });
+    expect(v.map(x => x.code)).toContain('emotional_dead_end');
+  });
+
+  it('"Understood." alone in response to "I\'m worried" → regen', () => {
+    const v = checkContent('Understood.', { userMessage: "I'm worried" });
+    expect(v.map(x => x.code)).toContain('emotional_dead_end');
+  });
+
+  it('"Thanks for sharing." alone in response to "I feel overwhelmed" → regen', () => {
+    const v = checkContent('Thanks for sharing.', { userMessage: 'I feel overwhelmed' });
+    expect(v.map(x => x.code)).toContain('emotional_dead_end');
+  });
+
+  it('Bare "I hear you 🤍" emoji-suffix still triggers regen', () => {
+    const v = checkContent('I hear you. 🤍', { userMessage: "I'm scared" });
+    expect(v.map(x => x.code)).toContain('emotional_dead_end');
+  });
+
+  it('Rich emotional reply with follow-up question PASSES the guard', () => {
+    const reply = "I hear you. What's the heaviest piece of it right now?";
+    const v = checkContent(reply, { userMessage: "I'm nervous" });
+    expect(v.map(x => x.code)).not.toContain('emotional_dead_end');
+  });
+
+  it('"I hear you. That sounds heavy — talking to your doctor can help." PASSES', () => {
+    const reply = "I hear you. That sounds heavy — talking to your doctor or a therapist can help carry some of this. What feels heaviest?";
+    const v = checkContent(reply, { userMessage: 'want to give up on everything' });
+    expect(v.map(x => x.code)).not.toContain('emotional_dead_end');
+  });
+
+  it('Bare ack to a NON-emotional message is NOT flagged', () => {
+    // The guard only fires when the user expressed an emotion.
+    const v = checkContent('Got it.', { userMessage: 'I had eggs for breakfast' });
+    expect(v.map(x => x.code)).not.toContain('emotional_dead_end');
+  });
+});

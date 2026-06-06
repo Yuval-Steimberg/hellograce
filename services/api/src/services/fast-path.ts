@@ -182,16 +182,20 @@ const BRIEF_POSITIVE_REPLIES: readonly string[] = [
   'Solid.',
 ] as const;
 
+// 2026-06-06 v2 — Coverage audit emotional-engagement follow-up.
+// Each entry now recognizes the feeling AND leaves a small door open
+// (a soft observation or a single gentle question) so the conversation
+// doesn't dead-end on a one-liner.
 const BRIEF_NEGATIVE_REPLIES: readonly string[] = [
-  'Ugh. I\'m here.',
-  'That sounds rough.',
-  'Heavy day.',
-  'Rest when you can.',
-  'Sending you something gentle 🤍',
-  'I\'m here. No pressure.',
-  'That stings.',
-  'Yeah, that one lands.',
-  'Of course you\'re feeling that way.',
+  'Ugh. That one\'s heavy — want to put it into words?',
+  'That sounds rough. Anything specific weighing on you?',
+  'Heavy day. What\'s the hardest piece right now?',
+  'Rough is fair. Want to talk through it a little?',
+  'Sending you something gentle 🤍 What\'s pulling at you?',
+  'I\'m here. Take your time — what\'s underneath it?',
+  'That stings. Want to say what set it off?',
+  'Yeah, that one lands. Where\'s the worst of it sitting?',
+  'Of course you\'re feeling that way. What feels heaviest?',
 ] as const;
 
 const BRIEF_ACK_REPLIES: readonly string[] = [

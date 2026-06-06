@@ -94,9 +94,13 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "Logged that one.",
   ],
   mood_log: [
-    "I hear you.",
-    "Got it. I'm here.",
-    "Noted.",
+    // 2026-06-06 v2 — Coverage audit follow-up: bare "I hear you." / "Got
+    // it. I'm here." / "Noted." are conversational dead-ends. Each entry
+    // now recognizes the feeling AND offers a gentle open door so the
+    // conversation can continue.
+    "Got that. What's been on your mind today?",
+    "I hear you. Anything specific weighing on you?",
+    "Logged. What's the day been like so far?",
   ],
   greeting: [
     "Hey — how are you doing?",
@@ -104,9 +108,14 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "Good to hear from you.",
   ],
   emotional: [
-    "I hear you.",
-    "That's a lot. I'm here.",
-    "With you on that.",
+    // 2026-06-06 v2 — Coverage audit follow-up. Bare one-line acks created
+    // conversational dead-ends. Each entry now follows the 4-step framework:
+    // recognize the feeling + leave a gentle door open for the user to
+    // elaborate. No "tell me more" / "what's on your mind?" — those are
+    // banned as too lazy.
+    "I hear you. What's the heaviest piece of it right now?",
+    "That's a lot to be holding. Want to say what's underneath it?",
+    "With you on that. Is there a specific piece you can put words to?",
   ],
   scheduling: [
     // Direct link to settings — the prompt rule says scheduling changes go
@@ -663,7 +672,7 @@ export function getToolAwareFallback(
     const isLevel2 =
       /\b(?:give up on everything|giving up on everything|give up on (?:my )?life|done with everything|over (?:all of )?(?:this|it)|nothing matters|no point|what'?s the point|hopeless|i'?m hopeless|feel(?:ing)? hopeless|no hope|cant shake (?:this|it)|can'?t shake (?:this|it)|so down|really down for (?:a )?while|no motivation for weeks|too tired to (?:keep|even) (?:going|trying)|burnt out completely)\b/.test(msg);
     if (isLevel2) {
-      return "I hear you. That sounds heavy — talking to your doctor or a therapist can help carry some of this. You don't have to do it alone.";
+      return "I hear how heavy this is. Wanting to give up after pushing hard isn't weakness — it's exhaustion talking. A doctor or therapist can help carry some of this. What feels heaviest right now?";
     }
   }
 

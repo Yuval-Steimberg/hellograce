@@ -94,6 +94,7 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
     violations.push(...checkFoodLogPreambleLeak(text, opts.userMessage));
     violations.push(...checkUserMessageEcho(text, opts.userMessage));
     violations.push(...checkEmotionBeforeData(text, opts.userMessage));
+    violations.push(...checkEmotionalDeadEnd(text, opts.userMessage));
     if (opts.previousUserMessage) {
       violations.push(
         ...checkPriorMessageRelitigation(text, opts.userMessage, opts.previousUserMessage),
@@ -384,6 +385,45 @@ function checkEmotionBeforeData(response: string, userMessage: string): ContentV
     }];
   }
   return [];
+}
+
+// ── Dead-end emotional ack guard (2026-06-06) ─────────────────────────────────
+// When the user expresses an emotion, the response must engage with it — not
+// stamp it. Bare one-line acks ("I hear you.", "Got it.", "Noted.",
+// "Understood.", "Thanks for sharing.") create a conversational dead-end.
+//
+// Per the 4-step framework: recognize + (optional context) + gentle open
+// question + (optional personalization). A response of one short sentence
+// that's JUST an acknowledgment with no follow-on door fails this check.
+//
+// Excluded from the guard:
+//   - Responses that are NOT replying to an emotional user message.
+//   - Responses that have a follow-on question or substantive second
+//     sentence (the four-step framework is met).
+//   - Responses where the emotional acknowledgment is part of a richer
+//     reply (e.g. "I hear you. What's the heaviest piece of it?" — fine).
+
+/** A bare acknowledgment phrase the response consists ENTIRELY of. */
+const DEAD_END_ACK_RE = /^(?:i hear you|got it|noted|understood|thanks for sharing|i'?m here|with you on that|that'?s a lot)\.?\s*$/i;
+
+/** Lightweight detector for emotion in the user's message — broader than the
+ *  Level-2 / failure cases EMOTIONAL_USER_RE matches, so that even mild
+ *  expressions of feeling ("I'm nervous", "I'm excited") trigger the
+ *  dead-end guard. Intentionally permissive: false positives just nudge
+ *  Grace to engage more richly, never block content. */
+const EMOTION_USER_BROAD_RE = /\b(?:i'?m|im|i am|i feel|feeling)\s+(?:so |really |kind of |a bit |very |super |just )*(?:nervous|scared|afraid|worried|anxious|terrified|on edge|jittery|uneasy|apprehensive|fearful|excited|thrilled|disappointed|let down|sad|down|low|blue|hurt|hopeless|stuck|lost|defeated|exhausted|drained|burnt out|burned out|frustrated|annoyed|angry|upset|overwhelmed|stressed|confused|conflicted|empty|lonely|alone|ashamed|embarrassed|guilty|happy|content|relieved|grateful|proud)\b|\bfeel(?:ing)?\s+(?:like\s+)?(?:i'?m\s+)?(?:failing|drowning|breaking|cracking|stuck|trapped|lost|invisible|worthless|like giving up)\b/i;
+
+function checkEmotionalDeadEnd(response: string, userMessage: string): ContentViolation[] {
+  // Only enforce when the user clearly expressed an emotion.
+  if (!EMOTION_USER_BROAD_RE.test(userMessage)) return [];
+  // Strip leading/trailing whitespace + emoji noise for the match.
+  const trimmed = response.trim().replace(/^[\p{Emoji}\s]+|[\p{Emoji}\s]+$/gu, '').trim();
+  if (!DEAD_END_ACK_RE.test(trimmed)) return [];
+  return [{
+    code: 'emotional_dead_end',
+    message: `Response to an emotional message is JUST a bare acknowledgment ("${trimmed}") — a conversational dead-end. Per the 4-step framework: recognize the feeling + add a brief contextual line OR a gentle open question that invites the user to share more. Example: user says "I'm nervous" → "Nervous makes a lot of sense before a shot — there's real uncertainty in it. What's the part that's weighing most?" — NOT just "I hear you."`,
+    severity: 'regen',
+  }];
 }
 
 // ── Prior-message re-litigation ──────────────────────────────────────────────

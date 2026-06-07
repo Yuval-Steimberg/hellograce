@@ -96,6 +96,11 @@ export interface MemoryContext {
   readonly isNewUser: boolean;
   /** Hours since last user reply. Used by FRESH START rule. */
   readonly hoursSinceLastReply: number;
+  /** Phase D — per-user memory.md narrative file. null when the user is
+   *  not enrolled in the pilot (no row in user_memory_md). When present
+   *  (even if empty string for a freshly-enrolled user), this content
+   *  is injected verbatim into the system prompt. */
+  readonly memoryMd?: string | null;
 }
 
 /** Today's nutrition state — single source of truth for protein/calorie reasoning. */

@@ -18,7 +18,8 @@ import { UserMemoryService } from './memory/user-memory.service.js';
 import { ProductionIssuesService } from './services/production-issues.service.js';
 import { AIService } from './services/ai.service.js';
 import { TwilioSender } from './twilio/sender.js';
-import { getTurnQueue, getFactExtractQueue, closeQueues } from './workers/queues.js';
+import { getTurnQueue, getFactExtractQueue, getMemoryMdQueue, closeQueues } from './workers/queues.js';
+import { MemoryMdService } from './memory/memory-md.service.js';
 import { startWorkers, stopWorkers } from './workers/index.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerWebhookRoutes } from './routes/webhook.js';
@@ -52,6 +53,10 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const rag = new RagService(pool, embedder, logger);
   const turnQueue = getTurnQueue(redis);
   const factExtractQueue = getFactExtractQueue(redis);
+  // Phase D — memory.md per-user narrative layer. Pilot opt-in via row in
+  // user_memory_md table (see migration 20260607000001_user_memory_md.sql).
+  const memoryMd = new MemoryMdService(pool, logger);
+  const memoryMdQueue = getMemoryMdQueue(redis);
 
   const loadActivePrompt = async (): Promise<string | undefined> => {
     try {
@@ -103,6 +108,8 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     twilioToken: env.TWILIO_AUTH_TOKEN,
     turnQueue,
     factExtractQueue,
+    memoryMd,
+    memoryMdQueue,
     systemPrompt: await loadActivePrompt(),
     contentRulesService,
     userMemory,
@@ -410,7 +417,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     void reloadActivePrompt().catch((err) => logger.error({ err }, 'prompt.reload.failed'));
   });
 
-  startWorkers({ redis, pool, memory, llm, logger });
+  startWorkers({ redis, pool, memory, llm, logger, memoryMd });
 
   scheduler.start();
 
@@ -469,7 +476,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService });
   registerUserRoutes(app, { pool, users, sender, generator });
   registerChatRoutes(app, ai, pool);
-  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, faqCache, users, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
+  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, faqCache, users, memoryMd, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
 
   const shutdown = async () => {
     app.log.info('shutdown.start');

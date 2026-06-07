@@ -344,7 +344,8 @@ import { makeGetFoodSummaryTool, makeGetProteinHistoryTool } from '../tools/get-
 import { makeLogSideEffectTool } from '../tools/log-side-effect.js';
 import { makeSearchFoodIdeasTool } from '../tools/search-food-ideas.js';
 import { makeRemoveFoodTool } from '../tools/remove-food.js';
-import type { TurnPersistJob, FactExtractJob } from '../workers/queues.js';
+import type { TurnPersistJob, FactExtractJob, MemoryMdUpdateJob } from '../workers/queues.js';
+import type { MemoryMdService } from '../memory/memory-md.service.js';
 
 const SIDE_EFFECT_KEYWORDS: Record<string, string> = {
   nausea: 'nausea',
@@ -376,6 +377,11 @@ export interface AIServiceDeps {
   twilioToken?: string;
   turnQueue?: Queue<TurnPersistJob>;
   factExtractQueue?: Queue<FactExtractJob>;
+  /** Phase D â€” pilot memory.md narrative layer. Optional; when absent
+   *  (e.g. tests), the memory.md layer is disabled entirely. When present,
+   *  only fires for users with a row in `user_memory_md`. */
+  memoryMd?: MemoryMdService;
+  memoryMdQueue?: Queue<MemoryMdUpdateJob>;
   systemPrompt?: string;
   contentRulesService?: ContentRulesService;
   userMemory?: UserMemoryService;
@@ -1398,7 +1404,14 @@ CRITICAL RULES:
       return { summary, topic };
     });
 
-    const [user, conversationId, isNew, history, toolSettings, description, todaysFood, checkinsToday, knownFacts, phase4] = await Promise.all([
+    // Phase D â€” memory.md fetch in parallel with the rest of parallel_io.
+    // Returns null when the user is not enrolled in the pilot (no row in
+    // user_memory_md). The 5-min in-memory cache catches repeat reads.
+    const memoryMdPromise: Promise<string | null> = this.deps.memoryMd
+      ? this.deps.memoryMd.get(input.userId).catch(() => null)
+      : Promise.resolve(null);
+
+    const [user, conversationId, isNew, history, toolSettings, description, todaysFood, checkinsToday, knownFacts, phase4, memoryMd] = await Promise.all([
       users.getById(input.userId).catch(() => null),
       conversationPromise,
       users.isNewUser(input.userId).catch(() => false),
@@ -1409,6 +1422,7 @@ CRITICAL RULES:
       this.countTodaysCheckIns(input.userId).catch(() => 0),
       users.getKnownFacts(input.userId, 30).catch(() => []),
       phase4Promise,
+      memoryMdPromise,
     ]);
     const conversationSummary = phase4.summary;
     const activeTopic = phase4.topic;
@@ -2095,6 +2109,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       knownFacts,
       dietaryRestriction,
       currentUserText: input.text,
+      memoryMd,
       ...(!topicSwitchAtAiService && conversationSummary ? { conversationSummary: conversationSummary.summary } : {}),
       ...(!topicSwitchAtAiService && activeTopic ? { activeTopic } : {}),
     });
@@ -2472,6 +2487,27 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
         .catch((err) => logger.warn({ err }, 'fact-extract-queue.add.failed'));
     }
 
+    // Phase D â€” enqueue memory.md update for pilot-enrolled users. We only
+    // enqueue when the user has memory.md content already loaded (memoryMd
+    // !== null) â€” that's the pilot gate. Empty string still counts as
+    // enrolled (newly-added user, worker will populate the initial file).
+    // Best-effort, fire-and-forget. Skips trivial exchanges and safe-
+    // fallback responses (no real content to memorize).
+    if (
+      this.deps.memoryMdQueue &&
+      memoryMd !== null &&
+      !result.usedSafeFallback &&
+      input.text.trim().length + result.text.trim().length >= 30
+    ) {
+      void this.deps.memoryMdQueue
+        .add('update', {
+          userId: input.userId,
+          userText: input.text,
+          assistantText: result.text,
+        })
+        .catch((err) => logger.warn({ err }, 'memory-md-queue.add.failed'));
+    }
+
     // Long-term semantic memory extraction â€” runs async after the response
     // is already on its way to the user. Skips trivially short turns to
     // avoid wasting Gemini calls on "ok" / "thanks".
@@ -2670,6 +2706,10 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
        *  (e.g. suppress food/protein context dump when the message is about
        *  physical pain or acute symptoms). */
       currentUserText?: string;
+      /** Phase D: per-user memory.md narrative file. null when the user
+       *  is not enrolled in the pilot. When present, injected verbatim
+       *  into the system prompt as a dedicated section. */
+      memoryMd?: string | null;
     },
   ): string {
     const base = this.systemPrompt ?? undefined;
@@ -2938,10 +2978,18 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       ? buildTurnDirective(runtime.currentUserText)
       : '';
 
-    if (lines.length === 0 && !factsBlock && !turnDirective) return `${dietBanner}${base ?? ''}`;
+    // Phase D â€” per-user memory.md. Injected verbatim when present.
+    // The LLM has been trained on markdown so it consumes this format
+    // natively. NEVER appears when the user is not in the pilot
+    // (runtime.memoryMd === null).
+    const memoryMdCtx = runtime?.memoryMd != null && runtime.memoryMd.length > 0
+      ? `\n\n--- USER MEMORY (this user's narrative profile â€” use it, never quote it back) ---\n${runtime.memoryMd}\n--- END USER MEMORY ---`
+      : '';
+
+    if (lines.length === 0 && !factsBlock && !turnDirective && !memoryMdCtx) return `${dietBanner}${base ?? ''}`;
     const userCtx = lines.length > 0 ? `\n\n--- User context ---\n${lines.join('\n')}` : '';
     const factsCtx = factsBlock ? `\n\n--- What Grace has naturally learned about this user ---\n${factsBlock}\nUse these subtly. Never read them back mechanically. Never say "according to your profile."` : '';
-    return `${dietBanner}${base ?? ''}${userCtx}${factsCtx}${turnDirective}`;
+    return `${dietBanner}${base ?? ''}${userCtx}${factsCtx}${memoryMdCtx}${turnDirective}`;
   }
 
   // In-memory tool-settings cache. Admin toggles are rare (minutes to days

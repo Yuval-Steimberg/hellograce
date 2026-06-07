@@ -34,6 +34,8 @@ export interface AdminDeps {
    *  apply until cache expiry. Production bug 2026-06-03: vegetarian user got
    *  chicken/fish recommendations even after dietary_pattern was set. */
   users?: import('../user/user.service.js').UserService;
+  /** Phase D — memory.md pilot enrollment management. Optional. */
+  memoryMd?: import('../memory/memory-md.service.js').MemoryMdService;
 }
 
 async function auditLog(pool: Pool, action: string, ip: string, details?: Record<string, unknown>): Promise<void> {
@@ -865,10 +867,67 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   });
 
   /** Reset conversation memory without deleting the profile. */
+  // ─── memory.md pilot (Phase D, 2026-06-07) ────────────────────────────
+  // Enroll / unenroll / read for the memory.md narrative memory pilot.
+  // Presence of a row in user_memory_md enables the layer for that user;
+  // these endpoints manage that gate.
+
+  app.post('/admin/users/:phone/memory-md/enroll', async (req, reply) => {
+    if (!deps.memoryMd) {
+      reply.status(503).send({ error: 'MEMORY_MD_DISABLED' });
+      return;
+    }
+    const { phone } = req.params as { phone: string };
+    const body = (req.body as { initial_content?: string } | null) ?? {};
+    await deps.memoryMd.enroll(phone, body.initial_content ?? '');
+    await auditLog(deps.pool, 'memory_md.enroll', req.ip ?? '', { phone });
+    return { ok: true, phone, enrolled: true };
+  });
+
+  app.post('/admin/users/:phone/memory-md/unenroll', async (req, reply) => {
+    if (!deps.memoryMd) {
+      reply.status(503).send({ error: 'MEMORY_MD_DISABLED' });
+      return;
+    }
+    const { phone } = req.params as { phone: string };
+    await deps.memoryMd.unenroll(phone);
+    await auditLog(deps.pool, 'memory_md.unenroll', req.ip ?? '', { phone });
+    return { ok: true, phone, enrolled: false };
+  });
+
+  app.get('/admin/users/:phone/memory-md', async (req, reply) => {
+    if (!deps.memoryMd) {
+      reply.status(503).send({ error: 'MEMORY_MD_DISABLED' });
+      return;
+    }
+    const { phone } = req.params as { phone: string };
+    const content = await deps.memoryMd.get(phone);
+    if (content === null) {
+      return { phone, enrolled: false, content: null };
+    }
+    // Also surface the row metadata (chars + rewrite_count) for QA.
+    const { rows } = await deps.pool.query<{
+      content_chars: number;
+      rewrite_count: number;
+      updated_at: string;
+    }>(
+      `SELECT content_chars, rewrite_count, updated_at::text
+       FROM user_memory_md WHERE user_id = $1 LIMIT 1`,
+      [phone],
+    );
+    return {
+      phone,
+      enrolled: true,
+      content,
+      metadata: rows[0] ?? null,
+    };
+  });
+
   app.post('/admin/users/:phone/reset-memory', async (req) => {
     const { phone } = req.params as { phone: string };
     await deps.pool.query('DELETE FROM user_memories WHERE user_id = $1', [phone]).catch(() => null);
     await deps.pool.query('DELETE FROM user_profile_facts WHERE user_id = $1', [phone]).catch(() => null);
+    await deps.pool.query('DELETE FROM user_memory_md WHERE user_id = $1', [phone]).catch(() => null);
     await deps.pool.query('DELETE FROM messages WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]);
     await deps.pool.query('DELETE FROM embeddings WHERE user_id = $1', [phone]);

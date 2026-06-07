@@ -58,6 +58,11 @@ export interface ContextBuilderDeps {
   readonly users: UserService;
   readonly memory: MemoryService;
   readonly userMemory?: UserMemoryService;
+  /** Phase D — per-user narrative memory.md layer. Optional; only fires
+   *  when the user is enrolled in the pilot (has a row in user_memory_md). */
+  readonly memoryMd?: {
+    get: (userId: string) => Promise<string | null>;
+  };
   readonly conversationSummary?: ConversationSummaryService;
   readonly topicTracker?: TopicTrackerService;
   readonly logger: Logger;
@@ -119,6 +124,12 @@ export class ContextBuilder {
           .catch(() => [] as string[])
       : Promise.resolve([] as string[]);
 
+    // Phase D: memory.md per-user narrative file. Single indexed lookup
+    // (5-min cached) — returns null when user is not in the pilot.
+    const memoryMdPromise: Promise<string | null> = this.deps.memoryMd
+      ? this.deps.memoryMd.get(input.userId).catch(() => null)
+      : Promise.resolve(null);
+
     const [
       user,
       conversationId,
@@ -128,6 +139,7 @@ export class ContextBuilder {
       knownFacts,
       phase4,
       relevantMemories,
+      memoryMd,
     ] = await Promise.all([
       this.deps.users.getById(input.userId).catch(() => null),
       conversationPromise,
@@ -139,6 +151,7 @@ export class ContextBuilder {
       this.deps.users.getKnownFacts(input.userId, knownFactsLimit).catch(() => []),
       phase4Promise,
       memoryPromise,
+      memoryMdPromise,
     ]);
 
     // ── Stage 2: compute derived fields ────────────────────────────────
@@ -150,6 +163,7 @@ export class ContextBuilder {
       summary: phase4.summary,
       isNewUser: isNew,
       lastReplyAt: user?.last_reply_at ?? null,
+      memoryMd,
     });
     const nutrition = buildNutritionContext(todaysFood);
     const goals = buildGoalsContext(user);
@@ -247,6 +261,7 @@ function buildMemoryContext(args: {
   summary: ConversationSummary | null;
   isNewUser: boolean;
   lastReplyAt: Date | null;
+  memoryMd?: string | null;
 }): MemoryContext {
   const hoursSinceLastReply = args.lastReplyAt
     ? (Date.now() - new Date(args.lastReplyAt).getTime()) / 3_600_000
@@ -258,6 +273,7 @@ function buildMemoryContext(args: {
     summary: args.summary,
     isNewUser: args.isNewUser,
     hoursSinceLastReply,
+    memoryMd: args.memoryMd ?? null,
   };
 }
 

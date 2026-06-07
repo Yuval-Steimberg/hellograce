@@ -28,8 +28,22 @@ export interface FactExtractJob {
   sourceMessageId?: string;
 }
 
+/**
+ * Background memory.md update job (Phase D, 2026-06-07). Fires after each
+ * assistant turn for users enrolled in the memory.md pilot. The worker
+ * loads current memory.md, sends it + the new user/assistant exchange to
+ * Gemini, and rewrites the file to reflect any new durable facts /
+ * corrections / open threads. Best-effort, fire-and-forget.
+ */
+export interface MemoryMdUpdateJob {
+  userId: string;
+  userText: string;
+  assistantText: string;
+}
+
 let _turnQueue: Queue<TurnPersistJob> | null = null;
 let _factQueue: Queue<FactExtractJob> | null = null;
+let _memoryMdQueue: Queue<MemoryMdUpdateJob> | null = null;
 
 export function getTurnQueue(redis: Redis): Queue<TurnPersistJob> {
   if (!_turnQueue) {
@@ -62,6 +76,23 @@ export function getFactExtractQueue(redis: Redis): Queue<FactExtractJob> {
   return _factQueue;
 }
 
+export function getMemoryMdQueue(redis: Redis): Queue<MemoryMdUpdateJob> {
+  if (!_memoryMdQueue) {
+    _memoryMdQueue = new Queue<MemoryMdUpdateJob>('memory-md-update', {
+      connection: redis,
+      defaultJobOptions: {
+        removeOnComplete: 200,
+        removeOnFail: 50,
+        // Best-effort — one retry. If the LLM rewrite is flaky for a turn,
+        // the next turn will pick up where we left off.
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 2_000 },
+      },
+    });
+  }
+  return _memoryMdQueue;
+}
+
 export async function closeQueues(): Promise<void> {
   if (_turnQueue) {
     await _turnQueue.close();
@@ -70,5 +101,9 @@ export async function closeQueues(): Promise<void> {
   if (_factQueue) {
     await _factQueue.close();
     _factQueue = null;
+  }
+  if (_memoryMdQueue) {
+    await _memoryMdQueue.close();
+    _memoryMdQueue = null;
   }
 }

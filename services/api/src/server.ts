@@ -27,6 +27,7 @@ import { registerChatRoutes } from './routes/chat.js';
 import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
 import { ContentRulesService } from './services/content-rules.service.js';
+import { TodayFoodCacheService } from './cache/today-food-cache.js';
 import { MessageTemplatesService } from './services/message-templates.service.js';
 import { MessageGenerator } from './scheduler/message-generator.js';
 import { Scheduler } from './scheduler/scheduler.js';
@@ -64,6 +65,10 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   };
 
   const users = new UserService(pool);
+  // Phase A2 (2026-06-07) — wire the Redis L2 cache for today's food
+  // summary. Saves the ~100-150ms CTE+TZ subquery on every turn after
+  // a cache warmup. Falls back to L1 in-memory + DB on Redis errors.
+  users.setTodayFoodCache(new TodayFoodCacheService(redis, logger));
 
   const contentRulesService = new ContentRulesService(pool, logger);
   contentRulesService.start();

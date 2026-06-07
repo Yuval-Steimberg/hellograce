@@ -667,25 +667,39 @@ export class AIService {
       const trimmedLower = input.text.trim().toLowerCase();
       const isShortFollowUp = trimmedLower.length <= 25 &&
         /^(?:yes|yep|yeah|yup|sure|ok|okay|please|please do|go ahead|do it|alright|absolutely|no|nope|why|why\??|how come|how so|more|more please|tell me more|continue|go on|really\??|what do you mean|like what)$/i.test(trimmedLower);
-      // Re-fetch last assistant message — the earlier fetch lives inside the
-      // media-check scope and isn't visible here.
-      const followupTurns = await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
-      const followupLastAssistant = [...followupTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
-      // 2026-06-06 v2 production failure: "What's my protein goal?" →
-      // "Your daily protein target is 60g." (ends with '.', not '?') →
-      // user "why" → previously skipped this whole block, fell through to
-      // orchestrator → generic muscle/satiety paragraph. Now we ALSO fire
-      // on curiosity follow-ups ("why" / "how come" / "where did that
-      // come from" / "explain") when the previous Grace message stated a
-      // numeric target — even when it ended with '.'.
-      const lastLower = followupLastAssistant.toLowerCase();
-      const prevStatedNumericTarget = /\b\d+\s*g\b|\b\d+\s*kcal\b/.test(followupLastAssistant);
-      const isAffirmative = /^(?:yes|yep|yeah|yup|sure|ok|okay|please|please do|go ahead|do it|alright|absolutely)$/i.test(trimmedLower);
-      const isCuriosityFollowUp = /^(?:why|why\??|how(?:\s+come|\s+so)?|how\s+is\s+that\s+(?:calculated|computed|figured)|how\s+was\s+that\s+(?:calculated|computed|figured)|how\s+did\s+you\s+(?:get|figure|calculate|compute)\s+that|where(?:\s+did\s+that|\s+does\s+it|\s+does\s+that|'?s\s+that)\s+(?:come\s+)?from|explain\s+that|explain|tell\s+me\s+more|how\s+do\s+you\s+know)\s*\??$/i.test(trimmedLower);
-      const offeredWalkthrough = /\b(walk you through|walk through (?:the|that)|break it down|break that down|break the (?:numbers?|math|math down)|show you the math|show the math|run you through|run the (?:numbers?|math)|do the math|want me to (?:explain|show|calculate))\b/.test(lastLower);
-      const shouldWalkthrough =
-        (isAffirmative && (offeredWalkthrough || prevStatedNumericTarget)) ||
-        (isCuriosityFollowUp && prevStatedNumericTarget);
+      // 2026-06-07 latency optimization (Phase A3): the recent-turns DB read
+      // here was firing on EVERY inbound message (~150ms wasted on the ~95%
+      // of turns where the message isn't a short follow-up). Only fetch
+      // recent turns when the shape gate (isShortFollowUp) actually matches.
+      // When isShortFollowUp is false, none of the downstream branches
+      // (shouldWalkthrough, isAffirmative+offer, isCuriosityFollowUp) can
+      // fire, so the followupTurns result would have been unused.
+      let followupLastAssistant = '';
+      let lastLower = '';
+      let prevStatedNumericTarget = false;
+      let isAffirmative = false;
+      let isCuriosityFollowUp = false;
+      let offeredWalkthrough = false;
+      let shouldWalkthrough = false;
+      if (isShortFollowUp) {
+        const followupTurns = await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
+        followupLastAssistant = [...followupTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+        // 2026-06-06 v2 production failure: "What's my protein goal?" →
+        // "Your daily protein target is 60g." (ends with '.', not '?') →
+        // user "why" → previously skipped this whole block, fell through to
+        // orchestrator → generic muscle/satiety paragraph. Now we ALSO fire
+        // on curiosity follow-ups ("why" / "how come" / "where did that
+        // come from" / "explain") when the previous Grace message stated a
+        // numeric target — even when it ended with '.'.
+        lastLower = followupLastAssistant.toLowerCase();
+        prevStatedNumericTarget = /\b\d+\s*g\b|\b\d+\s*kcal\b/.test(followupLastAssistant);
+        isAffirmative = /^(?:yes|yep|yeah|yup|sure|ok|okay|please|please do|go ahead|do it|alright|absolutely)$/i.test(trimmedLower);
+        isCuriosityFollowUp = /^(?:why|why\??|how(?:\s+come|\s+so)?|how\s+is\s+that\s+(?:calculated|computed|figured)|how\s+was\s+that\s+(?:calculated|computed|figured)|how\s+did\s+you\s+(?:get|figure|calculate|compute)\s+that|where(?:\s+did\s+that|\s+does\s+it|\s+does\s+that|'?s\s+that)\s+(?:come\s+)?from|explain\s+that|explain|tell\s+me\s+more|how\s+do\s+you\s+know)\s*\??$/i.test(trimmedLower);
+        offeredWalkthrough = /\b(walk you through|walk through (?:the|that)|break it down|break that down|break the (?:numbers?|math|math down)|show you the math|show the math|run you through|run the (?:numbers?|math)|do the math|want me to (?:explain|show|calculate))\b/.test(lastLower);
+        shouldWalkthrough =
+          (isAffirmative && (offeredWalkthrough || prevStatedNumericTarget)) ||
+          (isCuriosityFollowUp && prevStatedNumericTarget);
+      }
       if (isShortFollowUp && (shouldWalkthrough || /\?\s*$/.test(followupLastAssistant.trim()))) {
         // Deterministic walkthrough only fires when (a) the user signaled
         // they want the math AND (b) the previous Grace turn anchored on

@@ -1,5 +1,6 @@
 import type { Pool } from 'pg';
 import { encryptField, decryptField, hashField, isEncryptionEnabled } from '../crypto/field-encrypt.js';
+import type { TodayFoodCacheService } from '../cache/today-food-cache.js';
 
 export interface GraceUser {
   id: string;
@@ -129,6 +130,17 @@ export class UserService {
    *  sees the new total. Safe to call from anywhere (tools, fast-paths). */
   invalidateTodaysFoodCache(userId: string): void {
     this.todaysFoodCache.delete(userId);
+    // Also drop the L2 Redis cache (best-effort, fire-and-forget). The
+    // caller doesn't need to await — next read will recompute.
+    if (this.todayFoodCache) {
+      void (async () => {
+        const u = await this.getById(userId).catch(() => null);
+        const tz = u?.timezone ?? 'UTC';
+        if (this.todayFoodCache) {
+          await this.todayFoodCache.invalidate(userId, tz).catch(() => undefined);
+        }
+      })();
+    }
   }
 
   /** Public invalidator — call after writing to user_profile_facts. Clears
@@ -140,7 +152,18 @@ export class UserService {
     }
   }
 
+  /** Optional Redis L2 cache for today's food summary. Set via setter so
+   *  existing tests + callers that pass just the pool don't break. When
+   *  unset, falls back to the existing in-memory L1 cache + DB query. */
+  private todayFoodCache: TodayFoodCacheService | undefined;
+
   constructor(private pool: Pool) {}
+
+  /** Wire the Redis L2 cache for `getTodaysFoodSummary`. Optional —
+   *  callers that don't set this still get the in-memory L1 cache. */
+  setTodayFoodCache(cache: TodayFoodCacheService): void {
+    this.todayFoodCache = cache;
+  }
 
   private invalidateUserCache(keys: Array<string | null | undefined>): void {
     for (const k of keys) {
@@ -361,12 +384,35 @@ export class UserService {
     items: string[];
     items_detailed: Array<{ food: string; protein_g: number; calories: number; logged_at: string }>;
   }> {
-    // Cache hit fast-path — 10s TTL is short enough that food logs land within
-    // the typical user reaction window; invalidation runs after every insert.
+    // L1: in-memory 10s cache — handles tight back-to-back reads within
+    // a single user's burst. Invalidation runs after every insert.
     const cached = this.todaysFoodCache.get(userId);
     if (cached && cached.expiresAt > Date.now()) {
       return cached.value;
     }
+
+    // L2: Redis cache (Phase A2, 2026-06-07) — shared across machines,
+    // 36h TTL keyed by user's local date. Catches "what's my protein
+    // today?" after 30+s of silence when the L1 cache has expired.
+    // Best-effort: any Redis error falls through to L3 (DB).
+    if (this.todayFoodCache) {
+      // We need the user's timezone to compute the date key. Fetch the
+      // user row (cheap, has its own 5s cache).
+      const u = await this.getById(userId).catch(() => null);
+      const tz = u?.timezone ?? 'UTC';
+      const redisHit = await this.todayFoodCache.get(userId, tz);
+      if (redisHit) {
+        // Re-warm L1 from L2 so the next read in the same burst doesn't
+        // pay even the Redis round-trip.
+        this.todaysFoodCache.set(userId, {
+          value: redisHit,
+          expiresAt: Date.now() + this.TODAYS_FOOD_TTL_MS,
+        });
+        return redisHit;
+      }
+    }
+
+    // L3: source of truth — Postgres CTE.
     const { rows } = await this.pool.query<{ food: string; protein_g: number; calories: number; created_at: Date }>(
       `WITH user_tz AS (
          SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
@@ -394,7 +440,16 @@ export class UserService {
         logged_at: new Date(r.created_at).toISOString(),
       })),
     };
+
+    // Write-through to both L1 and L2 so the next read of any flavor
+    // catches the fresh aggregate.
     this.todaysFoodCache.set(userId, { value, expiresAt: Date.now() + this.TODAYS_FOOD_TTL_MS });
+    if (this.todayFoodCache) {
+      // Best-effort — never block the response on the L2 write.
+      const u = await this.getById(userId).catch(() => null);
+      const tz = u?.timezone ?? 'UTC';
+      void this.todayFoodCache.set(userId, tz, value).catch(() => undefined);
+    }
     return value;
   }
 

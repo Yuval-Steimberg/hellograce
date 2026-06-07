@@ -1,0 +1,169 @@
+/**
+ * Today's food summary — Redis-backed cache (Phase A2, 2026-06-07).
+ *
+ * The production latency audit found `getTodaysFoodSummary` was the single
+ * heaviest read in `parallel_io` (~100-150ms × every turn). It runs a CTE
+ * with a timezone subquery + ordered scan of `food_logs`. The in-memory
+ * 10-second cache catches repeats within a single user's burst, but a
+ * "what's my protein today?" question after a 30-second pause still pays
+ * the full CTE cost.
+ *
+ * This module adds a Redis L2 cache between the existing 10s in-memory
+ * cache and the Postgres CTE:
+ *
+ *   L1 (in-memory, 10s TTL)
+ *     ↓ miss
+ *   L2 (Redis, ~24h TTL)
+ *     ↓ miss
+ *   L3 (Postgres CTE)
+ *
+ * Key strategy: `food:today:{phone}:{userTodayDate}` where userTodayDate
+ * is the user's local calendar date with the standard 5-hour rollover.
+ * Each day naturally gets a fresh key — no midnight cleanup needed because
+ * stale keys age out via TTL.
+ *
+ * Write-through pattern: log_food / food-log-fast invalidate L2 on every
+ * INSERT, same as the existing L1 invalidation. The next read recomputes
+ * from DB and refills both caches.
+ *
+ * Fallback: any Redis error → fall through to L3 (DB). No behavior change
+ * on cache miss; this is a pure latency optimization.
+ */
+
+import type { Redis } from 'ioredis';
+
+const KEY_PREFIX = 'food:today:';
+/** TTL covers the maximum possible "today" window across timezones plus
+ *  the 5-hour rollover. 36 hours is generous and lets natural day
+ *  transitions drop stale keys. */
+const TTL_SECONDS = 36 * 60 * 60;
+
+export interface TodayFoodValue {
+  protein_g: number;
+  calories: number;
+  items: string[];
+  items_detailed: Array<{
+    food: string;
+    protein_g: number;
+    calories: number;
+    logged_at: string;
+  }>;
+}
+
+interface MinimalLogger {
+  info: (obj: object, msg?: string) => void;
+  warn: (obj: object, msg?: string) => void;
+  error: (obj: object, msg?: string) => void;
+}
+
+/**
+ * Compute the user's "today" calendar date string (YYYY-MM-DD) using the
+ * same convention as the Postgres CTE: `(now() AT TIME ZONE tz - INTERVAL
+ * '5 hours')::date`. This means 4am local time is still "yesterday" for
+ * cache purposes; 5am crosses into "today".
+ */
+export function computeUserToday(timezone: string, now: Date = new Date()): string {
+  const tz = timezone && timezone.length > 0 ? timezone : 'UTC';
+  // Pre-shift by 5 hours so the 5am rollover matches the SQL semantics.
+  const shifted = new Date(now.getTime() - 5 * 60 * 60 * 1000);
+  // en-CA returns ISO YYYY-MM-DD format directly via Intl formatter.
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(shifted);
+  } catch {
+    // Invalid timezone — fall back to UTC.
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(shifted);
+  }
+}
+
+function buildKey(phone: string, userTodayDate: string): string {
+  return `${KEY_PREFIX}${phone}:${userTodayDate}`;
+}
+
+export class TodayFoodCacheService {
+  constructor(
+    private readonly redis: Redis | undefined,
+    private readonly logger: MinimalLogger,
+  ) {}
+
+  /**
+   * Returns the cached summary if present, null otherwise. Never throws —
+   * Redis errors fall through to a null result so the caller falls back
+   * to the source-of-truth DB query.
+   */
+  async get(phone: string, timezone: string): Promise<TodayFoodValue | null> {
+    if (!this.redis) return null;
+    const key = buildKey(phone, computeUserToday(timezone));
+    try {
+      const raw = await this.redis.get(key);
+      if (!raw) return null;
+      return JSON.parse(raw) as TodayFoodValue;
+    } catch (err) {
+      this.logger.warn(
+        { err: err instanceof Error ? err.message : String(err), phone },
+        'today_food_cache.get_failed',
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Write-through after a DB recompute. Best-effort — Redis hiccup never
+   * blocks the caller because the in-memory L1 cache already covers the
+   * immediate next read.
+   */
+  async set(phone: string, timezone: string, value: TodayFoodValue): Promise<void> {
+    if (!this.redis) return;
+    const key = buildKey(phone, computeUserToday(timezone));
+    try {
+      await this.redis.set(key, JSON.stringify(value), 'EX', TTL_SECONDS);
+    } catch (err) {
+      this.logger.warn(
+        { err: err instanceof Error ? err.message : String(err), phone },
+        'today_food_cache.set_failed',
+      );
+    }
+  }
+
+  /**
+   * Drop the cached value — call after every food log INSERT so the next
+   * read recomputes. The L1 in-memory cache invalidation happens
+   * separately via `UserService.invalidateTodaysFoodCache()`.
+   *
+   * Invalidates BOTH today's and yesterday's keys to handle log timestamps
+   * that crossed the 5am rollover.
+   */
+  async invalidate(phone: string, timezone: string): Promise<void> {
+    if (!this.redis) return;
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const keys = [
+      buildKey(phone, computeUserToday(timezone, now)),
+      buildKey(phone, computeUserToday(timezone, yesterday)),
+    ];
+    try {
+      await this.redis.del(...keys);
+    } catch (err) {
+      this.logger.warn(
+        { err: err instanceof Error ? err.message : String(err), phone },
+        'today_food_cache.invalidate_failed',
+      );
+    }
+  }
+}
+
+// Test-only exports
+export const __testing = {
+  KEY_PREFIX,
+  TTL_SECONDS,
+  buildKey,
+};

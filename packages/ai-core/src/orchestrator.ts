@@ -1747,6 +1747,19 @@ export class AIOrchestrator {
         const reviewStart = Date.now();
         critic = await this.review(precheck, input.text, validated.text, input.retrieved);
         reviewMs = Date.now() - reviewStart;
+        // Phase B diagnostic (2026-06-07): surface the critic's input
+        // size + LLM time so future slow runs attribute themselves.
+        // Logged only when meaningfully slow (>1500ms) to avoid noise.
+        if (reviewMs > 1500 && critic && critic.source === 'llm') {
+          this.deps.logger?.info?.({
+            reviewMs,
+            criticLlmMs: critic.llmMs,
+            criticInputSizeChars: critic.inputSizeChars,
+            retrievedCount: input.retrieved.length,
+            responseLen: validated.text.length,
+            userMsgLen: input.text.length,
+          }, 'orchestrator.critic_slow');
+        }
       }
 
       // Treat a content-rule violation (forbidden food, banned phrase, DB rule)

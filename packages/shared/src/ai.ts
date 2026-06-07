@@ -175,6 +175,12 @@ export interface CriticReport {
    *  rather than an LLM call. Saves a Gemini call when we can fail-closed
    *  on grounding alone. */
   source?: 'llm' | 'precheck';
+  /** Phase B diagnostic (2026-06-07): bytes of input sent to the critic
+   *  LLM. Tracks payload-size drivers of slow runs. */
+  inputSizeChars?: number;
+  /** Phase B diagnostic (2026-06-07): wall-clock latency of just the
+   *  Gemini call inside the critic. Excludes JSON parsing. */
+  llmMs?: number;
 }
 
 /** Provider-agnostic LLM interface. Concrete adapters live in services/api. */

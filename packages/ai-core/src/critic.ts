@@ -35,8 +35,15 @@ export class LLMCritic {
     const context = renderRetrievedForCritic(input.retrieved);
     const user = `USER MESSAGE:\n${input.userText}\n\nGRACE'S DRAFT RESPONSE:\n${input.response}\n\nKNOWLEDGE CONTEXT:\n${context}`;
 
+    // Phase B diagnostic — production telemetry showed n=2 outliers at
+    // 5-9s for this call. Surface the input shape so future outliers
+    // attribute themselves to payload size vs Gemini latency.
+    const inputSizeChars = user.length;
+
     let raw: string;
+    let llmMs = 0;
     try {
+      const t0 = Date.now();
       const resp = await this.llm.generate({
         messages: [
           { role: 'system', content: CRITIC_SYSTEM },
@@ -48,12 +55,17 @@ export class LLMCritic {
         model: 'gemini-2.5-flash',
         disableThinking: true,
       });
+      llmMs = Date.now() - t0;
       raw = resp.text;
     } catch {
       return malformedReport();
     }
 
-    return parseCriticResponse(raw);
+    const report = parseCriticResponse(raw);
+    // Annotate the report with the diagnostic shape so callers / log
+    // sinks can attribute slow calls. Not consumed by any downstream
+    // logic — informational only.
+    return { ...report, inputSizeChars, llmMs };
   }
 }
 
@@ -103,12 +115,44 @@ function malformedReport(): CriticReport {
   };
 }
 
+/**
+ * Render retrieved knowledge for the critic prompt.
+ *
+ * Phase B investigation 2026-06-07: production telemetry showed
+ * `orch_review` (the critic LLM call) hit 5,787ms avg / 9,552ms P95
+ * on n=2 outliers. With `disableThinking: true` and the small 500-token
+ * cap, the only variable left is INPUT size — and the previous version
+ * of this function joined up to 5 docs at full length (~2KB each =
+ * ~10KB payload), which Gemini 2.5-flash will spend 3-5s parsing.
+ *
+ * Now we cap each doc at 320 chars (~80 tokens) and the total at 1,600
+ * chars (~400 tokens). That's plenty for grounding evaluation — the
+ * critic isn't writing answers, just checking whether drug/medical
+ * claims have ANY supporting text in context. 320 chars is two short
+ * sentences, which is the longest unit any single fact lives in.
+ *
+ * Expected impact: critic latency drops from 3-5s tail back to its
+ * historical 800-1,500ms range. No accuracy impact because the critic
+ * only needs to RECOGNIZE the support, not paraphrase it.
+ */
+const MAX_DOC_CHARS = 320;
+const MAX_TOTAL_CONTEXT_CHARS = 1600;
+
 function renderRetrievedForCritic(retrieved: RetrievedDoc[]): string {
   if (retrieved.length === 0) return '(no knowledge context retrieved)';
-  return retrieved
-    .slice(0, 5)
-    .map((d, i) => `[${i + 1}] ${d.content}`)
-    .join('\n');
+  const lines: string[] = [];
+  let total = 0;
+  for (let i = 0; i < Math.min(retrieved.length, 5); i++) {
+    const content = retrieved[i]!.content;
+    const truncated = content.length > MAX_DOC_CHARS
+      ? content.slice(0, MAX_DOC_CHARS) + '…'
+      : content;
+    const line = `[${i + 1}] ${truncated}`;
+    if (total + line.length > MAX_TOTAL_CONTEXT_CHARS) break;
+    lines.push(line);
+    total += line.length + 1;
+  }
+  return lines.join('\n');
 }
 
 function clamp(n: number, lo: number, hi: number): number {

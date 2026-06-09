@@ -49,10 +49,11 @@ const REPLAY_PERSONA: ReplayPersona = {
   glp1WeekNumber: 16,
 };
 
-/** Minimum run gap in hours before runIfMissedRecently triggers. Daily-ish
- *  cadence — if we haven't run in the last 20 hours, catch up on startup.
- *  Matches the once-per-UTC-day cron schedule. */
-const MIN_RUN_INTERVAL_HOURS = 20;
+/** Minimum run gap in hours before runIfMissedRecently triggers. 156h ≈ 6.5
+ *  days — matches the weekly cron schedule (2026-06-08 cost pass, throttled
+ *  from daily). Without this, every Fly machine restart would re-run the full
+ *  corpus-replay + LLM-eval pipeline, quietly restoring the old daily spend. */
+const MIN_RUN_INTERVAL_HOURS = 156;
 
 /** Minimum pattern frequency to generate a content rule. Dropped to 1 — any
  *  detected failure pattern is worth asking Gemini for a content rule, with

@@ -139,7 +139,10 @@ export class PromptOptimizer {
       const last = rows[0]?.last;
       if (last) {
         const hoursSince = (Date.now() - new Date(last).getTime()) / 3_600_000;
-        if (hoursSince < 20) {
+        // 156h ≈ 6.5 days. Matches the weekly cron cadence (2026-06-08 cost
+        // pass) — without this, every Fly machine restart would re-fire a full
+        // optimizer + coverage-smoke run, quietly restoring the old daily spend.
+        if (hoursSince < 156) {
           this.logger.info(
             { hoursSince: Math.round(hoursSince) },
             'prompt_optimizer.startup_catchup_skipped',

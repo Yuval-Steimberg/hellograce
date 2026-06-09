@@ -426,6 +426,19 @@ Roadmap (in progress, in this order):
 
 ---
 
+### Settings = single source of truth (2026-06-09)
+
+Profile, dietary, and reminder fields are owned EXCLUSIVELY by the Settings page. Grace may **read** them in chat but must **never** create, save, overwrite, or confirm a change to them from a chat message — that prevents a conflicting second source of truth. Enforced deterministically (before the AI ever runs) so it can't drift:
+
+- **`services/api/src/services/settings-flow.ts`** — `tryHandleSettings()` now only READS + REDIRECTS. The two-phase Redis confirm/apply flow and all chat writes were removed. READ requests answer + append the Settings URL (unchanged). UPDATE requests (timezone, medication, dose, weights, height, sex, name, age, primary goal), dietary-identity changes (`DIETARY_CHANGE_PATTERNS`: "I'm vegan now", "change my diet", "I no longer keep kosher", "remember I don't eat meat"), and food-dislike adds all return the verbatim `PROFILE_REDIRECT` message. Deps slimmed to `{ logger }` (no more `users`/`redis`). Dietary patterns are conservative — a passing mention like "I'm vegan, what should I eat?" still flows to food-ideas.
+- **`services/api/src/routes/webhook.ts`** — `detectFrequencyChange()` (which wrote `checkin_count_per_day`) replaced by `isFrequencyChangeRequest()` → sends `REMINDER_REDIRECT_REPLY` to Settings. No cadence write from chat.
+- **SOLE EXCEPTION:** injection-day change, still handled in-chat by `detectInjectionDayChange()` (writes `injection_day`).
+- **`packages/ai-core/src/prompts.ts`** — SETTINGS MANAGEMENT + CHECK-IN FREQUENCY sections rewritten to "redirect, never confirm in chat / never claim to remember"; the only in-chat exception is injection day. Starting-weight redirect no longer offers "tell me 'set my starting weight to ___'".
+- Tests: `settings-flow.test.ts` rewritten to assert redirect (no writes). Full suite green (615 api + 513 ai-core).
+- **Follow-up:** the legacy v1 `supabase/functions/handle-inbound-sms` edge fn still has its own chat-write settings flow ("Reply yes to confirm"). It's not the live v2 path, but disable/align it before re-enabling v1 as a fallback.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).
@@ -483,7 +496,7 @@ Adopts `gracemasterprompt.md` as the canonical Grace behavioral spec.
 
 **`services/api/src/routes/webhook.ts`** — two new in-conversation intercepts:
 - `detectNaturalOptOut()` — 6 regex patterns ("stop texting me", "I want to cancel", "don't want messages", etc). Reply word-for-word per spec; redirects to `https://graceglp.com/settings`. Short-circuits before AI handler.
-- `detectFrequencyChange()` — patterns for "text me less/more", "once a day", "twice a day", "every other day". Updates `users.checkin_count_per_day` directly (bounded [1, 4]) and confirms warmly. Short-circuits before AI handler.
+- `detectFrequencyChange()` — patterns for "text me less/more", "once a day", "twice a day", "every other day". Originally updated `users.checkin_count_per_day` directly. **SUPERSEDED 2026-06-09 (Settings single-source-of-truth):** replaced by `isFrequencyChangeRequest()`, which now redirects the user to the Settings page instead of writing the field. See the dated section below.
 
 ### Phase 9 — Production quality pass (2026-05-15)
 

@@ -1,48 +1,36 @@
 /**
- * Settings & Profile Update Flow (2026-06-06).
+ * Settings & Profile READ + Redirect Flow.
  *
- * Centralized handler for VIEWING and UPDATING any user profile field via
- * WhatsApp/SMS chat. Runs as a short-circuit in webhook.ts AFTER the
- * existing detectNaturalOptOut / detectFrequencyChange / detectInjectionDay
- * handlers (so their established UX stays untouched) and BEFORE the AI
- * pipeline.
+ * The Settings page is the SINGLE SOURCE OF TRUTH for every registration /
+ * profile / dietary / reminder field. Grace may READ these values in chat,
+ * but she must NEVER create, save, overwrite, or confirm a change to them
+ * from a chat message — doing so creates a conflicting second source of
+ * truth. This handler runs as a short-circuit in webhook.ts BEFORE the AI
+ * pipeline:
  *
- * Two-phase update flow with confirmation:
+ *   READ → answer directly + point at Settings:
+ *     user: "what is my timezone?"
+ *     Grace: "Your timezone is Asia/Jerusalem (Jerusalem).
+ *             You can change it at https://graceglp.com/settings"
  *
- *   user: "change my goal weight to 170"
- *   Grace: "Change your goal weight to 170 lbs? Reply yes to confirm."
- *   user: "yes"
- *   Grace: "Done — your goal weight is now 170 lbs."
+ *   UPDATE (any profile/dietary field) → detect intent + redirect, no write:
+ *     user: "change my goal weight to 170"  /  "I'm vegetarian now"
+ *     Grace: "To keep your profile information accurate, dietary preferences
+ *             and profile settings can only be updated from the Settings
+ *             page. ... : https://graceglp.com/settings"
  *
- * Pending updates live in Redis (`settings:pending:{phone}`, TTL 10 min) so
- * a "yes" after distraction still applies the right change, and the same
- * "yes" can't accidentally re-trigger an old pending update from yesterday.
+ * The FIELDS registry below drives both detection paths — each entry's
+ * readPatterns answer a question, updatePatterns trigger the redirect.
  *
- * Read requests answer directly + always append the settings URL:
- *
- *   user: "what is my timezone?"
- *   Grace: "Your timezone is Asia/Jerusalem (Jerusalem).
- *           You can change it at https://graceglp.com/settings"
- *
- * The FIELDS registry below is the single source of truth — adding a new
- * settable field is one entry: key + label + readPatterns + updatePatterns
- * + parse + format. Tests in settings-flow.test.ts cover every field.
- *
- * Scope decisions (the brief calls for "all current and future user
- * profile fields" — these are MVP exclusions for safety / overlap):
- *   - injection_day UPDATE: skipped, handled by existing
- *     detectInjectionDayChange in webhook.ts (immediate, no confirmation,
- *     matches typo "injuction"). READ included here.
- *   - checkin_count_per_day UPDATE: skipped, handled by existing
- *     detectFrequencyChange in webhook.ts. READ included here.
- *   - protein_goal_grams / calorie_goal_kcal: READ only, UPDATE goes to
- *     settings URL — these are computed targets, not raw user input.
- *   - food_dislikes UPDATE: ADD mode only ("I don't eat eggs anymore",
- *     "I'm allergic to fish"). REMOVE goes to settings URL.
+ * SOLE EXCEPTION: injection_day UPDATE is handled earlier in webhook.ts by
+ * detectInjectionDayChange (the established, approved in-chat flow). Every
+ * other field — including check-in / reminder frequency — redirects to
+ * Settings. Reminder-frequency requests are detected separately in
+ * webhook.ts (isFrequencyChangeRequest) and get the reminder-specific
+ * redirect; this module covers the rest.
  */
 
-import type { Redis } from 'ioredis';
-import type { UserService, GraceUser } from '../user/user.service.js';
+import type { GraceUser } from '../user/user.service.js';
 
 /** Minimal logger surface accepted by this module. Compatible with both
  *  pino's `Logger` and Fastify's `FastifyBaseLogger`. */
@@ -53,25 +41,16 @@ interface MinimalLogger {
 }
 
 const SETTINGS_URL = 'https://graceglp.com/settings';
-const PENDING_TTL_SECONDS = 600; // 10 minutes
-const PENDING_KEY_PREFIX = 'settings:pending:';
 
-interface PendingUpdate {
-  field: keyof GraceUser | 'food_dislikes_add';
-  /** Canonical typed value to write. For food_dislikes_add this is the
-   *  string token to append. */
-  value: unknown;
-  /** Human-readable representation of the new value for confirmation. */
-  display: string;
-  /** Field label for confirmation reply. */
-  label: string;
-  raw: string;
-  ts: number;
-}
+// Verbatim redirect for any profile / dietary change attempt. Grace detects
+// the intent and sends this instead of mutating the profile — the Settings
+// page is the single source of truth.
+const PROFILE_REDIRECT =
+  `To keep your profile information accurate, dietary preferences and profile ` +
+  `settings can only be updated from the Settings page. Please update it there ` +
+  `and I'll use the updated information moving forward: ${SETTINGS_URL}`;
 
 export interface SettingsHandlerDeps {
-  users: UserService;
-  redis: Redis;
   logger: MinimalLogger;
 }
 
@@ -89,16 +68,6 @@ interface FieldDef {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const CONFIRMATION_RE = /^(?:yes|yep|yeah|yup|sure|ok|okay|confirm|confirmed|correct|that'?s right|right|do it|go ahead|please do|please|alright|absolutely)\s*[.!]?\s*$/i;
-const CANCELLATION_RE = /^(?:no|nope|nah|cancel|stop|wait|don'?t|do not|not now|never mind|nevermind|hold on|wrong|that'?s wrong|incorrect)\s*[.!]?\s*$/i;
-
-function isConfirmation(text: string): boolean {
-  return CONFIRMATION_RE.test(text.trim());
-}
-function isCancellation(text: string): boolean {
-  return CANCELLATION_RE.test(text.trim());
-}
 
 const TIMEZONE_MAP: Record<string, { iana: string; label: string }> = {
   'jerusalem': { iana: 'Asia/Jerusalem', label: 'Jerusalem' },
@@ -460,7 +429,8 @@ const FIELDS: FieldDef[] = [
     },
     format: (u) => (u.primary_goal ? u.primary_goal.replace('_', ' ') : null),
   },
-  // Check-in frequency — READ only (UPDATE handled by detectFrequencyChange)
+  // Check-in frequency — READ only (cadence-change requests are detected in
+  // webhook.ts by isFrequencyChangeRequest and redirected to Settings).
   {
     key: 'checkin_count_per_day',
     label: 'check-in frequency',
@@ -490,7 +460,21 @@ const FIELDS: FieldDef[] = [
   },
 ];
 
-// Food dislikes ADD patterns — separate because they APPEND not REPLACE.
+// Dietary identity / preference changes ("I'm vegan now", "change my diet to
+// keto", "I no longer keep kosher", "remember I don't eat meat"). These are
+// profile settings → always redirect, never stored from chat. Patterns are
+// deliberately conservative (require an explicit change signal like "now",
+// "went", "change my diet", "no longer") so a passing mention such as
+// "I'm vegan, what should I eat?" still flows to the food-ideas path.
+const DIETARY_CHANGE_PATTERNS: RegExp[] = [
+  /^i'?m\s+(?:a\s+)?(?:vegetarian|vegan|pescatarian|pescetarian|keto|kosher|halal|gluten[\s-]?free|dairy[\s-]?free)\s+now\b/i,
+  /^i\s+(?:just\s+)?(?:went|became|turned)\s+(?:vegetarian|vegan|keto|gluten[\s-]?free|kosher|halal)\b/i,
+  /\b(?:change|update|set|switch)\s+my\s+(?:diet\b|dietary\s+(?:preferences?|restrictions?)|food\s+(?:preferences?|restrictions?))/i,
+  /^(?:please\s+)?(?:remember|note)\s+(?:that\s+)?i\s+(?:don'?t|do\s+not|can'?t)\s+eat\b/i,
+  /\bi\s+no\s+longer\s+(?:keep|do|eat)\s+(?:kosher|halal|meat|dairy|gluten)\b/i,
+];
+
+// Food dislikes ADD patterns — explicit "I don't eat X" / "I'm allergic to X".
 const FOOD_DISLIKE_ADD_PATTERNS: RegExp[] = [
   /^i\s+don'?t\s+eat\s+(.+?)(?:\s+anymore)?\s*[.!?]?$/i,
   /^i\s+do\s+not\s+eat\s+(.+?)(?:\s+anymore)?\s*[.!?]?$/i,
@@ -512,14 +496,14 @@ function parseFoodToken(raw: string): string | null {
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Inspect the user's message for a settings READ, UPDATE, or pending-update
- * CONFIRMATION/CANCELLATION. Returns the reply Grace should send, or null
- * when the message has nothing to do with settings (caller falls through
- * to the normal AI pipeline).
+ * Inspect the user's message for a settings READ or a profile/dietary UPDATE
+ * request. Reads are answered directly; update requests are REDIRECTED to the
+ * Settings page (never applied from chat). Returns the reply Grace should
+ * send, or null when the message has nothing to do with settings (caller
+ * falls through to the normal AI pipeline).
  *
- * MUST be called AFTER the existing webhook short-circuits (opt-out,
- * frequency change, injection day change) so their established UX
- * stays untouched.
+ * MUST be called AFTER the existing webhook short-circuits (opt-out, reminder
+ * frequency, injection day change) so their established UX stays untouched.
  */
 export async function tryHandleSettings(
   text: string,
@@ -529,57 +513,7 @@ export async function tryHandleSettings(
   const trimmed = text.trim();
   if (trimmed.length === 0 || trimmed.length > 200) return null;
 
-  const pendingKey = PENDING_KEY_PREFIX + user.phone;
-
-  // 1. Pending update? Check confirmation/cancellation FIRST.
-  let pending: PendingUpdate | null = null;
-  try {
-    const raw = await deps.redis.get(pendingKey);
-    if (raw) pending = JSON.parse(raw) as PendingUpdate;
-  } catch (err) {
-    deps.logger.warn(
-      { err: err instanceof Error ? err.message : String(err), userId: user.phone },
-      'settings_flow.redis_get_failed',
-    );
-  }
-
-  if (pending) {
-    if (isConfirmation(trimmed)) {
-      try {
-        await applyPending(user.phone, pending, deps);
-        await deps.redis.del(pendingKey).catch(() => undefined);
-        deps.logger.info(
-          { userId: user.phone, field: pending.field },
-          'settings_flow.applied',
-        );
-        return `Done — your ${pending.label} is now ${pending.display}.`;
-      } catch (err) {
-        deps.logger.error(
-          { err: err instanceof Error ? err.message : String(err), userId: user.phone, field: pending.field },
-          'settings_flow.apply_failed',
-        );
-        await deps.redis.del(pendingKey).catch(() => undefined);
-        return `I hit a hiccup saving that change. Try again, or update it at ${SETTINGS_URL}`;
-      }
-    }
-    if (isCancellation(trimmed)) {
-      await deps.redis.del(pendingKey).catch(() => undefined);
-      deps.logger.info(
-        { userId: user.phone, field: pending.field },
-        'settings_flow.cancelled',
-      );
-      return `Got it — leaving your ${pending.label} as it was.`;
-    }
-    // Anything else: drop the pending update (user moved on) and treat the
-    // current message as a fresh turn (falls through to detection below).
-    await deps.redis.del(pendingKey).catch(() => undefined);
-    deps.logger.info(
-      { userId: user.phone, field: pending.field },
-      'settings_flow.pending_dropped',
-    );
-  }
-
-  // 2. READ request?
+  // 1. READ request? Always allowed — Grace may read and use settings.
   for (const field of FIELDS) {
     if (field.readPatterns.some((re) => re.test(trimmed))) {
       const display = field.format(user);
@@ -594,102 +528,52 @@ export async function tryHandleSettings(
     }
   }
 
-  // 3. UPDATE request?
+  // 2. UPDATE request? Grace must NEVER modify a profile field from chat —
+  //    detect the intent and redirect to Settings (single source of truth).
+  //    No DB write, no confirmation flow.
   for (const field of FIELDS) {
-    for (const pattern of field.updatePatterns) {
-      const m = pattern.exec(trimmed);
-      if (!m) continue;
-      const rawValue = (m[1] ?? '').trim();
-      if (!rawValue) continue;
-      const parsed = field.parse(rawValue);
-      if (!parsed) {
-        return `I didn't catch the new ${field.label}. Try sending it like "set my ${field.label} to ___" or update it at ${SETTINGS_URL}`;
-      }
-      const update: PendingUpdate = {
-        field: field.key,
-        value: parsed.value,
-        display: parsed.display,
-        label: field.label,
-        raw: trimmed,
-        ts: Date.now(),
-      };
-      try {
-        await deps.redis.set(pendingKey, JSON.stringify(update), 'EX', PENDING_TTL_SECONDS);
-      } catch (err) {
-        deps.logger.warn(
-          { err: err instanceof Error ? err.message : String(err), userId: user.phone },
-          'settings_flow.redis_set_failed',
-        );
-        return null;
-      }
+    if (field.updatePatterns.some((re) => re.test(trimmed))) {
       deps.logger.info(
-        { userId: user.phone, field: field.key, action: 'update_pending' },
-        'settings_flow.update_pending',
+        { userId: user.phone, field: field.key, action: 'update_redirected' },
+        'settings_flow.update_redirected',
       );
-      return `Change your ${field.label} to ${parsed.display}? Reply yes to confirm.`;
+      return PROFILE_REDIRECT;
     }
   }
 
-  // 4. Food dislikes ADD?
+  // 3. Dietary identity / preference change ("I'm vegan now", "change my
+  //    diet", "I no longer keep kosher")? Profile setting → redirect.
+  if (DIETARY_CHANGE_PATTERNS.some((re) => re.test(trimmed))) {
+    deps.logger.info(
+      { userId: user.phone, field: 'dietary', action: 'update_redirected' },
+      'settings_flow.update_redirected',
+    );
+    return PROFILE_REDIRECT;
+  }
+
+  // 4. Food dislikes / allergies ("I don't eat eggs", "I'm allergic to fish")?
+  //    Same rule — redirect to Settings. parseFoodToken guards against firing
+  //    on non-food sentences ("I hate waiting", pronouns, clauses).
   for (const pattern of FOOD_DISLIKE_ADD_PATTERNS) {
     const m = pattern.exec(trimmed);
     if (!m) continue;
     const token = parseFoodToken(m[1] ?? '');
     if (!token) continue;
-    const existing = (user.food_dislikes ?? []).map((d) => d.toLowerCase());
-    if (existing.includes(token)) {
-      return `Already noted that you avoid ${token}. You can review all your preferences at ${SETTINGS_URL}`;
-    }
-    const update: PendingUpdate = {
-      field: 'food_dislikes_add',
-      value: token,
-      display: token,
-      label: 'food dislikes',
-      raw: trimmed,
-      ts: Date.now(),
-    };
-    try {
-      await deps.redis.set(pendingKey, JSON.stringify(update), 'EX', PENDING_TTL_SECONDS);
-    } catch (err) {
-      deps.logger.warn(
-        { err: err instanceof Error ? err.message : String(err), userId: user.phone },
-        'settings_flow.redis_set_failed',
-      );
-      return null;
-    }
     deps.logger.info(
-      { userId: user.phone, field: 'food_dislikes_add', action: 'update_pending' },
-      'settings_flow.update_pending',
+      { userId: user.phone, field: 'food_dislikes', action: 'update_redirected' },
+      'settings_flow.update_redirected',
     );
-    return `Add ${token} to your food dislikes? Reply yes to confirm.`;
+    return PROFILE_REDIRECT;
   }
 
   return null;
-}
-
-async function applyPending(
-  phone: string,
-  pending: PendingUpdate,
-  deps: SettingsHandlerDeps,
-): Promise<void> {
-  if (pending.field === 'food_dislikes_add') {
-    // Append to the existing array — fetch current to avoid race with admin edits.
-    const fresh = await deps.users.getByPhone(phone);
-    const current = fresh?.food_dislikes ?? [];
-    const token = String(pending.value);
-    if (current.map((d) => d.toLowerCase()).includes(token.toLowerCase())) return;
-    await deps.users.update(phone, { food_dislikes: [...current, token] });
-    return;
-  }
-  await deps.users.update(phone, { [pending.field]: pending.value } as Partial<GraceUser>);
 }
 
 // Test-only exports
 export const __testing = {
   FIELDS,
   FOOD_DISLIKE_ADD_PATTERNS,
-  isConfirmation,
-  isCancellation,
+  DIETARY_CHANGE_PATTERNS,
   parseTimezone,
   parseMedication,
   parseSex,
@@ -697,6 +581,5 @@ export const __testing = {
   formatHeight,
   parseFoodToken,
   TIMEZONE_MAP,
-  PENDING_KEY_PREFIX,
-  PENDING_TTL_SECONDS,
+  PROFILE_REDIRECT,
 };

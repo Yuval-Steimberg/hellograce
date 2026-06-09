@@ -228,8 +228,8 @@ describe('ResearchAutoFix.buildSyntheticFeedback', () => {
 });
 
 describe('ResearchAutoFix.runIfMissedRecently', () => {
-  it('skips when last run was less than 20 hours ago', async () => {
-    const recentMs = (Date.now() - 4 * 3_600_000).toString(); // 4 hours ago
+  it('skips when last run was within the weekly window', async () => {
+    const recentMs = (Date.now() - 100 * 3_600_000).toString(); // ~4 days ago (< 156h)
     const redis = {
       get: vi.fn().mockResolvedValue(recentMs),
       set: vi.fn().mockResolvedValue('OK'),
@@ -241,8 +241,8 @@ describe('ResearchAutoFix.runIfMissedRecently', () => {
     runSpy.mockRestore();
   });
 
-  it('triggers run when last run was more than 20 hours ago', async () => {
-    const recentMs = (Date.now() - 22 * 3_600_000).toString(); // 22 hours ago
+  it('triggers run when last run was more than the weekly window (~6.5 days) ago', async () => {
+    const recentMs = (Date.now() - 160 * 3_600_000).toString(); // ~6.7 days ago (> 156h)
     const redis = {
       get: vi.fn().mockResolvedValue(recentMs),
       set: vi.fn().mockResolvedValue('OK'),

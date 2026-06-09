@@ -46,15 +46,17 @@ export class Scheduler {
     this.tasks.push(
       cron.schedule('0 3 * * *', () => void this.runPersonalizationEngine()),
     );
-    // Prompt optimizer runs DAILY at 05:30 UTC — shifted from 4am so it fires
-    // ~12 hours offset from the typical mid-day operator/admin activity
-    // window. Strict isSafe() gates auto-activation; failures save as inactive
-    // drafts for admin review.
-    // Prompt optimizer — catch up on startup if the 05:30 UTC window was missed
-    // (common when Fly machines auto-stop overnight due to no payment method).
+    // Prompt optimizer runs WEEKLY (Sunday 05:30 UTC). Throttled from daily to
+    // weekly (2026-06-08 cost pass) — the optimizer + its post-activation
+    // coverage smoke (~50 cases through the full orchestrator) is one of the
+    // heaviest Gemini token consumers, and the self-improvement loop is just as
+    // effective weekly with no impact on live accuracy or latency. Strict
+    // isSafe() still gates auto-activation; failures save as inactive drafts.
+    // Catch up on startup if the weekly window was missed (common when Fly
+    // machines auto-stop overnight due to no payment method).
     if (this.deps.promptOptimizer) {
       this.tasks.push(
-        cron.schedule('30 5 * * *', () => void this.deps.promptOptimizer!.run()),
+        cron.schedule('30 5 * * 0', () => void this.deps.promptOptimizer!.run()),
       );
       setTimeout(() => void this.deps.promptOptimizer!.runIfMissedToday(), 30_000);
     }
@@ -75,15 +77,17 @@ export class Scheduler {
         cron.schedule('0 5 * * 0', () => void this.deps.researchScrape!()),
       );
     }
-    // Phase 18: auto-fix — DAILY at 1am UTC, 4.5 hours BEFORE the prompt
-    // optimizer's 05:30 UTC run. This ordering matters: auto-fix injects
-    // synthetic feedback into the optimizer's in-memory buffer, then the
-    // 05:30 cron picks it up alongside real RLHF signals. Daily cadence
-    // (was every 3 days) so the autonomous loop produces visible
-    // improvements every day, not every third day.
+    // Phase 18: auto-fix — WEEKLY (Sunday 01:00 UTC), 4.5 hours BEFORE the
+    // prompt optimizer's 05:30 UTC run on the same day. This ordering matters:
+    // auto-fix injects synthetic feedback into the optimizer's in-memory
+    // buffer, then the 05:30 cron picks it up alongside real RLHF signals.
+    // Throttled from daily to weekly (2026-06-08 cost pass) — re-replaying
+    // corpus failures through the orchestrator + 15-dimension LLM evaluator is
+    // a heavy Gemini consumer with zero live-quality impact; weekly keeps the
+    // autonomous loop running while cutting ~7x its token cost.
     if (this.deps.researchAutoFix) {
       this.tasks.push(
-        cron.schedule('0 1 * * *', () => void this.deps.researchAutoFix!()),
+        cron.schedule('0 1 * * 0', () => void this.deps.researchAutoFix!()),
       );
     }
     this.deps.logger.info('scheduler.started');

@@ -1,12 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { tryHandleSettings, __testing } from './settings-flow.js';
-import type { GraceUser, UserService } from '../user/user.service.js';
+import type { GraceUser } from '../user/user.service.js';
 
 const noopLogger = {
   info: () => {},
   warn: () => {},
   error: () => {},
 };
+
+const deps = { logger: noopLogger };
+const REDIRECT = __testing.PROFILE_REDIRECT;
 
 function makeUser(overrides: Partial<GraceUser> = {}): GraceUser {
   return {
@@ -77,57 +80,9 @@ function makeUser(overrides: Partial<GraceUser> = {}): GraceUser {
   };
 }
 
-function makeRedis() {
-  const store = new Map<string, { value: string; expiresAt: number }>();
-  return {
-    get: vi.fn(async (k: string) => {
-      const entry = store.get(k);
-      if (!entry) return null;
-      if (entry.expiresAt > 0 && Date.now() > entry.expiresAt) {
-        store.delete(k);
-        return null;
-      }
-      return entry.value;
-    }),
-    set: vi.fn(async (k: string, v: string, _mode?: string, ttl?: number) => {
-      const expiresAt = ttl ? Date.now() + ttl * 1000 : 0;
-      store.set(k, { value: v, expiresAt });
-      return 'OK';
-    }),
-    del: vi.fn(async (k: string) => {
-      const had = store.has(k);
-      store.delete(k);
-      return had ? 1 : 0;
-    }),
-    __store: store,
-  };
-}
-
-function makeUserService(initial: GraceUser): { svc: UserService; updates: Array<Partial<GraceUser>> } {
-  const updates: Array<Partial<GraceUser>> = [];
-  let current = initial;
-  const svc = {
-    update: vi.fn(async (_phone: string, fields: Partial<GraceUser>) => {
-      updates.push(fields);
-      current = { ...current, ...fields };
-    }),
-    getByPhone: vi.fn(async () => current),
-    getById: vi.fn(async () => current),
-  } as unknown as UserService;
-  return { svc, updates };
-}
-
 // ─── Helper tests ────────────────────────────────────────────────────────────
 
 describe('settings-flow helpers', () => {
-  it('isConfirmation matches yes/yep/confirm/correct/that\'s right', () => {
-    const yeses = ['yes', 'Yes', 'YES', 'yep', 'yeah', 'sure', 'ok', 'okay', 'confirm', 'correct', "that's right", 'do it', 'go ahead', 'please', 'alright'];
-    for (const y of yeses) expect(__testing.isConfirmation(y)).toBe(true);
-  });
-  it('isCancellation matches no/cancel/never mind/wrong', () => {
-    const nos = ['no', 'nope', 'cancel', 'wait', 'never mind', 'nevermind', "that's wrong", 'wrong', 'hold on'];
-    for (const n of nos) expect(__testing.isCancellation(n)).toBe(true);
-  });
   it('parseTimezone accepts friendly names + IANA', () => {
     expect(__testing.parseTimezone('Jerusalem')).toEqual({ value: 'Asia/Jerusalem', display: 'Asia/Jerusalem (Jerusalem)' });
     expect(__testing.parseTimezone('new york')).toEqual({ value: 'America/New_York', display: 'America/New_York (New York)' });
@@ -159,277 +114,114 @@ describe('settings-flow helpers', () => {
   });
 });
 
-// ─── READ flow ────────────────────────────────────────────────────────────────
+// ─── READ flow — always allowed (Grace may read + use settings) ───────────────
 
 describe('settings-flow READ', () => {
   it('"What is my timezone?" returns current value + settings link', async () => {
     const user = makeUser({ timezone: 'Asia/Jerusalem' });
-    const { svc } = makeUserService(user);
-    const redis = makeRedis();
-    const reply = await tryHandleSettings('What is my timezone?', user, { users: svc, redis: redis as any, logger: noopLogger });
-    expect(reply).not.toBeNull();
+    const reply = await tryHandleSettings('What is my timezone?', user, deps);
     expect(reply).toContain('Your timezone is Asia/Jerusalem (Jerusalem)');
     expect(reply).toContain('https://graceglp.com/settings');
   });
 
   it('"What is my injection day?" returns the stored day', async () => {
     const user = makeUser({ injection_day: 'Monday' });
-    const { svc } = makeUserService(user);
-    const redis = makeRedis();
-    const reply = await tryHandleSettings('What is my injection day?', user, { users: svc, redis: redis as any, logger: noopLogger });
+    const reply = await tryHandleSettings('What is my injection day?', user, deps);
     expect(reply).toContain('Your injection day is Monday');
   });
 
   it('"How tall am I?" returns the stored height in both cm + ft/in', async () => {
     const user = makeUser({ height_cm: 175 });
-    const { svc } = makeUserService(user);
-    const redis = makeRedis();
-    const reply = await tryHandleSettings('How tall am I?', user, { users: svc, redis: redis as any, logger: noopLogger });
+    const reply = await tryHandleSettings('How tall am I?', user, deps);
     expect(reply).toMatch(/Your height is 175 cm \(5'9"\)/);
   });
 
   it('unset field returns the "you haven\'t set X yet" line', async () => {
     const user = makeUser({ goal_weight: null });
-    const { svc } = makeUserService(user);
-    const redis = makeRedis();
-    const reply = await tryHandleSettings("What's my goal weight?", user, { users: svc, redis: redis as any, logger: noopLogger });
+    const reply = await tryHandleSettings("What's my goal weight?", user, deps);
     expect(reply).toContain("haven't set your goal weight yet");
     expect(reply).toContain('graceglp.com/settings');
   });
 
-  it('unrelated message returns null (falls through to AI)', async () => {
-    const user = makeUser();
-    const { svc } = makeUserService(user);
-    const redis = makeRedis();
-    const reply = await tryHandleSettings('I had eggs for breakfast', user, { users: svc, redis: redis as any, logger: noopLogger });
-    expect(reply).toBeNull();
-  });
-});
-
-// ─── UPDATE → confirm → apply flow ────────────────────────────────────────────
-
-describe('settings-flow UPDATE → confirm → apply', () => {
-  let user: GraceUser;
-  let svcObj: { svc: UserService; updates: Array<Partial<GraceUser>> };
-  let redis: ReturnType<typeof makeRedis>;
-  let deps: any;
-
-  beforeEach(() => {
-    user = makeUser();
-    svcObj = makeUserService(user);
-    redis = makeRedis();
-    deps = { users: svcObj.svc, redis, logger: noopLogger };
-  });
-
-  it('stages a pending update and asks for confirmation', async () => {
-    const reply = await tryHandleSettings('change my goal weight to 170', user, deps);
-    expect(reply).toBe('Change your goal weight to 170 lbs? Reply yes to confirm.');
-    // Pending update stored in Redis with TTL
-    expect(redis.set).toHaveBeenCalledWith(
-      __testing.PENDING_KEY_PREFIX + user.phone,
-      expect.any(String),
-      'EX',
-      __testing.PENDING_TTL_SECONDS,
-    );
-    expect(svcObj.updates).toEqual([]);
-  });
-
-  it('"yes" after pending applies the update and confirms', async () => {
-    await tryHandleSettings('change my goal weight to 170', user, deps);
-    const reply = await tryHandleSettings('yes', user, deps);
-    expect(reply).toBe('Done — your goal weight is now 170 lbs.');
-    expect(svcObj.updates).toEqual([{ goal_weight: 170 }]);
-    // Pending cleared
-    expect(await redis.get(__testing.PENDING_KEY_PREFIX + user.phone)).toBeNull();
-  });
-
-  it('"no" after pending cancels and leaves data unchanged', async () => {
-    await tryHandleSettings('change my goal weight to 170', user, deps);
-    const reply = await tryHandleSettings('no', user, deps);
-    expect(reply).toBe('Got it — leaving your goal weight as it was.');
-    expect(svcObj.updates).toEqual([]);
-    expect(await redis.get(__testing.PENDING_KEY_PREFIX + user.phone)).toBeNull();
-  });
-
-  it('a different message after pending drops the pending and treats as new turn', async () => {
-    await tryHandleSettings('change my goal weight to 170', user, deps);
-    // Unrelated message — pending is dropped, returns null (falls through).
-    const reply = await tryHandleSettings('I had eggs', user, deps);
-    expect(reply).toBeNull();
-    expect(svcObj.updates).toEqual([]);
-    expect(await redis.get(__testing.PENDING_KEY_PREFIX + user.phone)).toBeNull();
-  });
-
-  // ─── per-field update coverage ─────────────────────────────────────────────
-
-  it('updates timezone', async () => {
-    await tryHandleSettings('change my timezone to Jerusalem', user, deps);
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ timezone: 'Asia/Jerusalem' }]);
-  });
-
-  it('updates medication ("I switched to Wegovy")', async () => {
-    const reply1 = await tryHandleSettings('I switched to Wegovy', user, deps);
-    expect(reply1).toBe('Change your medication to Wegovy? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ medication: 'Wegovy' }]);
-  });
-
-  it('updates dose ("my dose is 0.5 now")', async () => {
-    const reply1 = await tryHandleSettings('my dose is 0.5 mg now', user, deps);
-    expect(reply1).toBe('Change your dose to 0.5 mg? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ dose_mg: 0.5 }]);
-  });
-
-  it('updates current weight ("I weigh 175 lbs now")', async () => {
-    const reply1 = await tryHandleSettings('I weigh 175 lbs now', user, deps);
-    expect(reply1).toBe('Change your current weight to 175 lbs? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ current_weight: 175 }]);
-  });
-
-  it('updates starting weight ("set my starting weight to 220 lbs")', async () => {
-    // 2026-06-06 — added per coverage audit Area 8.
-    const reply1 = await tryHandleSettings('set my starting weight to 220 lbs', user, deps);
-    expect(reply1).toBe('Change your starting weight to 220 lbs? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ starting_weight: 220 }]);
-  });
-
-  it('updates starting weight ("I started at 230")', async () => {
-    const reply1 = await tryHandleSettings('I started at 230', user, deps);
-    expect(reply1).toBe('Change your starting weight to 230 lbs? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ starting_weight: 230 }]);
-  });
-
-  it('reads starting weight: "what is my starting weight?" unset → null-aware reply', async () => {
+  it('reads starting weight: unset → null-aware reply', async () => {
+    const user = makeUser({ starting_weight: null });
     const reply = await tryHandleSettings('what is my starting weight?', user, deps);
     expect(reply).toContain("haven't set your starting weight yet");
   });
+});
 
-  it('updates height ("my height is 175 cm")', async () => {
-    const reply1 = await tryHandleSettings('my height is 175 cm', user, deps);
-    expect(reply1).toBe(`Change your height to 175 cm (5'9")? Reply yes to confirm.`);
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ height_cm: 175 }]);
-  });
+// ─── UPDATE → redirect (NEVER applied from chat) ──────────────────────────────
 
-  it('updates sex ("my sex is female")', async () => {
-    const reply1 = await tryHandleSettings('my sex is female', user, deps);
-    expect(reply1).toBe('Change your sex to female? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ sex: 'female' }]);
-  });
+describe('settings-flow UPDATE redirects to Settings (no chat writes)', () => {
+  const updatePhrases = [
+    'change my goal weight to 170',
+    'change my timezone to Jerusalem',
+    'I switched to Wegovy',
+    'my dose is 0.5 mg now',
+    'I weigh 175 lbs now',
+    'set my starting weight to 220 lbs',
+    'I started at 230',
+    'my height is 175 cm',
+    'my sex is female',
+    'call me Sarah',
+    'my age is 40',
+    'change my primary goal to maintenance',
+  ];
 
-  it('updates first name ("call me Sarah")', async () => {
-    const reply1 = await tryHandleSettings('call me Sarah', user, deps);
-    expect(reply1).toBe('Change your name to Sarah? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ first_name: 'Sarah' }]);
-  });
+  for (const phrase of updatePhrases) {
+    it(`"${phrase}" → redirect, no write`, async () => {
+      const reply = await tryHandleSettings(phrase, makeUser(), deps);
+      expect(reply).toBe(REDIRECT);
+      expect(reply).toContain('https://graceglp.com/settings');
+      expect(reply).toContain('Settings page');
+    });
+  }
 
-  it('updates age', async () => {
-    const reply1 = await tryHandleSettings('my age is 40', user, deps);
-    expect(reply1).toBe('Change your age to 40? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ age: 40 }]);
-  });
-
-  it('updates primary goal', async () => {
-    const reply1 = await tryHandleSettings('change my primary goal to maintenance', user, deps);
-    expect(reply1).toBe('Change your primary goal to maintenance? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    expect(svcObj.updates).toEqual([{ primary_goal: 'maintenance' }]);
-  });
-
-  // ─── Food dislikes ADD ─────────────────────────────────────────────────────
-
-  it('"I don\'t eat eggs anymore" stages adding eggs to food_dislikes', async () => {
-    const reply1 = await tryHandleSettings("I don't eat eggs anymore", user, deps);
-    expect(reply1).toBe('Add eggs to your food dislikes? Reply yes to confirm.');
-    await tryHandleSettings('yes', user, deps);
-    // Appended, not replaced — applyPending reads fresh + appends
-    expect(svcObj.updates).toEqual([{ food_dislikes: ['eggs'] }]);
-  });
-
-  it('"I\'m allergic to fish" stages adding fish', async () => {
-    const reply1 = await tryHandleSettings("I'm allergic to fish", user, deps);
-    expect(reply1).toBe('Add fish to your food dislikes? Reply yes to confirm.');
-  });
-
-  it('duplicate dislike short-circuits without asking', async () => {
-    user.food_dislikes = ['fish'];
-    svcObj = makeUserService(user);
-    deps = { users: svcObj.svc, redis, logger: noopLogger };
-    const reply = await tryHandleSettings("I'm allergic to fish", user, deps);
-    expect(reply).toContain('Already noted that you avoid fish');
-    expect(svcObj.updates).toEqual([]);
-  });
-
-  // ─── Invalid input ─────────────────────────────────────────────────────────
-
-  it('unparseable value returns a helpful error', async () => {
-    const reply = await tryHandleSettings('change my timezone to Mars', user, deps);
-    expect(reply).toContain("I didn't catch the new timezone");
-    expect(reply).toContain('graceglp.com/settings');
-  });
-
-  // ─── Confirmation idempotence ──────────────────────────────────────────────
-
-  it('"yes" without pending update returns null (falls through to AI)', async () => {
-    const reply = await tryHandleSettings('yes', user, deps);
-    expect(reply).toBeNull();
-    expect(svcObj.updates).toEqual([]);
-  });
-
-  it('"yes" after pending has been deleted returns null', async () => {
-    await tryHandleSettings('change my goal weight to 170', user, deps);
-    await tryHandleSettings('yes', user, deps);
-    // Second "yes" — no pending now
-    const reply = await tryHandleSettings('yes', user, deps);
-    expect(reply).toBeNull();
-    expect(svcObj.updates).toEqual([{ goal_weight: 170 }]);
+  it('even an unparseable value redirects (no "I didn\'t catch that")', async () => {
+    const reply = await tryHandleSettings('change my timezone to Mars', makeUser(), deps);
+    expect(reply).toBe(REDIRECT);
   });
 });
 
-// ─── Don't trigger on normal chat ─────────────────────────────────────────────
+// ─── Dietary preference changes → redirect ────────────────────────────────────
+
+describe('settings-flow dietary changes redirect to Settings', () => {
+  const dietaryPhrases = [
+    "I'm vegetarian now",
+    "I'm a vegan now",
+    'I went vegetarian',
+    'change my diet to vegan',
+    'update my food preferences',
+    'please remember that I don\'t eat meat',
+    'I no longer keep kosher',
+    "I don't eat eggs anymore",
+    "I'm allergic to fish",
+    'I hate mushrooms',
+  ];
+
+  for (const phrase of dietaryPhrases) {
+    it(`"${phrase}" → redirect, no write`, async () => {
+      const reply = await tryHandleSettings(phrase, makeUser(), deps);
+      expect(reply).toBe(REDIRECT);
+    });
+  }
+});
+
+// ─── Does NOT trigger on normal chat ──────────────────────────────────────────
 
 describe('settings-flow does NOT trigger on normal chat', () => {
-  it('returns null for "I had eggs for breakfast"', async () => {
-    const user = makeUser();
-    const { svc } = makeUserService(user);
-    const redis = makeRedis();
-    const reply = await tryHandleSettings('I had eggs for breakfast', user, { users: svc, redis: redis as any, logger: noopLogger });
-    expect(reply).toBeNull();
-  });
+  const passThrough = [
+    'I had eggs for breakfast',
+    "I'm feeling tired today",
+    'yes',
+    "I'm vegan, what should I eat for dinner?",
+    "I've been feeling really down lately and the scale isn't moving even though I'm sticking to my plan",
+  ];
 
-  it('returns null for "Im feeling tired today"', async () => {
-    const user = makeUser();
-    const { svc } = makeUserService(user);
-    const redis = makeRedis();
-    const reply = await tryHandleSettings("I'm feeling tired today", user, { users: svc, redis: redis as any, logger: noopLogger });
-    expect(reply).toBeNull();
-  });
-
-  it('returns null for a fresh "yes" with no pending', async () => {
-    const user = makeUser();
-    const { svc } = makeUserService(user);
-    const redis = makeRedis();
-    const reply = await tryHandleSettings('yes', user, { users: svc, redis: redis as any, logger: noopLogger });
-    expect(reply).toBeNull();
-  });
-
-  it('returns null for a long emotional message', async () => {
-    const user = makeUser();
-    const { svc } = makeUserService(user);
-    const redis = makeRedis();
-    const reply = await tryHandleSettings(
-      "I've been feeling really down lately and the scale isn't moving even though I'm sticking to my plan",
-      user,
-      { users: svc, redis: redis as any, logger: noopLogger },
-    );
-    expect(reply).toBeNull();
-  });
+  for (const phrase of passThrough) {
+    it(`"${phrase}" → null (falls through to AI)`, async () => {
+      const reply = await tryHandleSettings(phrase, makeUser(), deps);
+      expect(reply).toBeNull();
+    });
+  }
 });

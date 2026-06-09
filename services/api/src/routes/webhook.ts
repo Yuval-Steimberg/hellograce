@@ -146,15 +146,17 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             }
           }
 
-          // ── In-chat check-in frequency change (master prompt — CHECK-IN FREQUENCY).
-          // Update the field directly and confirm warmly; do NOT send to settings.
-          if (user) {
-            const freqChange = detectFrequencyChange(normalized.text, user.checkin_count_per_day ?? 1);
-            if (freqChange) {
-              await deps.users.update(user.phone, { checkin_count_per_day: freqChange.newCount }).catch(() => null);
-              await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: freqChange.reply });
-              return;
-            }
+          // ── In-chat reminder / check-in frequency change.
+          // Reminder preferences are owned by the Settings page (single source
+          // of truth). Grace must NOT change the cadence from chat — detect the
+          // request and redirect. Never write checkin_count_per_day here.
+          if (user && isFrequencyChangeRequest(normalized.text)) {
+            await deps.sender.send({
+              to: normalized.userId,
+              channel: normalized.channel,
+              body: REMINDER_REDIRECT_REPLY,
+            });
+            return;
           }
 
           // ── In-chat injection day change.
@@ -190,11 +192,9 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           // user's "yes" applies it, "no" cancels it. Runs AFTER the
           // existing short-circuits above so their immediate-update UX
           // for injection day / frequency / opt-out stays unchanged.
-          if (user && deps.users && deps.redis) {
+          if (user) {
             try {
               const settingsReply = await tryHandleSettings(normalized.text, user, {
-                users: deps.users,
-                redis: deps.redis,
                 logger: app.log,
               });
               if (settingsReply) {
@@ -581,48 +581,25 @@ const FREQ_DIGIT = new RegExp([
   /\b([1-9])\s+(?:a|per)\s+day\b/,
 ].map((r) => r.source).join('|'), 'i');
 
-const FREQ_LABEL: Record<number, string> = {
-  1: 'once a day',
-  2: 'twice a day',
-  3: '3 times a day',
-  4: '4 times a day',
-};
+// Reminder preferences (check-in cadence) live ONLY on the Settings page —
+// the single source of truth. Grace detects a cadence-change request and
+// sends this redirect; she never writes checkin_count_per_day from chat.
+const REMINDER_REDIRECT_REPLY =
+  `Reminder preferences can only be managed through the Settings page. Please ` +
+  `update them there and the system will apply your changes: https://graceglp.com/settings`;
 
-function detectFrequencyChange(text: string, current: number): { newCount: number; reply: string } | null {
-  // Digit-based check first — most explicit signal.
-  // Find the first non-undefined capture group across all alternatives.
-  const digitMatch = FREQ_DIGIT.exec(text);
-  if (digitMatch) {
-    const captured = digitMatch.slice(1).find((g) => g !== undefined);
-    const raw = parseInt(captured ?? '0', 10);
-    if (raw >= 1) {
-      const n = Math.min(4, Math.max(1, raw));
-      const label = FREQ_LABEL[n] ?? `${n} times a day`;
-      return { newCount: n, reply: `Done — ${label} from now on. Just let me know if you want to adjust it.` };
-    }
-  }
-  if (FREQ_ONCE.test(text)) {
-    return { newCount: 1, reply: 'Done — I\'ll check in once a day from now on. Just tell me if you want to change it again.' };
-  }
-  if (FREQ_TWICE.test(text)) {
-    return { newCount: 2, reply: 'Got it — twice a day from now on. Let me know if it feels like too much or too little.' };
-  }
-  if (FREQ_EVERY_OTHER.test(text)) {
-    return { newCount: 1, reply: 'Easy — I\'ll lighten it up. You\'ll mostly hear from me once a day, sometimes less.' };
-  }
-  if (FREQ_LESS.test(text)) {
-    const next = Math.max(1, current - 1);
-    return next === current
-      ? null
-      : { newCount: next, reply: `Done — I'll drop it to ${next === 1 ? 'once' : next + ' times'} a day. Let me know if you want to change it again.` };
-  }
-  if (FREQ_MORE.test(text)) {
-    const next = Math.min(4, current + 1);
-    return next === current
-      ? null
-      : { newCount: next, reply: `Got it — bumping it up to ${next} times a day. Tell me if it ever feels like too much.` };
-  }
-  return null;
+// True when the message is any attempt to change check-in / reminder cadence
+// (digit-based, "once a day", "text me less/more", "every other day", etc.).
+// All such requests redirect to Settings — there is no in-chat cadence write.
+function isFrequencyChangeRequest(text: string): boolean {
+  return (
+    FREQ_DIGIT.test(text) ||
+    FREQ_ONCE.test(text) ||
+    FREQ_TWICE.test(text) ||
+    FREQ_EVERY_OTHER.test(text) ||
+    FREQ_LESS.test(text) ||
+    FREQ_MORE.test(text)
+  );
 }
 
 // ─── Injection day change ─────────────────────────────────────────────────────

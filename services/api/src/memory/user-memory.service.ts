@@ -69,11 +69,18 @@ export class UserMemoryService {
     try {
       const queryEmbedding = await this.embedder.embed(queryText);
       const vectorStr = `[${queryEmbedding.join(',')}]`;
+      // Ranking = cosine distance + a small recency penalty. Memories newer
+      // than 30 days rank purely on similarity; older ones accrue up to +0.30
+      // distance (linear, saturating at ~390 days). This keeps a newer
+      // correction ("I can have dairy now") from being permanently outranked
+      // by an older high-similarity memory ("I'm avoiding dairy") — the
+      // staleness gap found in the 2026-06-10 reliability verification.
       const result = await this.pool.query<{ id: number; content: string; kind: string }>(
         `SELECT id, content, kind
          FROM user_memories
          WHERE user_id = $1 AND confidence >= 0.5
-         ORDER BY embedding <=> $2::vector
+         ORDER BY (embedding <=> $2::vector)
+           + LEAST(GREATEST(EXTRACT(EPOCH FROM (now() - created_at)) / 86400.0 - 30.0, 0) / 1200.0, 0.30)
          LIMIT $3`,
         [userId, vectorStr, topK],
       );

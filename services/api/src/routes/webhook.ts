@@ -80,58 +80,78 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
 
     // Fire-and-forget AI processing.
     void (async () => {
+      // Coalesce rapid consecutive text messages (corrections, continuations)
+      // BEFORE the in-flight lock. Order matters: the buffer append must come
+      // first — when the lock check ran first (2026-06-04 → 2026-06-10), a
+      // follow-up arriving while a turn was processing failed the lock and was
+      // dropped before it could ever reach the buffer, which made coalescing
+      // dead code and silently lost burst messages.
+      //
+      // If this message is absorbed into a pending window, exit early — the
+      // window-holder will process the merged text. Media messages fire
+      // immediately.
+      //
+      // Fast-path bypass (2026-05-30): pure greetings / brief acks / thanks
+      // get an instant deterministic reply, so the 2-second coalesce wait is
+      // pure dead time for them. Skip coalesce when the message is short and
+      // matches a no-continuation pattern. Real multi-message bursts (food
+      // logs, questions, longer content) still go through the buffer.
+      if (deps.redis && normalized.type === 'text') {
+        if (!shouldSkipCoalesce(normalized.text)) {
+          const coalesced = await coalesceMessages(deps.redis, normalized.userId, normalized.text);
+          if (coalesced === null) return;
+          normalized.text = coalesced;
+        }
+      }
+
       // In-flight lock: prevents TWO concurrent AI pipelines from running for
       // the same user, which would otherwise produce duplicate replies (e.g.
       // both a short refusal AND a long memory-dump in the same minute — the
       // exact bug reported 2026-05-29). 30s TTL covers the slowest realistic
       // turn; release in finally so the next turn isn't blocked.
+      //
+      // A message that arrives while a previous turn is still processing WAITS
+      // for the lock (bounded retries) instead of being dropped — losing a
+      // user's message is strictly worse than answering it a few seconds late.
+      // Only if the lock never frees within the retry budget do we drop, with
+      // a warning, as the last resort.
       // Failure-open: if Redis is down, proceed without the lock rather than
       // dropping the user's message entirely.
       const inflightKey = `inflight:${normalized.userId}`;
       let inflightAcquired = false;
       if (deps.redis) {
-        try {
-          const ok = await deps.redis.set(inflightKey, '1', 'EX', 30, 'NX');
-          if (ok === null) {
-            req.log.warn({ userId: normalized.userId }, 'webhook.inflight_skip');
-            return;
-          }
-          inflightAcquired = true;
-        } catch (err) {
-          req.log.warn({ err: (err as Error).message }, 'webhook.inflight_lock_failed_proceeding');
-        }
+        const slot = await acquireInflightSlot(deps.redis, inflightKey, (event) => {
+          if (event === 'waiting') req.log.info({ userId: normalized.userId }, 'webhook.inflight_waiting');
+          if (event === 'skip') req.log.warn({ userId: normalized.userId }, 'webhook.inflight_skip');
+          if (event === 'redis_failed') req.log.warn({ userId: normalized.userId }, 'webhook.inflight_lock_failed_proceeding');
+        });
+        if (slot === 'busy') return;
+        inflightAcquired = slot === 'acquired';
       }
 
       try {
-        // Coalesce rapid consecutive text messages (corrections, continuations).
-        // If this message is absorbed into a pending window, exit early — the
-        // lock-holder will process the merged text. Media messages fire immediately.
-        //
-        // Fast-path bypass (2026-05-30): pure greetings / brief acks / thanks
-        // get an instant deterministic reply, so the 2-second coalesce wait is
-        // pure dead time for them. Skip coalesce when the message is short and
-        // matches a no-continuation pattern. Real multi-message bursts (food
-        // logs, questions, longer content) still go through the buffer.
-        if (deps.redis && normalized.type === 'text') {
-          if (!shouldSkipCoalesce(normalized.text)) {
-            const coalesced = await coalesceMessages(deps.redis, normalized.userId, normalized.text);
-            if (coalesced === null) return;
-            normalized.text = coalesced;
-          }
-        }
-
         let user: GraceUser | null = null;
         // Upsert the user record and update last_reply_at on every inbound message.
         if (deps.users) {
           user = await deps.users.ensureUser(normalized.userId).catch(() => null);
 
-          // Handle injection "done" reply — advance the state machine.
+          // Handle injection "done" reply — advance the state machine and
+          // reply with an injection-aware acknowledgment. Without the explicit
+          // reply + return, the message fell through to the fast-path brief-ack
+          // pool and the user got a generic "Got it 👍" for completing their
+          // injection (state was correct, reply wasn't — fixed 2026-06-10).
           if (user && user.injection_flow_stage === 'morning_sent') {
             const trimmed = normalized.text.trim().toLowerCase();
             if (trimmed === 'done' || trimmed === 'done!' || trimmed === 'injected') {
               await deps.users.setInjectionStage(user.phone, 'done_confirmed', {
                 injection_done_at: new Date(),
               }).catch(() => null);
+              await deps.sender.send({
+                to: normalized.userId,
+                channel: normalized.channel,
+                body: pickInjectionDoneAck(normalized.userId),
+              });
+              return;
             }
           }
 
@@ -708,7 +728,67 @@ export async function coalesceMessages(redis: Redis, phone: string, text: string
 
   const parts = await redis.lrange(bufKey, 0, -1);
   await redis.del(bufKey);
+  // Release the window lock explicitly. Before 2026-06-10 the lock was left
+  // to expire on its own (EX 5), so a message arriving 2-5s after the first
+  // was "absorbed" into a window that had already drained — and lost. With
+  // the explicit release, the next message simply opens a new window.
+  // (A sub-millisecond race remains between lrange and the two dels; an
+  // rpush landing in that gap is absorbed-and-dropped. Acceptable vs. the
+  // guaranteed 3-second loss window this replaces.)
+  await redis.del(lockKey);
   return parts.join(' ').trim() || text;
+}
+
+// In-flight lock retry budget: 15 × 1s ≈ 15s of waiting, comfortably longer
+// than a slow AI turn (p99 ~10s) and shorter than the 30s lock TTL.
+const INFLIGHT_MAX_ATTEMPTS = 15;
+const INFLIGHT_RETRY_MS = 1000;
+
+/**
+ * Acquire the per-user in-flight slot, WAITING (bounded retries) when a
+ * previous turn for the same user is still processing rather than dropping
+ * the message. Returns:
+ *   'acquired'    — caller holds the lock and must release it in finally
+ *   'busy'        — retry budget exhausted; caller should drop with a warning
+ *   'unavailable' — Redis errored; caller proceeds WITHOUT the lock
+ *                   (failure-open: losing dedup is better than losing a message)
+ */
+export async function acquireInflightSlot(
+  redis: Redis,
+  key: string,
+  onEvent: (event: 'waiting' | 'skip' | 'redis_failed') => void,
+): Promise<'acquired' | 'busy' | 'unavailable'> {
+  try {
+    for (let attempt = 0; attempt < INFLIGHT_MAX_ATTEMPTS; attempt++) {
+      const ok = await redis.set(key, '1', 'EX', 30, 'NX');
+      if (ok !== null) return 'acquired';
+      if (attempt === 0) onEvent('waiting');
+      await new Promise((r) => setTimeout(r, INFLIGHT_RETRY_MS));
+    }
+    onEvent('skip');
+    return 'busy';
+  } catch {
+    onEvent('redis_failed');
+    return 'unavailable';
+  }
+}
+
+// ─── Injection "done" acknowledgment ─────────────────────────────────────────
+// Deterministic, injection-aware replies for the state-machine advance. The
+// "few hours" phrasing matches the scheduler's injection_followup, which fires
+// 3h after injection_done_at. Persona rules: no user name, one emoji max,
+// statement not question.
+const INJECTION_DONE_ACKS = [
+  "Injection done ✅ Nice work. I'll check in with you in a few hours, take it easy in the meantime.",
+  "Shot done, logged ✅ I'll check on you later today. Water and something light if you feel up to it.",
+  "Done ✅ That's the hard part of the week handled. I'll check in this afternoon, be kind to yourself today.",
+];
+
+export function pickInjectionDoneAck(userId: string): string {
+  let hash = 0;
+  const seed = `${userId}|${new Date().toISOString().slice(0, 10)}`;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  return INJECTION_DONE_ACKS[Math.abs(hash) % INJECTION_DONE_ACKS.length]!;
 }
 
 function isTransientError(err: unknown): boolean {

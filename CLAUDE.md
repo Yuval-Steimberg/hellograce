@@ -439,6 +439,47 @@ Profile, dietary, and reminder fields are owned EXCLUSIVELY by the Settings page
 
 ---
 
+### Reliability verification + fixes (2026-06-10)
+
+Full-system verification report: `docs/RELIABILITY_VERIFICATION_2026-06-10.md` — evidence-based
+PASS/FAIL for nutrition, memory, context, reminders, conversation protection, profile/settings,
+recommendations, injection day, data consistency. Two production-critical failures found and
+fixed the same session, plus five smaller items. Branch `claude/grace-reliability-verification-r77eph`.
+
+**Fixed — webhook message loss (CRITICAL, regression since `a2ae4bc` 2026-06-04):**
+- The per-user in-flight lock ran BEFORE coalescing, so any follow-up arriving while a
+  turn was processing (including within the 2s coalesce window) failed `SET NX` and was
+  silently dropped — coalescing was dead code in production.
+- `webhook.ts` now: (1) coalesces FIRST (buffer append before any lock), (2) the in-flight
+  lock WAITS with bounded retries (`acquireInflightSlot`, 15×1s, exported + tested) instead
+  of dropping, (3) `coalesceMessages` explicitly releases its window lock after draining —
+  previously it relied on the 5s TTL, so messages arriving 2–5s after the first were
+  absorbed into an already-drained window and lost.
+
+**Fixed — scheduler ignores cadence Settings (CRITICAL):**
+- `checkin_count_per_day` / `checkin_days_interval` were collected at onboarding, editable
+  in Settings, claimed by the AI context ("CHECKIN FREQUENCY: N") — and never read by the
+  scheduler (hard-coded 2/day cap). `sendAndRecord` now honors `checkin_count_per_day`
+  (clamped 1..3, default 2 — default behavior unchanged) and `checkin_days_interval`
+  (every-N-days, phase = user-local day number mod interval). Critical health flows
+  (`injection_morning`, `injection_followup`, `trial_expiry_reminder`) remain exempt.
+  The AI context line now reports the same clamped value.
+
+**Also fixed:** injection "done" reply now gets a deterministic injection-aware ack
+(short-circuits before fast-path's generic "Got it 👍"; state machine unchanged);
+`reset-memory` admin endpoint wraps core deletes in a transaction + invalidates the
+memory.md cache; `user_memories` retrieval adds a recency penalty (0 under 30 days,
+max +0.30 distance at ~390 days) so old memories can't permanently outrank new
+corrections; RAG `feedback_score` contribution clamped to ±0.25; date-flaky
+`curated-meal-ideas` test de-flaked (asserts spread across 10 users).
+
+**Deliberately deferred:** dedicated `allergies` column (functionally enforced today via
+`food_dislikes`; needs coordinated web-UI + v1 edge-fn changes — product decision);
+disabling the dormant v1 `handle-inbound-sms` settings-write path (prod Supabase action,
+already in open items). Tests: 627 api + 513 ai-core green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

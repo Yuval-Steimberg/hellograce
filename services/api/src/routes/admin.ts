@@ -925,12 +925,30 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
 
   app.post('/admin/users/:phone/reset-memory', async (req) => {
     const { phone } = req.params as { phone: string };
+    // Best-effort deletes for tables that may not exist yet (pilot/optional
+    // migrations) — kept OUTSIDE the transaction so a missing table can't
+    // abort the core wipe.
     await deps.pool.query('DELETE FROM user_memories WHERE user_id = $1', [phone]).catch(() => null);
     await deps.pool.query('DELETE FROM user_profile_facts WHERE user_id = $1', [phone]).catch(() => null);
     await deps.pool.query('DELETE FROM user_memory_md WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM messages WHERE user_id = $1', [phone]);
-    await deps.pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]);
-    await deps.pool.query('DELETE FROM embeddings WHERE user_id = $1', [phone]);
+    // Core wipe is atomic — a mid-sequence failure must not leave messages
+    // deleted but embeddings (or the conversation row) intact.
+    const client = await deps.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM messages WHERE user_id = $1', [phone]);
+      await client.query('DELETE FROM conversations WHERE user_id = $1', [phone]);
+      await client.query('DELETE FROM embeddings WHERE user_id = $1', [phone]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+    // Drop the in-process memory.md cache (5-min TTL) so this machine doesn't
+    // keep serving the deleted narrative until expiry.
+    deps.memoryMd?.invalidate(phone);
     return { ok: true };
   });
 

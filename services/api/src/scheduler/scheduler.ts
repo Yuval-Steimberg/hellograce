@@ -352,8 +352,10 @@ export class Scheduler {
     //     inbound message.
     //
     //   LAYER 2 — DAILY CADENCE (applies to non-critical, non-injection types)
-    //     1. Max 2 proactive reminders per user per day
-    //     2. Min 3 hours between reminders
+    //     1. Honor checkin_days_interval (every-N-days users skip off days)
+    //     2. Max checkin_count_per_day proactive reminders per user per day
+    //        (user Setting, clamped 1..3, default 2)
+    //     3. Min 3 hours between reminders
     //
     // Exemptions (truly time-critical health flows):
     //   - injection_morning: today is injection day, the user needs to know
@@ -391,14 +393,37 @@ export class Scheduler {
       }
     }
 
-    // ─── LAYER 2: Daily cadence (existing) ────────────────────────────────────
+    // ─── LAYER 2: Daily cadence ───────────────────────────────────────────────
     if (!isCritical) {
+      // Honor the user's check-in cadence Settings. Until 2026-06-10 these
+      // fields were collected at onboarding, editable on the Settings page,
+      // and claimed by the AI context ("CHECKIN FREQUENCY: N") — but never
+      // read here, so a user who chose 1/day still got the hard-coded 2/day.
+      //
+      //   checkin_days_interval: 1 = daily (default), 2 = every other day, …
+      //     Phase is the user-local day number mod interval — deterministic
+      //     across restarts and across both Fly machines.
+      //   checkin_count_per_day: daily cap on non-critical proactive sends,
+      //     clamped to [1, 3] (3 = structural max of the weekly schedule;
+      //     the previous hard cap of 2 is now simply the default).
+      const daysInterval = Math.max(1, user.checkin_days_interval || 1);
+      if (daysInterval > 1) {
+        const dayNumber = Math.floor(Date.parse(todayStr) / 86_400_000);
+        if (dayNumber % daysInterval !== 0) {
+          this.deps.logger.info(
+            { phone: user.phone, type, daysInterval },
+            'scheduler.skipped_days_interval',
+          );
+          return;
+        }
+      }
+      const dailyCap = Math.min(3, Math.max(1, user.checkin_count_per_day || 2));
       const countKey = `cadence:${user.phone}:${todayStr}`;
       const lastKey = `cadence:last:${user.phone}`;
       try {
         const currentCount = parseInt((await this.deps.redis.get(countKey)) ?? '0', 10);
-        if (currentCount >= 2) {
-          this.deps.logger.info({ phone: user.phone, type, count: currentCount }, 'scheduler.skipped_daily_cap');
+        if (currentCount >= dailyCap) {
+          this.deps.logger.info({ phone: user.phone, type, count: currentCount, dailyCap }, 'scheduler.skipped_daily_cap');
           return;
         }
         const lastSentMs = parseInt((await this.deps.redis.get(lastKey)) ?? '0', 10);

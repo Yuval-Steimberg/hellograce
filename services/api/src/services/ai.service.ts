@@ -2911,7 +2911,10 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       // CHECK-INS" section so Grace can answer "how many today?" with the exact
       // number instead of a vague "a couple."
       if (user.checkin_count_per_day) {
-        lines.push(`CHECKIN FREQUENCY: ${user.checkin_count_per_day} scheduled check-in(s) per day`);
+        // Same clamp the scheduler applies (1..3) â€” Grace must never claim a
+        // cadence the scheduler won't actually deliver.
+        const effectiveCadence = Math.min(3, Math.max(1, user.checkin_count_per_day));
+        lines.push(`CHECKIN FREQUENCY: ${effectiveCadence} scheduled check-in(s) per day`);
       }
       if (runtime?.checkinsToday !== undefined) {
         lines.push(`Scheduled check-ins sent today: ${runtime.checkinsToday}`);

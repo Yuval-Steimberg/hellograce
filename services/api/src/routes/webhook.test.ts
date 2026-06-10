@@ -5,6 +5,8 @@ import {
   coalesceMessages,
   detectPauseIntent,
   shouldSkipCoalesce,
+  acquireInflightSlot,
+  pickInjectionDoneAck,
 } from './webhook.js';
 
 // Minimal in-memory Redis mock for coalesceMessages tests.
@@ -58,6 +60,81 @@ describe('coalesceMessages', () => {
     expect(await second).toBeNull();
     expect(await third).toBeNull();
     expect(await first).toBe('actually never mind tell me about nausea');
+  });
+
+  it('releases the window lock after draining — a later message opens a NEW window instead of being absorbed-and-lost', async () => {
+    // Regression (pre-2026-06-10): the lock was left to its 5s TTL, so a
+    // message arriving 2-5s after the first matched a window that had
+    // already drained — return null, never processed, silently dropped.
+    const redis = makeMockRedis() as never;
+    const first = coalesceMessages(redis, '+15550000004', 'first message');
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(await first).toBe('first message');
+
+    // 3s after the first message (inside the old 5s lock TTL) — must NOT be absorbed.
+    const late = coalesceMessages(redis, '+15550000004', 'late follow-up');
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(await late).toBe('late follow-up');
+  });
+});
+
+describe('acquireInflightSlot', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('acquires immediately when no turn is in flight', async () => {
+    const redis = makeMockRedis() as never;
+    const events: string[] = [];
+    const result = await acquireInflightSlot(redis, 'inflight:+15550000010', (e) => events.push(e));
+    expect(result).toBe('acquired');
+    expect(events).toEqual([]);
+  });
+
+  it('WAITS for a held lock and acquires once released — the message is not dropped', async () => {
+    // Regression (2026-06-04 → 2026-06-10): a message arriving while a turn
+    // was processing failed SET NX once and was silently dropped.
+    const redis = makeMockRedis();
+    const key = 'inflight:+15550000011';
+    await redis.set(key, '1', 'EX', 30, 'NX'); // a previous turn holds the lock
+
+    const events: string[] = [];
+    const pending = acquireInflightSlot(redis as never, key, (e) => events.push(e));
+    await vi.advanceTimersByTimeAsync(2500); // 2 retries while held
+    await redis.del(key); // previous turn finishes
+    await vi.advanceTimersByTimeAsync(1100); // next retry succeeds
+
+    expect(await pending).toBe('acquired');
+    expect(events).toEqual(['waiting']);
+  });
+
+  it('returns busy only after exhausting the full retry budget', async () => {
+    const redis = makeMockRedis();
+    const key = 'inflight:+15550000012';
+    await redis.set(key, '1', 'EX', 30, 'NX'); // never released
+
+    const events: string[] = [];
+    const pending = acquireInflightSlot(redis as never, key, (e) => events.push(e));
+    await vi.advanceTimersByTimeAsync(16_000); // > 15 × 1s budget
+    expect(await pending).toBe('busy');
+    expect(events).toEqual(['waiting', 'skip']);
+  });
+
+  it('fails open (unavailable) when Redis errors', async () => {
+    const redis = { set: async () => { throw new Error('ECONNREFUSED'); } } as never;
+    const events: string[] = [];
+    const result = await acquireInflightSlot(redis, 'inflight:+15550000013', (e) => events.push(e));
+    expect(result).toBe('unavailable');
+    expect(events).toEqual(['redis_failed']);
+  });
+});
+
+describe('pickInjectionDoneAck', () => {
+  it('returns a deterministic injection-aware ack from the pool', () => {
+    const ack = pickInjectionDoneAck('+15550000020');
+    expect(ack).toContain('✅');
+    expect(ack.toLowerCase()).toMatch(/check in|check on/);
+    // Deterministic for the same user on the same day.
+    expect(pickInjectionDoneAck('+15550000020')).toBe(ack);
   });
 });
 

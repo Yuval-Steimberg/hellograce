@@ -129,27 +129,23 @@ describe('curated-meal-ideas', () => {
   });
 
   it('different users on same day see different starting points', () => {
-    const r1 = getCuratedFoodIdeas({
-      userId: 'alice',
-      query: 'breakfast',
-      mealType: 'breakfast',
-      dietaryRestriction: null,
-      foodDislikes: [],
-    });
-    const r2 = getCuratedFoodIdeas({
-      userId: 'bob-zzz-different-hash',
-      query: 'breakfast',
-      mealType: 'breakfast',
-      dietaryRestriction: null,
-      foodDislikes: [],
-    });
-    expect(r1).not.toBeNull();
-    expect(r2).not.toBeNull();
-    // At least one of them should not have the same first idea.
-    // (8 ideas in cell, 32 possible (start, day) combos — collision possible
-    // but unlikely for these two specific user IDs.)
-    const sameOrder = r1!.every((idea, i) => idea.name === r2![i]!.name);
-    expect(sameOrder).toBe(false);
+    // The rotation seed is hash(userId|dayNumber|meal|diet) % 8, so any two
+    // specific user IDs collide on ~1 in 8 calendar days — asserting on a
+    // fixed pair made this test date-flaky (it failed on 2026-06-10).
+    // Instead assert the spread across 10 users: the chance that ALL ten
+    // hash to the same start offset on any given day is (1/8)^9 ≈ 7e-9.
+    const firstIdeas = new Set(
+      Array.from({ length: 10 }, (_, i) =>
+        getCuratedFoodIdeas({
+          userId: `user-${i}-${i * 7919}`,
+          query: 'breakfast',
+          mealType: 'breakfast',
+          dietaryRestriction: null,
+          foodDislikes: [],
+        })!.map((idea) => idea.name).join('|'),
+      ),
+    );
+    expect(firstIdeas.size).toBeGreaterThan(1);
   });
 
   it('same user + same day returns the same 4 ideas (stable)', () => {

@@ -843,3 +843,87 @@ describe('Scheduler — full day simulation', () => {
     expect(types.filter((t) => t === 'evening')).toHaveLength(0);
   });
 });
+
+describe('Scheduler — check-in cadence Settings (checkin_count_per_day / checkin_days_interval)', () => {
+  // Call the private sendAndRecord directly so the cap is isolated from the
+  // window/jitter/min-gap logic that walkMinutes exercises elsewhere.
+  async function sendDirect(h: Harness, type: string): Promise<void> {
+    // @ts-expect-error — accessing private for test
+    await h.scheduler.sendAndRecord(h.user, type);
+  }
+  /** Rewind the min-3h-gap timestamp so only the daily cap is under test. */
+  function rewindMinGap(h: Harness): void {
+    h.redisLocks.set(`cadence:last:${h.user.phone}`, String(Date.now() - 4 * 3_600_000));
+  }
+
+  it('a user who chose 1 check-in per day gets exactly 1 non-critical send', async () => {
+    setUtc(2026, 5, 20, 16, 0); // Wednesday noon NY
+    const h = buildHarness(makeUser({ checkin_count_per_day: 1 }));
+
+    await sendDirect(h, 'morning');
+    expect(h.sends).toHaveLength(1);
+
+    rewindMinGap(h);
+    await sendDirect(h, 'midday');
+    expect(h.sends).toHaveLength(1); // capped at the user's setting, not the old hard-coded 2
+  });
+
+  it('default (2/day) still allows a second send and blocks the third', async () => {
+    setUtc(2026, 5, 20, 16, 0);
+    const h = buildHarness(makeUser({ checkin_count_per_day: 2 }));
+
+    await sendDirect(h, 'morning');
+    rewindMinGap(h);
+    await sendDirect(h, 'midday');
+    expect(h.sends).toHaveLength(2);
+
+    rewindMinGap(h);
+    await sendDirect(h, 'evening');
+    expect(h.sends).toHaveLength(2);
+  });
+
+  it('clamps an out-of-range setting (5/day) to the structural max of 3', async () => {
+    setUtc(2026, 5, 20, 16, 0);
+    const h = buildHarness(makeUser({ checkin_count_per_day: 5 }));
+
+    for (const type of ['morning', 'midday', 'evening', 'bonus']) {
+      rewindMinGap(h);
+      await sendDirect(h, type);
+    }
+    expect(h.sends).toHaveLength(3);
+  });
+
+  it('critical health flows are exempt from the user cap', async () => {
+    setUtc(2026, 5, 20, 16, 0);
+    const h = buildHarness(makeUser({ checkin_count_per_day: 1 }));
+
+    await sendDirect(h, 'morning');
+    rewindMinGap(h);
+    await sendDirect(h, 'injection_followup'); // critical — must not be blocked
+    expect(h.sends).toHaveLength(2);
+  });
+
+  it('checkin_days_interval=2 sends on exactly one of two consecutive days', async () => {
+    const h = buildHarness(makeUser({ checkin_days_interval: 2 }));
+
+    setUtc(2026, 5, 20, 16, 0); // Wednesday noon NY
+    await sendDirect(h, 'morning');
+    setUtc(2026, 5, 21, 16, 0); // Thursday noon NY
+    await sendDirect(h, 'morning');
+
+    expect(h.sends).toHaveLength(1);
+  });
+
+  it('checkin_days_interval off-days still allow critical flows', async () => {
+    const h = buildHarness(makeUser({ checkin_days_interval: 2 }));
+
+    // Find the off day of the pair and assert a critical type still fires.
+    setUtc(2026, 5, 20, 16, 0);
+    await sendDirect(h, 'morning');
+    const offDayUtc: [number, number] = h.sends.length === 0 ? [5, 20] : [5, 21];
+    setUtc(2026, offDayUtc[0], offDayUtc[1], 16, 0);
+    const before = h.sends.length;
+    await sendDirect(h, 'trial_expiry_reminder');
+    expect(h.sends.length).toBe(before + 1);
+  });
+});

@@ -39,11 +39,15 @@ export class RagService {
       score: number;
       metadata: Record<string, unknown> | null;
     }>(
+      // feedback_score is cumulative and unbounded — without the clamp, a
+      // chunk with enough accumulated 👍 (score >= ~4) outranks strictly more
+      // relevant chunks forever (2026-06-10 verification finding). Clamping to
+      // ±5 bounds the bias at ±0.25, a tiebreaker rather than an override.
       `SELECT id, source, content, metadata,
-              (1 - (embedding <=> $1::vector)) + COALESCE(feedback_score, 0) * 0.05 AS score
+              (1 - (embedding <=> $1::vector)) + GREATEST(LEAST(COALESCE(feedback_score, 0), 5), -5) * 0.05 AS score
        FROM embeddings
        WHERE (user_id = $2 OR user_id IS NULL)
-       ORDER BY (1 - (embedding <=> $1::vector)) + COALESCE(feedback_score, 0) * 0.05 DESC
+       ORDER BY (1 - (embedding <=> $1::vector)) + GREATEST(LEAST(COALESCE(feedback_score, 0), 5), -5) * 0.05 DESC
        LIMIT $3`,
       [vecLiteral, opts.userId, topK],
     );

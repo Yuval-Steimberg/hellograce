@@ -316,7 +316,7 @@ export function makeLogFoodTool(deps: {
       // ~80 hand-curated USDA-anchored entries. Saves ~1-2s per log on
       // common foods. Falls through to LLM + USDA on miss.
       let parsed: FoodEstimate | null = lookupCommonFoodMacros(foodForEstimate);
-      let estimateSource: 'usda' | 'llm' | 'fast_lookup' = 'llm';
+      let estimateSource: 'usda' | 'llm' | 'fast_lookup' | 'deterministic' = 'llm';
       if (parsed) {
         estimateSource = 'fast_lookup';
         deps.logger.info(
@@ -336,6 +336,30 @@ export function makeLogFoodTool(deps: {
         }
       }
       if (!parsed) parsed = await estimateFoodMacros(deps.llm, foodForEstimate);
+      // DETERMINISTIC LAST RESORT — never silently drop a recognizable meal.
+      // Production failure 2026-06-11 (Gemini on free-tier quota): a per-meal
+      // log_food for "chicken breast with bowl of rice" hit the multi-food bail
+      // in the fast lookup, then USDA + the LLM estimator both needed Gemini
+      // (down) → log_food returned ok:false and the lunch was dropped, so a
+      // "2 eggs / chicken breast + rice" message logged only the 12g eggs.
+      // estimateMultiItemFood decomposes against the macro table with no LLM,
+      // so a full multi-item meal still totals correctly during an outage.
+      if (!parsed) {
+        const det = estimateMultiItemFood(foodForEstimate);
+        if (det && (det.protein_g > 0 || det.calories > 0)) {
+          parsed = {
+            food: det.items.map((i) => i.food).join(' + '),
+            protein_g: det.protein_g,
+            calories: det.calories,
+            confidence: 'low',
+          };
+          estimateSource = 'deterministic';
+          deps.logger.info(
+            { userId: deps.userId, food: parsed.food, items: det.items.length },
+            'tool.log_food.deterministic_fallback',
+          );
+        }
+      }
       if (!parsed) return { ok: false, error: 'estimate_parse_failed' };
       deps.logger.info({ userId: deps.userId, source: estimateSource, food: parsed.food }, 'tool.log_food.estimate_source');
 
@@ -926,32 +950,79 @@ export interface MultiItemEstimate {
 
 export function estimateMultiItemFood(input: string): MultiItemEstimate | null {
   if (!input || input.length > 300) return null;
-  // Strip meal-context scaffolding so "for breakfast i ate 2 eggs" → "2 eggs".
-  const cleaned = input
-    .replace(/\b(hey|hi|hello|so|well|ok|okay|today|this morning|this afternoon|tonight|earlier)\b/gi, ' ')
-    .replace(/\bfor (breakfast|lunch|dinner|a snack|brunch|supper)\b/gi, ' ')
-    .replace(/\bi (just |also |then )?(ate|had|grabbed|made|cooked|got|drank|consumed|finished|enjoyed)\b/gi, ' ')
-    .replace(/\b(breakfast|lunch|dinner|snack|brunch)\b/gi, ' ');
-  // Split on commas, newlines, slashes, periods, and the joiners "and"/"with"/"plus"/"then".
-  const pieces = cleaned
-    .split(/[,\n/.]+|\s+(?:and|with|plus|then)\s+/i)
-    .map((p) => p.trim())
-    .filter((p) => p.length >= 2);
+  // Split on meal-label boundaries FIRST (keep the content on each side), so a
+  // punctuation-free "2 eggs for lunch chicken and rice" still separates the
+  // two meals. Then strip conversational scaffolding inside each segment.
+  const segments = input
+    .split(/\b(?:for\s+)?(?:breakfast|lunch|dinner|supper|brunch|snack|brekkie)\b/gi)
+    .map((s) =>
+      s
+        .replace(/\b(hey|hi|hello|so|well|ok|okay|today|this morning|this afternoon|tonight|earlier)\b/gi, ' ')
+        .replace(/\bi (just |also |then )?(ate|had|grabbed|made|cooked|got|drank|consumed|finished|enjoyed)\b/gi, ' '),
+    )
+    .filter((s) => s.trim().length >= 2);
+  const base = segments.length > 0 ? segments : [input];
+
+  // Within each segment split on commas, newlines, slashes, periods, and the
+  // joiners "and"/"with"/"plus"/"then".
+  const pieces: string[] = [];
+  for (const seg of base) {
+    for (const p of seg.split(/[,\n/.]+|\s+(?:and|with|plus|then)\s+/i)) {
+      const t = p.trim();
+      if (t.length >= 2) pieces.push(t);
+    }
+  }
 
   const items: MultiItemEstimate['items'] = [];
   const seen = new Set<string>();
+  const addItem = (food: string, protein_g: number, calories: number): void => {
+    const key = food.toLowerCase();
+    if (seen.has(key)) return; // don't double-count the same anchor
+    seen.add(key);
+    items.push({ food, protein_g, calories });
+  };
+
   for (const piece of pieces) {
     const m = lookupCommonFoodMacros(piece);
-    if (!m) continue;
-    const key = m.food.toLowerCase();
-    if (seen.has(key)) continue; // don't double-count the same anchor
-    seen.add(key);
-    items.push({ food: m.food, protein_g: m.protein_g, calories: m.calories });
+    if (m) {
+      addItem(m.food, m.protein_g, m.calories);
+      continue;
+    }
+    // The piece still holds multiple foods the single-entry lookup bailed on
+    // ("2 eggs chicken breast"). Resolve each food independently so none drop.
+    for (const sub of resolvePieceTokens(piece)) addItem(sub.food, sub.protein_g, sub.calories);
   }
   if (items.length === 0) return null;
   const protein_g = items.reduce((s, i) => s + i.protein_g, 0);
   const calories = items.reduce((s, i) => s + i.calories, 0);
   return { items, protein_g, calories };
+}
+
+/**
+ * Greedy per-food resolver for a piece that holds multiple foods (where the
+ * single-entry fast lookup bails). Scans left-to-right, matching the longest
+ * food window first so "chicken breast" wins over "chicken", then advances.
+ * Returns [] when nothing in the piece is a recognizable food.
+ */
+function resolvePieceTokens(piece: string): Array<{ food: string; protein_g: number; calories: number }> {
+  const words = normalizeFoodForLookup(piece).split(/\s+/).filter(Boolean);
+  const out: Array<{ food: string; protein_g: number; calories: number }> = [];
+  let i = 0;
+  while (i < words.length) {
+    let matched = false;
+    for (let span = Math.min(4, words.length - i); span >= 1; span--) {
+      const candidate = words.slice(i, i + span).join(' ');
+      const m = lookupCommonFoodMacros(candidate);
+      if (m) {
+        out.push({ food: m.food, protein_g: m.protein_g, calories: m.calories });
+        i += span;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) i++;
+  }
+  return out;
 }
 
 // Set of distinctive food tokens harvested from COMMON_FOODS — single words

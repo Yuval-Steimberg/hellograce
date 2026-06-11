@@ -531,6 +531,18 @@ async function p10ScreenshotRegressions(h: Harness): Promise<void> {
   check('multi-meal food log → not a generic deflection',
     !!r && !/what'?s on your mind|what would you like to talk about/i.test(r.body),
     r?.body.slice(0, 80) ?? 'no reply');
+  // The core comprehension regression: the WHOLE meal must be understood, not
+  // just the first food. eggs (12) + chicken (30) + rice (4) = 46g — the reply
+  // must name chicken AND rice and report a total well above the 12g eggs-only
+  // undercount that shipped in production.
+  check('multi-meal food log → names chicken AND rice (not just eggs)',
+    !!r && /chicken/i.test(r.body) && /rice/i.test(r.body),
+    r?.body.slice(0, 120) ?? 'no reply');
+  {
+    const protein = r ? Number(r.body.match(/(\d+)\s*g\b/)?.[1] ?? 0) : 0;
+    check('multi-meal food log → total counts all items (>= 40g, not 12g eggs-only)',
+      protein >= 40, r ? `${protein}g in reply` : 'no reply');
+  }
 
   h.llm.throwOnClasses = new Set();
   await h.wipeUser(P);
@@ -572,6 +584,82 @@ async function p11Reconstruction(h: Harness): Promise<void> {
   await h.wipeUser(P); await h.wipeUser(P2);
 }
 
+// ── P12: aggregated, non-repetitive food summary ─────────────────────────────
+// "What did I eat today?" must NEVER return a raw, repeated database dump
+// ("chicken, rice, 2 eggs, 2 eggs, chicken, rice, … and 12 more"). Identical
+// foods aggregate into "Name × N", totals live in their own section, and there
+// is no vague "and N more". Preloads duplicate rows directly (chat dedup would
+// otherwise collapse identical messages sent in the same minute).
+async function p12FoodSummaryAggregation(h: Harness): Promise<void> {
+  phase('P12 aggregated food summary (no raw repetition)');
+  const P = '+15551550001';
+  await h.wipeUser(P); await h.createUser(P, { protein_goal_grams: 200, calorie_goal_kcal: 3500, timezone: 'UTC' });
+
+  const rows: Array<[string, number, number]> = [
+    ['chicken breast (4oz)', 30, 180], ['chicken breast (4oz)', 30, 180], ['chicken breast (4oz)', 30, 180],
+    ['rice (1 cup)', 4, 200], ['rice (1 cup)', 4, 200],
+    ['2 eggs', 12, 140], ['2 eggs', 12, 140], ['2 eggs', 12, 140],
+  ];
+  for (let i = 0; i < rows.length; i++) {
+    const [food, p, c] = rows[i]!;
+    await h.pool.query(
+      `INSERT INTO food_logs (user_id, food, protein_g, calories, confidence, raw_text, source, dedupe_key)
+       VALUES ($1, $2, $3, $4, 'high', $2, 'text', $5)`,
+      [P, food, p, c, `p12-${i}-${Date.now()}`],
+    );
+  }
+
+  const r = await h.sendWhatsApp(P, 'what did I eat today?');
+  check('food summary → aggregates eggs (× 6, not repeated)',
+    !!r && /eggs × 6/i.test(r.body), r?.body.slice(0, 120) ?? 'no reply');
+  check('food summary → aggregates chicken (× 3) and rice (× 2)',
+    !!r && /chicken breast × 3/i.test(r.body) && /rice × 2/i.test(r.body),
+    r?.body.slice(0, 120) ?? 'no reply');
+  check('food summary → no raw repetition (chicken appears once)',
+    !!r && (r.body.match(/chicken breast/gi)?.length ?? 0) === 1,
+    r ? `chicken count: ${r.body.match(/chicken breast/gi)?.length}` : 'no reply');
+  check('food summary → no vague "and N more"',
+    !!r && !/and \d+ more/i.test(r.body), r?.body.slice(0, 120) ?? 'no reply');
+  check('food summary → totals present and unchanged by aggregation',
+    !!r && /134\s*g/i.test(r.body) && /1,?360/.test(r.body), r?.body.slice(0, 160) ?? 'no reply');
+
+  // Sectioned path (>3 distinct foods): fresh user, all foods preloaded BEFORE
+  // the first query (direct DB inserts bypass the today-food cache, so a
+  // post-query insert would be invisible). Probes what survives the outbound
+  // sanitizer, which strips bullets/headers for WhatsApp prose.
+  const P2 = '+15551550002';
+  await h.wipeUser(P2); await h.createUser(P2, { protein_goal_grams: 200, calorie_goal_kcal: 3500, timezone: 'UTC' });
+  const many: Array<[string, number, number]> = [
+    ['chicken breast (4oz)', 30, 180], ['chicken breast (4oz)', 30, 180], ['chicken breast (4oz)', 30, 180],
+    ['rice (1 cup)', 4, 200], ['rice (1 cup)', 4, 200],
+    ['2 eggs', 12, 140], ['2 eggs', 12, 140], ['2 eggs', 12, 140],
+    ['apple', 0, 95], ['banana', 1, 110], ['almonds', 6, 165], ['broccoli', 2, 30], ['salmon (5oz)', 28, 280],
+  ];
+  for (let i = 0; i < many.length; i++) {
+    const [food, p, c] = many[i]!;
+    await h.pool.query(
+      `INSERT INTO food_logs (user_id, food, protein_g, calories, confidence, raw_text, source, dedupe_key)
+       VALUES ($1, $2, $3, $4, 'high', $2, 'text', $5)`,
+      [P2, food, p, c, `p12b-${i}-${Date.now()}`],
+    );
+  }
+  const r2 = await h.sendWhatsApp(P2, 'summarize my meals');
+  console.log('  [P12 many-foods delivered]:', JSON.stringify(r2?.body ?? 'no reply'));
+  check('many-foods summary → delivered (one-line survives the enforcer)',
+    !!r2 && r2.body.length > 0, r2?.body.slice(0, 200) ?? 'no reply');
+  check('many-foods summary → aggregated, no raw repetition',
+    !!r2 && (r2.body.match(/chicken breast/gi)?.length ?? 0) === 1 && !/and \d+ more\b/i.test(r2.body),
+    r2?.body.slice(0, 200) ?? 'no reply');
+  check('many-foods summary → rolls tail into a meaningful count',
+    !!r2 && /plus \d+ more foods?/i.test(r2.body),
+    r2?.body.slice(0, 200) ?? 'no reply');
+  check('many-foods summary → totals survive (171g / 2,040)',
+    !!r2 && /171\s*g/i.test(r2.body) && /2,?040/.test(r2.body),
+    r2?.body.slice(0, 200) ?? 'no reply');
+
+  await h.wipeUser(P); await h.wipeUser(P2);
+}
+
 async function main(): Promise<void> {
   const only = process.argv.slice(2);
   const h = await buildHarness();
@@ -579,7 +667,7 @@ async function main(): Promise<void> {
     ['p1', p1ShortCircuits], ['p2', p2FastPath], ['p3', p3PipelineCorrectness],
     ['p4', p4Guards], ['p5', p5Concurrency], ['p6', p6LongThread], ['p7', p7LatencyModel],
     ['p8', p8ContentAccuracy], ['p9', p9HallucinationContext], ['p10', p10ScreenshotRegressions],
-    ['p11', p11Reconstruction],
+    ['p11', p11Reconstruction], ['p12', p12FoodSummaryAggregation],
   ];
   for (const [key, fn] of phases) {
     if (only.length > 0 && !only.includes(key)) continue;

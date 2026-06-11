@@ -20,6 +20,7 @@
 import type { Logger } from 'pino';
 import { normalizeUserText } from '@grace/ai-core';
 import type { UserService } from '../user/user.service.js';
+import { renderDailyFoodSummary } from './food-summary.js';
 
 export interface QueryFastResult {
   text: string;
@@ -107,7 +108,7 @@ const BARE_TARGET_RE =
 // ate today" went through the orchestrator → ship "Tell me a bit more?"
 // instead of listing the day's food. Deterministic: list the foods today.
 const FOOD_SUMMARY_LIST_RE =
-  /^(?:what (?:i|did i) ate(?:\s+today)?|what (?:have )?i (?:had|eaten|logged)(?:\s+today)?|(?:show|list|tell me)(?:\s+me)? my (?:food|meals?|logs?|food log)(?:\s+today)?|(?:today'?s|my today'?s) (?:food|meals?|log|logs?|intake|eating)|food i (?:had|ate|logged) today|my (?:food )?(?:totals?|log)(?:\s+today)?)\s*\??$/i;
+  /^(?:what (?:did i|i)(?:'ve)? (?:eat|ate|eaten|had|logged)(?:\s+today)?|what have i (?:had|eaten|logged)(?:\s+today)?|(?:show|list|tell me|summari[sz]e)(?:\s+me)? my (?:food|meals?|logs?|food log|day|intake|eating|nutrition|diet)(?:\s+today)?|summari[sz]e (?:my |today'?s )?(?:food|meals?|day|intake|eating|nutrition)|(?:today'?s|my today'?s) (?:food|meals?|log|logs?|intake|eating)|food i (?:had|ate|logged) today|my (?:food )?(?:totals?|log)(?:\s+today)?)\s*\??$/i;
 
 // "How am I doing today" / "how am I doing on protein" / "progress check"
 const PROGRESS_TODAY_RE =
@@ -386,40 +387,19 @@ export async function tryQueryFast(
 
       case 'food_summary_today': {
         // 2026-06-05 production failure: "What I ate today" → orchestrator
-        // shipped "Tell me a bit more?". Now we list the day's items in a
-        // single sentence with running totals. Deterministic, ~250ms.
+        // shipped "Tell me a bit more?". 2026-06-11: the replacement dumped a
+        // raw, repetitive list ("chicken breast, rice, 2 eggs, 2 eggs, chicken
+        // breast, … and 12 more") — a database export, not a summary. Now we
+        // AGGREGATE identical foods into "Name × N", separate the food list
+        // from the nutrition totals, and never emit a vague "and N more".
         const summary = await deps.users.getTodaysFoodSummary(deps.userId).catch(() => null);
         if (!summary) return null;
-        const proteinTotal = Math.round(summary.protein_g);
-        const calTotal = Math.round(summary.calories);
-        // 2026-06-06: log_food.sumItemized joins multi-item meals with " + "
-        // for a clean internal label, but that label leaks into the user-
-        // facing summary as "3 eggs + salad + 1 can tuna + 1 cup rice".
-        // Split on " + " so the natural comma-and-"and" list reads cleanly:
-        // "3 eggs, salad, 1 can tuna, and 1 cup rice."
-        const items = summary.items
-          .flatMap((s) => (s ?? '').split(/\s*\+\s*/))
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0);
-        if (items.length === 0) {
-          return {
-            text: `Nothing logged yet today. Send me what you've eaten and I'll track it.`,
-            category: 'food_summary_today',
-          };
-        }
-        // Human-friendly comma list with "and" before the last item.
-        const displayItems = items.slice(0, 8);
-        const moreCount = items.length - displayItems.length;
-        const last = displayItems.pop()!;
-        const list = displayItems.length === 0
-          ? last
-          : `${displayItems.join(', ')}, and ${last}`;
-        const tailing = moreCount > 0 ? ` and ${moreCount} more` : '';
-        const tot = calTotal > 0
-          ? `${proteinTotal}g protein, ${calTotal} kcal`
-          : `${proteinTotal}g protein`;
         return {
-          text: `Today you've had ${list}${tailing}. Running total: ${tot}.`,
+          text: renderDailyFoodSummary(
+            summary.items,
+            Math.round(summary.protein_g),
+            Math.round(summary.calories),
+          ),
           category: 'food_summary_today',
         };
       }

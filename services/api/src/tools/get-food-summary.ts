@@ -1,5 +1,6 @@
 import type { Tool } from '@grace/ai-core';
 import type { UserService } from '../user/user.service.js';
+import { aggregateFoodItems, formatAggregatedInline } from '../services/food-summary.js';
 
 export function makeGetFoodSummaryTool(deps: { users: UserService; userId: string }): Tool {
   return {
@@ -15,6 +16,11 @@ export function makeGetFoodSummaryTool(deps: { users: UserService; userId: strin
         protein_g: Math.round(summary.protein_g),
         calories: caloriesToday,
         items: summary.items,
+        // Deduped, aggregated presentation string — use THIS when listing the
+        // day's foods back to the user so the reply never repeats the same food
+        // ("Eggs ×6, Chicken breast ×3, Rice ×2"). `items`/`items_detailed`
+        // remain raw for item-level questions ("how did I reach 40g?").
+        items_aggregated: formatAggregatedInline(aggregateFoodItems(summary.items), 10),
         // Per-item breakdown — use this to explain WHICH foods contributed
         // to today's protein total. Each item carries its own protein_g and
         // calories. Ordered newest-first.

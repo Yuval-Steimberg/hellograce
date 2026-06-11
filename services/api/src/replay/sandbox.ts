@@ -21,6 +21,7 @@ import type {
   DietaryRestriction,
   DbContentRule,
 } from '@grace/shared';
+import { aggregateFoodItems, formatAggregatedInline } from '../services/food-summary.js';
 
 export interface ReplayPersona {
   firstName?: string;
@@ -170,7 +171,8 @@ function buildContextBlock(persona: ReplayPersona, state: MockFoodState): string
     lines.push(`Total calories TODAY: ${calories} kcal`);
   }
   if (state.items.length > 0) {
-    lines.push(`Foods logged today: ${state.items.map((i) => i.food).slice(0, 8).join('; ')}`);
+    // Mirror prod: aggregated + deduped, never a raw repetitive dump.
+    lines.push(`Foods logged today: ${formatAggregatedInline(aggregateFoodItems(state.items.map((i) => i.food)), 10)}`);
   }
   lines.push('━━━ END OF USER DATA ━━━');
   return lines.join('\n');

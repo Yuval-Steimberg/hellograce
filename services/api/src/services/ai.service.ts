@@ -23,6 +23,7 @@ import {
 import { tryFastPath } from './fast-path.js';
 import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
 import { estimateMultiItemFood } from '../tools/log-food.js';
+import { aggregateFoodItems, formatAggregatedInline } from './food-summary.js';
 import { buildFoodFitAnswer } from '../tools/food-fit.js';
 import { createHash } from 'crypto';
 import type { GraceUser } from '../user/user.service.js';
@@ -1234,10 +1235,16 @@ export class AIService {
           const names = est.items.map((i) => i.food);
           const last = names.pop()!;
           const list = names.length > 0 ? `${names.join(', ')}, and ${last}` : last;
+          // Informative confirmation: enumerate every item we recognized + the
+          // rough total, so the user can see the WHOLE meal was understood (not
+          // just the first food). Calories included when we have them.
+          const macros = est.calories > 0
+            ? `about ${est.protein_g}g protein and ${est.calories} calories`
+            : `about ${est.protein_g}g protein`;
           if (totals && totals.goal > 0) {
-            return `Logged ${list} — about ${est.protein_g}g protein. You're at ${totals.dailyProtein}g/${totals.goal}g today.`;
+            return `Got it — ${list}. Roughly ${macros}. You're at ${totals.dailyProtein}g/${totals.goal}g today.`;
           }
-          return `Logged ${list} — about ${est.protein_g}g protein${totals ? `, ${totals.dailyProtein}g today so far` : ''}.`;
+          return `Got it — ${list}. Roughly ${macros}${totals ? `, ${totals.dailyProtein}g protein today so far` : ''}.`;
         }
         return "Got it. Roughly how much was it — small, medium, or large portions? I'll total up the protein for you.";
       }
@@ -3270,7 +3277,11 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         } else if (f.calories) {
           lines.push(`Total calories TODAY: ${f.calories} kcal (no personal target set yet)`);
         }
-        if (f.items.length > 0) lines.push(`Foods logged today: ${f.items.slice(0, 8).join('; ')}`);
+        if (f.items.length > 0) {
+          // Aggregated + deduped so the model never echoes a raw repetitive
+          // dump ("2 eggs; 2 eggs; chicken breast; chicken breast; …").
+          lines.push(`Foods logged today: ${formatAggregatedInline(aggregateFoodItems(f.items), 10)}`);
+        }
       }
 
       // Phase 4: active conversation topic (decays after 2h silence). When

@@ -164,13 +164,11 @@ describe('tryQueryFast', () => {
   });
 });
 
-describe('food_summary_today: multi-item label splitting (2026-06-06)', () => {
-  it('splits "3 eggs + salad + 1 can tuna + 1 cup rice" into a natural comma list', async () => {
-    // Production failure: log_food.sumItemized joins multi-item meals with
-    // " + " for an internal label; that label leaked into the user-facing
-    // summary as "Today you've had 3 eggs + salad + 1 can tuna + 1 cup
-    // rice. Running total: 45g protein, 680 kcal." Now we split on " + "
-    // so the items read naturally.
+describe('food_summary_today: aggregated, non-repetitive summary (2026-06-11)', () => {
+  it('explodes a multi-item meal label and shows a sectioned summary', async () => {
+    // "3 eggs + salad + 1 can tuna + 1 cup rice" → exploded + aggregated.
+    // No raw " + " label; the leading count on portion words ("1 can tuna")
+    // stays part of the serving, not a multiplier.
     const users = {
       getById: vi.fn().mockResolvedValue({
         protein_goal_grams: 80,
@@ -188,22 +186,65 @@ describe('food_summary_today: multi-item label splitting (2026-06-06)', () => {
     const r = await tryQueryFast('what i ate today?', { users, logger: noopLogger, userId: 'u1' });
     expect(r).not.toBeNull();
     expect(r!.category).toBe('food_summary_today');
-    // Each item appears as a standalone comma-separated entry with "and"
-    // before the last one. The " + " label is gone.
-    expect(r!.text).toBe(
-      "Today you've had 3 eggs, salad, 1 can tuna, and 1 cup rice. Running total: 45g protein, 680 kcal.",
-    );
-    expect(r!.text).not.toMatch(/\+/);
+    expect(r!.text).not.toMatch(/\s\+\s/);
+    expect(r!.text).toContain('Eggs × 3');
+    expect(r!.text).toContain('Salad');
+    expect(r!.text).toContain('1 can tuna');
+    expect(r!.text).toContain('45g protein');
+    expect(r!.text).toContain('680 calories');
   });
 
-  it('handles already-split items (single-item food_logs rows)', async () => {
+  it('aggregates duplicate foods into "Name × N" instead of repeating them', async () => {
+    // The exact complaint: a repetitive raw dump. 3× chicken, 2× rice,
+    // 3× "2 eggs" (→ 6 eggs) must collapse, not repeat.
     const users = {
-      getById: vi.fn().mockResolvedValue({
-        protein_goal_grams: 80,
-        calorie_goal_kcal: 1800,
-        goal_weight: 160,
-        current_weight: 180,
+      getById: vi.fn().mockResolvedValue({ protein_goal_grams: 200, calorie_goal_kcal: 3500 }),
+      getTodaysFoodSummary: vi.fn().mockResolvedValue({
+        protein_g: 291,
+        calories: 3340,
+        items: [
+          'chicken breast (4oz)', 'chicken breast (4oz)', 'chicken breast (4oz)',
+          'rice (1 cup)', 'rice (1 cup)',
+          '2 eggs', '2 eggs', '2 eggs',
+        ],
+        items_detailed: [],
       }),
+    } as unknown as UserService;
+    const r = await tryQueryFast('show my food log', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toContain('Eggs × 6');
+    expect(r!.text).toContain('Chicken breast × 3');
+    expect(r!.text).toContain('Rice × 2');
+    // Totals are unchanged by aggregation.
+    expect(r!.text).toContain('291g protein');
+    expect(r!.text).toContain('3,340 calories');
+    // No vague tail, no repeated raw entries.
+    expect(r!.text).not.toMatch(/and \d+ more/i);
+    expect(r!.text.match(/chicken breast/gi)?.length).toBe(1);
+  });
+
+  it('rolls a long tail into a meaningful count (never "and 12 more")', async () => {
+    const items = [
+      'chicken breast (4oz)', 'chicken breast (4oz)', 'chicken breast (4oz)',
+      'rice (1 cup)', 'rice (1 cup)',
+      '2 eggs', '2 eggs', '2 eggs',
+      'apple', 'banana', 'protein shake', 'almonds', 'broccoli', 'salmon (5oz)',
+    ];
+    const users = {
+      getById: vi.fn().mockResolvedValue({ protein_goal_grams: 200, calorie_goal_kcal: 3500 }),
+      getTodaysFoodSummary: vi.fn().mockResolvedValue({
+        protein_g: 291, calories: 3340, items, items_detailed: [],
+      }),
+    } as unknown as UserService;
+    const r = await tryQueryFast('summarize my meals', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.text).toMatch(/plus \d+ more foods?/i);
+    expect(r!.text).not.toMatch(/and \d+ more\b/i);
+  });
+
+  it('uses a clean one-line sentence for a few foods', async () => {
+    const users = {
+      getById: vi.fn().mockResolvedValue({ protein_goal_grams: 80, calorie_goal_kcal: 1800 }),
       getTodaysFoodSummary: vi.fn().mockResolvedValue({
         protein_g: 30,
         calories: 450,
@@ -214,7 +255,7 @@ describe('food_summary_today: multi-item label splitting (2026-06-06)', () => {
     const r = await tryQueryFast('what i ate today', { users, logger: noopLogger, userId: 'u1' });
     expect(r).not.toBeNull();
     expect(r!.text).toBe(
-      "Today you've had Greek yogurt with hemp seeds, and apple. Running total: 30g protein, 450 kcal.",
+      "Today you've had Greek yogurt with hemp seeds, and Apple. That's 30g protein and 450 calories.",
     );
   });
 });

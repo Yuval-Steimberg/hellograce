@@ -527,6 +527,91 @@ behavior; needs live-Gemini evals first.
 
 ---
 
+### Full-sentence multi-item comprehension (2026-06-11, continued)
+
+Branch `claude/grace-production-readiness-x2k1oj`. Driven by a production report:
+"For breakfast I ate 2 eggs. For lunch I had chicken breast with bowl of rice"
+logged only ~12g protein (the eggs) — the chicken + rice were silently dropped.
+
+**Root cause (a Gemini-outage failure):** `splitMultiMealText` correctly split the
+message into two per-meal `log_food` calls, but the lunch call
+("chicken breast with bowl of rice") hit the fast-lookup **multi-food bail**, then
+both USDA decomposition and the LLM estimator needed Gemini (down on free-tier
+quota) → `log_food` returned `ok:false` and the lunch was dropped. `log_food` had
+**no deterministic last resort**, so on any LLM outage a recognizable compound meal
+vanished.
+
+**Fixes:**
+1. **`services/api/src/tools/log-food.ts`** — `makeLogFoodTool` now falls back to
+   `estimateMultiItemFood` (the no-LLM macro-table decomposer) before returning
+   `ok:false`. A multi-item meal now totals correctly during a total Gemini outage.
+   `estimateSource` gains `'deterministic'`; logs `tool.log_food.deterministic_fallback`.
+2. **`estimateMultiItemFood` hardened** — splits on meal-label boundaries (not just
+   strips them) so punctuation-free "2 eggs for lunch chicken and rice" still
+   separates; and any leftover piece that still holds multiple foods is resolved by
+   a new greedy `resolvePieceTokens` (longest-window-first scan) so nothing drops.
+3. **`packages/ai-core/src/prompts.ts`** — MULTI-PART PARSING section gains a
+   "MULTI-ITEM FOOD LOGS — enumerate EVERY food" rule + an INFORMATIVE CONFIRMATION
+   requirement (name each food, separate by meal, give the total + brief uncertainty,
+   never a bare "Got it 👍" for a multi-item meal) + a food-specific self-check.
+4. **`services/api/src/services/ai.service.ts`** — the deterministic food fallback
+   confirmation now enumerates every item + includes calories ("Got it — 2 eggs,
+   chicken breast (4oz), and rice (1 cup). Roughly about 46g protein and 520 calories…").
+
+**Validation:** new `estimateMultiItemFood` unit tests (incl. the exact production
+case → 46g, not 12g); P10 verification phase strengthened to assert the multi-meal
+reply names chicken AND rice and totals ≥40g under GEMINI_DOWN. Full battery
+66 pass / 0 fail; 534 ai-core + 653 api tests green.
+
+**Note (design):** no general LLM "did-you-cover-everything" completeness judge was
+added — that's the brittle judge class `TRUST_GEMINI` deliberately disables. The
+completeness guarantee is deterministic (the log itself now captures all items) plus
+the prompt enumeration rule, consistent with the existing architecture.
+
+---
+
+### Aggregated food-log summaries (2026-06-11, continued)
+
+Branch `claude/grace-production-readiness-x2k1oj`. Production report: "what did I
+eat today?" returned a raw, repetitive DB dump — "chicken, rice, 2 eggs, 2 eggs,
+chicken, rice, … and 12 more" — a database export, not a summary.
+
+**Root cause:** `query-fast.ts` `food_summary_today` joined raw `food_logs.items`
+(one row per log, with leaked internal labels) capped at 8 with "and N more". No
+dedup, no aggregation. The same raw list also fed the LLM prompt context
+(`ai.service.ts`), so tool-path answers could echo the duplicates too.
+
+**Fix — new `services/api/src/services/food-summary.ts`:**
+- `aggregateFoodItems(items)` — explodes multi-item meal labels ("3 eggs + salad
+  + rice"), strips portion parentheticals ("chicken breast (4oz)"), parses a
+  leading count as a multiplier ("2 eggs" ×3 logs → Eggs ×6) UNLESS it's a
+  serving word ("1 can tuna" stays intact), and dedupes into `{name, qty}` ordered
+  by qty.
+- `formatAggregatedInline(items)` — compact "Eggs × 6, Chicken breast × 3" label
+  for prompt context (overflow → "+N more items").
+- `renderDailyFoodSummary(items, protein, cal)` — the user-facing answer as ONE
+  conversational line: "Today you've had Eggs × 6, Chicken breast × 3, Rice × 2,
+  plus 2 more foods. That's 171g protein and 2,040 calories." Single line on
+  purpose — the WhatsApp outbound enforcer (`twilio/sender.ts` + `format-enforcer`)
+  strips bullets / "Here's your day:" intros / "Label:" headers / multi-line lists,
+  so a sectioned report gets gutted to an empty reply. Totals are passed in (summed
+  upstream) — aggregation never recomputes them, so a summary can't change the day's
+  numbers.
+
+**Wiring:** `query-fast.ts food_summary_today` → `renderDailyFoodSummary`;
+FOOD_SUMMARY_LIST_RE broadened to match "eat" (not just "ate") + "summarize my
+meals/day/intake". Prompt-context "Foods logged today:" line + `get_food_summary`
+tool (`items_aggregated` field) + replay sandbox all use the aggregated inline
+form. `prompts.ts` gains a "FOOD LISTING vs PROTEIN BREAKDOWN" rule (LISTING =
+aggregate; "how did I reach X grams" = per-item walk-through, unchanged).
+
+**Validation:** `food-summary.test.ts` (aggregation + render), updated query-fast
+tests, new P12 verification phase (9 checks) proving the aggregated one-line
+summary survives the full webhook→enforcer→sender pipeline with duplicates +
+a long tail. Battery 75 pass / 0 fail; 534 ai-core + 668 api green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

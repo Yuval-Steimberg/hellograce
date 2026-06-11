@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lookupCommonFoodMacros, __testing } from './log-food.js';
+import { lookupCommonFoodMacros, estimateMultiItemFood, __testing } from './log-food.js';
 
 const { parseItemizedEstimate, sumItemized } = __testing;
 
@@ -202,6 +202,61 @@ describe('lookupCommonFoodMacros — Phase 16 expansion (2026-06-03)', () => {
     // matcher should bail because "rice" is a distinct food token.
     const r = lookupCommonFoodMacros('chicken tacos and rice');
     expect(r).toBeNull();
+  });
+});
+
+// ── Deterministic multi-item estimator (no-LLM fallback) ──────────────────
+// estimateMultiItemFood keeps multi-item logging working (and complete) when
+// Gemini is down. Production failure 2026-06-11: "2 eggs / chicken breast +
+// rice" logged only the 12g eggs because the compound lunch fell through to a
+// dead LLM. These cover the full-sentence decomposition.
+
+describe('estimateMultiItemFood — full multi-clause comprehension', () => {
+  it('captures EVERY food across two meals (the 2026-06-11 production failure)', () => {
+    const r = estimateMultiItemFood('For breakfast I ate 2 eggs. For lunch I had chicken breast with bowl of rice');
+    expect(r).not.toBeNull();
+    expect(r!.items.map((i) => i.food)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/egg/i),
+        expect.stringMatching(/chicken/i),
+        expect.stringMatching(/rice/i),
+      ]),
+    );
+    // 2 eggs (12) + chicken breast (30) + rice (4) = 46g — NOT just the 12g eggs.
+    expect(r!.protein_g).toBe(46);
+    expect(r!.calories).toBeGreaterThan(400);
+  });
+
+  it('separates meals even WITHOUT punctuation between them', () => {
+    const r = estimateMultiItemFood('2 eggs for breakfast then chicken and rice for lunch');
+    expect(r).not.toBeNull();
+    expect(r!.items.length).toBeGreaterThanOrEqual(2);
+    expect(r!.protein_g).toBeGreaterThanOrEqual(40);
+  });
+
+  it('resolves a punctuation-free run of multiple foods in one clause', () => {
+    // "2 eggs chicken breast rice" — no joiners; the greedy token resolver
+    // must still pull out all three foods rather than dropping the run.
+    const r = estimateMultiItemFood('2 eggs chicken breast rice');
+    expect(r).not.toBeNull();
+    expect(r!.protein_g).toBe(46);
+  });
+
+  it('handles comma + "and" separated lists', () => {
+    const r = estimateMultiItemFood('I had Greek yogurt, a banana, and a protein shake');
+    expect(r).not.toBeNull();
+    // yogurt 17 + banana 1 + protein shake 25 = 43
+    expect(r!.protein_g).toBe(43);
+    expect(r!.items.length).toBe(3);
+  });
+
+  it('does not double-count the same anchor', () => {
+    const r = estimateMultiItemFood('eggs and eggs');
+    expect(r!.items.length).toBe(1);
+  });
+
+  it('returns null when nothing is a recognizable food', () => {
+    expect(estimateMultiItemFood('went for a long walk today')).toBeNull();
   });
 });
 

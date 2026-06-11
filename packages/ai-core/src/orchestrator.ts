@@ -108,14 +108,12 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     "Good to hear from you.",
   ],
   emotional: [
-    // 2026-06-06 v2 — Coverage audit follow-up. Bare one-line acks created
-    // conversational dead-ends. Each entry now follows the 4-step framework:
-    // recognize the feeling + leave a gentle door open for the user to
-    // elaborate. No "tell me more" / "what's on your mind?" — those are
-    // banned as too lazy.
-    "I hear you. What's the heaviest piece of it right now?",
-    "That's a lot to be holding. Want to say what's underneath it?",
-    "With you on that. Is there a specific piece you can put words to?",
+    // 2026-06-11 — reworded to companion style per production feedback:
+    // "What's the heaviest piece of it right now?" read as scripted-therapist.
+    // Warm, brief, human; one gentle question max.
+    "I'm sorry you're feeling that way. I'm right here. Want to tell me what happened?",
+    "That sounds heavy. I'm with you. What's going on?",
+    "I'm sorry it's hitting like this today. Want to talk it through?",
   ],
   scheduling: [
     // Direct link to settings — the prompt rule says scheduling changes go

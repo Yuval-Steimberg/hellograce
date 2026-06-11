@@ -22,6 +22,7 @@ import {
 import { tryFastPath } from './fast-path.js';
 import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
 import { estimateMultiItemFood } from '../tools/log-food.js';
+import { buildFoodFitAnswer } from '../tools/food-fit.js';
 import { createHash } from 'crypto';
 import type { GraceUser } from '../user/user.service.js';
 
@@ -92,7 +93,9 @@ function pickKnowledgeTopicFallback(userMessage: string): string | null {
     return "Hair shedding (telogen effluvium) is common with significant weight loss, including GLP-1 weight loss — it's usually temporary and tied to the rapid loss and lower intake, not the medication directly. Hitting your protein target and checking iron/ferritin with your doctor helps. Have you noticed more shedding lately, or asking generally?";
   }
   if (/\bmuscles?\b/.test(msg) && /\b(affect|impact|lose|losing|loss|protect|maintain|keep|preserve|build|GLP)\b/i.test(userMessage)) {
-    return "GLP-1s don't directly damage muscle, but rapid weight loss without enough protein or resistance training can cost you lean mass — research shows 25-35% of weight lost on GLP-1s can be muscle. Hitting 1.2-1.6g of protein per kg of body weight daily and lifting 2-3x a week shifts the balance toward fat loss.";
+    // Mechanism + personal action + follow-up (2026-06-11 feedback: "how"
+    // questions need the WHY, not just the statistic).
+    return "The medication itself doesn't damage muscle — but because it cuts your appetite so much, you eat less protein and fewer calories, and your body can start breaking down muscle along with fat. That's why hitting your protein target every day and doing some resistance work 2-3x a week matters so much. Want me to check how your protein's looking today?";
   }
   if (/\b(protein|grams)\b/.test(msg) && /\b(man|woman|men|women|male|female|guy|girl)\b/.test(msg)) {
     return "On GLP-1 therapy the target is 1.2-1.6g of protein per kg of body weight daily — for an average adult that's roughly 90-130g. Front-load 25-30g at breakfast to protect muscle and reduce muscle loss during weight reduction.";
@@ -1165,6 +1168,8 @@ export class AIService {
       }
       if (intent === 'food_question') {
         const user = await this.deps.users.getById(input.userId).catch(() => null);
+        const fit = buildFoodFitAnswer(text, { dietLabel: user?.dietary_pattern ?? null });
+        if (fit) return fit;
         const dietaryRestriction = user?.dietary_pattern ? buildRestrictionFromLabel(user.dietary_pattern) : null;
         const dislikes = (user?.food_dislikes ?? [])
           .map((d) => (d ?? '').trim().replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
@@ -1256,6 +1261,18 @@ export class AIService {
     const dislikes = (user?.food_dislikes ?? [])
       .map((d) => (d ?? '').trim().replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
       .filter((d) => d.length > 0);
+
+    // Intent hierarchy (2026-06-11): a question about a SPECIFIC food ("how
+    // about burger for dinner?") gets a direct fit answer for THAT food —
+    // general recommendations must never override a direct question.
+    const fit = buildFoodFitAnswer(userText, { dietLabel: user?.dietary_pattern ?? null });
+    if (fit) {
+      const fitViolations = checkContent(fit, { userMessage: userText, ...(dbRules.length > 0 ? { dbRules } : {}) });
+      if (!fitViolations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) {
+        this.deps.logger.info({ userId: input.userId }, 'ai.food_fit.served');
+        return fit;
+      }
+    }
 
     const curated = getCuratedFoodIdeas({
       userId: input.userId,

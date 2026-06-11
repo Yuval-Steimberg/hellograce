@@ -7,6 +7,38 @@ import type { Cache } from '../cache/cache.js';
 
 const LLM_TTL_SEC = 30 * 60; // 30 min
 
+// ── Quota circuit breaker (2026-06-11) ────────────────────────────────────────
+// Production failure: a free-tier key returned 429 with `limit: 0` on every
+// call. The retry ladder (800→1600→3200ms × 2 models) burned 8-10s per LLM
+// call on retries that COULD NOT succeed, stacking user turns minutes deep.
+// When Google says "quota exhausted, retry in Ns", we open a breaker: all
+// Gemini calls fail instantly until the window passes, so the deterministic
+// fallback layer answers in milliseconds instead of after a retry storm.
+// Module-level on purpose — one breaker per process covers all call sites
+// (orchestrator, direct paths, workers).
+let quotaBreakerUntil = 0;
+let contextCacheDisabledUntil = 0;
+
+function parseQuotaError(err: unknown): { isQuota: boolean; retryMs: number } {
+  if (!err || typeof err !== 'object') return { isQuota: false, retryMs: 0 };
+  const message = (err as { message?: string }).message ?? '';
+  const status = (err as { status?: number }).status;
+  if (status !== 429 && !/429|quota/i.test(message)) return { isQuota: false, retryMs: 0 };
+  // Honor Google's RetryInfo when present ("Please retry in 39.2s"), capped.
+  const m = message.match(/retry in (\d+(?:\.\d+)?)s/i);
+  const retryMs = m ? Math.min(Math.ceil(parseFloat(m[1]!) * 1000), 60_000) : 30_000;
+  return { isQuota: true, retryMs };
+}
+
+/** Exposed for tests/diagnostics. */
+export function isQuotaBreakerOpen(): boolean {
+  return Date.now() < quotaBreakerUntil;
+}
+export function resetQuotaBreaker(): void {
+  quotaBreakerUntil = 0;
+  contextCacheDisabledUntil = 0;
+}
+
 export class GeminiProvider implements LLMProvider {
   readonly id = 'gemini';
   private client: GoogleGenerativeAI;
@@ -23,6 +55,13 @@ export class GeminiProvider implements LLMProvider {
   }
 
   async generate(req: LLMRequest): Promise<LLMResponse> {
+    // Quota breaker open → fail instantly so deterministic fallbacks answer
+    // in milliseconds instead of after a doomed retry ladder.
+    if (Date.now() < quotaBreakerUntil) {
+      throw new UpstreamError(
+        `Gemini quota breaker open for ${Math.ceil((quotaBreakerUntil - Date.now()) / 1000)}s`,
+      );
+    }
     const systemMessages = req.messages.filter((m) => m.role === 'system');
     const conversation = req.messages.filter((m) => m.role !== 'system');
 
@@ -50,6 +89,10 @@ export class GeminiProvider implements LLMProvider {
   }
 
   private async getOrCreateCachedContent(systemInstruction: string, modelName: string): Promise<string | null> {
+    // After a 403/429 on the cachedContents endpoint, every subsequent call
+    // was re-paying the failed HTTP roundtrip (~300ms each). Negative-cache
+    // the failure for 10 minutes.
+    if (Date.now() < contextCacheDisabledUntil) return null;
     const hash = createHash('sha256').update(systemInstruction).digest('hex').slice(0, 16);
     if (this.cachedContentName && this.cachedContentHash === hash && this.cachedContentModel === modelName) {
       return this.cachedContentName;
@@ -71,6 +114,9 @@ export class GeminiProvider implements LLMProvider {
       );
       if (!resp.ok) {
         this.logger.warn({ status: resp.status }, 'gemini.context_cache.http_failed');
+        if (resp.status === 403 || resp.status === 429) {
+          contextCacheDisabledUntil = Date.now() + 10 * 60_000;
+        }
         return null;
       }
       const data = await resp.json() as { name: string };
@@ -181,6 +227,19 @@ export class GeminiProvider implements LLMProvider {
         return { text, finishReason, ...(usage ? { usage } : {}) };
       } catch (err) {
         lastErr = err;
+        // Quota exhaustion is NOT transient within the retry window — Google
+        // tells us how long to wait ("retry in 39s"). Open the breaker and
+        // fail immediately; retrying within seconds is guaranteed to fail and
+        // was stacking user turns 8-10s deep per LLM call.
+        const quota = parseQuotaError(err);
+        if (quota.isQuota) {
+          quotaBreakerUntil = Math.max(quotaBreakerUntil, Date.now() + quota.retryMs);
+          this.logger.warn(
+            { model: modelName, breakerForMs: quota.retryMs },
+            'gemini.quota_breaker.opened',
+          );
+          throw err;
+        }
         if (!isTransientGeminiError(err) || attempt === maxAttempts - 1) {
           throw err;
         }

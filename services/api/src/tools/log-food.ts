@@ -908,6 +908,52 @@ export function lookupCommonFoodMacros(input: string): FoodEstimate | null {
   return null;
 }
 
+/**
+ * Deterministic multi-item food estimator (no LLM). Splits a compound food
+ * description ("for breakfast 2 eggs, for lunch chicken breast with rice")
+ * into pieces, looks each up in COMMON_FOODS, and sums the macros.
+ *
+ * Used as a graceful degradation path so food logging KEEPS WORKING for common
+ * foods even when Gemini is unavailable — instead of exposing an internal
+ * "couldn't total the macros" failure to the user. Returns null when fewer
+ * than one piece resolves (caller falls back to a clarifying ask).
+ */
+export interface MultiItemEstimate {
+  items: Array<{ food: string; protein_g: number; calories: number }>;
+  protein_g: number;
+  calories: number;
+}
+
+export function estimateMultiItemFood(input: string): MultiItemEstimate | null {
+  if (!input || input.length > 300) return null;
+  // Strip meal-context scaffolding so "for breakfast i ate 2 eggs" → "2 eggs".
+  const cleaned = input
+    .replace(/\b(hey|hi|hello|so|well|ok|okay|today|this morning|this afternoon|tonight|earlier)\b/gi, ' ')
+    .replace(/\bfor (breakfast|lunch|dinner|a snack|brunch|supper)\b/gi, ' ')
+    .replace(/\bi (just |also |then )?(ate|had|grabbed|made|cooked|got|drank|consumed|finished|enjoyed)\b/gi, ' ')
+    .replace(/\b(breakfast|lunch|dinner|snack|brunch)\b/gi, ' ');
+  // Split on commas, newlines, slashes, periods, and the joiners "and"/"with"/"plus"/"then".
+  const pieces = cleaned
+    .split(/[,\n/.]+|\s+(?:and|with|plus|then)\s+/i)
+    .map((p) => p.trim())
+    .filter((p) => p.length >= 2);
+
+  const items: MultiItemEstimate['items'] = [];
+  const seen = new Set<string>();
+  for (const piece of pieces) {
+    const m = lookupCommonFoodMacros(piece);
+    if (!m) continue;
+    const key = m.food.toLowerCase();
+    if (seen.has(key)) continue; // don't double-count the same anchor
+    seen.add(key);
+    items.push({ food: m.food, protein_g: m.protein_g, calories: m.calories });
+  }
+  if (items.length === 0) return null;
+  const protein_g = items.reduce((s, i) => s + i.protein_g, 0);
+  const calories = items.reduce((s, i) => s + i.calories, 0);
+  return { items, protein_g, calories };
+}
+
 // Set of distinctive food tokens harvested from COMMON_FOODS — single words
 // that are unambiguously foods. Used by hasOtherFoodTokens to detect when a
 // multi-item meal slipped past the substring matcher.

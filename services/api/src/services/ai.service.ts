@@ -21,6 +21,8 @@ import {
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
 import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
+import { estimateMultiItemFood } from '../tools/log-food.js';
+import { createHash } from 'crypto';
 import type { GraceUser } from '../user/user.service.js';
 
 /**
@@ -83,8 +85,11 @@ function pickKnowledgeTopicFallback(userMessage: string): string | null {
   if (/\bexercise|workout|gym|cardio|lift|train\b/.test(msg)) {
     return "Resistance training a few times a week is the strongest protector against muscle loss on GLP-1, alongside hitting your protein target. Start light if appetite is suppressed and build up.";
   }
-  if (/\bhair\s+(loss|fall|shed|thin)\b/.test(msg)) {
-    return "Hair shedding (telogen effluvium) is common with significant weight loss, including GLP-1 weight loss. It's typically temporary — protein, iron, and ferritin levels are worth checking with your doctor if it persists.";
+  // 2026-06-11 WhatsApp: "is hair loose commn on glp?" — "loose"/"losing"/
+  // "falling out"/"shedding"/"thinning" must all map here, not to the generic
+  // GLP-1 mechanism blurb. Match "hair" near any of those.
+  if (/\bhair\b/.test(msg) && /\b(loss|loose|losing|fall|falling|fell|shed|shedding|thin|thinning|coming out|falling out)\b/.test(msg)) {
+    return "Hair shedding (telogen effluvium) is common with significant weight loss, including GLP-1 weight loss — it's usually temporary and tied to the rapid loss and lower intake, not the medication directly. Hitting your protein target and checking iron/ferritin with your doctor helps. Have you noticed more shedding lately, or asking generally?";
   }
   if (/\bmuscles?\b/.test(msg) && /\b(affect|impact|lose|losing|loss|protect|maintain|keep|preserve|build|GLP)\b/i.test(userMessage)) {
     return "GLP-1s don't directly damage muscle, but rapid weight loss without enough protein or resistance training can cost you lean mass — research shows 25-35% of weight lost on GLP-1s can be muscle. Hitting 1.2-1.6g of protein per kg of body weight daily and lifting 2-3x a week shifts the balance toward fat loss.";
@@ -1088,6 +1093,49 @@ export class AIService {
     return joined.charAt(0).toUpperCase() + joined.slice(1) + '.';
   }
 
+  // Persist a deterministically-estimated multi-item meal as a single
+  // food_logs row (dedupe-keyed like food-log-fast) and return today's totals.
+  // Used by the resilient fallback so food logging works with the LLM down.
+  private async persistEstimatedFood(
+    userId: string,
+    est: { items: Array<{ food: string }>; protein_g: number; calories: number },
+    rawText: string,
+  ): Promise<{ dailyProtein: number; goal: number } | null> {
+    // The main pipeline logs food deterministically (lookupCommonFoodMacros)
+    // even when Gemini is down — only the REPLY generation failed and dropped
+    // us here. So if anything was already logged for this user in the last 2
+    // minutes, do NOT insert again (that would double-count). Only insert when
+    // nothing was logged this turn.
+    const recent = await this.deps.pool.query<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM food_logs WHERE user_id = $1 AND created_at > now() - interval '2 minutes'`,
+      [userId],
+    );
+    const alreadyLogged = Number(recent.rows[0]?.n ?? 0) > 0;
+    if (!alreadyLogged) {
+      const foodLabel = est.items.map((i) => i.food).join(' + ').slice(0, 200);
+      const minuteBucket = Math.floor(Date.now() / 60_000);
+      const dedupeKey = createHash('sha256')
+        .update(`${userId}|${rawText.toLowerCase().replace(/\s+/g, ' ')}|${minuteBucket}`)
+        .digest('hex')
+        .slice(0, 32);
+      await this.deps.pool.query(
+        `INSERT INTO food_logs (user_id, food, protein_g, calories, confidence, raw_text, source, dedupe_key)
+         VALUES ($1, $2, $3, $4, 'medium', $5, 'text', $6)
+         ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+        [userId, foodLabel, est.protein_g, est.calories, rawText, dedupeKey],
+      );
+      this.deps.users.invalidateTodaysFoodCache?.(userId);
+    }
+    const [summary, user] = await Promise.all([
+      this.deps.users.getTodaysFoodSummary(userId).catch(() => null),
+      this.deps.users.getById(userId).catch(() => null),
+    ]);
+    return {
+      dailyProtein: Math.round(summary?.protein_g ?? est.protein_g),
+      goal: user?.protein_goal_grams ?? 0,
+    };
+  }
+
   // ── Resilient deterministic fallback (2026-06-11) ──────────────────────────
   // Last-resort reply when the entire pipeline AND the emergency Gemini call
   // have failed. Produces an INTENT-AWARE, useful answer from deterministic
@@ -1134,7 +1182,21 @@ export class AIService {
       if (intent === 'mood_log') return getToolAwareFallback('mood_log', [], { userMessage: text });
       if (intent === 'greeting') return getToolAwareFallback('greeting', [], { userMessage: text });
       if (intent === 'food_log') {
-        return "Got it — noted. I'm having a brief hiccup totaling the macros; resend that in a moment and I'll add it up for you.";
+        // Deterministic multi-item estimate from the macro table — keeps food
+        // logging working (and LOGGED) even with the LLM down. Never expose an
+        // internal "hiccup": if nothing resolves, ask a useful portion question.
+        const est = estimateMultiItemFood(text);
+        if (est && est.items.length > 0) {
+          const totals = await this.persistEstimatedFood(input.userId, est, text).catch(() => null);
+          const names = est.items.map((i) => i.food);
+          const last = names.pop()!;
+          const list = names.length > 0 ? `${names.join(', ')}, and ${last}` : last;
+          if (totals && totals.goal > 0) {
+            return `Logged ${list} — about ${est.protein_g}g protein. You're at ${totals.dailyProtein}g/${totals.goal}g today.`;
+          }
+          return `Logged ${list} — about ${est.protein_g}g protein${totals ? `, ${totals.dailyProtein}g today so far` : ''}.`;
+        }
+        return "Got it. Roughly how much was it — small, medium, or large portions? I'll total up the protein for you.";
       }
     } catch { /* fall through to warm floor */ }
 

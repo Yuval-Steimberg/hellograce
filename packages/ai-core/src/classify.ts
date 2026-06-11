@@ -493,7 +493,11 @@ export function classifyMessage(rawText: string): ClassifyResult {
     .replace(/\bprot[ie]+n\b/gi, 'protein') // "protin" / "protien" → "protein"
     .replace(/\btufu\b/gi, 'tofu')
     .replace(/\bchikt?en\b/gi, 'chicken')
-    .replace(/\bavacado\b/gi, 'avocado');
+    .replace(/\bavacado\b/gi, 'avocado')
+    .replace(/\bcomm?n\b/gi, 'common')   // "commn" / "comn" → "common"
+    .replace(/\bcomon\b/gi, 'common')
+    // "hair loose" → "hair loss" (only adjacent to hair, so "loose clothes" is safe)
+    .replace(/\bhair\s+loose\b/gi, 'hair loss');
   if (isGibberish(text)) return { type: 'gibberish', confidence: 0.9 };
   if (matches(text, GREETING)) return { type: 'greeting', confidence: 0.95 };
   // Appointment prep MUST come BEFORE knowledge / general, since "Help me write

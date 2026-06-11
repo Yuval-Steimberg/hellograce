@@ -16,8 +16,12 @@
 -- preserves existing behavior unchanged. To enroll a user, insert a row.
 -- To unenroll, delete the row.
 
+-- user_id is the user's PHONE (every reader/writer — MemoryMdService,
+-- ai.service, admin routes — keys this table by phone, not users.id).
+-- No FK: the original `REFERENCES public.users(id)` was a TEXT→UUID type
+-- mismatch, which made this migration fail on every database it ran on.
 CREATE TABLE IF NOT EXISTS public.user_memory_md (
-  user_id    TEXT PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+  user_id    TEXT PRIMARY KEY,
   content_md TEXT NOT NULL DEFAULT '',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- Track size for the compact-on-overflow worker; populated on every write.

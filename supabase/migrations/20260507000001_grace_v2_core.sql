@@ -3,7 +3,10 @@
 -- Existing Grace v1 tables (users, check_ins, injections, weight_logs, grace_knowledge)
 -- remain intact and untouched by this migration.
 
-CREATE EXTENSION IF NOT EXISTS pgvector;
+-- The extension is named "vector" (pgvector is the project name).
+-- `CREATE EXTENSION IF NOT EXISTS pgvector` errors on every Postgres,
+-- aborting this whole file when run with ON_ERROR_STOP (2026-06-11 fix).
+CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ─── conversations ───────────────────────────────────────────────────

@@ -662,7 +662,11 @@ const COALESCE_SKIP_RE = /^(?:hi|hey|hello|hii+|heyy+|good\s+morning|good\s+afte
 // here saves 2 seconds off every "I ate X" / "Just had Y" type message.
 // Length-capped at 35 chars so compound multi-food logs still get the coalesce
 // window in case the user is about to send a follow-up.
-const FOOD_LOG_SKIP_RE = /^(?:(?:i|just)\s+(?:ate|had|drank|made)|ate|had|drank|just\s+(?:ate|had|drank|made)|made|grabbed|finished|enjoyed)\s+[a-z0-9].{0,28}$/i;
+// Optional "I" and "just" prefixes compose: "ate X", "I ate X", "just ate X",
+// AND "I just ate X" — the original alternation matched the first three but
+// missed "I just had …", the single most common food-log phrasing, costing
+// those messages a flat +2s coalesce wait (2026-06-11 verification finding).
+const FOOD_LOG_SKIP_RE = /^(?:i\s+)?(?:just\s+)?(?:ate|had|drank|made|grabbed|finished|enjoyed)\s+[a-z0-9].{0,28}$/i;
 
 // Clear knowledge / recommendation questions — single-turn, self-contained,
 // no continuation expected. "What causes hair loss on Ozempic?" / "How much

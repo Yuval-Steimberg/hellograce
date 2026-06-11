@@ -161,7 +161,10 @@ const CHECK_IN_QUERY_RE = /^(how\s+am\s+i\s+doing|how'?s\s+(my\s+)?progress|wher
 
 const GREETING_REPLIES: readonly string[] = [
   'Hey there.',
-  'Hi 🤍',
+  // Every entry must contain a 3+ char alphanumeric run — the webhook's
+  // empty-response gate (/[A-Za-z0-9]{3,}/) silently DROPS anything shorter,
+  // so "Hi 🤍" / bare-emoji entries mean the user gets no reply at all.
+  'Hey 🤍',
   'Hey. Good to hear from you.',
   'Hey. How are you doing today?',
   'Hi there. How are you feeling?',
@@ -203,8 +206,8 @@ const BRIEF_ACK_REPLIES: readonly string[] = [
   'Noted.',
   'Cool.',
   'Sounds good.',
-  '🤍',
-  'On it.',
+  'Okay 🤍',
+  'Will do.',
   'Heard.',
 ] as const;
 
@@ -254,12 +257,13 @@ const FAREWELL_REPLIES: readonly string[] = [
 ] as const;
 
 const LAUGHTER_REPLIES: readonly string[] = [
-  '😄',
+  // No bare-emoji entries — see the webhook empty-response gate note above.
+  'Haha 😄',
   'Right?',
   'Hehe.',
   'Right 😄',
   'Haha.',
-  '😆',
+  'Hehe 😆',
 ] as const;
 
 const APOLOGY_REPLIES: readonly string[] = [

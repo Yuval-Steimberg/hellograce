@@ -952,8 +952,10 @@ export class AIService {
         if (rawEmergency) {
           // Run through the content-checker so banned phrases never reach
           // the user via the emergency path. If anything trips, ship a
-          // safe canned text instead of the raw LLM output.
-          const violations = checkContent(rawEmergency, {});
+          // safe canned text instead of the raw LLM output. DB rules
+          // included — the dose-safety block rules exist only in the DB.
+          const emergencyDbRules = await this.getDbRules();
+          const violations = checkContent(rawEmergency, emergencyDbRules.length > 0 ? { dbRules: emergencyDbRules } : {});
           const safeText =
             violations.some((v) => v.severity !== 'log')
               ? "I'm having trouble pulling that together right now — try again in a moment?"
@@ -1001,6 +1003,7 @@ export class AIService {
    */
   private async handleFoodQuestionDirect(input: InboundMessage): Promise<string | null> {
     const userText = input.text;
+    const dbRules = await this.getDbRules();
 
     // Extract meal type and try the curated bank deterministically first.
     const lower = userText.toLowerCase();
@@ -1039,8 +1042,9 @@ export class AIService {
       const reply = `A few options: ${list}. Anything sound good?`;
       // Run through format-enforce + content-check for consistency.
       const formatted = enforceFormat(reply, { userMessage: userText });
-      const violations = checkContent(formatted.text, { userMessage: userText });
-      if (violations.some((v) => v.severity === 'block' || v.severity === 'regen')) return null;
+      const violations = checkContent(formatted.text, { userMessage: userText, ...(dbRules.length > 0 ? { dbRules } : {}) });
+      // No severity = code-level banned phrase = regen (see runDirectPath note).
+      if (violations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) return null;
       return formatted.text;
     }
 
@@ -1121,8 +1125,9 @@ CRITICAL CONTEXT RULES — apply on every turn:
       userMessage: userText,
       ...(lastAssistantMessage ? { lastAssistantMessage } : {}),
     });
-    const violations = checkContent(formatted.text, { userMessage: userText });
-    if (violations.some((v) => v.severity === 'block' || v.severity === 'regen')) {
+    const violations = checkContent(formatted.text, { userMessage: userText, ...(dbRules.length > 0 ? { dbRules } : {}) });
+    // No severity = code-level banned phrase = regen (see runDirectPath note).
+    if (violations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) {
       this.deps.logger.info(
         { codes: violations.map((v) => v.code).slice(0, 5) },
         'food_question_direct.content_violations',
@@ -1177,7 +1182,16 @@ CRITICAL CONTEXT RULES — apply on every turn:
     let directDislikes: string[] = [];
     if (userId) {
       try {
-        const u = await this.deps.users.getById(userId);
+        // Known facts fetched in parallel with the profile (both cached:
+        // 5-min facts cache + profile cache). Without them, the direct
+        // paths — the PRIMARY route for knowledge/emotional intents —
+        // answered memory-dependent messages blind: "remember I work night
+        // shifts" never reached these prompts (2026-06-11 verification
+        // finding; reproduced via prompt inspection in the harness).
+        const [u, knownFacts] = await Promise.all([
+          this.deps.users.getById(userId),
+          this.deps.users.getKnownFacts(userId, 8).catch(() => [] as Array<{ fact: string }>),
+        ]);
         if (u) {
           const lines: string[] = [];
           if (u.starting_weight) lines.push(`Starting weight: ${u.starting_weight} lbs`);
@@ -1210,6 +1224,9 @@ CRITICAL CONTEXT RULES — apply on every turn:
             .filter((d) => d.length > 0);
           if (directDislikes.length > 0) {
             lines.push(`Avoid / disliked / allergic to: ${directDislikes.join(', ')}`);
+          }
+          if (knownFacts.length > 0) {
+            lines.push(`Known about this user: ${knownFacts.map((f) => f.fact).join('; ')}`);
           }
           if (lines.length > 0) {
             userContextBlock = `\n\nUSER PROFILE (use for specifics, don't restate verbatim):\n${lines.join('\n')}\n`;
@@ -1290,9 +1307,17 @@ CRITICAL RULES:
 
     // Content-check: drop on banned-phrase or block violations. Regen-
     // severity → fall through to orchestrator (which has the regen
-    // machinery). Clean → ship.
-    const violations = checkContent(formatted.text, { userMessage: userText });
-    if (violations.some((v) => v.severity === 'block' || v.severity === 'regen')) {
+    // machinery). Clean → ship. DB rules included — the dose-safety
+    // block rules ("take an extra dose", "double your dose") exist ONLY
+    // in content_rules; without them this path would ship such advice.
+    const directDbRules = await this.getDbRules();
+    const violations = checkContent(formatted.text, { userMessage: userText, ...(directDbRules.length > 0 ? { dbRules: directDbRules } : {}) });
+    // Code-level banned-phrase violations carry NO severity field (only DB
+    // rules set one) — same semantics as the orchestrator (line ~1464) and
+    // the FAQ-cache gate: undefined severity means regen. Checking only
+    // severity === 'block' | 'regen' let every code-level banned phrase
+    // ship through this path (2026-06-11 verification finding).
+    if (violations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) {
       this.deps.logger.info(
         { codes: violations.map((v) => v.code).slice(0, 5), intent },
         'direct_path.content_violations',
@@ -1740,6 +1765,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
           // that legitimately aren't in the user message. Skip the
           // stale-context-echo guard for these — keep all other guards.
           skipStaleContextEcho: true,
+          // DB rules included so admin-managed bans apply to cached
+          // responses too (dose-safety block rules live only in the DB).
+          ...(await this.getDbRules().then((r) => (r.length > 0 ? { dbRules: r } : {}))),
         });
         const cacheBlocked = cacheViolations.filter(
           (v) => v.severity === 'block' || v.severity === 'regen' || !v.severity,
@@ -2597,6 +2625,20 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     );
 
     return result;
+  }
+
+  /** Active DB content rules for the AI path (60s in-memory cache inside the
+   *  service — effectively free). Centralized so EVERY checkContent call site
+   *  enforces the same rule set: the four block-severity dose-safety rules
+   *  live ONLY in the DB, so any path that skips dbRules can ship "take an
+   *  extra dose" if the model emits it (2026-06-11 verification finding). */
+  private async getDbRules(): Promise<import('@grace/shared').DbContentRule[]> {
+    if (!this.deps.contentRulesService) return [];
+    try {
+      return await this.deps.contentRulesService.getActive('ai');
+    } catch {
+      return [];
+    }
   }
 
   /** Persist a fast-path response's intent + latency + stage timings via the

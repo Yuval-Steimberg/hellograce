@@ -77,6 +77,17 @@ const PROTEIN_TODAY_RE =
 const CALORIE_TODAY_RE =
   /^(?:how (?:many|much)\s+(?:calories|cal|kcal)\s+(?:have i\s+(?:had|eaten|consumed|logged)|did i\s+(?:have|eat))|what(?:'?s| is)\s+my\s+(?:calorie|cal|kcal)\s+(?:total\s+)?(?:today|so far))(?:\s+today)?\??$/i;
 
+// "How many calories do I have left today?" / "calories remaining" / "how much
+// protein do I have left". These are the LIVE-total questions the goal/total
+// patterns deliberately exclude — but nothing matched them, so they leaked to
+// knowledge_direct, which has NO access to today's intake and answered
+// generically (2026-06-11 verification finding). The calorie_today /
+// protein_today renderers already compute and phrase the remaining amount.
+const PROTEIN_LEFT_RE =
+  /^(?:how (?:much|many)\s+(?:grams? of\s+)?protein\s+(?:do i have\s+|is\s+|are\s+)?(?:left|remaining)|protein\s+(?:left|remaining)|how (?:much|many) more protein (?:do i need|can i (?:have|eat)))(?:\s+(?:today|for today))?\s*\??$/i;
+const CALORIE_LEFT_RE =
+  /^(?:how (?:many|much)\s+(?:calories|cals?|kcal)\s+(?:do i have\s+|are\s+|is\s+)?(?:left|remaining)|(?:calories|cals?|kcal)\s+(?:left|remaining)|how (?:many|much) more (?:calories|cals?|kcal) (?:can i (?:have|eat)|do i have))(?:\s+(?:today|for today))?\s*\??$/i;
+
 // Food summary list — "what I ate today" / "show my food" / "my food today" /
 // "what did I have" / "today's log". Production failure 2026-06-05: "What I
 // ate today" went through the orchestrator → ship "Tell me a bit more?"
@@ -197,6 +208,8 @@ export async function tryQueryFast(
     : WEIGHT_GOAL_RE.test(t) ? 'weight_goal'
     : PROTEIN_TODAY_RE.test(t) ? 'protein_today'
     : CALORIE_TODAY_RE.test(t) ? 'calorie_today'
+    : PROTEIN_LEFT_RE.test(t) ? 'protein_today'
+    : CALORIE_LEFT_RE.test(t) ? 'calorie_today'
     : PROGRESS_TODAY_RE.test(t) ? 'progress_today'
     : FOOD_SUMMARY_LIST_RE.test(t) ? 'food_summary_today'
     : START_DATE_RE.test(t) ? 'start_date'
@@ -678,6 +691,8 @@ export const __testing = {
   WEIGHT_GOAL_RE,
   PROTEIN_TODAY_RE,
   CALORIE_TODAY_RE,
+  PROTEIN_LEFT_RE,
+  CALORIE_LEFT_RE,
   PROGRESS_TODAY_RE,
   START_DATE_RE,
   WEEK_NUMBER_RE,

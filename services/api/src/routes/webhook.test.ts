@@ -288,3 +288,20 @@ describe('shouldSkipCoalesce — knowledge / recommendation skip (Phase 16 laten
     expect(shouldSkipCoalesce('I ate two eggs')).toBe(true);
   });
 });
+
+describe('shouldSkipCoalesce — "I just had …" food logs (2026-06-11 latency fix)', () => {
+  it('skips coalesce for the canonical "I just <verb>" food-log phrasings', () => {
+    expect(shouldSkipCoalesce('I just had two eggs and toast')).toBe(true);
+    expect(shouldSkipCoalesce('I just ate a sandwich')).toBe(true);
+    expect(shouldSkipCoalesce('I just drank a smoothie')).toBe(true);
+    expect(shouldSkipCoalesce('I just finished lunch')).toBe(true);
+    expect(shouldSkipCoalesce('just had eggs')).toBe(true);
+    expect(shouldSkipCoalesce('I had two eggs')).toBe(true);
+  });
+
+  it('still buffers long compound logs (tail > 28 chars after the verb)', () => {
+    expect(
+      shouldSkipCoalesce('I just had grilled chicken thighs with brown rice and roasted broccoli'),
+    ).toBe(false);
+  });
+});

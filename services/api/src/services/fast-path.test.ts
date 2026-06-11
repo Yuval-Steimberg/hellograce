@@ -137,3 +137,35 @@ describe('non_english fast-path (2026-06-06 — coverage audit)', () => {
     expect(b?.category).toBe('non_english');
   });
 });
+
+describe('every fast-path reply survives the webhook empty-response gate (2026-06-11 fix)', () => {
+  // webhook.ts drops any response without a 3+ char alphanumeric run
+  // (hasUsefulContent). A pool entry like '😄' or 'Hi 🤍' therefore means the
+  // user gets NO reply at all. Brute-force every category × many seeds and
+  // assert every reachable reply passes the gate.
+  const WEBHOOK_USEFUL_CONTENT_RE = /[A-Za-z0-9]{3,}/;
+  const INPUTS = [
+    'Hi', 'hello', 'thanks', 'thank you', 'ok', 'got it', 'goodnight', 'good night',
+    "I'm feeling great", "I'm exhausted", 'haha', 'lol', "you're the best",
+    'love it', 'wow', 'sorry', 'bye', 'see you later', 'yes', 'no', "I'm good", 'hola',
+  ];
+
+  it('no reachable fast-path reply is droppable', () => {
+    const dropped: Array<{ input: string; category: string; reply: string }> = [];
+    const seen = new Set<string>();
+    for (const input of INPUTS) {
+      for (let i = 0; i < 300; i++) {
+        const r = tryFastPath(input, `+1555${String(i).padStart(7, '0')}`);
+        if (!r) break;
+        const key = `${r.category}|${r.text}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!WEBHOOK_USEFUL_CONTENT_RE.test(r.text.trim())) {
+          dropped.push({ input, category: r.category, reply: r.text });
+        }
+      }
+    }
+    expect(dropped).toEqual([]);
+    expect(seen.size).toBeGreaterThan(40); // sanity: we actually sampled the pools
+  });
+});

@@ -367,3 +367,43 @@ describe('starting_weight + weight_progress (2026-06-06 — coverage audit)', ()
     expect(r!.text).toBe('Your starting weight is 220 lbs.');
   });
 });
+
+describe('calories/protein LEFT today (2026-06-11 fix — was leaking to knowledge_direct)', () => {
+  it('"how many calories do I have left today?" → calorie_today with correct remaining', async () => {
+    const users = mockUsers({ todayCalories: 500, calorie_goal_kcal: 1500 });
+    const r = await tryQueryFast('how many calories do I have left today?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('calorie_today');
+    expect(r!.text).toMatch(/1000 kcal left/);
+  });
+
+  it('"calories remaining?" → calorie_today', async () => {
+    const users = mockUsers({ todayCalories: 300, calorie_goal_kcal: 1800 });
+    const r = await tryQueryFast('calories remaining?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('calorie_today');
+    expect(r!.text).toMatch(/1500 kcal left/);
+  });
+
+  it('"how much protein do I have left?" → protein_today with correct remaining', async () => {
+    const users = mockUsers({ todayProtein: 30, protein_goal_grams: 90 });
+    const r = await tryQueryFast('how much protein do I have left?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('protein_today');
+    expect(r!.text).toMatch(/60g left/);
+  });
+
+  it('"how many more calories can I eat today?" → calorie_today', async () => {
+    const users = mockUsers({ todayCalories: 900, calorie_goal_kcal: 1500 });
+    const r = await tryQueryFast('how many more calories can I eat today?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('calorie_today');
+    expect(r!.text).toMatch(/600 kcal left/);
+  });
+
+  it('does NOT hijack compound messages', async () => {
+    const users = mockUsers({});
+    const r = await tryQueryFast('how many calories do I have left today? also I just ate eggs', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).toBeNull();
+  });
+});

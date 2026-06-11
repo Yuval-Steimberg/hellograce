@@ -480,6 +480,53 @@ already in open items). Tests: 627 api + 513 ai-core green.
 
 ---
 
+### Execution-path verification + production fixes (2026-06-11)
+
+Branch `claude/grace-production-readiness-x2k1oj`. Full report:
+`docs/VERIFICATION_2026-06-11.md`. New tooling: `services/api/verification/`
+— a production-shaped harness (real webhook→coalesce→locks→AI→workers→Postgres
+pipeline on local Postgres+Redis; deterministic stub LLM/embedder/sender that
+records every LLM call) with a 54-check battery (P1-P9, incl. deterministic
+content accuracy + anti-hallucination/context phases) + 24-user stress run.
+All green; 635 api + 513 ai-core tests green.
+
+**Fixed (production):**
+1. Fast-path silent drops — `'Hi 🤍'`, `'😄'`, `'😆'`, `'🤍'`, `'On it.'`
+   failed the webhook `/[A-Za-z0-9]{3,}/` junk gate → user got NO reply.
+   Pools reworded + brute-force regression test in `fast-path.test.ts`.
+2. DB content rules (incl. all 4 block-severity dose rules) were NOT applied
+   on `runDirectPath` / `handleFoodQuestionDirect` / emergency fallback / FAQ
+   cache. Now threaded via `AIService.getDbRules()` (cached, ~0ms).
+3. Code-level banned-phrase violations carry NO `severity`; direct-path gates
+   only checked `'block'|'regen'` → every code-level banned phrase shipped on
+   knowledge/emotional/food direct paths (reproduced live). Gates now treat
+   missing severity as regen, matching orchestrator semantics.
+4. `FOOD_LOG_SKIP_RE` missed "I **just** had/ate/drank …" → +2s coalesce tax
+   on the most common food-log phrasing. Fixed; e2e 2011ms → 9ms in harness.
+5. `user_memory_md` migration had an unimplementable TEXT→UUID FK (fails on
+   every DB; table is keyed by phone). FK dropped. **Verify the table exists
+   in prod Supabase** — if the migration never applied, Phase D pilot can't
+   enroll anyone (fails soft).
+6. Core migration `CREATE EXTENSION pgvector` → `vector` (the old name errors
+   on every Postgres and halted `docker compose up` initdb).
+7. `USDA_API_KEY` was a no-op — `UsdaFoodService` was never constructed.
+   Now built in server.ts when the key is set.
+8. "Calories/protein left today?" matched no query_fast pattern → routed to
+   knowledge_direct, which can't see today's intake → generic/hallucinated
+   answers. New PROTEIN_LEFT_RE / CALORIE_LEFT_RE route to the existing
+   DB-backed protein_today/calorie_today renderers (+5 unit tests).
+9. Durable facts (user_profile_facts) never reached the direct paths'
+   prompts — runDirectPath now injects top-8 getKnownFacts (cached, fetched
+   in parallel with the profile) as "Known about this user:".
+
+**Documented, not fixed:** `ConversationSummaryService`, `TopicTrackerService`,
+`ResponseFingerprintService`, `BanditService` are scaffolded + accepted as deps
+but never instantiated anywhere — summaries/topic-tracking/repetition-
+fingerprinting/bandit loop are dead code in prod. Wiring them changes live
+behavior; needs live-Gemini evals first.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

@@ -83,6 +83,15 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const userMemory = new UserMemoryService(pool, embedder, llm, logger);
   const productionIssues = new ProductionIssuesService(pool, logger);
 
+  // Phase 5 USDA grounding for log_food. Was documented + env-gated but never
+  // constructed anywhere, so USDA_API_KEY had no effect (2026-06-11
+  // verification finding). Only built when the key is set — without it,
+  // behavior is byte-identical to before (LLM-only macro estimates).
+  const usda = env.USDA_API_KEY
+    ? new (await import('./services/usda-food.service.js')).UsdaFoodService(pool, logger, env.USDA_API_KEY)
+    : undefined;
+  if (usda) logger.info('usda_food_service.enabled');
+
   // FAQ semantic cache — opt-in via FAQ_CACHE_ENABLED env var. Initializes
   // (embeds all seeds) in the background so server boot isn't blocked.
   let faqCache: FaqSemanticCache | undefined;
@@ -116,6 +125,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     faqCache,
     redis,
     productionIssues,
+    ...(usda ? { usda } : {}),
     // 2026-06-04 TRUST GEMINI flags — bypass LLM-as-judge guards.
     guards: {
       trustGemini: env.TRUST_GEMINI,

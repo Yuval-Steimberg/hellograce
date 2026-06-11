@@ -13,3 +13,4 @@ export * from './tools/registry.js';
 export { enforceFormat } from './format-enforcer.js';
 export { endsMidWord, trimToLastCompleteSentence } from './orchestrator.js';
 export { normalizeUserText } from './text-normalize.js';
+export * from './reconstruct.js';

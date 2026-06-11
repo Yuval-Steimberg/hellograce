@@ -536,6 +536,42 @@ async function p10ScreenshotRegressions(h: Harness): Promise<void> {
   await h.wipeUser(P);
 }
 
+// ── P11: follow-up intent reconstruction ─────────────────────────────────────
+// "is hair loss common?" then "on glp?" must be understood as "is hair loss
+// common on GLP-1?" — routed by the full meaning and answered about hair loss,
+// not the generic GLP-1 mechanism. Verified both with the stub LLM healthy
+// (reconstruction reaches the prompt) and DOWN (deterministic topic fallback
+// matches the reconstructed subject).
+async function p11Reconstruction(h: Harness): Promise<void> {
+  phase('P11 follow-up intent reconstruction');
+  const P = '+15551440001';
+  await h.wipeUser(P); await h.createUser(P);
+
+  // ── Healthy: reconstruction reaches the generation prompt ──
+  h.llm.throwOnClasses = new Set();
+  await h.sendWhatsApp(P, 'is hair loss common?');
+  await new Promise((r) => setTimeout(r, 1500)); // let turn-persist drain
+  h.llm.reset();
+  await h.sendWhatsApp(P, 'on glp?');
+  const gen = h.llm.calls.find((c) => c.cls === 'generation' && /is hair loss common on glp/i.test(c.fullText));
+  check('continuation "on glp?" → reconstructed question reaches the model',
+    !!gen, gen ? 'found reconstructed question in prompt' : 'reconstruction NOT in any generation prompt');
+
+  // ── Gemini DOWN: topic fallback matches the reconstructed subject ──
+  const P2 = '+15551440002';
+  await h.wipeUser(P2); await h.createUser(P2);
+  h.llm.throwOnClasses = new Set(['generation', 'food_question_direct', 'emergency_fallback', 'planner', 'search_food_ideas'] as const);
+  await h.sendWhatsApp(P2, 'is hair loss common?');
+  await new Promise((r) => setTimeout(r, 1500));
+  const r = await h.sendWhatsApp(P2, 'on glp?', { timeoutMs: 20_000 });
+  check('continuation answered about HAIR (not GLP-1 mechanism) with LLM down',
+    !!r && /hair/i.test(r.body) && !/mimicking the incretin|reducing appetite/i.test(r.body),
+    r?.body.slice(0, 90) ?? 'no reply');
+
+  h.llm.throwOnClasses = new Set();
+  await h.wipeUser(P); await h.wipeUser(P2);
+}
+
 async function main(): Promise<void> {
   const only = process.argv.slice(2);
   const h = await buildHarness();
@@ -543,6 +579,7 @@ async function main(): Promise<void> {
     ['p1', p1ShortCircuits], ['p2', p2FastPath], ['p3', p3PipelineCorrectness],
     ['p4', p4Guards], ['p5', p5Concurrency], ['p6', p6LongThread], ['p7', p7LatencyModel],
     ['p8', p8ContentAccuracy], ['p9', p9HallucinationContext], ['p10', p10ScreenshotRegressions],
+    ['p11', p11Reconstruction],
   ];
   for (const [key, fn] of phases) {
     if (only.length > 0 && !only.includes(key)) continue;

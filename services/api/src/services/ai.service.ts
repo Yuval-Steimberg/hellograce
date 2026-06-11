@@ -15,6 +15,7 @@ import {
   detectTopicSwitch,
   detectReasoningRequest,
   normalizeUserText,
+  reconstructFollowUp,
   FOOD_HISTORY_QUESTION,
   PROTEIN_TARGET_QUESTION,
   FOOD_REMOVAL_QUESTION,
@@ -471,6 +472,9 @@ export class AIService {
     // instead of ~2-4s. Skipped when media is attached (photo/voice always
     // needs analysis). Tool results / RAG / memory are all skipped for these
     // turns because they don't add anything to a "Hi" → "Hey there" exchange.
+    // Reconstruction hint hoisted so the orchestrator fallback path
+    // (handleMessageInner) can also receive the standalone meaning.
+    let reconHintForInner: string | undefined;
     if (input.media.length === 0) {
       lat.mark('fast_path_lookup');
       // 2026-06-04 fix: when Grace's previous message ended with an OFFER
@@ -708,7 +712,34 @@ export class AIService {
     // empty output → return null → fall through to orchestrator. Net safety
     // unchanged; worst case is the same as today.
     {
-      const earlyIntent = classifyIntent(input.text);
+      // ── Follow-up reconstruction (2026-06-11) ───────────────────────────
+      // A short context-dependent fragment ("on glp?", "why 12?") is
+      // meaningless alone. Merge it with the prior turn deterministically so
+      // routing classifies the FULL meaning and Gemini gets the standalone
+      // question. Only fetch turns when the message is a short fragment.
+      const fragText = input.text.trim();
+      const fragmentCandidate = fragText.length <= 40 && fragText.split(/\s+/).filter(Boolean).length <= 7;
+      let fragmentTurns: ChatTurn[] = [];
+      if (fragmentCandidate) {
+        fragmentTurns = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
+      }
+      const reversedFrag = [...fragmentTurns].reverse();
+      const prevUserMsg = reversedFrag.find((t) => t.role === 'user')?.content ?? null;
+      const lastAsstMsg = reversedFrag.find((t) => t.role === 'assistant')?.content ?? null;
+      const recon = reconstructFollowUp(input.text, { previousUserMessage: prevUserMsg, lastAssistantMessage: lastAsstMsg });
+      if (recon.isFollowUp) {
+        this.deps.logger.info(
+          { userId: input.userId, kind: recon.kind, reconstructed: recon.reconstructed.slice(0, 120) },
+          'ai.reconstruct.applied',
+        );
+      }
+      // Route continuations on the merged question; reasoning keeps its own
+      // routing (the walkthrough/followup logic below) but supplies the hint.
+      const routingText = recon.kind === 'continuation' ? recon.reconstructed : input.text;
+      const reconHint = recon.isFollowUp ? recon.reconstructed : undefined;
+      reconHintForInner = reconHint;
+
+      const earlyIntent = classifyIntent(routingText);
       const directIntent = earlyIntent.type;
 
       // 2026-06-06 production failure: user "Yes" after Grace asked "want
@@ -736,7 +767,11 @@ export class AIService {
       let offeredWalkthrough = false;
       let shouldWalkthrough = false;
       if (isShortFollowUp) {
-        const followupTurns = await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
+        // Reuse the turns already fetched for reconstruction when available;
+        // only hit the DB again if this short follow-up slipped the gate.
+        const followupTurns = fragmentTurns.length > 0
+          ? fragmentTurns
+          : await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
         followupLastAssistant = [...followupTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
         // 2026-06-06 v2 production failure: "What's my protein goal?" →
         // "Your daily protein target is 60g." (ends with '.', not '?') →
@@ -783,7 +818,7 @@ export class AIService {
         }
         try {
           lat.mark('followup_direct');
-          const direct = await this.runDirectPath('knowledge', input.text, input.userId);
+          const direct = await this.runDirectPath('knowledge', input.text, input.userId, reconHint);
           if (direct) {
             const stageTimings = lat.snapshot();
             const totalMs = Date.now() - t0;
@@ -854,7 +889,7 @@ export class AIService {
         try {
           const stage = `${directIntent}_direct`;
           lat.mark(stage);
-          const direct = await this.runDirectPath(directIntent, input.text, input.userId);
+          const direct = await this.runDirectPath(directIntent, input.text, input.userId, reconHint);
           if (direct) {
             const stageTimings = lat.snapshot();
             const totalMs = Date.now() - t0;
@@ -888,7 +923,10 @@ export class AIService {
         // hair loss, side effects, plateau) the fallback IS the best
         // answer Grace can ship.
         if (directIntent === 'knowledge') {
-          const topicFallback = pickKnowledgeTopicFallback(input.text);
+          // Use the reconstructed question ("on glp?" → "is hair loss common
+          // on glp?") so the topic fallback matches the real subject even when
+          // Gemini is unavailable.
+          const topicFallback = pickKnowledgeTopicFallback(routingText);
           if (topicFallback) {
             const stageTimings = lat.snapshot();
             const totalMs = Date.now() - t0;
@@ -960,7 +998,7 @@ export class AIService {
     }
 
     try {
-      return await this.handleMessageInner(input, t0, lat);
+      return await this.handleMessageInner(input, t0, lat, reconHintForInner);
     } catch (outerErr) {
       // Emergency fallback: fires when the full pipeline throws (DB down, LLM
       // timeout, etc.). Makes one last bare LLM call with no tools/RAG/history.
@@ -1414,7 +1452,7 @@ CRITICAL CONTEXT RULES — apply on every turn:
     return formatted.text;
   }
 
-  private async runDirectPath(intent: string, userText: string, userId?: string): Promise<string | null> {
+  private async runDirectPath(intent: string, userText: string, userId?: string, reconHint?: string): Promise<string | null> {
     const config = DIRECT_PATH_CONFIGS[intent];
     if (!config) return null;
 
@@ -1497,8 +1535,13 @@ CRITICAL CONTEXT RULES — apply on every turn:
       try {
         const recentTurns = await this.deps.memory.getRecentTurns(userId, 2);
         const lastAsst = [...recentTurns].reverse().find((t) => t.role === 'assistant');
-        if (lastAsst?.content) {
-          lastAssistantMessage = lastAsst.content;
+        if (lastAsst?.content) lastAssistantMessage = lastAsst.content;
+        if (reconHint) {
+          // Deterministic reconstruction already merged the fragment with the
+          // prior turn — give Gemini the standalone meaning directly instead
+          // of the verbatim-prior-turn dump. (2026-06-11)
+          followUpContext = `\n\nFOLLOW-UP CONTEXT — in the full conversation, the user is really asking: "${reconHint}". Answer THAT directly and specifically. Do not restate earlier text.\n`;
+        } else if (lastAsst?.content) {
           const isShortFollowUp =
             userText.trim().length <= 25 &&
             /^(?:why|why\??|yes|yeah|sure|ok|okay|please|go on|tell me more|more|more please|continue|and\??|so\??|really\??|how\s+so\??|how\s+come\??|what do you mean\??|like what\??)$/i.test(userText.trim());
@@ -1639,7 +1682,7 @@ CRITICAL RULES:
   // (3) detect dietary restrictions + side effects, (4) build personalised system
   // prompt with runtime context, (5) register per-request tools, (6) call
   // orchestrator.run(), (7) fire-and-forget persistence + memory extraction.
-  private async handleMessageInner(input: InboundMessage, t0: number, lat: LatencyTracker): Promise<OrchestratorOutput> {
+  private async handleMessageInner(input: InboundMessage, t0: number, lat: LatencyTracker, reconHint?: string): Promise<OrchestratorOutput> {
     const { logger, memory, rag, flags, users } = this.deps;
 
     // Fire all independent I/O in parallel: user profile, conversation, history, tool settings,
@@ -2472,9 +2515,15 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       const selection = await this.deps.bandit.selectArm(user.id).catch(() => null);
       if (selection) banditHint = selection.hint;
     }
-    const systemPromptWithStrategy = banditHint
+    let systemPromptWithStrategy = banditHint
       ? `${systemPrompt}\n\n${banditHint}`
       : systemPrompt;
+    // Follow-up reconstruction hint (2026-06-11): when the user's message is a
+    // short fragment, the deterministic reconstruction has the standalone
+    // meaning — give it to the model so it answers the full question.
+    if (reconHint) {
+      systemPromptWithStrategy += `\n\n[FOLLOW-UP — in the full conversation, the user is really asking: "${reconHint}". Answer THAT directly; do not restate earlier text.]`;
+    }
 
     // Topic-closer detection: brief acknowledgments ("thanks", "ok", "got it")
     // signal the user is done with that topic. Strip history before the closer so

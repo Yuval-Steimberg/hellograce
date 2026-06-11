@@ -83,6 +83,10 @@ export class StubLLM implements LLMProvider {
   failNextRelevance = false;
   /** When set, the NEXT behavioral check reports a violation once. */
   failNextBehavioral = false;
+  /** Classes whose generate() should THROW — simulates a live Gemini outage /
+   *  rate-limit / timeout for those call types. Reproduces the production
+   *  failure mode where the LLM is intermittently unavailable. */
+  throwOnClasses: Set<CallClass> = new Set();
 
   constructor(public delays: StubDelays = {}) {}
 
@@ -128,6 +132,20 @@ export class StubLLM implements LLMProvider {
     const startedAt = Date.now();
     const delay = this.delays[cls] ?? this.delays['default'] ?? 0;
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+
+    if (this.throwOnClasses.has(cls)) {
+      // Record the attempt so callers can see which class was hit, then throw
+      // the same shape a real upstream failure produces.
+      this.calls.push({
+        seq: this.seq++, cls, model: req.model, startedAt, endedAt: Date.now(),
+        promptChars: req.messages.reduce((s, m) => s + m.content.length, 0),
+        maxOutputTokens: req.maxOutputTokens, disableThinking: req.disableThinking,
+        systemHead: (req.messages.find((m) => m.role === 'system')?.content ?? '').slice(0, 80),
+        userText: ([...req.messages].reverse().find((m) => m.role === 'user')?.content ?? '').slice(0, 120),
+        responseText: '[THROW]', fullText: '',
+      });
+      throw new Error(`stub upstream failure for ${cls}`);
+    }
 
     const userText = [...req.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
     let text: string;

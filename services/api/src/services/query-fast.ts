@@ -71,8 +71,12 @@ const WEIGHT_GOAL_RE =
 // Today's protein total — "how much protein have I had today" / "what's my
 // protein today" / "how am I doing on protein". Anchor on "today" / "so far"
 // to avoid matching the GOAL question.
+// 2026-06-11 WhatsApp screenshot: "How much protein I had" got the generic
+// 1.2-1.6g/kg target instead of today's logged total. The old pattern only
+// accepted "have i had" / "did i have"; real users drop the auxiliary and say
+// "protein I had" / "protein I ate". Added those forms.
 const PROTEIN_TODAY_RE =
-  /^(?:how much\s+protein\s+(?:have i\s+(?:had|eaten|consumed|logged)|did i\s+(?:have|eat))|what(?:'?s| is)\s+my\s+protein\s+(?:today|so far))(?:\s+today)?\??$/i;
+  /^(?:how much\s+protein\s+(?:have i\s+(?:had|eaten|consumed|logged)|did i\s+(?:have|eat)|i\s+(?:had|ate|got|consumed|logged|have had|have eaten|have))|what(?:'?s| is)\s+my\s+protein\s+(?:today|so far))(?:\s+today)?\??$/i;
 
 const CALORIE_TODAY_RE =
   /^(?:how (?:many|much)\s+(?:calories|cal|kcal)\s+(?:have i\s+(?:had|eaten|consumed|logged)|did i\s+(?:have|eat))|what(?:'?s| is)\s+my\s+(?:calorie|cal|kcal)\s+(?:total\s+)?(?:today|so far))(?:\s+today)?\??$/i;
@@ -87,6 +91,16 @@ const PROTEIN_LEFT_RE =
   /^(?:how (?:much|many)\s+(?:grams? of\s+)?protein\s+(?:do i have\s+|is\s+|are\s+)?(?:left|remaining)|protein\s+(?:left|remaining)|how (?:much|many) more protein (?:do i need|can i (?:have|eat)))(?:\s+(?:today|for today))?\s*\??$/i;
 const CALORIE_LEFT_RE =
   /^(?:how (?:many|much)\s+(?:calories|cals?|kcal)\s+(?:do i have\s+|are\s+|is\s+)?(?:left|remaining)|(?:calories|cals?|kcal)\s+(?:left|remaining)|how (?:many|much) more (?:calories|cals?|kcal) (?:can i (?:have|eat)|do i have))(?:\s+(?:today|for today))?\s*\??$/i;
+
+// 2026-06-11 WhatsApp screenshot: "What is my target?" (bare, no
+// "protein"/"calorie" word) fell through every pattern → orchestrator →
+// generic-fallback when Gemini was unavailable. Protein is the metric Grace
+// tracks front-and-center on GLP-1, so a bare "what's my target/goal" answers
+// with the protein target (the renderer offers the walkthrough + handles a
+// missing goal gracefully). Specific patterns above (weight/calorie) win
+// because this is checked LAST in the chain.
+const BARE_TARGET_RE =
+  /^(?:what(?:'?s| is| was)?|tell me|whats|what)\s+(?:my|the)\s+(?:daily\s+)?(?:target|goal)\??$/i;
 
 // Food summary list — "what I ate today" / "show my food" / "my food today" /
 // "what did I have" / "today's log". Production failure 2026-06-05: "What I
@@ -222,6 +236,7 @@ export async function tryQueryFast(
     : AGE_RE.test(t) ? 'age'
     : matchProteinEnough(t) ? 'is_protein_enough'
     : matchCalorieEnough(t) ? 'is_calorie_enough'
+    : BARE_TARGET_RE.test(t) ? 'protein_goal'
     : null;
   if (!matchedCategory) return null;
 
@@ -693,6 +708,7 @@ export const __testing = {
   CALORIE_TODAY_RE,
   PROTEIN_LEFT_RE,
   CALORIE_LEFT_RE,
+  BARE_TARGET_RE,
   PROGRESS_TODAY_RE,
   START_DATE_RE,
   WEEK_NUMBER_RE,

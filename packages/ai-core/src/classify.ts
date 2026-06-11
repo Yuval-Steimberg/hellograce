@@ -131,6 +131,11 @@ export const FOOD_REMOVAL_QUESTION: RegExp[] = [
   /\bi (made a |was )?mistake/i,
 ];
 
+// Recognized single-word foods/drinks — used by the bare multi-item list
+// matcher so "tuna, rice, avocado" reads as a food log without a verb.
+const FOOD_WORDS =
+  'tuna|rice|avocado|chicken|beef|pork|fish|salmon|tofu|tempeh|seitan|eggs?|yogurt|oatmeal|oats|pasta|pizza|sushi|sandwich|burger|burrito|taco|wrap|soup|steak|turkey|bagel|toast|cereal|pancakes?|waffles?|fruit|banana|apple|orange|berries|grapes|salad|broccoli|spinach|kale|potato|sweet potato|quinoa|beans|lentils|chickpeas|edamame|hummus|cheese|milk|bread|nuts|almonds?|walnuts?|peanuts?|granola|smoothie|shake|coffee|tea|water|protein bar|protein shake|cottage cheese|shrimp|cod|tilapia|crackers?|popcorn|chocolate|cookie|cake|fries|nuggets?';
+
 const FOOD_LOG: RegExp[] = [
   // Direct past-tense verbs at start of message
   // "also" covers "I also ate X" / "I also had X" (common continuation logs)
@@ -167,10 +172,26 @@ const FOOD_LOG: RegExp[] = [
   // Restaurant / brand prefixes — "Chipotle bowl", "Starbucks latte", etc.
   /\b(from|at|got from) (chipotle|starbucks|panera|sweetgreen|chick.?fil.?a|mcdonald'?s|wendy'?s|burger king|taco bell|subway|panda express|five guys|in.?n.?out|whole foods|trader joe'?s|costco)\b/i,
   /\b(chipotle|starbucks|panera|sweetgreen|chick.?fil.?a|mcdonald'?s|wendy'?s|burger king|taco bell|subway|panda express) (bowl|burrito|sandwich|salad|wrap|smoothie|shake|coffee|latte|burger|nuggets|fries|tacos?|enchilada)/i,
+  // Bare multi-item food list, optionally led by a continuation word
+  // ("And tuna, rice, avocado" / "And tuna\nRice\nAvocado" / "eggs and toast").
+  // 2026-06-11 WhatsApp screenshot: a follow-up adding foods to a prior log
+  // ("And tuna / Rice / Avocado") classified as 'general' → generic fallback.
+  // Requires 2+ recognized food words so it can't fire on arbitrary lists.
+  new RegExp(
+    `^(?:and|also|plus|then|with)?\\s*(?:a |an |some |the |my |\\d+ )?(?:${FOOD_WORDS})\\b(?:\\s*[,\\n/]\\s*|\\s+(?:and|with|plus)\\s+)(?:a |an |some |the |\\d+ )?(?:${FOOD_WORDS})\\b`,
+    'i',
+  ),
 ];
 
 const FOOD_QUESTION: RegExp[] = [
   /\bwhat (should|can|could) i (eat|have|make|cook|order|get|grab|pick|do|try)\b/i,
+  // 2026-06-11 WhatsApp screenshot: "What I should eat for dinner" (dropped
+  // auxiliary / inverted word order) missed the pattern above and routed to
+  // 'general' → generic fallback. Catch the "what I should/can eat" form too.
+  /\bwhat (?:i should|i can|i could|i'?d|to) (eat|have|make|cook|order|get|grab|pick|try)\b/i,
+  // "How about X for dinner?" / "What about a salad?" — considering a food.
+  // Routes to the recommendation path instead of being logged as eaten.
+  /^(?:how about|what about)\s+.{1,40}\b(for (?:breakfast|lunch|dinner|a snack|dessert)|to eat|instead)\b/i,
   /\b(recommend|suggest)(ion)?(s)? for (food|meal|dinner|lunch|snack|breakfast|protein)/i,
   /\b(good (protein|snack|meal|food) (options?|ideas?|choices?))\b/i,
   /\bhow much protein (in|is|does|for)\b/i,
@@ -459,7 +480,20 @@ export function classifyMessage(rawText: string): ClassifyResult {
     // Common "what" typos
     .replace(/\bwat\b/gi, 'what')
     .replace(/\bwaht\b/gi, 'what')
-    .replace(/\bwhats\b/gi, "what's");
+    .replace(/\bwhats\b/gi, "what's")
+    // 2026-06-11 WhatsApp screenshots + user-listed typos. High-frequency
+    // misspellings/contractions that broke intent detection. Matching-only —
+    // the raw text the user typed is still what gets stored / sent to Gemini.
+    .replace(/\bima\b/gi, "i'm")          // "ima nervous" → "i'm nervous"
+    .replace(/\bim\b/gi, "i'm")           // bare "im" → "i'm"
+    .replace(/\bfel+ing\b/gi, 'feeling')  // "felling" / "feling" → "feeling"
+    .replace(/\bh[ue]rts?\b/gi, 'hurts')  // "herts" / "hurt" → "hurts"
+    .replace(/\bhungr?y\b/gi, 'hungry')   // "hungy" / "hungry"
+    .replace(/\bnervu?s\b/gi, 'nervous')  // "nervus" → "nervous"
+    .replace(/\bprot[ie]+n\b/gi, 'protein') // "protin" / "protien" → "protein"
+    .replace(/\btufu\b/gi, 'tofu')
+    .replace(/\bchikt?en\b/gi, 'chicken')
+    .replace(/\bavacado\b/gi, 'avocado');
   if (isGibberish(text)) return { type: 'gibberish', confidence: 0.9 };
   if (matches(text, GREETING)) return { type: 'greeting', confidence: 0.95 };
   // Appointment prep MUST come BEFORE knowledge / general, since "Help me write

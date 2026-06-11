@@ -188,9 +188,23 @@ function buildClarification(matched: string, followUp: boolean): string {
  * for clarification — if so, we use a softer "but which item specifically"
  * follow-up template instead of repeating the initial ask verbatim.
  */
+// ── Consideration / suggestion framing (2026-06-11) ──────────────────────────
+// Production bug from WhatsApp screenshots: "How about pizza for dinner?" →
+// "Sounds like you enjoyed it 😊. What did you have at Pizza?" — Grace treated a
+// FUTURE-tense suggestion as a PAST-tense eaten meal needing clarification.
+// These framings mean the user is asking about / proposing a food, not
+// reporting having eaten it. When present, this is NOT a vague food log — let
+// it flow to the food-question / recommendation path instead.
+const CONSIDERATION_RE =
+  /\b(how about|what about|thinking (?:about|of)|considering|maybe i(?:'?ll| should| could| might)?|should i (?:have|eat|get|order|try|do)|can i (?:have|eat|get|order|try)|could i (?:have|eat|get)|is (?:it ok|.{0,20} (?:ok|okay|fine|good|healthy|allowed|alright))|what if i|planning (?:to|on)|going to (?:have|eat|get|order|try)|want(?:ing)? to (?:have|eat|get|order|try)|do you think i should|would (?:it be|.{0,15}) ok)\b/i;
+
 export function detectVagueFood(text: string, lastGraceMessage?: string): VagueFoodCheck {
   const lower = text.toLowerCase().trim();
   if (lower.length === 0) return { vague: false };
+
+  // A consideration ("how about pizza?", "should I have a burger?") is not a
+  // log — never ship the "what did you have" clarification for it.
+  if (CONSIDERATION_RE.test(lower)) return { vague: false };
 
   // Find a matching brand (case-insensitive, word-boundaried).
   let matched: string | null = null;

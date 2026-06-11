@@ -175,4 +175,26 @@ describe('detectVagueFood — uber-vague quantity guard (QA report 2026-06-03)',
     const r = detectVagueFood('I had a medium pizza');
     expect(r.vague).toBe(false);
   });
+
+  // ── 2026-06-11 WhatsApp screenshot: considering food ≠ eaten food ────────
+  describe('consideration framing is NOT a vague food log (2026-06-11)', () => {
+    const considerations = [
+      'How about pizza for dinner?',
+      'What about a burger?',
+      'Should I have pizza tonight?',
+      'Thinking about getting sushi',
+      'Maybe I should order pasta',
+      'Can I have a burrito?',
+      'Is pizza ok on a GLP-1?',
+    ];
+    for (const c of considerations) {
+      it(`"${c}" → not vague`, () => {
+        expect(detectVagueFood(c).vague).toBe(false);
+      });
+    }
+
+    it('still flags an actual past-tense vague log ("I ate pizza")', () => {
+      expect(detectVagueFood('I ate pizza').vague).toBe(true);
+    });
+  });
 });

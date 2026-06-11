@@ -406,4 +406,35 @@ describe('calories/protein LEFT today (2026-06-11 fix — was leaking to knowled
     const r = await tryQueryFast('how many calories do I have left today? also I just ate eggs', { users, logger: noopLogger, userId: 'u1' });
     expect(r).toBeNull();
   });
+
+  // ── 2026-06-11 WhatsApp screenshot regressions ──────────────────────────
+  describe('screenshot regressions (2026-06-11)', () => {
+    it('bare "What is my target?" → protein_goal (no protein/calorie word)', async () => {
+      const users = mockUsers({ protein_goal_grams: 60 });
+      const r = await tryQueryFast('What is my target?', { users, logger: noopLogger, userId: 'u1' });
+      expect(r).not.toBeNull();
+      expect(r!.category).toBe('protein_goal');
+      expect(r!.text).toMatch(/60g/);
+    });
+
+    it('bare "what\'s my goal?" → protein_goal', () => {
+      expect(__testing.BARE_TARGET_RE.test("what's my goal")).toBe(true);
+      expect(__testing.BARE_TARGET_RE.test('what is my target')).toBe(true);
+      expect(__testing.BARE_TARGET_RE.test('tell me my goal')).toBe(true);
+    });
+
+    it('"How much protein I had" (dropped auxiliary) → protein_today', async () => {
+      const users = mockUsers({ todayProtein: 15, protein_goal_grams: 60 });
+      const r = await tryQueryFast('How much protein I had', { users, logger: noopLogger, userId: 'u1' });
+      expect(r).not.toBeNull();
+      expect(r!.category).toBe('protein_today');
+      expect(r!.text).toMatch(/15g protein today/);
+    });
+
+    it('PROTEIN_TODAY_RE matches "protein I ate/had/got"', () => {
+      expect(__testing.PROTEIN_TODAY_RE.test('how much protein i had')).toBe(true);
+      expect(__testing.PROTEIN_TODAY_RE.test('how much protein i ate')).toBe(true);
+      expect(__testing.PROTEIN_TODAY_RE.test('how much protein i got')).toBe(true);
+    });
+  });
 });

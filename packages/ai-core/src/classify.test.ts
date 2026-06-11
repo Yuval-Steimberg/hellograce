@@ -471,3 +471,37 @@ describe('classifyMessage — imperative recommendation requests (2026-06-06 pro
     expect(result.type).not.toBe('food_question');
   });
 });
+
+describe('classifyMessage — 2026-06-11 WhatsApp screenshot regressions', () => {
+  it('"What I should eat for dinner" (inverted word order) → food_question', () => {
+    expect(classifyMessage('What I should eat for dinner').type).toBe('food_question');
+  });
+
+  it('"How about pizza for dinner?" → food_question (considering, not food_log)', () => {
+    expect(classifyMessage('How about pizza for dinner?').type).toBe('food_question');
+  });
+
+  it('bare multi-item food list "tuna, rice, avocado" → food_log', () => {
+    expect(classifyMessage('tuna, rice, avocado').type).toBe('food_log');
+  });
+
+  it('continuation food list "And tuna\\nRice\\nAvocado" → food_log', () => {
+    expect(classifyMessage('And tuna\nRice\nAvocado').type).toBe('food_log');
+  });
+
+  it('typo "Ima nervous" → emotional', () => {
+    expect(classifyMessage('Ima nervous').type).toBe('emotional');
+  });
+
+  it('typo "felling good" still routes (not gibberish)', () => {
+    expect(classifyMessage('felling good').type).not.toBe('gibberish');
+  });
+
+  it('typo "wat should i eat" → food_question', () => {
+    expect(classifyMessage('wat should i eat').type).toBe('food_question');
+  });
+
+  it('does NOT misclassify a plain question as a food list', () => {
+    expect(classifyMessage('how are you today?').type).not.toBe('food_log');
+  });
+});

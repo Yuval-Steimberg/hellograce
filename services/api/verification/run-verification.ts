@@ -473,13 +473,76 @@ async function p9HallucinationContext(h: Harness): Promise<void> {
   await h.wipeUser(P); await h.wipeUser(P3); await h.wipeUser(P4);
 }
 
+// ── P10: 2026-06-11 WhatsApp screenshot regressions ──────────────────────────
+// Reproduces the exact production failures (generic "what's on your mind"
+// deflections, "considering food" treated as "ate food", personal questions
+// answered with generic clinical ranges, typos breaking intent) and asserts
+// each now produces a USEFUL reply — crucially under GEMINI_DOWN (the
+// intermittent-outage condition that caused them). Generic-deflection strings
+// must NEVER appear.
+const GENERIC_DEFLECTION_RE =
+  /what'?s on your mind|what would you like to talk about|i'?m listening|tell me a bit more|say more|what'?s the rest of that/i;
+
+async function p10ScreenshotRegressions(h: Harness): Promise<void> {
+  phase('P10 WhatsApp screenshot regressions (Gemini DOWN)');
+  const P = '+15551330001';
+  await h.wipeUser(P); await h.createUser(P, { protein_goal_grams: 60, dietary_pattern: null });
+  await h.sendWhatsApp(P, 'I just had 2 eggs and toast'); // prime intake
+
+  // Simulate the intermittent Gemini outage that produced the screenshots.
+  h.llm.throwOnClasses = new Set(['generation', 'food_question_direct', 'emergency_fallback', 'planner', 'search_food_ideas'] as const);
+
+  let r = await h.sendWhatsApp(P, 'What I should eat for dinner');
+  check('food-rec request → real suggestions, not deflection',
+    !!r && !GENERIC_DEFLECTION_RE.test(r.body) && /\b(yogurt|eggs?|chicken|tofu|salmon|tuna|cottage|lentil|turkey|shrimp|options?)\b/i.test(r.body),
+    r?.body.slice(0, 80) ?? 'no reply');
+
+  r = await h.sendWhatsApp(P, 'How about pizza for dinner?');
+  check('considering food → NOT treated as eaten ("what did you have")',
+    !!r && !/what did you have at|once i know.*you ordered/i.test(r.body),
+    r?.body.slice(0, 80) ?? 'no reply');
+
+  r = await h.sendWhatsApp(P, 'How much protein I had');
+  check('"how much protein I had" → today\'s logged total (not generic target)',
+    !!r && /\b\d+\s*g\b/.test(r.body) && /today/i.test(r.body),
+    r?.body.slice(0, 80) ?? 'no reply');
+
+  r = await h.sendWhatsApp(P, 'What is my target?');
+  check('bare "what is my target?" → personal protein target',
+    !!r && /\b60\s*g\b/.test(r.body),
+    r?.body.slice(0, 80) ?? 'no reply');
+
+  r = await h.sendWhatsApp(P, "What's is my protein target? How much I had?");
+  check('compound personal question → BOTH target and today\'s intake',
+    !!r && /\b60\s*g\b/.test(r.body) && /today/i.test(r.body),
+    r?.body.slice(0, 80) ?? 'no reply');
+
+  r = await h.sendWhatsApp(P, "I'm good. My stomach herts. I'm hungry");
+  check('symptom with typo ("herts") → acknowledgement + guidance, not deflection',
+    !!r && !GENERIC_DEFLECTION_RE.test(r.body) && /\b(water|prescriber|light|protein|uncomfortable|stomach|nausea)\b/i.test(r.body),
+    r?.body.slice(0, 80) ?? 'no reply');
+
+  r = await h.sendWhatsApp(P, 'Ima nervous');
+  check('emotional with typo ("ima") → emotional reflection, not deflection',
+    !!r && !/what would you like to talk about|what'?s on your mind/i.test(r.body),
+    r?.body.slice(0, 80) ?? 'no reply');
+
+  r = await h.sendWhatsApp(P, 'Hey, for breakfast I ate 2 eggs. For lunch I had chicken breast with bowl of rice');
+  check('multi-meal food log → not a generic deflection',
+    !!r && !/what'?s on your mind|what would you like to talk about/i.test(r.body),
+    r?.body.slice(0, 80) ?? 'no reply');
+
+  h.llm.throwOnClasses = new Set();
+  await h.wipeUser(P);
+}
+
 async function main(): Promise<void> {
   const only = process.argv.slice(2);
   const h = await buildHarness();
   const phases: Array<[string, (h: Harness) => Promise<void>]> = [
     ['p1', p1ShortCircuits], ['p2', p2FastPath], ['p3', p3PipelineCorrectness],
     ['p4', p4Guards], ['p5', p5Concurrency], ['p6', p6LongThread], ['p7', p7LatencyModel],
-    ['p8', p8ContentAccuracy], ['p9', p9HallucinationContext],
+    ['p8', p8ContentAccuracy], ['p9', p9HallucinationContext], ['p10', p10ScreenshotRegressions],
   ];
   for (const [key, fn] of phases) {
     if (only.length > 0 && !only.includes(key)) continue;

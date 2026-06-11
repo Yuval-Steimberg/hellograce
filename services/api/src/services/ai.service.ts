@@ -14,6 +14,7 @@ import {
   trimToLastCompleteSentence,
   detectTopicSwitch,
   detectReasoningRequest,
+  normalizeUserText,
   FOOD_HISTORY_QUESTION,
   PROTEIN_TARGET_QUESTION,
   FOOD_REMOVAL_QUESTION,
@@ -59,6 +60,12 @@ function buildProteinTargetWalkthrough(user: GraceUser | null): string | null {
 // curated GLP-1-accurate fallbacks ready — ship them immediately instead.
 // Mirrors the orchestrator's getToolAwareFallback topic checks but runs
 // BEFORE the orchestrator so we save the latency entirely.
+// Body-symptom / side-effect signal — used by the resilient fallback so a
+// message like "my stomach hurts, I'm hungry" gets an acknowledgement +
+// guidance instead of a generic deflection when the LLM is unavailable.
+const SYMPTOM_FALLBACK_RE =
+  /\b(stomach|tummy|belly|gut)\s+(h[ue]rts?|aches?|ache|cramping|cramp|upset|sore|burning|in pain)\b|\b(nause(?:a|ous)|queasy|sick to my stomach|throwing up|threw up|vomiting|vomited)\b|\b(heartburn|acid reflux|reflux|indigestion)\b|\b(headache|migraine|dizzy|lightheaded|woozy)\b|\b(constipated|constipation|diarrhea|bloated|bloating)\b|\b(fatigued?|exhausted|so tired|no energy|wiped out)\b/i;
+
 function pickKnowledgeTopicFallback(userMessage: string): string | null {
   const msg = userMessage.toLowerCase();
   if (/\bwater|hydration|fluid\b/.test(msg) && !/\balcohol|caffeine|coffee\b/.test(msg)) {
@@ -645,6 +652,39 @@ export class AIService {
           );
         }
       }
+
+      // ── Personal-stats fast answer (compound-tolerant) ──────────────────
+      // Catches "what's my target? how much I had?" and similar personal
+      // questions the anchored query-fast skips. Deterministic DB read, zero
+      // LLM — immune to Gemini outages. High-precision, returns null otherwise.
+      {
+        try {
+          lat.mark('personal_stats');
+          const ps = await this.tryPersonalStats(input);
+          if (ps) {
+            const stageTimings = lat.snapshot();
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info(
+              { userId: input.userId, latencyMs: totalMs, stageTimings, intent: 'personal_stats' },
+              'ai.personal_stats.served',
+            );
+            this.persistLatency(input.userId, 'personal_stats', totalMs, stageTimings, input.text, ps);
+            return {
+              text: ps,
+              confidence: 'high',
+              intent: 'personal_stats',
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.personal_stats.error',
+          );
+        }
+      }
     }
 
     // ── Direct paths (2026-06-05 architectural inversion) ─────────────────
@@ -951,29 +991,156 @@ export class AIService {
         const rawEmergency = emergency.text?.trim() ?? '';
         if (rawEmergency) {
           // Run through the content-checker so banned phrases never reach
-          // the user via the emergency path. If anything trips, ship a
-          // safe canned text instead of the raw LLM output. DB rules
-          // included — the dose-safety block rules exist only in the DB.
+          // the user via the emergency path. If anything trips, ship the
+          // deterministic resilient fallback (intent-aware) instead of the
+          // raw LLM output. DB rules included — dose-safety block rules
+          // exist only in the DB.
           const emergencyDbRules = await this.getDbRules();
           const violations = checkContent(rawEmergency, emergencyDbRules.length > 0 ? { dbRules: emergencyDbRules } : {});
-          const safeText =
-            violations.some((v) => v.severity !== 'log')
-              ? "I'm having trouble pulling that together right now — try again in a moment?"
-              : rawEmergency;
-          return {
-            text: safeText,
-            confidence: 'low' as const,
-            intent: 'emergency_fallback',
-            toolResults: [],
-            usedRetrieval: false,
-            latencyMs: Date.now() - t0,
-          };
+          if (!violations.some((v) => v.severity !== 'log')) {
+            return {
+              text: rawEmergency,
+              confidence: 'low' as const,
+              intent: 'emergency_fallback',
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: Date.now() - t0,
+            };
+          }
         }
       } catch (llmErr) {
         this.deps.logger.error({ err: llmErr }, 'ai.handle.emergency_llm.failed');
       }
-      throw outerErr;
+
+      // 2026-06-11: BOTH the full pipeline and the emergency Gemini call have
+      // failed (almost always an intermittent Gemini outage / rate-limit).
+      // Previously we rethrew → the webhook catch shipped a generic
+      // "I'm here, what's on your mind?" — reproduced from production
+      // WhatsApp screenshots. Instead, ship a deterministic, INTENT-AWARE
+      // reply built from the user's DB data + curated banks. handleMessage
+      // now NEVER throws, so the generic webhook-catch fallback is dead code.
+      try {
+        const resilient = await this.buildResilientFallback(input);
+        this.deps.logger.warn(
+          { userId: input.userId, intent: classifyIntent(input.text).type },
+          'ai.handle.resilient_fallback',
+        );
+        return {
+          text: resilient,
+          confidence: 'low' as const,
+          intent: 'resilient_fallback',
+          toolResults: [],
+          usedRetrieval: false,
+          latencyMs: Date.now() - t0,
+        };
+      } catch (fallbackErr) {
+        this.deps.logger.error({ err: fallbackErr }, 'ai.handle.resilient_fallback.failed');
+        throw outerErr;
+      }
     }
+  }
+
+  // ── Personal-stats deterministic answer (2026-06-11) ───────────────────────
+  // Answers "what's my (protein/calorie) target?" and "how much (protein) have
+  // I had today?" — including COMPOUND phrasings ("what's my target? how much I
+  // had?") that the anchored query-fast deliberately skips — straight from the
+  // DB. Zero LLM, so it's immune to Gemini outages. High-precision gates: must
+  // reference a personal target/goal OR an intake-today question. Returns null
+  // when neither applies (caller continues to the normal pipeline).
+  //
+  // Runs BEFORE the direct paths so a personal question never gets a generic
+  // clinical range (production WhatsApp screenshot: "what's my protein target?
+  // how much I had?" → "On a GLP-1 the target is 1.2-1.6g/kg..." instead of the
+  // user's own 60g / today's 15g).
+  private async tryPersonalStats(input: InboundMessage): Promise<string | null> {
+    const lower = normalizeUserText(input.text).toLowerCase();
+    if (lower.length > 120) return null; // compound is fine; essays are not
+    const wantsTarget =
+      /\b(?:my|what'?s|whats|what is|tell me)\b[^?]{0,30}\b(?:protein|calorie)\s+(?:target|goal)\b/.test(lower) ||
+      /\b(?:protein|calorie)\s+(?:target|goal)\b/.test(lower) && /\b(my|what|whats|what'?s|tell)\b/.test(lower);
+    const wantsHad =
+      /\bhow (?:much|many)\b[^?]{0,40}\b(?:protein|calorie|cal|kcal)?\b[^?]{0,20}\b(had|today|so far|eaten|consumed|left|remaining)\b/.test(lower) ||
+      /\b(?:protein|calorie|cal|kcal)\b[^?]{0,15}\b(today|so far|left|remaining)\b/.test(lower) ||
+      /\bhow am i doing\b/.test(lower);
+    if (!wantsTarget && !wantsHad) return null;
+
+    const user = await this.deps.users.getById(input.userId).catch(() => null);
+    if (!user) return null;
+    const parts: string[] = [];
+    if (wantsTarget && user.protein_goal_grams && user.protein_goal_grams > 0) {
+      parts.push(`your daily protein target is ${user.protein_goal_grams}g`);
+    }
+    if (wantsHad) {
+      const summary = await this.deps.users.getTodaysFoodSummary(input.userId).catch(() => null);
+      if (summary) {
+        const total = Math.round(summary.protein_g);
+        const goal = user.protein_goal_grams ?? 0;
+        if (goal > 0 && !wantsTarget) {
+          const left = Math.max(0, goal - total);
+          parts.push(left === 0 ? `you're at ${total}g protein today — you hit your ${goal}g target` : `you're at ${total}g protein today, ${left}g left of your ${goal}g target`);
+        } else {
+          parts.push(`you're at ${total}g protein today`);
+        }
+      }
+    }
+    if (parts.length === 0) return null;
+    const joined = parts.join(', and ');
+    return joined.charAt(0).toUpperCase() + joined.slice(1) + '.';
+  }
+
+  // ── Resilient deterministic fallback (2026-06-11) ──────────────────────────
+  // Last-resort reply when the entire pipeline AND the emergency Gemini call
+  // have failed. Produces an INTENT-AWARE, useful answer from deterministic
+  // data + the shared curated banks — NEVER a generic "what's on your mind".
+  // This is the floor that keeps Grace helpful when the LLM is unavailable.
+  private async buildResilientFallback(input: InboundMessage): Promise<string> {
+    const text = input.text;
+    const lower = text.toLowerCase();
+    const intent = classifyIntent(text).type;
+    const { getToolAwareFallback } = await import('@grace/ai-core');
+
+    // 1. Personal protein/calorie target or today's intake — straight from DB.
+    const personal = await this.tryPersonalStats(input).catch(() => null);
+    if (personal) return personal;
+
+    // 2. Symptom / side effect — acknowledge + practical guidance, never a
+    //    generic deflection.
+    if (SYMPTOM_FALLBACK_RE.test(lower)) {
+      return pickKnowledgeTopicFallback(text)
+        ?? "That sounds uncomfortable. Sip water, keep food light and protein-first for now, and if it gets worse or lingers more than a day or two, check in with your prescriber.";
+    }
+
+    // 3. Intent-typed deterministic reply via the shared ai-core banks.
+    try {
+      if (intent === 'knowledge' || intent === 'medication_question') {
+        return pickKnowledgeTopicFallback(text) ?? getToolAwareFallback('knowledge', [], { userMessage: text });
+      }
+      if (intent === 'food_question') {
+        const user = await this.deps.users.getById(input.userId).catch(() => null);
+        const dietaryRestriction = user?.dietary_pattern ? buildRestrictionFromLabel(user.dietary_pattern) : null;
+        const dislikes = (user?.food_dislikes ?? [])
+          .map((d) => (d ?? '').trim().replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+          .filter((d) => d.length > 0);
+        return getToolAwareFallback('food_question', [], {
+          userMessage: text,
+          ...(dietaryRestriction ? { dietaryRestriction } : {}),
+          ...(dislikes.length > 0 ? { foodDislikes: dislikes } : {}),
+        });
+      }
+      if (intent === 'emotional') return getToolAwareFallback('emotional', [], { userMessage: text });
+      if (intent === 'appointment_prep') return getToolAwareFallback('appointment_prep', [], { userMessage: text });
+      if (intent === 'social_situation') return getToolAwareFallback('social_situation', [], { userMessage: text });
+      if (intent === 'weight_log') return getToolAwareFallback('weight_log', [], { userMessage: text });
+      if (intent === 'mood_log') return getToolAwareFallback('mood_log', [], { userMessage: text });
+      if (intent === 'greeting') return getToolAwareFallback('greeting', [], { userMessage: text });
+      if (intent === 'food_log') {
+        return "Got it — noted. I'm having a brief hiccup totaling the macros; resend that in a moment and I'll add it up for you.";
+      }
+    } catch { /* fall through to warm floor */ }
+
+    // 4. Final floor — warm, forward-moving, references their message. NEVER
+    //    a generic "what's on your mind" deflection.
+    return getToolAwareFallback('general', [], { userMessage: text });
   }
 
   /**

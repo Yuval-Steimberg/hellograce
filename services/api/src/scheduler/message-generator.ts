@@ -120,6 +120,13 @@ export interface GenerateOpts {
   extra?: string;
   isWednesday?: boolean;  // forces mood check regardless of goals
   lowMoodMode?: boolean;  // evening → encouragement over reflection
+  /** REAL yesterday food data (morning reminders) — from getDailyProteinHistory. */
+  yesterdayFood?: { protein_g: number; calories: number; itemCount: number; proteinGoal: number | null };
+  /** REAL same-day food data (evening reminders) — from getTodaysFoodSummary. */
+  todayFood?: { protein_g: number; calories: number; itemCount: number; proteinGoal: number | null };
+  /** Texts of the last few reminders sent to this user — the new message must
+   *  not repeat any of them. Also used for a post-generation duplicate check. */
+  recentMessages?: string[];
 }
 
 const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => string> = {
@@ -357,6 +364,14 @@ export class MessageGenerator {
       const sanitized = sanitizeProactiveOutput(resp.text, type === 'welcome' ? null : user.first_name);
       if (!sanitized) return fallback;
 
+      // Anti-repetition: never ship a reminder that duplicates one of the
+      // last few sent to this user. The prompt already lists them as banned;
+      // this is the deterministic backstop. Fallbacks rotate daily by seed,
+      // so the fallback itself won't repeat yesterday's fallback.
+      if (opts?.recentMessages?.some((prev) => isNearDuplicate(sanitized, prev))) {
+        return fallback;
+      }
+
       // Full content check on proactive messages — same coverage as the
       // reactive path. Until this was added, only DB rules ran here while the
       // reactive AIService had a 4-layer checker (banned phrases, dietary
@@ -440,7 +455,6 @@ export class MessageGenerator {
   }
 
   private buildPrompt(type: MsgType, user: GraceUser, opts?: GenerateOpts): string {
-    const name = user.first_name ?? 'the user';
     const cleanDislikes = user.food_dislikes
       .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
       .filter(Boolean);
@@ -474,13 +488,22 @@ export class MessageGenerator {
 - Reminder style (✓): "Protein first today. Front-load it before appetite fades." / "Hydration reminder — start with a full glass before coffee." / "Muscle protection reminder: protein + movement today."
 - Question style (✗): "How's your eating going today?" / "What's your first protein hit today?" / "Any cravings hitting today?"
 - Warm, calm, brief. No motivational speeches. No exclamation marks unless absolutely warranted.
+- WRITE AS IF TEXTING THEM DIRECTLY. NEVER address the user by name. NEVER open with "For <name>," / "Dear <name>" / "To <name>" / "Hi <name>" / "Dear user" / "As your assistant" — those read like a mail-merge template, not a text from a friend.
+- DATA ACCURACY: use ONLY the REAL DATA lines provided in this prompt. If no data line is given, send a simple general reminder — NEVER invent food logs, protein numbers, symptoms, goals, or injection details.
 - ZERO TOLERANCE — NEVER start the message with a label or category prefix. ALL of the following are strictly forbidden as openers:
   ✗ "Midday reminder:" / "Morning reminder:" / "Evening reminder:"
   ✗ "Daily check-in:" / "Check-in:" / "Reminder:" / "Note:"
   ✗ "Morning check-in —" / "Midday nudge —" / "Evening wind-down —"
   Start DIRECTLY with the actual message content. No preambles, no categories.`;
 
-    const base = `Generate a single short SMS for ${name}.\n${VARIATION_BLOCK}\n\n${RULES}\n\n`;
+    // Anti-repeat block: list the texts of recent reminders so the model
+    // writes something genuinely new (deterministic backstop in generate()).
+    const recent = (opts?.recentMessages ?? []).filter((m) => m && m.trim().length > 0).slice(0, 5);
+    const ANTI_REPEAT = recent.length > 0
+      ? `\nRECENTLY SENT (do NOT repeat any of these — not the wording, not the structure, not a close variant):\n${recent.map((m) => `- "${m.slice(0, 160)}"`).join('\n')}\n`
+      : '';
+
+    const base = `Write the next short proactive SMS from Grace to this user. Output ONLY the message text.\n${VARIATION_BLOCK}\n\n${RULES}\n${ANTI_REPEAT}\n`;
 
     // Wednesday morning: mood check overrides all goal-based routing
     if (type === 'morning' && opts?.isWednesday) {
@@ -499,7 +522,25 @@ export class MessageGenerator {
           habits: 'acknowledge one small intention for the day. Very gentle.',
           muscle: `remind them that protein early protects muscle on ${user.medication ?? 'GLP-1'}. Target: ${user.protein_goal_grams ?? 80}g.`,
         }[mode] ?? 'say good morning warmly.';
-        return `${base}Context: gentle morning hello. Today's focus: ${modeHint} No questions.`;
+        // REAL yesterday data → the morning reminder can reference actual
+        // behavior ("yesterday you were a little short on protein") instead
+        // of a generic template. Absent data → plain warm reminder, never
+        // invented numbers.
+        const y = opts?.yesterdayFood;
+        let dataBlock = '';
+        if (y) {
+          if (y.itemCount === 0) {
+            dataBlock = `\nREAL DATA — yesterday: no food was logged. If you reference it, keep it shame-free ("fresh start today" energy, never scolding about not logging).`;
+          } else {
+            const goalPart = y.proteinGoal
+              ? y.protein_g >= y.proteinGoal
+                ? `they HIT their ${y.proteinGoal}g protein target (${y.protein_g}g) — a brief genuine acknowledgment is welcome`
+                : `they reached ${y.protein_g}g of their ${y.proteinGoal}g protein target (${Math.max(0, y.proteinGoal - y.protein_g)}g short) — today is a good day to plan one solid protein meal early`
+              : `they logged ${y.protein_g}g protein`;
+            dataBlock = `\nREAL DATA — yesterday: ${goalPart}. ${y.itemCount} food${y.itemCount === 1 ? '' : 's'} logged. Use this naturally if helpful; don't recite all the numbers.`;
+          }
+        }
+        return `${base}Context: gentle morning hello. Today's focus: ${modeHint}${dataBlock} No questions.`;
       })(),
       bonus: (() => {
         const catIdx = (seed + dayOfYear(new Date())) % BONUS_CATEGORIES.length;
@@ -526,7 +567,25 @@ export class MessageGenerator {
         const moodCtx = opts?.lowMoodMode
           ? 'Their recent mood data shows they\'ve been struggling. Lead with encouragement and warmth — no reflection prompts, no "how did today go?". Just presence.'
           : 'Soft wind-down tone. Optional one-word-answer question max, or none.';
-        return `${base}Context: evening wind-down (Tue/Thu/Sun). ${weightCtx} ${moodCtx} ${dislikes} If suggesting evening food, filter by dislikes.`;
+        // REAL same-day data → the evening reminder is a daily wrap-up
+        // grounded in what actually happened TODAY ("you're at 82g — eggs or
+        // yogurt tonight would close the gap"), never a repeat of the
+        // morning message and never invented numbers.
+        const t = opts?.todayFood;
+        let dataBlock = '';
+        if (t) {
+          if (t.itemCount === 0) {
+            dataBlock = `\nREAL DATA — today: nothing logged yet. A gentle, shame-free nudge that they can still text you what they ate is welcome. Do NOT pretend to know what they ate.`;
+          } else {
+            const goalPart = t.proteinGoal
+              ? t.protein_g >= t.proteinGoal
+                ? `they're at ${t.protein_g}g protein — target (${t.proteinGoal}g) already hit. Acknowledge it; no food suggestion needed`
+                : `they're at ${t.protein_g}g of their ${t.proteinGoal}g protein target. If they're still eating tonight, ONE simple suggestion (eggs, Greek yogurt, cottage cheese — filtered by dislikes) could close the gap`
+              : `they're at ${t.protein_g}g protein today`;
+            dataBlock = `\nREAL DATA — today: ${goalPart}. ${t.itemCount} food${t.itemCount === 1 ? '' : 's'} logged so far.`;
+          }
+        }
+        return `${base}Context: evening wind-down — a daily check-in that wraps the day, NOT a repeat of this morning's message. ${weightCtx} ${moodCtx}${dataBlock} ${dislikes} If suggesting evening food, filter by dislikes.`;
       })(),
       injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}. Tell them to reply "done" when injected. No questions about feelings — that comes later.`,
       injection_followup: `${base}Context: ~3 hours after their shot. Just check in softly — no interrogation. One brief opening for them to share if they want.`,
@@ -567,6 +626,17 @@ const GENERIC_LABEL_PREFIX = /^(reminder|check[\s-]?in|note|update|hey there)[\s
 // Note: COMPLETE_ENDING regex was replaced by the shared endsMidWord guard
 // imported from @grace/ai-core (2026-06-04 unification).
 
+// Production failure (2026-06-11): a reminder shipped as "For Yuval, Hope
+// you're having a good day…" — the LLM echoed the prompt's addressing line
+// as a mail-merge-style salutation. These catch that whole class of opener
+// regardless of which name the model used (covers nicknames that don't match
+// users.first_name).
+// Capitalized-name requirement is deliberate (no `i` flag on the name): it
+// distinguishes "For Yuval," (salutation → strip) from a legitimate
+// "For breakfast, try…" (lowercase noun → keep).
+const ADDRESSED_OPENER_RE = /^(For|Dear|To|for|dear|to)\s+[A-Z][\w'’-]*\s*[,:;.!—–-]+\s*/;
+const ROLE_OPENER_RE = /^(dear\s+(user|friend|there)|as your (ai\s+)?(assistant|companion|coach|nutritionist)|this is grace[,:]?|grace here[,:]?)\s*[,:;.!—–-]*\s*/i;
+
 function sanitizeProactiveOutput(raw: string, firstName: string | null): string | null {
   let text = raw.trim();
   if (text.length === 0) return null;
@@ -579,6 +649,9 @@ function sanitizeProactiveOutput(raw: string, firstName: string | null): string 
   // Strip a forbidden label-style prefix if present, then re-trim.
   const before = text;
   text = text.replace(FORBIDDEN_LABEL_PREFIX, '').replace(GENERIC_LABEL_PREFIX, '').trim();
+  // Mail-merge salutations ("For Yuval,", "Dear user,", "As your assistant,")
+  // — strip whatever name the model used, then the role-style openers.
+  text = text.replace(ADDRESSED_OPENER_RE, '').replace(ROLE_OPENER_RE, '').trim();
   // Capitalize first letter if the strip left it lowercase mid-word.
   if (before !== text && text.length > 0) {
     text = text.charAt(0).toUpperCase() + text.slice(1);
@@ -622,3 +695,30 @@ function sanitizeProactiveOutput(raw: string, firstName: string | null): string 
 // trimToLastCompleteSentence is now imported from @grace/ai-core (2026-06-04
 // unification), so the proactive path uses the EXACT SAME completeness check
 // as the orchestrator.
+
+// ─── Near-duplicate detection ────────────────────────────────────────────────
+// A reminder must never repeat one of the last few sent to the same user.
+// Exact match after normalization, or ≥85% token overlap (Jaccard) — catches
+// "Protein first today 🌿" vs "Protein first today 🤍" style trivial rewrites.
+function normalizeForCompare(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+export function isNearDuplicate(a: string, b: string): boolean {
+  const na = normalizeForCompare(a);
+  const nb = normalizeForCompare(b);
+  if (na.length === 0 || nb.length === 0) return false;
+  if (na === nb) return true;
+  const ta = new Set(na.split(' '));
+  const tb = new Set(nb.split(' '));
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = ta.size + tb.size - inter;
+  return union > 0 && inter / union >= 0.85;
+}
+
+// Test-only exports — let unit tests drive the sanitizer directly without a
+// real LLM round-trip.
+export const __testing = {
+  sanitizeProactiveOutput,
+};

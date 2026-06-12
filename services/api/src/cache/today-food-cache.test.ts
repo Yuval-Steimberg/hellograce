@@ -45,21 +45,26 @@ describe('computeUserToday', () => {
   });
 
   it('uses the user\'s timezone — Asia/Jerusalem ahead of UTC', () => {
-    // 2026-06-07 22:00 UTC = 2026-06-08 01:00 Jerusalem
-    // Minus 5h rollover = 2026-06-07 20:00 Jerusalem → date = 2026-06-07
+    // 2026-06-07 22:00 UTC = 2026-06-08 01:00 Jerusalem → local date 2026-06-08
+    // (already past local midnight in Jerusalem even though UTC is still 06-07)
     const result = computeUserToday('Asia/Jerusalem', new Date('2026-06-07T22:00:00.000Z'));
+    expect(result).toBe('2026-06-08');
+  });
+
+  it('midnight boundary: 11:59 PM local is still "today"', () => {
+    const result = computeUserToday('UTC', new Date('2026-06-07T23:59:00.000Z'));
     expect(result).toBe('2026-06-07');
   });
 
-  it('5am rollover: 4am local is still "yesterday"', () => {
-    // 2026-06-07 04:00 UTC, in UTC tz, minus 5h = 2026-06-06 23:00 → date 2026-06-06
-    const result = computeUserToday('UTC', new Date('2026-06-07T04:00:00.000Z'));
-    expect(result).toBe('2026-06-06');
+  it('midnight boundary: 12:00 AM local starts the new day', () => {
+    const result = computeUserToday('UTC', new Date('2026-06-08T00:00:00.000Z'));
+    expect(result).toBe('2026-06-08');
   });
 
-  it('5am rollover: 6am local crosses into "today"', () => {
-    // 2026-06-07 06:00 UTC minus 5h = 2026-06-07 01:00 → date 2026-06-07
-    const result = computeUserToday('UTC', new Date('2026-06-07T06:00:00.000Z'));
+  it('midnight boundary: 1 AM local belongs to the NEW day (no 5am rollover)', () => {
+    // Previously a 5am rollover put 1am-4:59am into "yesterday". Spec
+    // 2026-06-11: a day is strictly 12:00 AM – 11:59 PM local.
+    const result = computeUserToday('UTC', new Date('2026-06-07T04:00:00.000Z'));
     expect(result).toBe('2026-06-07');
   });
 
@@ -111,7 +116,7 @@ describe('TodayFoodCacheService — basic flow', () => {
     expect(await cache.get(PHONE, 'UTC')).toBeNull();
   });
 
-  it('invalidate drops BOTH today and yesterday keys (handles 5am crossover)', async () => {
+  it('invalidate drops BOTH today and yesterday keys (midnight-boundary safety)', async () => {
     await cache.invalidate(PHONE, 'UTC');
     // Should call del with 2 keys (today + yesterday)
     expect(redis.del).toHaveBeenCalledWith(

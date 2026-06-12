@@ -462,7 +462,8 @@ export class Scheduler {
     }
 
     try {
-      const message = await this.deps.generator.generate(type, user, opts);
+      const enriched = await this.enrichGenerateOpts(user, type, opts);
+      const message = await this.deps.generator.generate(type, user, enriched);
       // 2026-06-05 — shortened from the 60-char "Rate this:..." appendage
       // that was 8.5x longer than short replies like "Logged."
       const body = user.rlhf_enabled && message.trim().length >= 25
@@ -495,6 +496,64 @@ export class Scheduler {
       }
       this.deps.logger.error({ err, phone: user.phone, type }, 'scheduler.send.failed');
     }
+  }
+
+  /**
+   * Enrich generation opts with REAL user data so reminders are grounded in
+   * actual behavior instead of generic templates (2026-06-11 reminders fix):
+   *   - morning  → YESTERDAY's food totals (plan today from yesterday's gap)
+   *   - evening  → TODAY's running totals (daily wrap-up, "82g so far")
+   *   - all generative types → last 5 sent reminder texts (anti-repetition)
+   * Every fetch is best-effort: a DB hiccup never blocks the reminder — the
+   * generator just falls back to its generic (still safe) prompt.
+   */
+  private async enrichGenerateOpts(
+    user: GraceUser,
+    type: Parameters<MessageGenerator['generate']>[0],
+    opts?: GenerateOpts,
+  ): Promise<GenerateOpts | undefined> {
+    const GENERATIVE_TYPES = new Set(['morning', 'midday', 'evening', 'bonus', 'injection_dayafter']);
+    if (!GENERATIVE_TYPES.has(type)) return opts;
+    const enriched: GenerateOpts = { ...(opts ?? {}) };
+
+    try {
+      const recent = await this.deps.users.getRecentCheckIns(user.phone, 5);
+      const texts = recent.map((c) => c.message_sent).filter((m): m is string => !!m && m.length > 0);
+      if (texts.length > 0) enriched.recentMessages = texts;
+    } catch { /* best-effort */ }
+
+    if (type === 'morning') {
+      try {
+        const hist = await this.deps.users.getDailyProteinHistory(user.phone, 2);
+        const todayLocal = toDateStr(localNow(user.timezone || 'America/New_York'));
+        const yesterday = hist.find((d) => d.day !== todayLocal);
+        if (yesterday) {
+          enriched.yesterdayFood = {
+            protein_g: Math.round(yesterday.protein_g),
+            calories: Math.round(yesterday.calories),
+            itemCount: yesterday.item_count,
+            proteinGoal: user.protein_goal_grams ?? null,
+          };
+        } else if (hist.length > 0 || user.last_reply_at) {
+          // History query worked but yesterday has no row → nothing was logged.
+          enriched.yesterdayFood = { protein_g: 0, calories: 0, itemCount: 0, proteinGoal: user.protein_goal_grams ?? null };
+        }
+      } catch { /* best-effort */ }
+    }
+
+    if (type === 'evening') {
+      try {
+        const today = await this.deps.users.getTodaysFoodSummary(user.phone);
+        enriched.todayFood = {
+          protein_g: Math.round(today.protein_g),
+          calories: Math.round(today.calories),
+          itemCount: today.items.length,
+          proteinGoal: user.protein_goal_grams ?? null,
+        };
+      } catch { /* best-effort */ }
+    }
+
+    return enriched;
   }
 
   private async runPersonalizationEngine(): Promise<void> {
@@ -557,7 +616,7 @@ function toDateStr(d: Date): string {
  * Survives restarts, retries, and timezone resyncs because the seed encodes
  * user + local date + message type, not wall-clock time.
  */
-function jitterMinutes(seed: string, maxMinutes: number): number {
+export function jitterMinutes(seed: string, maxMinutes: number): number {
   if (maxMinutes <= 0) return 0;
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {

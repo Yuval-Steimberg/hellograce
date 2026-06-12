@@ -10,8 +10,9 @@ import type { Tool } from '@grace/ai-core';
  * best-matching entry in today's food_logs (by food name, case-insensitive
  * partial match) and deletes it, then returns the updated daily totals.
  *
- * "Today" uses the same 5 AM local-time boundary as log_food and
- * getTodaysFoodSummary so the deleted entry is always in the correct window.
+ * "Today" uses the same local-midnight boundary (12:00 AM – 11:59 PM in the
+ * user's timezone) as log_food and getTodaysFoodSummary so the deleted entry
+ * is always in the correct window.
  */
 export function makeRemoveFoodTool(deps: {
   pool: Pool;
@@ -26,7 +27,7 @@ export function makeRemoveFoodTool(deps: {
       const food = typeof args['food'] === 'string' ? (args['food'] as string).trim() : '';
       if (!food) return { ok: false, error: 'no_food_provided' };
 
-      // Find matching entry in today's food window (5 AM reset, user timezone).
+      // Find matching entry in today's food window (local midnight reset, user timezone).
       const matchResult = await deps.pool.query<{ id: string; food: string; protein_g: number; calories: number }>(
         `WITH user_tz AS (
            SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
@@ -35,8 +36,8 @@ export function makeRemoveFoodTool(deps: {
          SELECT fl.id, fl.food, fl.protein_g, fl.calories
          FROM food_logs fl, user_tz
          WHERE fl.user_id = $1
-           AND (fl.created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
-               = (now()        AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
+           AND (fl.created_at AT TIME ZONE user_tz.tz)::date
+               = (now()        AT TIME ZONE user_tz.tz)::date
            AND lower(fl.food) LIKE '%' || lower($2) || '%'
          ORDER BY fl.created_at DESC
          LIMIT 1`,
@@ -52,8 +53,8 @@ export function makeRemoveFoodTool(deps: {
            )
            SELECT food FROM food_logs fl, user_tz
            WHERE fl.user_id = $1
-             AND (fl.created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
-                 = (now()        AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
+             AND (fl.created_at AT TIME ZONE user_tz.tz)::date
+                 = (now()        AT TIME ZONE user_tz.tz)::date
            ORDER BY fl.created_at DESC`,
           [deps.userId],
         );
@@ -77,8 +78,8 @@ export function makeRemoveFoodTool(deps: {
                 COALESCE(SUM(fl.calories), 0) AS total_calories
          FROM food_logs fl, user_tz
          WHERE fl.user_id = $1
-           AND (fl.created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
-               = (now()        AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date`,
+           AND (fl.created_at AT TIME ZONE user_tz.tz)::date
+               = (now()        AT TIME ZONE user_tz.tz)::date`,
         [deps.userId],
       );
       const dailyProteinG = Math.round(totalsResult.rows[0]?.total_protein_g ?? 0);

@@ -93,7 +93,7 @@ function makeUser(overrides: Partial<GraceUser> = {}): GraceUser {
 interface Harness {
   scheduler: Scheduler;
   sends: Array<{ to: string; body: string; channel: string }>;
-  generateCalls: Array<{ type: string; user: GraceUser }>;
+  generateCalls: Array<{ type: string; user: GraceUser; opts?: Record<string, unknown> }>;
   user: GraceUser;
   setUser: (next: Partial<GraceUser>) => void;
   redisLocks: Map<string, string>;
@@ -103,7 +103,18 @@ interface Harness {
  * Build a scheduler with full in-memory mocks. The user object is mutable
  * across ticks so writes via UserService.update reflect on next tick.
  */
-function buildHarness(initial: GraceUser, opts: { redisFails?: boolean } = {}): Harness {
+function buildHarness(
+  initial: GraceUser,
+  opts: {
+    redisFails?: boolean;
+    /** Mocked recent check-ins (anti-repetition context). */
+    recentCheckIns?: Array<{ type: string; message_sent: string }>;
+    /** Mocked per-day food history rows (morning context). */
+    proteinHistory?: Array<{ day: string; protein_g: number; calories: number; item_count: number }>;
+    /** Mocked today's food summary (evening context). */
+    todaySummary?: { protein_g: number; calories: number; items: string[] };
+  } = {},
+): Harness {
   let user: GraceUser = { ...initial };
   const sends: Harness['sends'] = [];
   const generateCalls: Harness['generateCalls'] = [];
@@ -118,7 +129,10 @@ function buildHarness(initial: GraceUser, opts: { redisFails?: boolean } = {}): 
     setInjectionStage: async (_phone: string, stage: string | null, extra: Record<string, unknown> = {}) => {
       user = { ...user, injection_flow_stage: stage, ...(extra as Partial<GraceUser>) };
     },
-    getRecentCheckIns: async () => [],
+    getRecentCheckIns: async () => opts.recentCheckIns ?? [],
+    getDailyProteinHistory: async () => opts.proteinHistory ?? [],
+    getTodaysFoodSummary: async () => opts.todaySummary
+      ?? { protein_g: 0, calories: 0, items: [], items_detailed: [] },
   } as unknown as UserService;
 
   const sender = {
@@ -128,8 +142,8 @@ function buildHarness(initial: GraceUser, opts: { redisFails?: boolean } = {}): 
   } as unknown as TwilioSender;
 
   const generator = {
-    generate: async (type: string, u: GraceUser) => {
-      generateCalls.push({ type, user: u });
+    generate: async (type: string, u: GraceUser, genOpts?: Record<string, unknown>) => {
+      generateCalls.push({ type, user: u, ...(genOpts !== undefined ? { opts: genOpts } : {}) });
       return `MOCK_${type}_MESSAGE`;
     },
   } as unknown as MessageGenerator;
@@ -925,5 +939,98 @@ describe('Scheduler — check-in cadence Settings (checkin_count_per_day / check
     const before = h.sends.length;
     await sendDirect(h, 'trial_expiry_reminder');
     expect(h.sends.length).toBe(before + 1);
+  });
+});
+
+describe('Scheduler — reminder context enrichment (2026-06-11 reminders fix)', () => {
+  async function sendDirect(h: Harness, type: string): Promise<void> {
+    // @ts-expect-error — accessing private for test
+    await h.scheduler.sendAndRecord(h.user, type);
+  }
+
+  it('morning reminder receives YESTERDAY\'s real food data', async () => {
+    setUtc(2026, 5, 19, 16, 0); // local NY date = 2026-05-19
+    const h = buildHarness(makeUser({ protein_goal_grams: 90 }), {
+      proteinHistory: [
+        { day: '2026-05-19', protein_g: 12, calories: 200, item_count: 1 },
+        { day: '2026-05-18', protein_g: 42, calories: 900, item_count: 3 },
+      ],
+    });
+    await sendDirect(h, 'morning');
+    const call = h.generateCalls.find((c) => c.type === 'morning');
+    expect(call?.opts?.['yesterdayFood']).toEqual({
+      protein_g: 42, calories: 900, itemCount: 3, proteinGoal: 90,
+    });
+    // Morning must NOT receive today's data — that's evening logic.
+    expect(call?.opts?.['todayFood']).toBeUndefined();
+  });
+
+  it('evening reminder receives TODAY\'s real food data (not yesterday\'s)', async () => {
+    setUtc(2026, 5, 19, 16, 0);
+    const h = buildHarness(
+      makeUser({ protein_goal_grams: 100, last_reply_at: new Date(Date.now() - 5 * 3_600_000), last_morning_sent_at: new Date(Date.now() - 6 * 3_600_000) }),
+      { todaySummary: { protein_g: 82, calories: 1400, items: ['eggs', 'chicken', 'yogurt'] } },
+    );
+    await sendDirect(h, 'evening');
+    const call = h.generateCalls.find((c) => c.type === 'evening');
+    expect(call?.opts?.['todayFood']).toEqual({
+      protein_g: 82, calories: 1400, itemCount: 3, proteinGoal: 100,
+    });
+    expect(call?.opts?.['yesterdayFood']).toBeUndefined();
+  });
+
+  it('generative reminders receive the last sent texts for anti-repetition', async () => {
+    setUtc(2026, 5, 19, 16, 0);
+    const h = buildHarness(makeUser(), {
+      recentCheckIns: [
+        { type: 'morning', message_sent: 'Protein first today 🌿' },
+        { type: 'evening', message_sent: 'Rest well tonight 🌙' },
+      ],
+    });
+    await sendDirect(h, 'morning');
+    const call = h.generateCalls.find((c) => c.type === 'morning');
+    expect(call?.opts?.['recentMessages']).toEqual(['Protein first today 🌿', 'Rest well tonight 🌙']);
+  });
+
+  it('context fetch failures never block the reminder (best-effort)', async () => {
+    setUtc(2026, 5, 19, 16, 0);
+    const h = buildHarness(makeUser());
+    // Sabotage all context reads.
+    // @ts-expect-error — reaching into the mock
+    h.scheduler.deps.users.getRecentCheckIns = async () => { throw new Error('db down'); };
+    // @ts-expect-error — reaching into the mock
+    h.scheduler.deps.users.getDailyProteinHistory = async () => { throw new Error('db down'); };
+    await sendDirect(h, 'morning');
+    expect(h.sends.length).toBe(1); // still sent
+  });
+
+  it('critical injection_morning skips context enrichment entirely', async () => {
+    setUtc(2026, 5, 19, 16, 0);
+    const h = buildHarness(makeUser(), {
+      recentCheckIns: [{ type: 'morning', message_sent: 'Old text' }],
+    });
+    await sendDirect(h, 'injection_morning');
+    const call = h.generateCalls.find((c) => c.type === 'injection_morning');
+    expect(call?.opts?.['recentMessages']).toBeUndefined();
+  });
+});
+
+describe('Scheduler — timing varies day to day (jitter)', () => {
+  it('same user + same day → same offset (stable across restarts/retries)', async () => {
+    const { jitterMinutes } = await import('./scheduler.js');
+    expect(jitterMinutes('+15551234567-2026-05-19-morning', 55))
+      .toBe(jitterMinutes('+15551234567-2026-05-19-morning', 55));
+  });
+
+  it('offsets differ across days — reminders never land at identical times every day', async () => {
+    const { jitterMinutes } = await import('./scheduler.js');
+    const offsets = ['2026-05-18', '2026-05-19', '2026-05-20', '2026-05-21', '2026-05-22', '2026-05-23', '2026-05-24']
+      .map((d) => jitterMinutes(`+15551234567-${d}-morning`, 55));
+    // Across a week the offset must actually vary (not a constant schedule).
+    expect(new Set(offsets).size).toBeGreaterThan(1);
+    for (const o of offsets) {
+      expect(o).toBeGreaterThanOrEqual(0);
+      expect(o).toBeLessThan(55);
+    }
   });
 });

@@ -612,6 +612,86 @@ a long tail. Battery 75 pass / 0 fail; 534 ai-core + 668 api green.
 
 ---
 
+### Food day boundary = LOCAL MIDNIGHT (2026-06-11, continued)
+
+Branch `claude/grace-production-readiness-x2k1oj`. Spec: the food day is the
+user's local calendar day, 12:00 AM – 11:59 PM. The code used a **5am rollover**
+(`- INTERVAL '5 hours'` in every "today" SQL query + a matching 5h pre-shift in
+the Redis cache key), so a log between midnight and 4:59 AM silently counted
+toward *yesterday* — contradicting `getTodaysFoodSummary`'s own doc comment,
+which already claimed "resets at the user's local midnight".
+
+**Change (mechanical, conventions must stay in lockstep):** dropped the 5-hour
+shift everywhere → `(created_at AT TIME ZONE user_tz.tz)::date = (now() AT TIME
+ZONE user_tz.tz)::date`:
+- `user/user.service.ts` — `getTodaysFoodSummary` (L3 query) + `getDailyProteinHistory` (day keys + window)
+- `tools/log-food.ts` — post-insert running total
+- `tools/remove-food.ts` — all 3 queries (match, list, recount)
+- `services/food-log-fast.ts` — fast-path daily total
+- `routes/admin.ts` — `/admin/users/:phone/food-logs` day filter
+- `cache/today-food-cache.ts` — `computeUserToday` no longer pre-shifts 5h (the
+  L2 Redis key MUST use the same date convention as the SQL or the cache serves
+  a different day window than the DB)
+
+Everything else the daily-reset spec asks for was already true and is now
+verified: per-user isolation (`WHERE user_id = $1` everywhere), history never
+deleted (the "reset" is purely a query-window convention — totals are always
+recomputed from rows, nothing is carried over), full timestamps stored per row,
+history queryable per local day via `getDailyProteinHistory`.
+
+**Validation:** `today-food-cache.test.ts` rollover tests replaced with
+midnight-boundary tests (11:59 PM = today, 12:00 AM = new day, 1 AM = new day);
+new **P13** verification phase (7 checks): inserts rows at yesterday-11:30 PM /
+today-12:30 AM / now, proves today = 22g not 72g (the 12:30 AM row is the
+discriminator — old code put it in yesterday), history keeps yesterday's 50g,
+users isolated, WhatsApp "protein today" answers 22g. Battery 82 pass / 0 fail;
+534 ai-core + 669 api green.
+
+---
+
+### Reminders: grounded context + anti-repetition + salutation fix (2026-06-11, continued)
+
+Branch `claude/grace-production-readiness-x2k1oj`. Production report: reminder
+shipped as **"For Yuval, Hope you're having a good day…"** — mail-merge tone,
+generic, unconnected to the user's actual behavior.
+
+**Root causes & fixes (scheduler + message-generator):**
+1. **Salutation bug** — `buildPrompt` opened with "Generate a single short SMS
+   for ${name}", baiting Gemini into echoing "For Yuval, …" as a salutation.
+   Prompt no longer names the user ("Write the next short proactive SMS…
+   NEVER address the user by name / never open 'For <name>' / 'Dear user' /
+   'As your assistant'"), and `sanitizeProactiveOutput` now strips
+   `ADDRESSED_OPENER_RE` (For/Dear/To + Capitalized-name — catches nicknames
+   that don't match `users.first_name`) + `ROLE_OPENER_RE` ("Dear user", "As
+   your assistant", "Grace here:"). Capital-letter requirement distinguishes
+   "For Yuval," (strip) from "For breakfast," (keep).
+2. **No real context** — morning/evening reminders were goal-template-only.
+   `Scheduler.enrichGenerateOpts()` (best-effort, never blocks a send) now
+   feeds the generator: **morning** → YESTERDAY's totals via
+   `getDailyProteinHistory` ("yesterday you were short on protein → plan one
+   solid protein meal early"; no-logs day gets shame-free framing); **evening**
+   → TODAY's running totals via `getTodaysFoodSummary` ("you're at 82g — eggs
+   or yogurt tonight closes the gap"; target-hit → acknowledge, no suggestion).
+   Prompt carries a DATA ACCURACY rule: use ONLY provided REAL DATA lines,
+   never invent logs/symptoms/numbers.
+3. **Repetition** — all generative types now receive the last 5 sent reminder
+   texts (`getRecentCheckIns().message_sent`) as a RECENTLY SENT banned list,
+   plus a deterministic `isNearDuplicate` backstop (normalized exact or ≥85%
+   token Jaccard) that ships the daily-rotating fallback instead of a near-dupe.
+
+**Verified pre-existing and now tested:** 2/day default cap (user-settable
+1..3) + 3h min gap + Redis day counter; per-user-per-day jitter (new test:
+offsets vary across a week, stable within a day); 2h engagement cooldown;
+quiet hours; injection flows fully separate (own state machine, exempt from
+caps, skip regular check-ins on injection day, NOT context-enriched).
+
+Tests: `message-generator.test.ts` (NEW — 12: salutation strips incl. the
+exact production string, near-duplicate, prompt grounding, no-invention rule)
++ 5 scheduler context-enrichment tests + 2 jitter tests. 688 api + 534 ai-core
+green; battery 82/82.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

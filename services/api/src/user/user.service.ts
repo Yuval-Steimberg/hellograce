@@ -424,8 +424,8 @@ export class UserService {
               created_at
        FROM food_logs, user_tz
        WHERE user_id = $1
-         AND (created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
-             = (now()       AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
+         AND (created_at AT TIME ZONE user_tz.tz)::date
+             = (now()       AT TIME ZONE user_tz.tz)::date
        ORDER BY created_at DESC`,
       [userId],
     );
@@ -456,7 +456,8 @@ export class UserService {
   /**
    * Get per-day protein/calorie totals for the last N days, including TODAY
    * as the rightmost entry. Each row is one calendar day in the user's local
-   * timezone (same 5am rollover as today's summary). Used to answer queries
+   * timezone (same local-midnight boundary as today's summary, 12:00 AM –
+   * 11:59 PM). Used to answer queries
    * like "How much protein did I have yesterday?" or "Show me this week's
    * protein" — without this, Grace would have to guess or refuse.
    */
@@ -472,14 +473,14 @@ export class UserService {
          SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
          FROM users WHERE phone = $1
        )
-       SELECT (created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date::text AS day,
+       SELECT (created_at AT TIME ZONE user_tz.tz)::date::text AS day,
               COALESCE(SUM(protein_g), 0)::int AS protein_g,
               COALESCE(SUM(calories), 0)::int AS calories,
               COUNT(*)::int AS item_count
        FROM food_logs, user_tz
        WHERE user_id = $1
-         AND (created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
-             >= (now() AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date - ($2::int - 1)
+         AND (created_at AT TIME ZONE user_tz.tz)::date
+             >= (now() AT TIME ZONE user_tz.tz)::date - ($2::int - 1)
        GROUP BY day
        ORDER BY day DESC`,
       [userId, safeDays],

@@ -660,6 +660,64 @@ async function p12FoodSummaryAggregation(h: Harness): Promise<void> {
   await h.wipeUser(P); await h.wipeUser(P2);
 }
 
+// ── P13: daily reset at LOCAL MIDNIGHT (12:00 AM – 11:59 PM) ────────────────
+// Spec 2026-06-11: the food day is the user's local calendar day. A log at
+// 11:30 PM belongs to that day; a log at 12:30 AM belongs to the NEW day.
+// (The old code used a 5am rollover, so 12:30 AM counted as "yesterday" —
+// the 00:30 row below is the discriminating case.) History must survive the
+// reset and stay queryable per day; users must be fully isolated.
+async function p13MidnightReset(h: Harness): Promise<void> {
+  phase('P13 local-midnight daily reset + history');
+  const A = '+15551660001';
+  const B = '+15551660002';
+  await h.wipeUser(A); await h.createUser(A, { protein_goal_grams: 100, timezone: 'UTC' });
+  await h.wipeUser(B); await h.createUser(B, { protein_goal_grams: 100, timezone: 'UTC' });
+
+  // Insert rows at controlled timestamps relative to the UTC midnight boundary
+  // BEFORE any read (direct inserts bypass cache invalidation).
+  const insert = (phone: string, food: string, protein: number, cal: number, createdAtSql: string) =>
+    h.pool.query(
+      `INSERT INTO food_logs (user_id, food, protein_g, calories, confidence, raw_text, source, dedupe_key, created_at)
+       VALUES ($1, $2, $3, $4, 'high', $2, 'text', $5, ${createdAtSql})`,
+      [phone, food, protein, cal, `p13-${phone}-${food}-${Date.now()}`],
+    );
+  await insert(A, 'late dinner steak', 50, 400, `date_trunc('day', now()) - interval '30 minutes'`); // yesterday 11:30 PM
+  await insert(A, 'midnight snack yogurt', 10, 100, `date_trunc('day', now()) + interval '30 minutes'`); // today 12:30 AM
+  await insert(A, 'eggs', 12, 140, 'now()'); // today, now
+  await insert(B, 'tofu', 20, 160, 'now()'); // another user, today
+
+  const today = await h.users.getTodaysFoodSummary(A);
+  check('today = strictly 12:00 AM onward (22g = 00:30 yogurt + eggs, NOT 72g)',
+    Math.round(today.protein_g) === 22,
+    `today.protein_g=${Math.round(today.protein_g)} items=${today.items.join('|')}`);
+  check("yesterday's 11:30 PM steak excluded from today",
+    !today.items.some((i) => /steak/i.test(i)), today.items.join('|'));
+  check("today's items include the 12:30 AM log (old 5am rollover would drop it)",
+    today.items.some((i) => /yogurt/i.test(i)), today.items.join('|'));
+
+  // History: the pre-midnight day is preserved and queryable per-day.
+  const hist = await h.users.getDailyProteinHistory(A, 2);
+  const yesterdayRow = hist.find((d) => Math.round(d.protein_g) === 50);
+  check('history keeps yesterday (50g steak) after the reset',
+    !!yesterdayRow, JSON.stringify(hist));
+  check('history day rows recomputed from logs (today=22g, yesterday=50g)',
+    hist.some((d) => Math.round(d.protein_g) === 22) && !!yesterdayRow,
+    JSON.stringify(hist));
+
+  // Per-user isolation: B sees only B's rows.
+  const bToday = await h.users.getTodaysFoodSummary(B);
+  check('users fully isolated (B sees only tofu, 20g)',
+    Math.round(bToday.protein_g) === 20 && bToday.items.length === 1,
+    `B.protein_g=${Math.round(bToday.protein_g)} items=${bToday.items.join('|')}`);
+
+  // End-to-end: the WhatsApp answer uses the midnight-bounded total.
+  const r = await h.sendWhatsApp(A, 'How much protein I had');
+  check('WhatsApp "protein today" uses the midnight-bounded total (22g)',
+    !!r && /\b22\s*g\b/.test(r.body), r?.body.slice(0, 120) ?? 'no reply');
+
+  await h.wipeUser(A); await h.wipeUser(B);
+}
+
 async function main(): Promise<void> {
   const only = process.argv.slice(2);
   const h = await buildHarness();
@@ -668,6 +726,7 @@ async function main(): Promise<void> {
     ['p4', p4Guards], ['p5', p5Concurrency], ['p6', p6LongThread], ['p7', p7LatencyModel],
     ['p8', p8ContentAccuracy], ['p9', p9HallucinationContext], ['p10', p10ScreenshotRegressions],
     ['p11', p11Reconstruction], ['p12', p12FoodSummaryAggregation],
+    ['p13', p13MidnightReset],
   ];
   for (const [key, fn] of phases) {
     if (only.length > 0 && !only.includes(key)) continue;

@@ -18,9 +18,9 @@
  *   L3 (Postgres CTE)
  *
  * Key strategy: `food:today:{phone}:{userTodayDate}` where userTodayDate
- * is the user's local calendar date with the standard 5-hour rollover.
- * Each day naturally gets a fresh key — no midnight cleanup needed because
- * stale keys age out via TTL.
+ * is the user's local calendar date (midnight-to-midnight in the user's
+ * timezone). Each day naturally gets a fresh key at local midnight — no
+ * cleanup job needed because stale keys age out via TTL.
  *
  * Write-through pattern: log_food / food-log-fast invalidate L2 on every
  * INSERT, same as the existing L1 invalidation. The next read recomputes
@@ -33,9 +33,8 @@
 import type { Redis } from 'ioredis';
 
 const KEY_PREFIX = 'food:today:';
-/** TTL covers the maximum possible "today" window across timezones plus
- *  the 5-hour rollover. 36 hours is generous and lets natural day
- *  transitions drop stale keys. */
+/** TTL covers the maximum possible "today" window across timezones.
+ *  36 hours is generous and lets natural day transitions drop stale keys. */
 const TTL_SECONDS = 36 * 60 * 60;
 
 export interface TodayFoodValue {
@@ -58,14 +57,14 @@ interface MinimalLogger {
 
 /**
  * Compute the user's "today" calendar date string (YYYY-MM-DD) using the
- * same convention as the Postgres CTE: `(now() AT TIME ZONE tz - INTERVAL
- * '5 hours')::date`. This means 4am local time is still "yesterday" for
- * cache purposes; 5am crosses into "today".
+ * same convention as the Postgres CTE: `(now() AT TIME ZONE tz)::date`.
+ * The day boundary is the user's LOCAL MIDNIGHT — 12:00 AM starts a fresh
+ * day, 11:59 PM is still today. Must stay in lockstep with every food_logs
+ * "today" SQL query or the L2 cache would serve a different day window
+ * than the DB.
  */
 export function computeUserToday(timezone: string, now: Date = new Date()): string {
   const tz = timezone && timezone.length > 0 ? timezone : 'UTC';
-  // Pre-shift by 5 hours so the 5am rollover matches the SQL semantics.
-  const shifted = new Date(now.getTime() - 5 * 60 * 60 * 1000);
   // en-CA returns ISO YYYY-MM-DD format directly via Intl formatter.
   try {
     return new Intl.DateTimeFormat('en-CA', {
@@ -73,7 +72,7 @@ export function computeUserToday(timezone: string, now: Date = new Date()): stri
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
-    }).format(shifted);
+    }).format(now);
   } catch {
     // Invalid timezone — fall back to UTC.
     return new Intl.DateTimeFormat('en-CA', {
@@ -81,7 +80,7 @@ export function computeUserToday(timezone: string, now: Date = new Date()): stri
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
-    }).format(shifted);
+    }).format(now);
   }
 }
 
@@ -139,8 +138,9 @@ export class TodayFoodCacheService {
    * read recomputes. The L1 in-memory cache invalidation happens
    * separately via `UserService.invalidateTodaysFoodCache()`.
    *
-   * Invalidates BOTH today's and yesterday's keys to handle log timestamps
-   * that crossed the 5am rollover.
+   * Invalidates BOTH today's and yesterday's keys defensively (covers a log
+   * landing right at the midnight boundary or minor clock skew between
+   * machines).
    */
   async invalidate(phone: string, timezone: string): Promise<void> {
     if (!this.redis) return;

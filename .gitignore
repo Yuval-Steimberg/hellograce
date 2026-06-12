@@ -63,3 +63,6 @@ services/api/dist-coverage
 # misc
 *.tsbuildinfo
 *.bak
+
+# Redis persistence snapshots from the local verification harness
+dump.rdb

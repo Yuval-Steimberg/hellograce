@@ -846,9 +846,9 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
        WHERE fl.user_id = $1
          AND CASE
            WHEN $2::date IS NOT NULL
-             THEN (fl.created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date = $2::date
-           ELSE (fl.created_at AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
-                = (now() AT TIME ZONE user_tz.tz - INTERVAL '5 hours')::date
+             THEN (fl.created_at AT TIME ZONE user_tz.tz)::date = $2::date
+           ELSE (fl.created_at AT TIME ZONE user_tz.tz)::date
+                = (now() AT TIME ZONE user_tz.tz)::date
          END
        ORDER BY fl.created_at DESC`,
       [phone, dateParam ?? null],

@@ -174,7 +174,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             await deps.sender.send({
               to: normalized.userId,
               channel: normalized.channel,
-              body: REMINDER_REDIRECT_REPLY,
+              body: buildReminderRedirectReply(deps.env.PUBLIC_WEB_URL),
             });
             return;
           }
@@ -230,6 +230,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             try {
               const settingsReply = await tryHandleSettings(normalized.text, user, {
                 logger: app.log,
+                webUrl: deps.env.PUBLIC_WEB_URL,
               });
               if (settingsReply) {
                 await deps.sender.send({
@@ -250,7 +251,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
                   lastAssistant && typeof (lastAssistant as { content?: unknown }).content === 'string'
                     ? (lastAssistant as { content: string }).content
                     : '';
-                const followUp = tryHandleSettingsFollowUp(normalized.text, lastContent);
+                const followUp = tryHandleSettingsFollowUp(normalized.text, lastContent, deps.env.PUBLIC_WEB_URL);
                 if (followUp) {
                   await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: followUp });
                   return;
@@ -688,9 +689,12 @@ const FREQ_DIGIT = new RegExp([
 // Reminder preferences (check-in cadence) live ONLY on the Settings page —
 // the single source of truth. Grace detects a cadence-change request and
 // sends this redirect; she never writes checkin_count_per_day from chat.
-const REMINDER_REDIRECT_REPLY =
-  `Reminder preferences can only be managed through the Settings page. Please ` +
-  `update them there and the system will apply your changes: https://graceglp.com/settings`;
+function buildReminderRedirectReply(webUrl: string = DEFAULT_WEB_URL): string {
+  return (
+    `Reminder preferences can only be managed through the Settings page. Please ` +
+    `update them there and the system will apply your changes: ${webUrl.replace(/\/$/, '')}/settings`
+  );
+}
 
 // True when the message is any attempt to change check-in / reminder cadence
 // (digit-based, "once a day", "text me less/more", "every other day", etc.).

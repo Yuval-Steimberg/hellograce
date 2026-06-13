@@ -40,15 +40,31 @@ interface MinimalLogger {
   error: (obj: object, msg?: string) => void;
 }
 
-const SETTINGS_URL = 'https://graceglp.com/settings';
+// Default settings URL — used only as a fallback when the caller doesn't pass
+// the deployment's web URL. The webhook passes deps.webUrl (PUBLIC_WEB_URL) so
+// the link matches the running environment (e.g. grace-admin-silk.vercel.app)
+// rather than the hardcoded production domain.
+const DEFAULT_SETTINGS_URL = 'https://graceglp.com/settings';
+
+/** Resolve the user-facing Settings URL from the deployment's web URL. */
+function resolveSettingsUrl(webUrl?: string | null): string {
+  if (!webUrl) return DEFAULT_SETTINGS_URL;
+  return `${webUrl.replace(/\/$/, '')}/settings`;
+}
 
 // Verbatim redirect for any profile / dietary change attempt. Grace detects
 // the intent and sends this instead of mutating the profile — the Settings
 // page is the single source of truth.
-const PROFILE_REDIRECT =
-  `To keep your profile information accurate, dietary preferences and profile ` +
-  `settings can only be updated from the Settings page. Please update it there ` +
-  `and I'll use the updated information moving forward: ${SETTINGS_URL}`;
+function profileRedirect(settingsUrl: string): string {
+  return (
+    `To keep your profile information accurate, dietary preferences and profile ` +
+    `settings can only be updated from the Settings page. Please update it there ` +
+    `and I'll use the updated information moving forward: ${settingsUrl}`
+  );
+}
+
+// Back-compat default-URL string (used by tests + as the no-webUrl fallback).
+const PROFILE_REDIRECT = profileRedirect(DEFAULT_SETTINGS_URL);
 
 // General settings/profile MODIFICATION intent — a modify verb + a settings/
 // goal/profile field. Field nouns are SETTING phrasings ("protein goal", not
@@ -83,14 +99,21 @@ export function wasSettingsClarification(lastGraceMessage: string | undefined | 
 /** Cross-turn follow-up: a bare settings-field reply to a prior settings
  *  clarification → redirect (inherit the modify intent). Returns the redirect
  *  message or null. */
-export function tryHandleSettingsFollowUp(text: string, lastGraceMessage: string | undefined | null): string | null {
+export function tryHandleSettingsFollowUp(
+  text: string,
+  lastGraceMessage: string | undefined | null,
+  webUrl?: string,
+): string | null {
   if (!isBareSettingsFieldReply(text)) return null;
   if (!wasSettingsClarification(lastGraceMessage)) return null;
-  return PROFILE_REDIRECT;
+  return profileRedirect(resolveSettingsUrl(webUrl));
 }
 
 export interface SettingsHandlerDeps {
   logger: MinimalLogger;
+  /** Deployment web URL (PUBLIC_WEB_URL). When set, Settings links point here
+   *  ("<webUrl>/settings") instead of the hardcoded default domain. */
+  webUrl?: string;
 }
 
 interface FieldDef {
@@ -551,6 +574,7 @@ export async function tryHandleSettings(
 ): Promise<string | null> {
   const trimmed = text.trim();
   if (trimmed.length === 0 || trimmed.length > 200) return null;
+  const settingsUrl = resolveSettingsUrl(deps.webUrl);
 
   // 0. GENERAL settings/profile MODIFICATION intent (2026-06-13).
   // A modify verb + a settings/goal/profile field → redirect to Settings, even
@@ -567,7 +591,7 @@ export async function tryHandleSettings(
   // are untouched.
   if (MODIFY_VERB_RE.test(trimmed) && SETTINGS_FIELD_RE.test(trimmed) && !/\binjection\s+day\b/i.test(trimmed)) {
     deps.logger.info({ userId: user.phone, action: 'settings_modify_redirect' }, 'settings_flow.modify_redirect');
-    return PROFILE_REDIRECT;
+    return profileRedirect(settingsUrl);
   }
 
   // 1. READ request? Always allowed — Grace may read and use settings.
@@ -579,9 +603,9 @@ export async function tryHandleSettings(
         'settings_flow.read',
       );
       if (display !== null) {
-        return `Your ${field.label} is ${display}.\nYou can change it at ${SETTINGS_URL}`;
+        return `Your ${field.label} is ${display}.\nYou can change it at ${settingsUrl}`;
       }
-      return `You haven't set your ${field.label} yet. You can add it at ${SETTINGS_URL}`;
+      return `You haven't set your ${field.label} yet. You can add it at ${settingsUrl}`;
     }
   }
 
@@ -594,7 +618,7 @@ export async function tryHandleSettings(
         { userId: user.phone, field: field.key, action: 'update_redirected' },
         'settings_flow.update_redirected',
       );
-      return PROFILE_REDIRECT;
+      return profileRedirect(settingsUrl);
     }
   }
 
@@ -605,7 +629,7 @@ export async function tryHandleSettings(
       { userId: user.phone, field: 'dietary', action: 'update_redirected' },
       'settings_flow.update_redirected',
     );
-    return PROFILE_REDIRECT;
+    return profileRedirect(settingsUrl);
   }
 
   // 4. Food dislikes / allergies ("I don't eat eggs", "I'm allergic to fish")?
@@ -620,7 +644,7 @@ export async function tryHandleSettings(
       { userId: user.phone, field: 'food_dislikes', action: 'update_redirected' },
       'settings_flow.update_redirected',
     );
-    return PROFILE_REDIRECT;
+    return profileRedirect(settingsUrl);
   }
 
   return null;

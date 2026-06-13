@@ -263,6 +263,21 @@ describe('tryHandleSettingsFollowUp — inherits modify intent across turns', ()
     expect(tryHandleSettingsFollowUp('chicken and rice', clar)).toBeNull();
   });
 
+  it('Settings links use the deployment webUrl when provided', async () => {
+    const url = 'https://grace-admin-silk.vercel.app';
+    const reply = await tryHandleSettings('change my protein goal', makeUser(), { logger: noopLogger, webUrl: url });
+    expect(reply).toContain(`${url}/settings`);
+    expect(reply).not.toMatch(/graceglp/);
+    // follow-up helper too
+    const fu = tryHandleSettingsFollowUp('protein goal', 'Which setting would you like to change?', url);
+    expect(fu).toContain(`${url}/settings`);
+  });
+
+  it('falls back to the default domain when no webUrl is passed', async () => {
+    const reply = await tryHandleSettings('change my protein goal', makeUser(), { logger: noopLogger });
+    expect(reply).toMatch(/graceglp\.com\/settings/);
+  });
+
   it('isBareSettingsFieldReply gate', () => {
     expect(isBareSettingsFieldReply('protein goal')).toBe(true);
     expect(isBareSettingsFieldReply('my goal weight')).toBe(true);

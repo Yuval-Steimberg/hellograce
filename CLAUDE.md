@@ -1190,6 +1190,29 @@ ai-core + 796 api green.
 
 ---
 
+### Settings links use the deployment URL, not hardcoded graceglp.com (2026-06-13)
+
+`settings-flow.ts` hardcoded `https://graceglp.com/settings` in every redirect/
+read response; the webhook's `REMINDER_REDIRECT_REPLY` did the same. On the
+sandbox/Vercel deployment those links don't resolve. Now they use the running
+deployment's `PUBLIC_WEB_URL`:
+- `settings-flow.ts`: `resolveSettingsUrl(webUrl)` → `<webUrl>/settings`;
+  `profileRedirect(settingsUrl)` builds the redirect; `SettingsHandlerDeps`
+  gains `webUrl`. `tryHandleSettings` computes the URL once and uses it for all
+  redirects + read responses; `tryHandleSettingsFollowUp(text, last, webUrl)`.
+  Falls back to the `graceglp.com` default when `webUrl` is absent (so the unit
+  tests, which pass no webUrl, are unchanged).
+- `webhook.ts`: passes `deps.env.PUBLIC_WEB_URL` into both settings calls;
+  `REMINDER_REDIRECT_REPLY` const → `buildReminderRedirectReply(webUrl)`.
+
+Note: the LLM system prompt (`prompts.ts`) and a few orchestrator fallback
+strings still mention `graceglp.com/settings` — those are static prompt text the
+model echoes, not the deterministic settings-flow redirects; left for a separate
+pass. Tests: +2 in `settings-flow.test.ts` (webUrl honored / default fallback).
+798 api green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

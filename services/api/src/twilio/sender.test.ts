@@ -24,6 +24,27 @@ describe('rewriteCanonicalLinks — settings link points at the deployment (2026
   });
 });
 
+describe('sanitizeOutbound — never truncates a trailing URL (2026-06-13)', () => {
+  it('preserves a full settings link at the end of the message', () => {
+    const msg = "Profile settings can only be updated from the Settings page. Please update it there and I'll use the updated information moving forward: https://grace-admin-silk.vercel.app/settings";
+    const out = sanitizeOutbound(msg);
+    expect(out).toContain('https://grace-admin-silk.vercel.app/settings');
+    expect(out).not.toMatch(/vercel\.?$/); // not chopped to "…vercel" / "…vercel."
+  });
+  it('preserves a link followed by a period', () => {
+    const out = sanitizeOutbound('You can change it at https://grace-admin-silk.vercel.app/settings.');
+    expect(out).toContain('grace-admin-silk.vercel.app/settings');
+  });
+  it('preserves a bare (no-protocol) domain link', () => {
+    const out = sanitizeOutbound('Update it at grace-admin-silk.vercel.app/settings');
+    expect(out).toContain('grace-admin-silk.vercel.app/settings');
+  });
+  it('still repairs a genuine mid-word truncation (no URL)', () => {
+    const out = sanitizeOutbound('Got it. I was about to say something but');
+    expect(out).toBe('Got it.');
+  });
+});
+
 describe('sanitizeOutbound — em-dash replacement', () => {
   it('replaces em-dashes with commas', () => {
     const out = sanitizeOutbound('Got it — moved your injection day.');

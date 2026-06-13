@@ -1268,7 +1268,25 @@ once that domain is live and links follow automatically). Tests: +5 in
 
 ---
 
-## Where to start in a new session
+### Outbound sanitizer was truncating trailing URLs → broken settings link (2026-06-13)
+
+Production: the WhatsApp settings link arrived as `https://grace-admin-silk.vercel`
+— missing `.app/settings` — so Safari said "server can't be found." (Also
+diagnosed + fixed an unrelated Vercel issue: the project had Deployment
+Protection / "Require Log In" ON, 403-ing the public; that's a dashboard toggle,
+not code.)
+
+Root cause: `sanitizeOutbound` (`twilio/sender.ts`) mid-sentence-truncation
+repair. A message ending in a URL doesn't end in terminal punctuation, so it was
+flagged `endsMidWord=true`, then trimmed to the last `.` — which is the dot in
+`vercel.app` — chopping the link to `…vercel.`. Every settings/upgrade message
+(which always ends with a URL) was mangled.
+
+Fix: compute `endsWithUrl` (`https?://\S+$` OR a bare `host.tld[/path]$` for
+com/app/io/org/net/co/dev/ai/me/health/care) and skip the truncation repair when
+true — a message ending in a URL is complete. Genuine mid-word truncation (no
+URL) still repairs. Tests: +4 in `sender.test.ts` (full link preserved, link +
+trailing period, bare-domain link, real truncation still trimmed). 815 api green.
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).
 2. `git log --oneline -10` to see recent commits.

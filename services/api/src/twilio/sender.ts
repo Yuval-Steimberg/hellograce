@@ -152,10 +152,21 @@ export function sanitizeOutbound(input: string, logger?: Logger): string {
     throw new EmptyOutboundError();
   }
 
+  // A message ending in a URL is COMPLETE — never treat it as cut-off and never
+  // trim it (the dots in a domain like "vercel.app/settings" look like sentence
+  // terminators, so the repair below would chop the link to "…vercel."). This
+  // broke every settings/upgrade link, which always ends with a URL.
+  // Production failure 2026-06-13: "…grace-admin-silk.vercel" (missing .app/settings).
+  const endsWithUrl =
+    /https?:\/\/\S+$/i.test(trimmed) ||
+    /\b[\w-]+\.(?:com|app|io|org|net|co|dev|ai|me|health|care)(?:\/\S*)?$/i.test(trimmed);
+
   const endsMidWord =
-    /[-–—]$/.test(trimmed) ||
-    /\s(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be)$/i.test(trimmed) ||
-    !/[.!?…)_]$|[\p{Extended_Pictographic}]$/u.test(trimmed);
+    !endsWithUrl && (
+      /[-–—]$/.test(trimmed) ||
+      /\s(the|a|an|of|on|in|to|for|with|and|or|but|so|by|at|as|is|are|was|were|be)$/i.test(trimmed) ||
+      !/[.!?…)_]$|[\p{Extended_Pictographic}]$/u.test(trimmed)
+    );
 
   if (endsMidWord) {
     // Find the last complete sentence terminator and trim everything after it.

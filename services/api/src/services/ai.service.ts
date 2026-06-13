@@ -429,6 +429,38 @@ export interface AIServiceDeps {
   productionIssues?: ProductionIssuesService;
 }
 
+/**
+ * Reconstruct a clean food string when the user answers a prior food
+ * clarification with a brief detail. We pull the food the clarification was
+ * about (e.g. "pizza" from "For the pizza, how many slices…", "chicken" from
+ * "How was the chicken prepared…") and join it with the user's answer so the
+ * result is a clean loggable phrase ("2 slices of pizza", "grilled chicken")
+ * instead of the messy "<entire question>: <answer>" blob — which the LLM
+ * turned into a generic non-answer (production bug 2026-06-13).
+ *
+ * Returns null when the prior message wasn't one of our category/prep
+ * clarifications (e.g. a brand "what did you have at KFC?" — the user's reply
+ * there is already a specific item and needs no reconstruction).
+ */
+export function reconstructFoodFromClarification(lastGraceMsg: string, reply: string): string | null {
+  const r = reply.trim();
+  if (!r) return null;
+  let food: string | null = null;
+  let m: RegExpExecArray | null;
+  if ((m = /\bfor the ([a-z][a-z]*)\b/i.exec(lastGraceMsg))) food = m[1]!;
+  else if ((m = /\blog (?:that|the) ([a-z]+)\b/i.exec(lastGraceMsg))) food = m[1]!;
+  else if ((m = /\bhow was the ([a-z]+) prepared\b/i.exec(lastGraceMsg))) food = m[1]!;
+  else if ((m = /\bmore on the ([a-z]+)\b/i.exec(lastGraceMsg))) food = m[1]!;
+  if (!food) return null;
+  food = food.toLowerCase();
+  // Quantity-style answer ("2 slices", "a cup") → join with "of" so it matches
+  // the macro table ("2 slices of pizza"). Prep/other answers ("grilled",
+  // "cheese") just prefix the food ("grilled chicken", "cheese pizza").
+  const isQuantity =
+    /^(?:\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|half|couple)\b[\s\S]*\b(slice|slices|cup|cups|piece|pieces|oz|ounces?|gram|grams|serving|servings|bowl|bowls|tbsp|tsp|wing|wings|tender|tenders|nugget|nuggets|handful|scoop|scoops|can|cans)\b/i.test(r);
+  return isQuantity ? `${r} of ${food}` : `${r} ${food}`;
+}
+
 export class AIService {
   private systemPrompt: string | undefined;
 
@@ -2186,16 +2218,63 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       briefDetailMatchesFood &&
       !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food')
     ) {
-      // Combine the previous food context with the new detail
-      const combined = `${lastGraceMsg.slice(0, 200).replace(/\?$/, '')}: ${input.text}`;
+      // Reconstruct a CLEAN food phrase from the prior question + this answer
+      // ("2 slices of pizza", "grilled chicken"). Falls back to the old blob
+      // only when reconstruction can't identify the food (e.g. brand replies).
+      const reconstructed =
+        reconstructFoodFromClarification(lastGraceMsg, input.text) ??
+        `${input.text} ${lastGraceMsg.slice(0, 120).replace(/\?$/, '')}`;
+
+      // Prefer the deterministic fast-log so the answer is logged + confirmed
+      // with real numbers, never a chatty LLM detour. Only when the clean
+      // phrase resolves in the macro table; otherwise fall through to the
+      // orchestrator force-log with the clean phrase.
+      try {
+        const u = await this.deps.users.getByPhone(input.userId).catch(() => null);
+        const fast = await tryFoodLogFastResponse(reconstructed, {
+          pool: this.deps.pool,
+          logger: this.deps.logger,
+          userId: input.userId,
+          intentType: 'food_log',
+          proteinGoalGrams: u?.protein_goal_grams ?? null,
+          users: this.deps.users,
+        });
+        if (fast) {
+          this.deps.logger.info(
+            { userId: input.userId, reconstructed, briefDetail: input.text },
+            'ai.handle.continuation_fast_log',
+          );
+          void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
+            .catch((err) => this.deps.logger.warn({ err }, 'continuation.append_user.failed'));
+          void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: fast.text })
+            .catch((err) => this.deps.logger.warn({ err }, 'continuation.append_assistant.failed'));
+          return {
+            text: fast.text,
+            intent: 'food_log_continuation',
+            confidence: 'high' as const,
+            toolResults: [{
+              name: 'log_food',
+              args: { food: reconstructed },
+              output: { ...fast.macros, daily_protein_g: fast.dailyProteinG, daily_calories: fast.dailyCalories },
+              latencyMs: 0,
+              ok: true,
+            }],
+            usedRetrieval: false,
+            latencyMs: Date.now() - t0,
+          };
+        }
+      } catch (err) {
+        this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.handle.continuation_fast_log.error');
+      }
+
       prePlannedDecision = {
         intent: 'log_food',
         needsTools: true,
-        toolCalls: [{ name: 'log_food', args: { food: combined } }],
+        toolCalls: [{ name: 'log_food', args: { food: reconstructed } }],
         rationale: 'continuation_of_food_question',
       };
       this.deps.logger.info(
-        { userId: input.userId, briefDetail: input.text, lastGraceMsgPreview: lastGraceMsg.slice(0, 80) },
+        { userId: input.userId, briefDetail: input.text, reconstructed, lastGraceMsgPreview: lastGraceMsg.slice(0, 80) },
         'ai.handle.forced_log_food_continuation',
       );
     }

@@ -1,5 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiMealText } from './ai.service.js';
+import { splitMultiMealText, reconstructFoodFromClarification } from './ai.service.js';
+
+describe('reconstructFoodFromClarification — continuation answer (2026-06-13)', () => {
+  // The exact production failure: Grace asked "For the pizza, how many slices…",
+  // user replied "2 slices" → must become a clean, loggable phrase.
+  it('"2 slices" after the pizza category question → "2 slices of pizza"', () => {
+    const q = 'Nice 😊 For the pizza, how many slices and what kind (e.g. 2 slices of cheese)? Then I can estimate the protein and calories accurately.';
+    expect(reconstructFoodFromClarification(q, '2 slices')).toBe('2 slices of pizza');
+  });
+
+  it('prep answer "grilled" after the chicken prep question → "grilled chicken"', () => {
+    const q = 'How was the chicken prepared, grilled, baked, or fried? And any sauce or oil?';
+    expect(reconstructFoodFromClarification(q, 'grilled')).toBe('grilled chicken');
+  });
+
+  it('non-quantity answer "cheese" → "cheese pizza"', () => {
+    const q = 'For the pizza, how many slices and what kind (e.g. 2 slices of cheese)?';
+    expect(reconstructFoodFromClarification(q, 'cheese')).toBe('cheese pizza');
+  });
+
+  it('returns null when the prior message is not one of our clarifications', () => {
+    expect(reconstructFoodFromClarification('How are you feeling today?', '2 slices')).toBeNull();
+    expect(reconstructFoodFromClarification('What did you have at KFC?', '3 tenders')).toBeNull();
+  });
+});
 
 describe('splitMultiMealText — multi-meal preprocessor (2026-06-01 fix)', () => {
   it('splits the exact production failure into two meal segments', () => {

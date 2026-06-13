@@ -870,6 +870,31 @@ Tests: +1 webhook gate case (onboarded-no-trial not locked out). 755 api green.
 
 ---
 
+### Food-log continuation: clean reconstruction of clarification answers (2026-06-13)
+
+Production: Grace asked "For the pizza, how many slices and what kind?", user
+replied "2 slices", Grace responded "Two slices is a perfect amount…" — generic,
+didn't log, broke the flow. The continuation gate (ai.service ~2171) DID fire
+(`lastWasFoodQuestion` + brief reply), but it built the food arg as the messy
+blob `"<entire 200-char question>: 2 slices"` and handed that to `log_food` —
+which the LLM turned into chat instead of a log.
+
+Fix: new `reconstructFoodFromClarification(lastGraceMsg, reply)` (exported from
+`ai.service.ts`) pulls the food the clarification was about ("pizza" from "For
+the pizza…", "chicken" from "How was the chicken prepared…") and joins it with
+the answer into a CLEAN phrase — quantity answers get "of" ("2 slices" →
+"2 slices of pizza"), prep/other answers prefix ("grilled" → "grilled chicken").
+The continuation block then (1) tries `tryFoodLogFastResponse` on the clean
+phrase and, when it resolves in the macro table, returns a DETERMINISTIC log
+confirmation immediately (no LLM detour) with `intent:'food_log_continuation'` +
+persisted turns; (2) otherwise sets the orchestrator force-log to the clean
+phrase (not the blob). Brand replies ("what did you have at KFC?" → "3 tenders")
+return null from the reconstructor and keep the existing path (the reply is
+already specific). Tests: +4 reconstruct cases (`ai.service.test.ts`). 764 api
+green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

@@ -1213,6 +1213,42 @@ pass. Tests: +2 in `settings-flow.test.ts` (webUrl honored / default fallback).
 
 ---
 
+### Self-serve Settings page on the v2 API (phone + code verification) (2026-06-13)
+
+Rebuilt the Settings page so it no longer depends on the Supabase edge functions
++ the unset `VITE_SUPABASE_*` Vercel env vars (which made the settings LINK error
+when pressed). Now fully on the v2 API under the Vercel domain.
+
+**Backend — `services/api/src/routes/settings.ts`** (registered in server.ts with
+`{ redis, sender, users, whatsappEnabled: !!env.TWILIO_WHATSAPP_FROM }`):
+- `POST /settings/request-code` { phone } → normalize, look up user; if
+  registered, generate a 6-digit code (Redis `settings:code:{phone}`, 10-min
+  TTL) and send via WhatsApp (or SMS). Enumeration-guarded (always returns
+  `{ok,sent}`, only sends for a real account). Rate-limited 5/10min.
+- `POST /settings/verify-code` { phone, code } → checks code + attempt counter
+  (lockout after 5), issues an opaque Redis session token (`settings:session:
+  {token}`, 30-min sliding TTL), returns `{ token, profile }`.
+- `GET /settings/me` (Bearer token) → profile.
+- `PUT /settings/me` (Bearer token) → updates the user-editable subset only
+  (no is_paid/is_pro/blocked/trial_start/paused). `UserService.update` encrypts
+  PII + invalidates the user cache so changes take effect on the next message.
+  Bulk update falls back to field-by-field on a missing-migration column.
+- Tests: `settings.test.ts` (8 — code send/enumeration, verify + lockout,
+  session gate, update). 806 api green.
+
+**Frontend** — `apps/web/src/lib/settingsApi.ts` (user-facing fetch client, NO
+admin token, token in sessionStorage `grace_settings_token`) + rewritten
+`pages/Settings.tsx`: 3 stages (phone → 6-digit code → full profile form),
+resumes an existing session on load, edits every profile field (about you /
+medication / body & goals / diet / check-ins) grouped, saves via PUT. Uses
+`VITE_API_URL` (already set on Vercel). web typecheck + build clean.
+
+Note: code delivery uses WhatsApp when `TWILIO_WHATSAPP_FROM` is set (sandbox
+requires the user to have joined; real users need the approved WhatsApp sender
+or SMS). A user must be registered (onboarded) to receive a code.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

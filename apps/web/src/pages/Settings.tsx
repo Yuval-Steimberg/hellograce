@@ -1,738 +1,343 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import SEOHead from "@/components/SEOHead";
 import { breadcrumbSchema } from "@/lib/seo-schemas";
 import LegalFooter from "@/components/LegalFooter";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
-import QuizButton from "@/components/onboarding/QuizButton";
-import QuizTile from "@/components/onboarding/QuizTile";
 import PhoneInput from "@/components/onboarding/PhoneInput";
+import {
+  settingsApi,
+  getSettingsToken,
+  setSettingsToken,
+  clearSettingsToken,
+  type SettingsProfile,
+  type SettingsUpdate,
+} from "@/lib/settingsApi";
 
-const DAYS = [
-  { label: "Monday", short: "Mon" },
-  { label: "Tuesday", short: "Tue" },
-  { label: "Wednesday", short: "Wed" },
-  { label: "Thursday", short: "Thu" },
-  { label: "Friday", short: "Fri" },
-  { label: "Saturday", short: "Sat" },
-  { label: "Sunday", short: "Sun" },
-];
-
-const MEDICATIONS = [
-  "Ozempic", "Wegovy", "Mounjaro", "Zepbound",
-  "Compounded semaglutide", "Compounded tirzepatide", "Other",
-];
-
-const GOALS = [
-  { label: "Losing weight", subtitle: "Sustainable progress at a healthy pace" },
-  { label: "Eating enough protein", subtitle: "Staying nourished and strong" },
-  { label: "Protecting my muscle", subtitle: "Staying strong while losing weight" },
-  { label: "Staying hydrated", subtitle: "Building a consistent water habit" },
-  { label: "Managing side effects", subtitle: "Navigating nausea, fatigue, and more" },
-  { label: "Building better habits", subtitle: "Small daily wins that compound" },
-  { label: "Feeling less alone in this", subtitle: "Having someone in your corner" },
-  { label: "Hitting my fiber goals", subtitle: "Keeping digestion on track" },
-];
-
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const MEDICATIONS = ["Ozempic", "Wegovy", "Mounjaro", "Zepbound", "Compounded semaglutide", "Compounded tirzepatide", "Rybelsus", "Other"];
 const TIMEZONES = [
-  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
-  "America/Anchorage", "Pacific/Honolulu", "America/Phoenix",
-  "America/Toronto", "America/Vancouver", "America/Mexico_City",
-  "America/Sao_Paulo", "America/Argentina/Buenos_Aires",
-  "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome",
-  "Europe/Amsterdam", "Europe/Stockholm", "Europe/Athens", "Europe/Moscow",
-  "Asia/Dubai", "Asia/Kolkata", "Asia/Bangkok", "Asia/Singapore",
-  "Asia/Shanghai", "Asia/Tokyo", "Asia/Seoul",
-  "Australia/Sydney", "Australia/Melbourne", "Australia/Perth",
-  "Pacific/Auckland", "Africa/Johannesburg", "Africa/Cairo",
+  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Phoenix",
+  "America/Toronto", "America/Mexico_City", "America/Sao_Paulo",
+  "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome", "Europe/Amsterdam", "Europe/Athens",
+  "Asia/Jerusalem", "Asia/Dubai", "Asia/Kolkata", "Asia/Singapore", "Asia/Shanghai", "Asia/Tokyo",
+  "Australia/Sydney", "Pacific/Auckland", "Africa/Johannesburg",
 ];
-
-interface UserData {
-  id: string;
-  first_name: string;
-  phone: string;
-  email: string | null;
-  medication: string;
-  injection_day: string;
-  goals: string[] | null;
-  wake_time: string;
-  sleep_time: string;
-  food_dislikes: string | null;
-  current_weight: number | null;
-  goal_weight: number | null;
-  timezone: string;
-  is_pro: boolean;
-  is_paid: boolean;
-  checkin_frequency: string | null;
-  checkin_count_per_day: number | null;
-  checkin_days_interval: number | null;
-}
 
 const inputClass =
-  "h-16 w-full border-b-2 border-sand focus:border-primary outline-none bg-transparent text-lg text-foreground placeholder:text-muted-foreground/40 transition-colors rounded-none px-1";
+  "h-12 w-full border-b-2 border-sand focus:border-primary outline-none bg-transparent text-base text-foreground placeholder:text-muted-foreground/40 transition-colors rounded-none px-1";
+const labelClass = "block text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1";
+
+type Stage = "phone" | "code" | "profile";
+
+// Editable form mirror of the profile (strings for inputs).
+interface FormState {
+  first_name: string;
+  medication: string;
+  medication_frequency: string;
+  dose_mg: string;
+  injection_day: string;
+  timezone: string;
+  wake_time: string;
+  sleep_time: string;
+  current_weight: string;
+  goal_weight: string;
+  starting_weight: string;
+  height_cm: string;
+  age: string;
+  sex: string;
+  primary_goal: string;
+  activity_level: string;
+  protein_goal_grams: string;
+  calorie_goal_kcal: string;
+  dietary_pattern: string;
+  dietary_restriction: string;
+  food_dislikes: string;
+  goals: string;
+  checkin_count_per_day: string;
+  checkin_days_interval: string;
+  glp1_start_date: string;
+}
+
+function profileToForm(p: SettingsProfile): FormState {
+  const num = (n: number | null) => (n == null ? "" : String(n));
+  return {
+    first_name: p.first_name ?? "",
+    medication: p.medication ?? "",
+    medication_frequency: p.medication_frequency ?? "weekly",
+    dose_mg: num(p.dose_mg),
+    injection_day: p.injection_day ?? "",
+    timezone: p.timezone ?? "America/New_York",
+    wake_time: (p.wake_time ?? "07:00").slice(0, 5),
+    sleep_time: (p.sleep_time ?? "22:00").slice(0, 5),
+    current_weight: num(p.current_weight),
+    goal_weight: num(p.goal_weight),
+    starting_weight: num(p.starting_weight),
+    height_cm: num(p.height_cm),
+    age: num(p.age),
+    sex: p.sex ?? "",
+    primary_goal: p.primary_goal ?? "",
+    activity_level: p.activity_level ?? "",
+    protein_goal_grams: num(p.protein_goal_grams),
+    calorie_goal_kcal: num(p.calorie_goal_kcal),
+    dietary_pattern: p.dietary_pattern ?? "",
+    dietary_restriction: p.dietary_restriction ?? "",
+    food_dislikes: (p.food_dislikes ?? []).join(", "),
+    goals: (p.goals ?? []).join(", "),
+    checkin_count_per_day: num(p.checkin_count_per_day),
+    checkin_days_interval: num(p.checkin_days_interval),
+    glp1_start_date: p.glp1_start_date ? String(p.glp1_start_date).slice(0, 10) : "",
+  };
+}
+
+function formToUpdate(f: FormState): SettingsUpdate {
+  const numOrNull = (s: string) => (s.trim() === "" ? null : Number(s));
+  const strOrNull = (s: string) => (s.trim() === "" ? null : s.trim());
+  return {
+    first_name: f.first_name.trim() || undefined,
+    medication: f.medication.trim() || undefined,
+    medication_frequency: f.medication_frequency || undefined,
+    dose_mg: numOrNull(f.dose_mg),
+    injection_day: strOrNull(f.injection_day),
+    timezone: f.timezone || undefined,
+    wake_time: f.wake_time || undefined,
+    sleep_time: f.sleep_time || undefined,
+    current_weight: numOrNull(f.current_weight),
+    goal_weight: numOrNull(f.goal_weight),
+    starting_weight: numOrNull(f.starting_weight),
+    height_cm: numOrNull(f.height_cm),
+    age: numOrNull(f.age),
+    sex: (f.sex || null) as SettingsUpdate["sex"],
+    primary_goal: strOrNull(f.primary_goal),
+    activity_level: strOrNull(f.activity_level),
+    protein_goal_grams: numOrNull(f.protein_goal_grams),
+    calorie_goal_kcal: numOrNull(f.calorie_goal_kcal),
+    dietary_pattern: (f.dietary_pattern || null) as SettingsUpdate["dietary_pattern"],
+    dietary_restriction: strOrNull(f.dietary_restriction),
+    food_dislikes: f.food_dislikes ? f.food_dislikes.split(",").map((s) => s.trim()).filter(Boolean) : [],
+    goals: f.goals ? f.goals.split(",").map((s) => s.trim()).filter(Boolean) : [],
+    checkin_count_per_day: f.checkin_count_per_day ? Number(f.checkin_count_per_day) : undefined,
+    checkin_days_interval: f.checkin_days_interval ? Number(f.checkin_days_interval) : undefined,
+    glp1_start_date: strOrNull(f.glp1_start_date),
+  };
+}
 
 const Settings = () => {
-  const [verified, setVerified] = useState(false);
+  const [stage, setStage] = useState<Stage>("phone");
   const [phone, setPhone] = useState("");
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginMethod, setLoginMethod] = useState<"phone" | "email">("phone");
   const [code, setCode] = useState("");
-  const [sending, setSending] = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [codeSent, setCodeSent] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [profile, setProfile] = useState<SettingsProfile | null>(null);
+  const [form, setForm] = useState<FormState | null>(null);
+  const [bootLoading, setBootLoading] = useState(true);
 
-  const [userId, setUserId] = useState("");
-  const [name, setName] = useState("");
-  const [userPhone, setUserPhone] = useState("");
-  const [userEmail, setUserEmail] = useState("");
-  const [medication, setMedication] = useState("");
-  const [injectionDay, setInjectionDay] = useState("");
-  const [goals, setGoals] = useState<string[]>([]);
-  const [wakeTime, setWakeTime] = useState("07:00");
-  const [sleepTime, setSleepTime] = useState("22:00");
-  const [foodDislikes, setFoodDislikes] = useState("");
-  const [currentWeight, setCurrentWeight] = useState("");
-  const [goalWeight, setGoalWeight] = useState("");
-  const [timezone, setTimezone] = useState("America/New_York");
-  const [saving, setSaving] = useState(false);
-  const [portalLoading, setPortalLoading] = useState(false);
-  const [originalPhone, setOriginalPhone] = useState("");
-  const [isPro, setIsPro] = useState(false);
-  const [upgrading, setUpgrading] = useState(false);
-  const [checkinFrequency, setCheckinFrequency] = useState("normal");
-  const [checkinCountPerDay, setCheckinCountPerDay] = useState(2);
-  const [checkinDaysInterval, setCheckinDaysInterval] = useState(1);
-
-  // Try loading user from stored session on mount
+  // Resume an existing verified session on load.
   useEffect(() => {
-    const storedId = localStorage.getItem("grace_user_id");
-    if (storedId) {
-      loadUserById(storedId);
-    } else {
-      setLoading(false);
-    }
+    (async () => {
+      if (getSettingsToken()) {
+        try {
+          const { profile: p } = await settingsApi.me();
+          setProfile(p);
+          setForm(profileToForm(p));
+          setStage("profile");
+        } catch {
+          clearSettingsToken();
+        }
+      }
+      setBootLoading(false);
+    })();
   }, []);
 
-  const loadUserById = async (id: string) => {
+  const setField = useCallback((k: keyof FormState, v: string) => {
+    setForm((f) => (f ? { ...f, [k]: v } : f));
+  }, []);
+
+  const sendCode = async () => {
+    if (phone.replace(/\D/g, "").length < 8) { toast.error("Enter a valid phone number"); return; }
+    setBusy(true);
     try {
-      const { data, error } = await supabase.functions.invoke("get-user", {
-        body: { userId: id },
-      });
-      if (error || !data?.user) {
-        localStorage.removeItem("grace_user_id");
-        setLoading(false);
-        return;
-      }
-      populateUser(data.user as UserData);
-      setVerified(true);
-    } catch {
-      localStorage.removeItem("grace_user_id");
+      await settingsApi.requestCode(phone);
+      setStage("code");
+      toast.success("We sent you a 6-digit code");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't send the code");
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
-  const populateUser = (user: UserData) => {
-    setUserId(user.id);
-    setName(user.first_name);
-    setUserPhone(user.phone || "");
-    setOriginalPhone(user.phone || "");
-    setUserEmail(user.email || "");
-    setMedication(user.medication || "");
-    setInjectionDay(user.injection_day);
-    setGoals(user.goals || []);
-    setWakeTime(user.wake_time?.slice(0, 5) || "07:00");
-    setSleepTime(user.sleep_time?.slice(0, 5) || "22:00");
-    setFoodDislikes(user.food_dislikes || "");
-    setCurrentWeight(user.current_weight?.toString() || "");
-    setGoalWeight(user.goal_weight?.toString() || "");
-    setTimezone(user.timezone || "America/New_York");
-    setIsPro(user.is_pro || false);
-    setCheckinFrequency(user.checkin_frequency || "normal");
-    setCheckinCountPerDay(user.checkin_count_per_day || 2);
-    setCheckinDaysInterval(user.checkin_days_interval || 1);
-  };
-
-  const handleSendCode = async () => {
-    if (loginMethod === "phone" && !phone.trim()) return;
-    if (loginMethod === "email" && !loginEmail.trim()) return;
-    setSending(true);
+  const verify = async () => {
+    if (!/^\d{6}$/.test(code.trim())) { toast.error("Enter the 6-digit code"); return; }
+    setBusy(true);
     try {
-      const body = loginMethod === "phone"
-        ? { phone: phone.trim() }
-        : { email: loginEmail.trim().toLowerCase() };
-      const { data, error } = await supabase.functions.invoke("send-verification-code", { body });
-      if (error || (data && data.error)) {
-        toast.error(data?.error || (loginMethod === "phone"
-          ? "Couldn't send code. Is this the right number?"
-          : "Couldn't send code. Is this the right email?"));
-        setSending(false);
-        return;
-      }
-      setCodeSent(true);
-      toast.success(loginMethod === "phone"
-        ? "Code sent! Check your messages 📱"
-        : "Code sent! Check your email 📧");
-    } catch {
-      toast.error("Something went wrong. Try again.");
+      const { token, profile: p } = await settingsApi.verifyCode(phone, code.trim());
+      setSettingsToken(token);
+      setProfile(p);
+      setForm(profileToForm(p));
+      setStage("profile");
+      toast.success("Verified");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "That code didn't work");
     } finally {
-      setSending(false);
+      setBusy(false);
     }
   };
 
-  const handleVerify = async () => {
-    if (code.length !== 6) return;
-    setVerifying(true);
+  const save = async () => {
+    if (!form) return;
+    setBusy(true);
     try {
-      const body = loginMethod === "phone"
-        ? { phone: phone.trim(), code }
-        : { email: loginEmail.trim().toLowerCase(), code };
-      const { data, error } = await supabase.functions.invoke("verify-code", { body });
-      if (error || (data && data.error)) {
-        toast.error(data?.error || "Invalid code. Try again.");
-        setVerifying(false);
-        return;
-      }
-      const user = data.user as UserData;
-      populateUser(user);
-      localStorage.setItem("grace_user_id", user.id);
-      setVerified(true);
-      toast.success(`Welcome back, ${user.first_name}!`);
-    } catch {
-      toast.error("Something went wrong. Try again.");
+      const { profile: p } = await settingsApi.update(formToUpdate(form));
+      setProfile(p);
+      setForm(profileToForm(p));
+      toast.success("Saved — Grace will use this right away");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't save");
     } finally {
-      setVerifying(false);
+      setBusy(false);
     }
   };
 
-  const handleGoalToggle = (goal: string) => {
-    setGoals((prev) =>
-      prev.includes(goal) ? prev.filter((g) => g !== goal) : [...prev, goal]
-    );
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("update-user", {
-        body: {
-          userId,
-          updates: {
-            first_name: name.trim(),
-            phone: userPhone.trim(),
-            email: userEmail.trim().toLowerCase() || null,
-            medication,
-            injection_day: injectionDay,
-            goals,
-            wake_time: wakeTime + ":00",
-            sleep_time: sleepTime + ":00",
-            food_dislikes: foodDislikes.trim() || null,
-            current_weight: currentWeight ? Number(currentWeight) : null,
-            goal_weight: goalWeight ? Number(goalWeight) : null,
-            timezone,
-            checkin_frequency: checkinFrequency,
-            checkin_count_per_day: checkinCountPerDay,
-            checkin_days_interval: checkinDaysInterval,
-          },
-        },
-      });
-      if (error || (data && data.error)) {
-        toast.error("Couldn't save. Try again.");
-        setSaving(false);
-        return;
-      }
-      const phoneChanged = userPhone.trim() !== originalPhone;
-      if (phoneChanged) {
-        setOriginalPhone(userPhone.trim());
-        toast.success("Phone number updated — it may take a couple of hours for texts to arrive at your new number.", { duration: 6000 });
-      } else {
-        toast.success("Saved! You're all set ✓");
-      }
-    } catch {
-      toast.error("Something went wrong. Try again.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleManageSubscription = async () => {
-    setPortalLoading(true);
-    try {
-      await openCustomerPortalWithRetry(userId, /* attempt */ 1);
-    } finally {
-      setPortalLoading(false);
-    }
-  };
-
-  // Same retry logic as Upgrade.tsx (kept here to avoid circular imports for
-  // a 30-line helper). See Upgrade.tsx for the rationale on the 30-60s
-  // Stripe-search indexing lag.
-  const openCustomerPortalWithRetry = async (uid: string, attempt: number): Promise<void> => {
-    try {
-      const { data, error } = await supabase.functions.invoke("customer-portal", {
-        body: { userId: uid },
-      });
-
-      if (!error && data?.url) {
-        // Same-tab navigation: window.open(..., "_blank") after `await` is
-        // silently blocked by Safari/iOS because the user gesture is lost
-        // once we await the Supabase call. Stripe Portal's return_url brings
-        // the user back to /settings when they finish, so same-tab is fine.
-        window.location.href = data.url;
-        return;
-      }
-
-      const code = (data as { code?: string } | null | undefined)?.code
-        || (error as { context?: { code?: string } } | null | undefined)?.context?.code;
-      const message = (data as { error?: string } | null | undefined)?.error
-        || error?.message
-        || "Couldn't open subscription manager. Try again.";
-
-      if (code === "no_stripe_customer" && attempt < 2) {
-        toast.info("Just a moment — finalizing your subscription…");
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        await openCustomerPortalWithRetry(uid, attempt + 1);
-        return;
-      }
-
-      if (code === "portal_not_configured") {
-        toast.error("Subscription manager isn't configured yet. Please contact support.");
-        return;
-      }
-
-      toast.error(message);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Something went wrong. Try again.");
-    }
-  };
-
-  const handleUpgradeToPro = async () => {
-    setUpgrading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("upgrade-to-pro", {
-        body: { userId },
-      });
-      if (error || (!data?.success && !data?.alreadyPro)) {
-        toast.error("Couldn't upgrade. Please try again.");
-        return;
-      }
-      if (data?.alreadyPro) {
-        toast.info("You're already on the Pro plan!");
-      } else {
-        toast.success("You've been upgraded to Grace Pro! 🎉");
-      }
-      setIsPro(true);
-    } catch {
-      toast.error("Something went wrong. Try again.");
-    } finally {
-      setUpgrading(false);
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem("grace_user_id");
-    setVerified(false);
-    setCodeSent(false);
-    setCode("");
+  const logout = () => {
+    clearSettingsToken();
+    setProfile(null);
+    setForm(null);
     setPhone("");
-    setLoginEmail("");
-    setLoginMethod("phone");
+    setCode("");
+    setStage("phone");
   };
-
-  if (loading) {
-    return (
-      <>
-        <SEOHead title="Settings" description="Manage your grace profile, schedule, and preferences." canonical="/settings" noindex />
-        <div className="min-h-dvh bg-background flex items-center justify-center">
-          <div className="text-muted-foreground">Loading...</div>
-        </div>
-      </>
-    );
-  }
 
   return (
-    <>
-      <SEOHead
-        title="Settings"
-        description="Manage your grace profile, schedule, and preferences. Update your medication, goals, and notification times."
-        canonical="/settings"
-        noindex
-        jsonLd={breadcrumbSchema([
-          { name: "Home", path: "/" },
-          { name: "Settings", path: "/settings" },
-        ])}
-      />
-      <div className="min-h-dvh bg-background flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md min-h-[85dvh] bg-card rounded-[2.5rem] shadow-[0_24px_64px_-12px_rgba(59,31,30,0.1)] ring-1 ring-border/40 flex flex-col overflow-hidden relative">
-        {/* Progress bar */}
-        <div className="w-full h-1.5 bg-sand/50">
-          <motion.div
-            className="h-full bg-peach"
-            initial={{ width: 0 }}
-            animate={{ width: verified ? "100%" : codeSent ? "50%" : "10%" }}
-            transition={{ duration: 0.6, ease: "easeOut" }}
-          />
-        </div>
+    <div className="min-h-screen bg-background">
+      <SEOHead title="Settings" description="Manage your Grace profile and preferences." noindex jsonLd={breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Settings", path: "/settings" }])} />
+      <div className="max-w-2xl mx-auto px-5 py-10">
+        <h1 className="font-serif text-3xl text-foreground mb-1">Your settings</h1>
+        <p className="text-muted-foreground mb-8">Update your profile and preferences. Grace uses these right away.</p>
 
-        {/* Header */}
-        <div className="px-8 pt-6 pb-2 flex items-center justify-between">
-          {verified ? (
-            <button
-              onClick={handleLogout}
-              className="text-muted-foreground hover:text-foreground transition-colors text-xs font-semibold tracking-widest uppercase"
-            >
-              ← Log out
-            </button>
-          ) : (
-            <div />
-          )}
-          <span className="text-xs font-semibold tracking-widest text-muted-foreground/60 uppercase">
-            Settings
-          </span>
-        </div>
+        {bootLoading ? (
+          <p className="text-muted-foreground">Loading…</p>
+        ) : (
+          <AnimatePresence mode="wait">
+            {stage === "phone" && (
+              <motion.div key="phone" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-5">
+                <p className="text-foreground">Enter your phone number and we'll text you a code to verify it's you.</p>
+                <PhoneInput value={phone} onChange={setPhone} />
+                <button onClick={sendCode} disabled={busy} className="h-12 px-6 rounded-full bg-primary text-white font-medium disabled:opacity-50">
+                  {busy ? "Sending…" : "Send code"}
+                </button>
+              </motion.div>
+            )}
 
-        <AnimatePresence mode="wait">
-          {!verified ? (
-            <motion.div
-              key="verify"
-              initial={{ opacity: 0, x: 30 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -30 }}
-              transition={{ duration: 0.3 }}
-              className="flex-1 flex flex-col px-8 pb-8"
-            >
-              <div className="flex-1 pt-8">
-                <span className="uppercase tracking-widest text-xs font-semibold text-muted-foreground/60 block mb-4">
-                  Verification
-                </span>
-                <h1 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-                  {!codeSent
-                    ? (loginMethod === "phone" ? "Verify your phone." : "Verify your email.")
-                    : "Enter your code."}
-                </h1>
-                <p className="text-muted-foreground text-base leading-relaxed mb-10">
-                  {!codeSent
-                    ? (loginMethod === "phone"
-                        ? "We'll send a code to the number you signed up with."
-                        : "We'll send a code to the email you used at checkout.")
-                    : (loginMethod === "phone"
-                        ? "Check your texts — we just sent you a 6-digit code."
-                        : "Check your email — we just sent you a 6-digit code.")}
-                </p>
-
-                {!codeSent ? (
-                  <div className="w-full space-y-4">
-                    {loginMethod === "phone" ? (
-                      <PhoneInput value={phone} onChange={setPhone} />
-                    ) : (
-                      <input
-                        type="email"
-                        placeholder="you@example.com"
-                        value={loginEmail}
-                        onChange={(e) => setLoginEmail(e.target.value)}
-                        className={inputClass}
-                      />
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLoginMethod(loginMethod === "phone" ? "email" : "phone");
-                        setCodeSent(false);
-                        setCode("");
-                      }}
-                      className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-4 transition-colors"
-                    >
-                      {loginMethod === "phone" ? "Log in with email instead" : "Log in with phone instead"}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="w-full">
-                    <input
-                      type="text"
-                      maxLength={6}
-                      placeholder="000000"
-                      value={code}
-                      onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                      className="w-full h-16 border-b-2 border-sand focus:border-primary outline-none bg-transparent font-serif text-3xl text-foreground tracking-[0.3em] text-center placeholder:text-muted-foreground/30 transition-colors rounded-none"
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-auto pt-6">
-                {!codeSent ? (
-                  <QuizButton onClick={handleSendCode} disabled={sending}>
-                    {sending ? "Sending..." : "Send verification code"}
-                  </QuizButton>
-                ) : (
-                  <QuizButton onClick={handleVerify} disabled={code.length !== 6 || verifying}>
-                    {verifying ? "Verifying..." : "Verify"}
-                  </QuizButton>
-                )}
-              </div>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="settings"
-              initial={{ opacity: 0, x: 30 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -30 }}
-              transition={{ duration: 0.3 }}
-              className="flex-1 flex flex-col px-8 pb-8 overflow-y-auto"
-            >
-              <div className="flex-1 pt-4">
-                <span className="uppercase tracking-widest text-xs font-semibold text-muted-foreground/60 block mb-4">
-                  Your profile
-                </span>
-                <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-3">
-                  Your settings
-                </h2>
-                <p className="text-muted-foreground text-base leading-relaxed mb-8">
-                  Update anything you need, {name}.
-                </p>
-
-                <div className="space-y-8">
-                  {/* Name */}
-                  <label className="flex flex-col gap-2">
-                    <span className="text-foreground font-medium text-sm px-1">First name</span>
-                    <input
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className={inputClass}
-                    />
-                  </label>
-
-                  {/* Phone */}
-                  <label className="flex flex-col gap-2">
-                    <span className="text-foreground font-medium text-sm px-1">Phone number</span>
-                    <PhoneInput value={userPhone} onChange={setUserPhone} />
-                    <span className="text-xs text-muted-foreground px-1">
-                      We'll text you at this number
-                    </span>
-                  </label>
-
-                  {/* Email */}
-                  <label className="flex flex-col gap-2">
-                    <span className="text-foreground font-medium text-sm px-1">Email</span>
-                    <input
-                      type="email"
-                      placeholder="you@example.com"
-                      value={userEmail}
-                      onChange={(e) => setUserEmail(e.target.value)}
-                      className={inputClass}
-                    />
-                    <span className="text-xs text-muted-foreground px-1">
-                      For login only — doesn't change your Stripe billing email
-                    </span>
-                  </label>
-
-                  {/* Medication */}
-                  <div className="space-y-3">
-                    <span className="text-foreground font-medium text-sm px-1">Medication</span>
-                    <div className="flex flex-col gap-2">
-                      {MEDICATIONS.map((med, i) => (
-                        <QuizTile
-                          key={med}
-                          label={med}
-                          selected={medication === med}
-                          onClick={() => setMedication(med)}
-                          index={i}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Injection day */}
-                  <div className="space-y-3">
-                    <span className="text-foreground font-medium text-sm px-1">Injection day</span>
-                    <div className="flex flex-col gap-2">
-                      {DAYS.map((day, i) => (
-                        <QuizTile
-                          key={day.short}
-                          label={day.label}
-                          selected={injectionDay === day.short}
-                          onClick={() => setInjectionDay(day.short)}
-                          index={i}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Goals */}
-                  <div className="space-y-3">
-                    <span className="text-foreground font-medium text-sm px-1">Your goals</span>
-                    <div className="flex flex-col gap-2">
-                      {GOALS.map((goal, i) => (
-                        <QuizTile
-                          key={goal.label}
-                          label={goal.label}
-                          subtitle={goal.subtitle}
-                          selected={goals.includes(goal.label)}
-                          onClick={() => handleGoalToggle(goal.label)}
-                          index={i}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Schedule */}
-                  <div className="grid grid-cols-2 gap-6">
-                    <label className="flex flex-col gap-2">
-                      <span className="text-foreground font-medium text-sm px-1">Wake time</span>
-                      <input
-                        type="time"
-                        value={wakeTime}
-                        onChange={(e) => setWakeTime(e.target.value)}
-                        className={inputClass}
-                      />
-                    </label>
-                    <label className="flex flex-col gap-2">
-                      <span className="text-foreground font-medium text-sm px-1">Bed time</span>
-                      <input
-                        type="time"
-                        value={sleepTime}
-                        onChange={(e) => setSleepTime(e.target.value)}
-                        className={inputClass}
-                      />
-                    </label>
-                  </div>
-
-                  {/* Check-in frequency */}
-                  <div className="space-y-3">
-                    <span className="text-foreground font-medium text-sm px-1">How often should Grace check in?</span>
-                    <div className="flex flex-col gap-2">
-                      {[
-                        { label: "Twice a day", count: 2, interval: 1, freq: "normal" },
-                        { label: "Once a day", count: 1, interval: 1, freq: "less" },
-                        { label: "Every other day", count: 1, interval: 2, freq: "less" },
-                      ].map((option, i) => (
-                        <QuizTile
-                          key={option.label}
-                          label={option.label}
-                          selected={checkinCountPerDay === option.count && checkinDaysInterval === option.interval}
-                          onClick={() => {
-                            setCheckinFrequency(option.freq);
-                            setCheckinCountPerDay(option.count);
-                            setCheckinDaysInterval(option.interval);
-                          }}
-                          index={i}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-xs text-muted-foreground px-1">
-                      You can also just tell Grace directly — she'll update this for you.
-                    </span>
-                  </div>
-
-                  {/* Timezone */}
-                  <label className="flex flex-col gap-2">
-                    <span className="text-foreground font-medium text-sm px-1">Timezone</span>
-                    <select
-                      value={timezone}
-                      onChange={(e) => setTimezone(e.target.value)}
-                      className={inputClass + " cursor-pointer"}
-                    >
-                      {TIMEZONES.map((tz) => (
-                        <option key={tz} value={tz}>
-                          {tz.replace(/_/g, " ")}
-                        </option>
-                      ))}
-                      {!TIMEZONES.includes(timezone) && (
-                        <option value={timezone}>{timezone}</option>
-                      )}
-                    </select>
-                  </label>
-
-                  {/* Food dislikes */}
-                  <label className="flex flex-col gap-2">
-                    <span className="text-foreground font-medium text-sm px-1">Foods you won't eat</span>
-                    <input
-                      type="text"
-                      placeholder="e.g. I'm vegetarian, I hate fish"
-                      value={foodDislikes}
-                      onChange={(e) => setFoodDislikes(e.target.value)}
-                      className={inputClass}
-                    />
-                    <span className="text-xs text-muted-foreground px-1">Optional</span>
-                  </label>
-
-                  {/* Weights */}
-                  <div className="grid grid-cols-2 gap-6">
-                    <label className="flex flex-col gap-2">
-                      <span className="text-foreground font-medium text-sm px-1">Current weight (lbs)</span>
-                      <input
-                        type="number"
-                        placeholder="Optional"
-                        value={currentWeight}
-                        onChange={(e) => setCurrentWeight(e.target.value)}
-                        className={inputClass}
-                      />
-                    </label>
-                    <label className="flex flex-col gap-2">
-                      <span className="text-foreground font-medium text-sm px-1">Goal weight (lbs)</span>
-                      <input
-                        type="number"
-                        placeholder="Optional"
-                        value={goalWeight}
-                        onChange={(e) => setGoalWeight(e.target.value)}
-                        className={inputClass}
-                      />
-                    </label>
-                  </div>
-
-                  {/* Subscription */}
-                  <div className="space-y-3 pt-2">
-                    <span className="text-foreground font-medium text-sm px-1">Your plan</span>
-                    <div className="w-full bg-secondary/50 rounded-2xl p-5 ring-1 ring-border/40">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-foreground font-serif text-xl">{isPro ? "Grace Pro" : "Grace Base"}</span>
-                        <span className="text-foreground font-medium">{isPro ? "$24/mo" : "$12/mo"}</span>
-                      </div>
-                      <p className="text-muted-foreground text-xs mb-3">
-                        {isPro
-                          ? "Unlimited daily SMS check-ins"
-                          : "Up to 10 SMS messages per day (inbound + outbound)"}
-                      </p>
-                      {!isPro && (
-                        <button
-                          onClick={handleUpgradeToPro}
-                          disabled={upgrading}
-                          className="w-full h-12 rounded-full bg-peach hover:brightness-95 text-white font-medium text-sm transition-all mb-3 disabled:opacity-50"
-                        >
-                          {upgrading ? "Upgrading..." : "Upgrade to Pro — $24/mo"}
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-muted-foreground text-xs px-1">
-                      Manage your billing, update payment method, or cancel your plan.
-                    </p>
-                    <button
-                      onClick={handleManageSubscription}
-                      disabled={portalLoading}
-                      className="w-full h-14 rounded-full ring-1 ring-border/60 bg-secondary/50 hover:bg-secondary text-foreground font-medium text-sm transition-colors disabled:opacity-50"
-                    >
-                      {portalLoading ? "Opening..." : "Manage subscription →"}
-                    </button>
-                  </div>
+            {stage === "code" && (
+              <motion.div key="code" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-5">
+                <p className="text-foreground">Enter the 6-digit code we sent to <span className="font-medium">{phone}</span>.</p>
+                <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" placeholder="123456" className={`${inputClass} tracking-[0.5em] text-2xl`} />
+                <div className="flex items-center gap-4">
+                  <button onClick={verify} disabled={busy} className="h-12 px-6 rounded-full bg-primary text-white font-medium disabled:opacity-50">
+                    {busy ? "Verifying…" : "Verify"}
+                  </button>
+                  <button onClick={sendCode} disabled={busy} className="text-sm text-muted-foreground underline">Resend code</button>
+                  <button onClick={() => setStage("phone")} className="text-sm text-muted-foreground underline">Change number</button>
                 </div>
-              </div>
+              </motion.div>
+            )}
 
-              <div className="mt-auto pt-6 sticky bottom-0 bg-gradient-to-t from-card via-card to-transparent">
-                <QuizButton onClick={handleSave} disabled={saving}>
-                  {saving ? "Saving..." : "Save changes"}
-                </QuizButton>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+            {stage === "profile" && form && profile && (
+              <motion.div key="profile" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="space-y-8">
+                <div className="flex items-center justify-between rounded-xl bg-sand/30 px-4 py-3">
+                  <div className="text-sm">
+                    <span className="font-mono">{profile.phone}</span>
+                    <span className="ml-2 text-muted-foreground">
+                      {profile.is_pro ? "Pro" : profile.is_paid ? "Paid" : profile.trial_start ? "Trial" : "Free"}
+                    </span>
+                  </div>
+                  <button onClick={logout} className="text-sm text-muted-foreground underline">Sign out</button>
+                </div>
+
+                <Section title="About you">
+                  <Field label="First name"><input className={inputClass} value={form.first_name} onChange={(e) => setField("first_name", e.target.value)} /></Field>
+                  <Field label="Age"><input type="number" className={inputClass} value={form.age} onChange={(e) => setField("age", e.target.value)} /></Field>
+                  <SelectField label="Sex" value={form.sex} onChange={(v) => setField("sex", v)} options={[["", "—"], ["female", "Female"], ["male", "Male"], ["other", "Other"]]} />
+                  <Field label="Height (cm)"><input type="number" className={inputClass} value={form.height_cm} onChange={(e) => setField("height_cm", e.target.value)} /></Field>
+                  <SelectField label="Timezone" value={form.timezone} onChange={(v) => setField("timezone", v)} options={TIMEZONES.map((t) => [t, t])} />
+                </Section>
+
+                <Section title="Medication">
+                  <SelectField label="Medication" value={form.medication} onChange={(v) => setField("medication", v)} options={[["", "—"], ...MEDICATIONS.map((m) => [m, m] as [string, string])]} />
+                  <SelectField label="Frequency" value={form.medication_frequency} onChange={(v) => setField("medication_frequency", v)} options={[["weekly", "Weekly"], ["biweekly", "Every 2 weeks"], ["daily", "Daily"]]} />
+                  <Field label="Dose (mg)"><input type="number" step="0.05" className={inputClass} value={form.dose_mg} onChange={(e) => setField("dose_mg", e.target.value)} /></Field>
+                  <SelectField label="Injection day" value={form.injection_day} onChange={(v) => setField("injection_day", v)} options={[["", "—"], ...DAYS.map((d) => [d, d] as [string, string])]} />
+                  <Field label="GLP-1 start date"><input type="date" className={inputClass} value={form.glp1_start_date} onChange={(e) => setField("glp1_start_date", e.target.value)} /></Field>
+                </Section>
+
+                <Section title="Body & goals">
+                  <Field label="Starting weight (lbs)"><input type="number" className={inputClass} value={form.starting_weight} onChange={(e) => setField("starting_weight", e.target.value)} /></Field>
+                  <Field label="Current weight (lbs)"><input type="number" className={inputClass} value={form.current_weight} onChange={(e) => setField("current_weight", e.target.value)} /></Field>
+                  <Field label="Goal weight (lbs)"><input type="number" className={inputClass} value={form.goal_weight} onChange={(e) => setField("goal_weight", e.target.value)} /></Field>
+                  <SelectField label="Primary goal" value={form.primary_goal} onChange={(v) => setField("primary_goal", v)} options={[["", "—"], ["fat_loss", "Fat loss"], ["muscle_gain", "Muscle gain"], ["maintenance", "Maintenance"], ["recomposition", "Recomposition"]]} />
+                  <SelectField label="Activity level" value={form.activity_level} onChange={(v) => setField("activity_level", v)} options={[["", "—"], ["sedentary", "Sedentary"], ["light", "Light"], ["moderate", "Moderate"], ["active", "Active"], ["very_active", "Very active"]]} />
+                  <Field label="Protein goal (g/day)"><input type="number" className={inputClass} value={form.protein_goal_grams} onChange={(e) => setField("protein_goal_grams", e.target.value)} /></Field>
+                  <Field label="Calorie goal (kcal/day)"><input type="number" className={inputClass} value={form.calorie_goal_kcal} onChange={(e) => setField("calorie_goal_kcal", e.target.value)} /></Field>
+                </Section>
+
+                <Section title="Diet">
+                  <SelectField label="Diet" value={form.dietary_pattern} onChange={(v) => setField("dietary_pattern", v)} options={[["", "No restriction"], ["vegan", "Vegan"], ["vegetarian", "Vegetarian"], ["pescatarian", "Pescatarian"]]} />
+                  <Field label="Other diet (kosher, halal, gluten-free…)"><input className={inputClass} value={form.dietary_restriction} onChange={(e) => setField("dietary_restriction", e.target.value)} /></Field>
+                  <Field label="Foods to avoid (comma-separated)" full><input className={inputClass} value={form.food_dislikes} onChange={(e) => setField("food_dislikes", e.target.value)} placeholder="broccoli, mushrooms" /></Field>
+                  <Field label="Goals (comma-separated)" full><input className={inputClass} value={form.goals} onChange={(e) => setField("goals", e.target.value)} placeholder="Losing weight, Eating enough protein" /></Field>
+                </Section>
+
+                <Section title="Check-ins & reminders">
+                  <Field label="Wake time"><input type="time" className={inputClass} value={form.wake_time} onChange={(e) => setField("wake_time", e.target.value)} /></Field>
+                  <Field label="Sleep time"><input type="time" className={inputClass} value={form.sleep_time} onChange={(e) => setField("sleep_time", e.target.value)} /></Field>
+                  <Field label="Check-ins per day (1–3)"><input type="number" min={1} max={3} className={inputClass} value={form.checkin_count_per_day} onChange={(e) => setField("checkin_count_per_day", e.target.value)} /></Field>
+                  <Field label="Every N days (1–14)"><input type="number" min={1} max={14} className={inputClass} value={form.checkin_days_interval} onChange={(e) => setField("checkin_days_interval", e.target.value)} /></Field>
+                </Section>
+
+                <div className="sticky bottom-0 bg-background py-4 border-t border-sand">
+                  <button onClick={save} disabled={busy} className="h-12 w-full rounded-full bg-primary text-white font-medium disabled:opacity-50">
+                    {busy ? "Saving…" : "Save changes"}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )}
       </div>
       <LegalFooter />
-    </>
+    </div>
   );
 };
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h2 className="font-serif text-xl text-foreground mb-4">{title}</h2>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">{children}</div>
+    </section>
+  );
+}
+
+function Field({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
+  return (
+    <div className={full ? "sm:col-span-2" : ""}>
+      <label className={labelClass}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function SelectField({ label, value, onChange, options, full }: { label: string; value: string; onChange: (v: string) => void; options: [string, string][]; full?: boolean }) {
+  return (
+    <div className={full ? "sm:col-span-2" : ""}>
+      <label className={labelClass}>{label}</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={`${inputClass} appearance-none cursor-pointer`}>
+        {options.map(([v, l]) => (
+          <option key={v} value={v}>{l}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 export default Settings;

@@ -111,27 +111,39 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     // Upsert user then apply full profile.
     await users.ensureUser(phone);
 
-    // Core profile fields — only columns from the original v2 schema (20260507000003).
-    // This block must succeed for onboarding. Newer columns go in try/catch blocks below.
-    await users.update(phone, {
-      ...(b.firstName ? { first_name: b.firstName } : {}),
-      medication: b.medication,
-      medication_frequency: b.medicationFrequency,
-      injection_day: b.injectionDay ?? undefined,
-      wake_time: b.wakeTime,
-      sleep_time: b.sleepTime,
-      food_dislikes: foodDislikesArr,
-      current_weight: b.currentWeight ?? undefined,
-      goal_weight: b.goalWeight ?? undefined,
-      starting_weight: b.startingWeight ?? undefined,
-      height_cm: b.heightCm ?? undefined,
-      goals: b.goals,
-      timezone: b.timezone,
-      checkin_count_per_day: b.checkinCountPerDay,
-      checkin_days_interval: b.checkinDaysInterval,
-      active: true,
-      trial_start: new Date(),
-    });
+    // REGISTER FIRST, with base-schema columns only (active + trial_start always
+    // exist). This guarantees the user is registered even if a later profile
+    // write fails on a missing-migration column — otherwise a single failed
+    // UPDATE rolls back trial_start and the webhook registration gate locks the
+    // user out after they completed signup (production bug 2026-06-13).
+    await users.update(phone, { active: true, trial_start: new Date() });
+
+    // Full profile. Best-effort: a missing newer column here must NOT block
+    // onboarding or un-register the user (trial_start is already set above).
+    try {
+      await users.update(phone, {
+        ...(b.firstName ? { first_name: b.firstName } : {}),
+        medication: b.medication,
+        medication_frequency: b.medicationFrequency,
+        injection_day: b.injectionDay ?? undefined,
+        wake_time: b.wakeTime,
+        sleep_time: b.sleepTime,
+        food_dislikes: foodDislikesArr,
+        current_weight: b.currentWeight ?? undefined,
+        goal_weight: b.goalWeight ?? undefined,
+        starting_weight: b.startingWeight ?? undefined,
+        height_cm: b.heightCm ?? undefined,
+        goals: b.goals,
+        timezone: b.timezone,
+        checkin_count_per_day: b.checkinCountPerDay,
+        checkin_days_interval: b.checkinDaysInterval,
+      });
+    } catch (err) {
+      req.log.warn(
+        { err: err instanceof Error ? err.message : String(err), phone },
+        'onboard.core_profile.partial (user is registered; some profile columns may be missing migrations)',
+      );
+    }
 
     // medication_time + sms_consent — migration 20260525000002. Degrades silently.
     try {

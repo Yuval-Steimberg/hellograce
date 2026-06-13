@@ -222,10 +222,18 @@ describe('buildSignupUrl', () => {
 describe('registration gate (deleted / never-onboarded users)', () => {
   const base = { is_paid: false, is_pro: false, trial_start: null as Date | null };
 
-  it('a recreated/deleted user (no trial_start, not paid) needs registration', () => {
+  it('a recreated/deleted user (no trial_start, not paid, no profile) needs registration', () => {
     expect(needsRegistration(base)).toBe(true);
     // and is therefore NOT granted access (previously this returned true → the bug)
     expect(isAccessAllowed(base)).toBe(false);
+  });
+
+  it('an onboarded user with profile data but NO trial_start is NOT locked out', () => {
+    // Production 2026-06-13: completed signup but trial_start did not land.
+    expect(needsRegistration({ ...base, medication: 'Ozempic' })).toBe(false);
+    expect(needsRegistration({ ...base, goals: ['lose weight'] })).toBe(false);
+    // A bare row (no medication, empty goals) still needs registration.
+    expect(needsRegistration({ ...base, medication: null, goals: [] })).toBe(true);
   });
 
   it('an onboarded user inside their trial does NOT need registration and has access', () => {

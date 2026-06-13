@@ -837,6 +837,39 @@ logs are untouched.
 
 ---
 
+### Onboarded users locked out by the registration gate (2026-06-13)
+
+Production: user completed web signup, got NO welcome, and still got the
+"sign up here" prompt on every message. The registration gate (`needsRegistration`,
+added earlier today) blocks any user with `!is_paid && !is_pro && !trial_start`.
+The lockout means `trial_start` never landed for the webhook's phone.
+
+Root cause (defensive fixes for both):
+1. **Onboarding could roll back `trial_start`.** `POST /users/onboard` set the
+   whole core profile — including newer columns like `starting_weight` — in ONE
+   un-try/caught `users.update`. A single missing-migration column threw, rolling
+   back the entire UPDATE (incl. `trial_start`), so the user was never registered.
+   Fix: register FIRST with base-schema columns only (`await users.update(phone,
+   { active: true, trial_start: new Date() })`) immediately after `ensureUser`,
+   THEN best-effort the full profile inside try/catch. A missing column can no
+   longer un-register anyone.
+2. **The gate was too strict.** `needsRegistration` now also returns false when
+   the user has onboarding profile data (`medication` set OR `goals` non-empty),
+   so a user who onboarded but whose `trial_start` didn't land (legacy path /
+   partial write) is treated as registered instead of locked out. A bare
+   deleted/never-onboarded row (no medication, no goals) still gets the sign-up
+   prompt. The paywall branch now only fires when `user.trial_start` is set (a
+   trial actually started + expired) — a registered-but-null-trial user is no
+   longer dumped into the paywall.
+
+Immediate manual unblock (no deploy): admin dashboard → open the user → toggle
+Paid, or "Reset trial" (sets trial_start) → access restored under current code.
+Note: the missing welcome is partly Twilio-sandbox mechanics — outbound fails
+until the user has sent `join <code>` and is inside the 24h session window.
+Tests: +1 webhook gate case (onboarded-no-trial not locked out). 755 api green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

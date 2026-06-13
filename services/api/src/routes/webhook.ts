@@ -429,9 +429,11 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             return;
           }
 
-          // Subscription gate — users with an expired trial and no active subscription
-          // get a soft paywall nudge instead of the AI response.
-          if (user && !isAccessAllowed(user)) {
+          // Subscription gate — only fires once a trial has actually STARTED
+          // and then expired (and the user isn't paid). A registered user
+          // whose trial_start never landed (handled above by needsRegistration's
+          // onboarding-data escape hatch) must NOT be dumped into the paywall.
+          if (user && user.trial_start && !isAccessAllowed(user)) {
             const upgradeUrl = buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL);
             const body = deps.templates
               ? await deps.templates.render(
@@ -565,8 +567,20 @@ export function isAccessAllowed(user: { is_paid: boolean; is_pro: boolean; trial
  * with a null trial that never expires). Production bug surfaced 2026-06-13:
  * an admin-deleted user kept chatting normally and reappeared as Active.
  */
-export function needsRegistration(user: { is_paid: boolean; is_pro: boolean; trial_start: Date | null }): boolean {
-  return !user.is_paid && !user.is_pro && !user.trial_start;
+export function needsRegistration(user: {
+  is_paid: boolean; is_pro: boolean; trial_start: Date | null;
+  medication?: string | null; goals?: string[] | null;
+}): boolean {
+  if (user.is_paid || user.is_pro || user.trial_start) return false;
+  // Onboarding writes medication + goals; a deleted/never-onboarded row
+  // recreated bare by ensureUser has neither. If the user has onboarding
+  // profile data but trial_start somehow didn't land (partial onboarding, a
+  // legacy onboarding path, or a write that rolled back on a missing-migration
+  // column), treat them as registered instead of locking them out behind the
+  // sign-up prompt. Production 2026-06-13: an onboarded user kept getting the
+  // sign-up prompt because their trial_start wasn't set.
+  const hasOnboardingData = !!user.medication || (Array.isArray(user.goals) && user.goals.length > 0);
+  return !hasOnboardingData;
 }
 
 // ─── Natural-language opt-out ────────────────────────────────────────────────

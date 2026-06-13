@@ -50,7 +50,7 @@ const BRAND_NAMES = [
 const VAGUE_CATEGORIES = [
   // Generic foods
   'pizza', 'burger', 'sandwich', 'pasta', 'burrito', 'taco', 'sushi',
-  'wrap', 'soup', 'stir fry', 'stir-fry', 'curry', 'sub',
+  'wrap', 'soup', 'stir fry', 'stir-fry', 'curry', 'sub', 'salad',
   // Cuisine names
   'chinese food', 'thai food', 'mexican food', 'indian food',
   'italian food', 'japanese food', 'korean food', 'vietnamese food',

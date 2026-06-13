@@ -768,6 +768,34 @@ method) so the deleted user isn't served from the 60s in-memory cache. Tests:
 
 ---
 
+### Food-log fast-path bypassed the vague-food clarification gate (2026-06-13)
+
+Production screenshot: "I had pizza" → "Logged pizza (2 slices), roughly 22g
+protein. Running total: 22g." — an assumed portion the user never gave.
+
+Root cause: `tryFoodLogFastResponse` (`services/api/src/services/food-log-fast.ts`)
+runs EARLY in `handleMessage` (ai.service ~534), before the well-tested
+`detectVagueFood` gate (ai.service ~1966). The common-food macro table
+(`lookupCommonFoodMacros`) has bare-category defaults — `'pizza' → 'pizza
+(2 slices), 22g'` (log-food.ts:555) — so a bare vague food got fast-logged with
+a fabricated portion, skipping the clarification ask entirely. The vague-food
+system already existed and was correct; the fast path was the only bypass (other
+paths — degraded/force-log, FAQ cache — sit after the 1966 gate).
+
+Fix: `tryFoodLogFastResponse` now calls `detectVagueFood(trimmed)` and returns
+null when vague, deferring to the full pipeline (which returns the "what exactly
+did you have?" clarification). `detectVagueFood` returns vague=false the moment
+a quantity/specific item is present, so "2 slices of pizza" / "a chicken
+sandwich" still fast-log. Also added `'salad'` to `VAGUE_CATEGORIES`
+(`safety/vague-food.ts`) — bare "salad" spans a 2g side to a 40g chicken-caesar;
+"chicken salad" / "large salad" stay specific via the qualified/sized regexes.
+Tests: +2 in `food-log-fast.test.ts`. 720 api tests green. NOTE: regression fix
+to the EXISTING gate, not a new ask-always policy — the team deliberately avoids
+over-asking, and multi-item meals still log deterministically (never-drop
+hardening) rather than asking per-item.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

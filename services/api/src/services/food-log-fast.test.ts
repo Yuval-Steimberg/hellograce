@@ -74,6 +74,30 @@ describe('tryFoodLogFastResponse', () => {
     expect(result).toBeNull();
   });
 
+  // Regression 2026-06-13: bare vague foods must NOT fast-log with an assumed
+  // portion ("I had pizza" → "Logged pizza (2 slices), 22g"). They defer to
+  // the pipeline's vague-food clarification gate.
+  it('returns null for a vague bare food ("I had pizza") so it routes to clarification', async () => {
+    const pool = makePool();
+    const result = await tryFoodLogFastResponse('I had pizza', {
+      pool, logger: stubLogger, userId: '+15551234567',
+      intentType: 'food_log', proteinGoalGrams: 60,
+    });
+    expect(result).toBeNull();
+    // and it never touched the DB (no fabricated log)
+    expect((pool.query as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it('still fast-logs when a portion IS given ("2 slices of pizza")', async () => {
+    const pool = makePool(22, 540);
+    const result = await tryFoodLogFastResponse('2 slices of pizza', {
+      pool, logger: stubLogger, userId: '+15551234567',
+      intentType: 'food_log', proteinGoalGrams: 60,
+    });
+    expect(result).not.toBeNull();
+    expect(result!.macros.protein_g).toBe(22);
+  });
+
   it('returns null on negation', async () => {
     const pool = makePool();
     const result1 = await tryFoodLogFastResponse("I didn't eat eggs today", {

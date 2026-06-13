@@ -24,6 +24,7 @@ import { createHash } from 'crypto';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { lookupCommonFoodMacros } from '../tools/log-food.js';
+import { detectVagueFood } from '../safety/vague-food.js';
 
 const TEMPLATES = [
   '{food} — about {protein}g protein. You\'re at {total}g/{goal}g today.',
@@ -76,6 +77,18 @@ export async function tryFoodLogFastResponse(
   if (/\b(didn'?t|did not|haven'?t|have not|won'?t|won not|never|skipped|skipping)\b/i.test(trimmed)) {
     return null;
   }
+
+  // Vague mentions ("pizza", "a burger", a brand with no portion) must NOT be
+  // fast-logged. The common-food table has bare-category defaults — e.g.
+  // "pizza" → "pizza (2 slices), 22g" — that would fabricate a portion here
+  // and bypass the clarification ask. detectVagueFood returns vague=false the
+  // moment the message carries a quantity or specific item ("2 slices of
+  // pizza", "a chicken sandwich"), so genuine logs still fast-path. When vague,
+  // we defer to the full pipeline, whose detectVagueFood gate returns the
+  // "what exactly did you have?" clarification.
+  // Production bug 2026-06-13: "I had pizza" → "Logged pizza (2 slices),
+  // roughly 22g protein" — an assumed portion the user never gave.
+  if (detectVagueFood(trimmed).vague) return null;
 
   const macros = lookupCommonFoodMacros(trimmed);
   if (!macros) return null;

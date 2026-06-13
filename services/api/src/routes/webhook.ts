@@ -12,7 +12,7 @@ import { classifyScope } from '../safety/scope-guard.js';
 import { classifyMessage as classifySafety, classifySymptomCategory } from '../safety/guard.js';
 import { recordSymptom, shouldEscalate, clearStack } from '../safety/symptom-stack.js';
 import { getCrisisResourcesForUser, buildSafetyResponse } from '../safety/crisis-resources.js';
-import { tryHandleSettings } from '../services/settings-flow.js';
+import { tryHandleSettings, isBareSettingsFieldReply, tryHandleSettingsFollowUp } from '../services/settings-flow.js';
 
 const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 
@@ -238,6 +238,23 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
                   body: settingsReply,
                 });
                 return;
+              }
+              // Cross-turn: a bare settings-field reply ("protein goal") to a
+              // prior settings clarification inherits the modify intent and
+              // redirects. Cheap regex gate first, so we only fetch the prior
+              // Grace message for the rare bare-field follow-up.
+              if (isBareSettingsFieldReply(normalized.text)) {
+                const recent = (await deps.ai.getRecentTurnsForUser?.(normalized.userId, 3).catch(() => [])) ?? [];
+                const lastAssistant = [...recent].reverse().find((t: { role: string }) => t.role === 'assistant');
+                const lastContent =
+                  lastAssistant && typeof (lastAssistant as { content?: unknown }).content === 'string'
+                    ? (lastAssistant as { content: string }).content
+                    : '';
+                const followUp = tryHandleSettingsFollowUp(normalized.text, lastContent);
+                if (followUp) {
+                  await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: followUp });
+                  return;
+                }
               }
             } catch (err) {
               app.log.warn(

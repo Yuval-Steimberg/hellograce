@@ -58,6 +58,37 @@ const MODIFY_VERB_RE =
 const SETTINGS_FIELD_RE =
   /(protein\s*(?:goal|target)|calorie\s*(?:goal|target)|macro\s*(?:goal|target)s?|(?:goal|current|starting)\s*weight|weight\s*goal|\bheight\b|\bmy\s+age\b|\bmy\s+(?:sex|gender)\b|\bmy\s+name\b|time\s?zone|wake[\s-]*(?:time|up)|sleep[\s-]*(?:time|schedule)|\bmedication\b|\bmy\s+dose\b|\bdosage\b|primary\s+goal|\bmy\s+goals?\b|\bmy\s+diet(?:ary)?\b|food\s+(?:dislikes?|preferences?|restrictions?)|dietary\s+(?:preference|restriction)s?|\breminders?\b|check[\s-]?ins?|\bmy\s+profile\b|\bmy\s+settings?\b|\bpreferences?\b)/i;
 
+// Cross-turn (context inheritance) helpers. When Grace's previous message asked
+// the user WHICH setting they want to change, a bare field-noun reply ("protein
+// goal", "my weight") inherits that MODIFY intent and must redirect — not be
+// read back as the current value. Production failure 2026-06-13 (point #3/#4):
+// "How can I change my setting?" → "which setting?" → "protein goal" → read.
+
+/** A short reply that names a settings field but carries no modify verb and is
+ *  not a read question — i.e. it only makes sense as a follow-up. */
+export function isBareSettingsFieldReply(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0 || t.length > 50) return false;
+  if (/\b(what|whats|what'?s|how\s+much|how\s+many|when|is\s+my|do\s+i|tell\s+me)\b/i.test(t)) return false; // READ phrasing
+  if (MODIFY_VERB_RE.test(t)) return false; // already handled by the modify detector
+  return SETTINGS_FIELD_RE.test(t);
+}
+
+/** Did Grace's previous message ask which setting/field the user wants to change? */
+export function wasSettingsClarification(lastGraceMessage: string | undefined | null): boolean {
+  if (!lastGraceMessage) return false;
+  return /(which|what)\s+(setting|settings|field)\b|what (?:would|do) you (?:like|want) to (?:change|update|edit|adjust|modify)|depends (?:on )?(?:what|which) (?:setting|you)|like to change|update it (?:in|through|on) (?:the )?settings|settings page/i.test(lastGraceMessage);
+}
+
+/** Cross-turn follow-up: a bare settings-field reply to a prior settings
+ *  clarification → redirect (inherit the modify intent). Returns the redirect
+ *  message or null. */
+export function tryHandleSettingsFollowUp(text: string, lastGraceMessage: string | undefined | null): string | null {
+  if (!isBareSettingsFieldReply(text)) return null;
+  if (!wasSettingsClarification(lastGraceMessage)) return null;
+  return PROFILE_REDIRECT;
+}
+
 export interface SettingsHandlerDeps {
   logger: MinimalLogger;
 }

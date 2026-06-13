@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tryHandleSettings, __testing } from './settings-flow.js';
+import { tryHandleSettings, tryHandleSettingsFollowUp, isBareSettingsFieldReply, __testing } from './settings-flow.js';
 import type { GraceUser } from '../user/user.service.js';
 
 const noopLogger = {
@@ -240,6 +240,35 @@ describe('settings modification requests redirect to Settings (never read the va
   it('nutrition questions are NOT caught (bare "protein", no "goal/target")', async () => {
     expect(await tryHandleSettings('how do I increase my protein intake?', makeUser(), deps)).toBeNull();
     expect(await tryHandleSettings('should I eat more protein?', makeUser(), deps)).toBeNull();
+  });
+});
+
+// ─── Cross-turn: bare field reply after a settings clarification (2026-06-13) ──
+
+describe('tryHandleSettingsFollowUp — inherits modify intent across turns', () => {
+  const clar = 'It depends on what setting you’d like to change.';
+  it('"protein goal" after "which setting?" → redirect', () => {
+    expect(tryHandleSettingsFollowUp('protein goal', clar)).toMatch(/settings page/i);
+    expect(tryHandleSettingsFollowUp('my protein goal', clar)).toMatch(/settings page/i);
+    expect(tryHandleSettingsFollowUp('my goal weight', 'Which setting would you like to change?')).toMatch(/settings page/i);
+  });
+
+  it('does NOT fire without a prior settings clarification', () => {
+    expect(tryHandleSettingsFollowUp('protein goal', 'How are you feeling today?')).toBeNull();
+    expect(tryHandleSettingsFollowUp('protein goal', undefined)).toBeNull();
+  });
+
+  it('does NOT fire on a read question or a non-field reply', () => {
+    expect(tryHandleSettingsFollowUp("what's my protein goal", clar)).toBeNull();
+    expect(tryHandleSettingsFollowUp('chicken and rice', clar)).toBeNull();
+  });
+
+  it('isBareSettingsFieldReply gate', () => {
+    expect(isBareSettingsFieldReply('protein goal')).toBe(true);
+    expect(isBareSettingsFieldReply('my goal weight')).toBe(true);
+    expect(isBareSettingsFieldReply('what is my protein goal')).toBe(false); // read
+    expect(isBareSettingsFieldReply('change my protein goal')).toBe(false);  // has verb → main detector
+    expect(isBareSettingsFieldReply('I had eggs')).toBe(false);
   });
 });
 

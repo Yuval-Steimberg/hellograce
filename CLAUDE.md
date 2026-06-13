@@ -1149,6 +1149,18 @@ non-deterministic-flow failures in one deterministic gate. Applies to ALL
 settings/survey fields, not just protein. Tests: +12 in `settings-flow.test.ts`.
 792 api tests green.
 
+**Cross-turn follow-up (same day):** a bare settings-field reply ("protein
+goal", "my goal weight") to a PRIOR settings clarification now inherits the
+modify intent → redirect, instead of being read back. `settings-flow.ts` exports
+`isBareSettingsFieldReply` (cheap regex: names a field, no modify verb, not a
+read question) + `wasSettingsClarification(lastGraceMessage)` (Grace asked
+"which setting?") + `tryHandleSettingsFollowUp(text, lastGraceMessage)`. Wired in
+`webhook.ts` right after `tryHandleSettings`: the cheap gate fires first, and
+only then does it fetch the prior Grace message (`deps.ai.getRecentTurnsForUser`)
+— so the extra read only happens for the rare bare-field follow-up. Resolves the
+context-inheritance + repeated-clarification-loop points (#3/#4). +4 tests; 796
+api green.
+
 ---
 
 ## Where to start in a new session

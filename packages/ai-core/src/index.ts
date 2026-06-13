@@ -1,4 +1,5 @@
 export * from './classify.js';
+export * from './glp1-knowledge.js';
 export * from './content-checker.js';
 export * from './prompts.js';
 export * from './planner.js';

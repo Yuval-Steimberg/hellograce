@@ -23,6 +23,7 @@ import type {
 } from '@grace/shared';
 import { checkContent, buildContentRegenInstruction, type ContentViolation } from './content-checker.js';
 import { classifyMessage, type MessageType } from './classify.js';
+import { answerGlp1Topic } from './glp1-knowledge.js';
 import { LLMCritic } from './critic.js';
 import { BehavioralGuard } from './behavioral-guard.js';
 import { checkResponseQuality } from './quality-guard.js';
@@ -570,6 +571,12 @@ export function getToolAwareFallback(
     if (/\bwhat (?:is|'?s)\s+my\b/.test(msg) || /\bdo you know\s+my\b/.test(msg) || /\btell me\s+my\b/.test(msg)) {
       return "I don't have that detail on file yet. You can set it at graceglp.com/settings.";
     }
+    // Comprehensive, typo-tolerant GLP-1 knowledge bank — ~40 topics (GI side
+    // effects, fatigue/dizziness/headache, dose logistics, mechanism,
+    // interactions, pregnancy redirect, etc.). Checked before the narrower
+    // inline branches below so coverage is broad and consistent.
+    const kb = answerGlp1Topic(opts.userMessage);
+    if (kb) return kb;
     // 2026-06-05 production failure: "how much water?" got the muscle-loss
     // typed fallback (first array entry) because the knowledge typed
     // fallbacks are hardcoded muscle-loss / mechanism / protein facts,

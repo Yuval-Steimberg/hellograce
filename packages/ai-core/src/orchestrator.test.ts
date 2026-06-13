@@ -298,7 +298,11 @@ describe('AIOrchestrator', () => {
     expect(out.regenerated).toBe(true);
     expect(out.confidence).toBe('low');
     expect(out.text.length).toBeGreaterThan(0);
-    expect(out.text).not.toContain('double');
+    // The safe fallback may now ship the curated, SAFE missed-dose guidance
+    // ("don't double up, skip if it's been >5 days, check your label") — that's
+    // accurate and helpful. It must NEVER echo the dangerous advice the critic
+    // rejected ("take an extra shot", "take double the dose tomorrow").
+    expect(out.text).not.toMatch(/take (an )?extra|double the dose|take double/i);
   });
 });
 

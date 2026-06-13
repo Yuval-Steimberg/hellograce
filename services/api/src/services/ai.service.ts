@@ -8,6 +8,7 @@ import {
   PlannerAgent,
   ToolRegistry,
   classifyMessage as classifyIntent,
+  answerGlp1Topic,
   checkContent,
   enforceFormat,
   endsMidWord,
@@ -72,6 +73,12 @@ const SYMPTOM_FALLBACK_RE =
   /\b(stomach|tummy|belly|gut)\s+(h[ue]rts?|aches?|ache|cramping|cramp|upset|sore|burning|in pain)\b|\b(nause(?:a|ous)|queasy|sick to my stomach|throwing up|threw up|vomiting|vomited)\b|\b(heartburn|acid reflux|reflux|indigestion)\b|\b(headache|migraine|dizzy|lightheaded|woozy)\b|\b(constipated|constipation|diarrhea|bloated|bloating)\b|\b(fatigued?|exhausted|so tired|no energy|wiped out)\b/i;
 
 function pickKnowledgeTopicFallback(userMessage: string): string | null {
+  // Comprehensive, typo-tolerant GLP-1 knowledge bank (shared with the
+  // orchestrator fallback). Covers ~40 topics and normalizes misspellings, so
+  // this is the primary deterministic answer source. The legacy inline checks
+  // below remain as a backstop for anything it doesn't cover.
+  const kb = answerGlp1Topic(userMessage);
+  if (kb) return kb;
   const msg = userMessage.toLowerCase();
   if (/\bwater|hydration|fluid\b/.test(msg) && !/\balcohol|caffeine|coffee\b/.test(msg)) {
     return "Aim for around 64-80 oz of water daily on GLP-1, sipped throughout the day rather than gulped — large amounts at once can amplify nausea.";

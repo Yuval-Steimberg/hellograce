@@ -991,6 +991,46 @@ topics under general, no-truncation phrasing). 537 ai-core + 773 api green.
 
 ---
 
+### Comprehensive, typo-tolerant GLP-1 knowledge bank (2026-06-13)
+
+New `packages/ai-core/src/glp1-knowledge.ts` — `answerGlp1Topic(msg)` +
+`matchGlp1Topic` + `normalizeKnowledgeText`. A single ordered topic table
+(~40 topics, specific→generic) covering: nausea / nausea duration / vomiting /
+constipation / diarrhea / heartburn / bloating-gas / stomach pain / fatigue /
+dizziness / headache / brain fog / hair loss / muscle / Ozempic-face-skin /
+food-noise-appetite / appetite-return / missed dose / dose increase / injection
+site / injection timing / storage-travel / mechanism / how-long-take /
+weight-regain / expected-loss / alcohol / caffeine / blood sugar / gallbladder /
+pregnancy (redirect) / birth control / fiber / electrolytes / water / sleep /
+exercise / plateau / protein target.
+
+Typo tolerance: `normalizeKnowledgeText` collapses 3+ repeated letters and
+applies a GLP-1 misspelling map (nausia→nausea, diarhea→diarrhea, constipaton,
+muscels→muscles, protien→protein, hartburn, bloted, etc.) before matching, and
+topic regexes include common variants. Verified: "im so naus", "how do i deal
+with constipaton", "is hair loose commn on glp" all resolve.
+
+Wired as the PRIMARY deterministic answer source in BOTH fallback paths
+(de-duplicating them): `orchestrator.getToolAwareFallback` (knowledge||general
+block, before the legacy inline branches) and `ai.service.pickKnowledgeTopicFallback`
+(before its legacy checks). This is the degraded-mode floor — the live primary
+path is still Gemini + RAG; the bank guarantees accurate answers to common
+questions when Gemini is down. Each topic regex requires a health keyword, so
+non-health messages return null and fall through untouched.
+
+Safety: missed-dose answer warns "don't double up" (never advises doubling);
+pregnancy/birth-control defer to the clinician; severe/red-flag symptoms route
+to the doctor. The orchestrator critic-failure test was tightened from a blunt
+`not.toContain('double')` to forbid the DANGEROUS advice ("take an extra/double
+the dose") while allowing the curated safe missed-dose guidance.
+
+Tests: `glp1-knowledge.test.ts` (53 — coverage + typos + non-health null +
+safety). 590 ai-core + 773 api green. Follow-up: the legacy inline topic
+branches in both paths are now mostly shadowed by the bank — safe to delete in a
+later cleanup once the bank is confirmed in prod.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

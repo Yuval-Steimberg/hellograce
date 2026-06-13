@@ -735,6 +735,33 @@ describe('getToolAwareFallback — food log formatting (2026-06-06)', () => {
   });
 });
 
+describe('getToolAwareFallback — health questions answered, not clarified (2026-06-13)', () => {
+  it('answers the muscle "get smaller" question (the production failure)', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const msg = 'is it possible that i feel that my muscles get smaller ?';
+    // Real muscle answer regardless of whether it classified knowledge OR general.
+    for (const type of ['knowledge', 'general']) {
+      const reply = getToolAwareFallback(type, [], { userMessage: msg });
+      expect(reply).toMatch(/muscle|lean mass/i);
+      expect(reply).not.toMatch(/rest of that|tell me a bit more|say more/i);
+    }
+  });
+
+  it('answers a health topic that landed in general (water / alcohol)', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    expect(getToolAwareFallback('general', [], { userMessage: 'how much water should i drink' })).toMatch(/water|oz/i);
+    expect(getToolAwareFallback('general', [], { userMessage: 'can i have alcohol' })).toMatch(/alcohol|moderation/i);
+  });
+
+  it('general fallbacks never imply the message was cut off', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    // A truly non-health general message → invites elaboration, but never
+    // "what's the rest of that?" (which reads as "you didn't finish").
+    const reply = getToolAwareFallback('general', [], { userMessage: 'mmhm sure thing then' });
+    expect(reply).not.toMatch(/rest of that/i);
+  });
+});
+
 describe('getToolAwareFallback — Level 2 mood-ladder (2026-06-06)', () => {
   it('"want to give up on everything" → validate + suggest professional help', async () => {
     // Production screenshot 2026-06-06: this exact phrase shipped "I hear

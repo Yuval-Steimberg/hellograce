@@ -960,6 +960,37 @@ regen on failure.
 
 ---
 
+### Complete questions treated as incomplete + general fallback gap (2026-06-13)
+
+Production: "is it possible that i feel that my muscles get smaller?" → Grace
+replied "What's the rest of that?" — a complete question treated as truncated.
+
+Root cause (NOT classification — `classifyMessage` correctly returns `knowledge`
+for it): the topic-specific knowledge answers in `getToolAwareFallback`
+(`orchestrator.ts`, muscle / water / alcohol / sleep / hair / plateau / protein)
+were gated on `type === 'knowledge'`. When a health question lands in `general`
+(classifier near-miss, or a generation failure that resolved to the general
+fallback), ALL those helpful branches were skipped → straight to the
+`TYPED_FALLBACKS.general` clarification pool, which included "What's the rest of
+that?" (reads as "you didn't finish your sentence").
+
+Fixes (`packages/ai-core/src/orchestrator.ts`):
+1. The topic-answer block now runs for `type === 'knowledge' || 'general'`. Each
+   branch only RETURNS on a topic-keyword match, so non-health general messages
+   fall through untouched — but a health question that landed in general now
+   gets the real answer (verified: water/alcohol/muscle under `general`).
+2. Muscle fallback verb set broadened beyond affect/loss to include perception/
+   shrinkage phrasing: `smaller|shrink\w*|weaker|wasting|atrophy|thinner|…` so
+   "muscles get smaller" matches.
+3. `TYPED_FALLBACKS.general` reworded to never imply truncation ("What's the
+   rest of that?" removed) — these fire on genuinely unclassifiable messages,
+   not incomplete ones.
+
+Tests: +3 in `orchestrator.test.ts` (muscle question under both intents, health
+topics under general, no-truncation phrasing). 537 ai-core + 773 api green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

@@ -142,9 +142,13 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     // Auto-eval scored every instance 0.0-1.5 across relevance, persona-
     // awareness, conversational continuity. Replaced with honest brief
     // acknowledgements that don't pretend the LLM didn't just fail.
-    "Tell me a bit more?",
-    "Say more — I'm with you.",
-    "What's the rest of that?",
+    // Never imply the user's message was cut off / incomplete — these fire on
+    // genuinely unclassifiable messages, not truncated ones. (Removed
+    // "What's the rest of that?" — it read as "you didn't finish your sentence"
+    // on complete questions. Production failure 2026-06-13.)
+    "Happy to help — what would you like to dig into?",
+    "I'm with you. What can I help with right now?",
+    "Tell me a bit more about what you're after.",
   ],
   // Phase 1 coverage expansion intents — short, warm fallbacks per type.
   exercise_log: [
@@ -554,7 +558,14 @@ export function getToolAwareFallback(
   //
   // If the user message is a profile lookup ("what is my X"), don't ship
   // random GLP-1 facts. Redirect to settings, which is honest and useful.
-  if (type === 'knowledge' && opts?.userMessage) {
+  // Topic-specific knowledge answers. Run for BOTH knowledge AND general
+  // intents: a clear health question that lands in 'general' (classifier
+  // near-miss) must still get a real answer here instead of falling through to
+  // the "Tell me a bit more?" clarification. Each branch only RETURNS on a
+  // topic-keyword match, so non-health general messages fall through untouched.
+  // Production failure 2026-06-13: "is it possible that i feel that my muscles
+  // get smaller?" → "What's the rest of that?" because the type was 'general'.
+  if ((type === 'knowledge' || type === 'general') && opts?.userMessage) {
     const msg = opts.userMessage.toLowerCase();
     if (/\bwhat (?:is|'?s)\s+my\b/.test(msg) || /\bdo you know\s+my\b/.test(msg) || /\btell me\s+my\b/.test(msg)) {
       return "I don't have that detail on file yet. You can set it at graceglp.com/settings.";
@@ -585,7 +596,7 @@ export function getToolAwareFallback(
     // 2026-06-05 v4: muscle-specific fallback. Question "How GLP affect my
     // muscles?" was shipping the protein-target typed fallback. Now ships
     // a muscle-preservation-focused answer.
-    if (/\bmuscles?\b/.test(msg) && /\b(affect|impact|lose|losing|loss|protect|maintain|keep|preserve|build)\b/.test(msg)) {
+    if (/\bmuscles?\b/.test(msg) && /\b(affect|impact|lose|losing|loss|lost|protect|maintain|keep|preserve|build|smaller|shrink\w*|shrunk|weaker|weak|wasting|waste|atrophy|thinner|softer|smaller|disappear\w*|deteriorat\w*)\b/.test(msg)) {
       return "GLP-1s don't directly damage muscle, but rapid weight loss without enough protein or resistance training can cost you lean mass — research shows 25-35% of weight lost on GLP-1s can be muscle. Hitting 1.2-1.6g of protein per kg of body weight daily and lifting 2-3x a week shifts the balance toward fat loss.";
     }
     // 2026-06-05 v4: gendered protein-target fallback. "Recommended proteins

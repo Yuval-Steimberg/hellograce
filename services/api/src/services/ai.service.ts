@@ -1247,9 +1247,9 @@ export class AIService {
       }
       if (intent === 'food_question') {
         const user = await this.deps.users.getById(input.userId).catch(() => null);
-        const fit = buildFoodFitAnswer(text, { dietLabel: user?.dietary_pattern ?? null });
+        const fit = buildFoodFitAnswer(text, { dietLabel: user?.dietary_pattern ?? user?.dietary_restriction ?? null });
         if (fit) return fit;
-        const dietaryRestriction = user?.dietary_pattern ? buildRestrictionFromLabel(user.dietary_pattern) : null;
+        const dietaryRestriction = effectiveDietaryRestriction(user);
         const dislikes = (user?.food_dislikes ?? [])
           .map((d) => (d ?? '').trim().replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
           .filter((d) => d.length > 0);
@@ -1340,9 +1340,7 @@ export class AIService {
     } catch {
       user = null;
     }
-    const dietaryRestriction = user?.dietary_pattern
-      ? buildRestrictionFromLabel(user.dietary_pattern)
-      : null;
+    const dietaryRestriction = effectiveDietaryRestriction(user);
     const dislikes = (user?.food_dislikes ?? [])
       .map((d) => (d ?? '').trim().replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
       .filter((d) => d.length > 0);
@@ -1350,7 +1348,7 @@ export class AIService {
     // Intent hierarchy (2026-06-11): a question about a SPECIFIC food ("how
     // about burger for dinner?") gets a direct fit answer for THAT food —
     // general recommendations must never override a direct question.
-    const fit = buildFoodFitAnswer(userText, { dietLabel: user?.dietary_pattern ?? null });
+    const fit = buildFoodFitAnswer(userText, { dietLabel: user?.dietary_pattern ?? user?.dietary_restriction ?? null });
     if (fit) {
       const fitViolations = checkContent(fit, { userMessage: userText, ...(dbRules.length > 0 ? { dbRules } : {}) });
       if (!fitViolations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) {
@@ -1540,9 +1538,11 @@ CRITICAL CONTEXT RULES — apply on every turn:
           // can never recommend a forbidden food on a knowledge / medication
           // / appointment-prep question. Same post-gen filter as
           // handleFoodQuestionDirect catches any model leak.
-          if (u.dietary_pattern) {
-            lines.push(`Dietary pattern: ${u.dietary_pattern}`);
-            directDietaryRestriction = buildRestrictionFromLabel(u.dietary_pattern);
+          // Read dietary_pattern AND the signup dietary_restriction free-text.
+          const effLabel = u.dietary_pattern ?? u.dietary_restriction ?? null;
+          if (effLabel) {
+            lines.push(`Dietary pattern: ${effLabel} — ALL food suggestions MUST respect this.`);
+            directDietaryRestriction = effectiveDietaryRestriction(u);
           }
           directDislikes = (u.food_dislikes ?? [])
             .map((d) =>
@@ -2113,9 +2113,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         // this user's dietary pattern, food dislikes, medication type, and
         // intent. ANY violation → bail out of cache and fall through to the
         // full pipeline so Grace generates a contextually-correct reply.
-        const cachedDietary = user?.dietary_pattern
-          ? buildRestrictionFromLabel(user.dietary_pattern)
-          : null;
+        const cachedDietary = effectiveDietaryRestriction(user);
         const cachedMedType = inferMedicationType(user?.medication ?? null);
         const cleanedDislikes = (user?.food_dislikes ?? [])
           .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
@@ -3660,6 +3658,58 @@ const PESCATARIAN_ALLOWED = [
   'cottage cheese', 'eggs', 'tofu', 'lentils', 'beans', 'protein shake',
 ];
 
+// 2026-06-13: additional signup-survey diet types beyond the vegan/vegetarian/
+// pescatarian pattern enum. Partial-but-safe forbidden lists so the diet-aware
+// suggestion + post-gen filter never recommend an obvious conflict.
+const KOSHER_FORBIDDEN = [
+  'pork', 'bacon', 'ham', 'prosciutto', 'pancetta', 'pepperoni', 'salami', 'chorizo',
+  'shrimp', 'prawns', 'crab', 'lobster', 'scallops', 'oysters', 'mussels', 'clams', 'shellfish',
+  'catfish', 'eel',
+];
+const HALAL_FORBIDDEN = [
+  'pork', 'bacon', 'ham', 'prosciutto', 'pancetta', 'pepperoni', 'salami', 'chorizo',
+  'alcohol', 'wine', 'beer', 'rum', 'vodka', 'gelatin', 'lard',
+];
+const GLUTEN_FREE_FORBIDDEN = [
+  'wheat', 'bread', 'pasta', 'barley', 'rye', 'couscous', 'bulgur', 'farro', 'semolina',
+  'flour tortilla', 'tortilla', 'pita', 'bagel', 'cracker', 'crackers', 'cereal', 'granola',
+  'breaded', 'crouton', 'croutons', 'beer', 'soy sauce', 'seitan', 'noodles',
+];
+const GLUTEN_FREE_ALLOWED = [
+  'rice', 'quinoa', 'potato', 'sweet potato', 'corn', 'gluten-free oats', 'eggs',
+  'chicken', 'fish', 'beans', 'lentils', 'Greek yogurt', 'nuts',
+];
+const DAIRY_FREE_FORBIDDEN = [
+  'milk', 'cheese', 'yogurt', 'greek yogurt', 'butter', 'cream', 'whey', 'casein',
+  'dairy', 'cottage cheese', 'ice cream', 'latte', 'cheddar', 'mozzarella', 'parmesan',
+];
+const DAIRY_FREE_ALLOWED = [
+  'almond milk', 'oat milk', 'soy milk', 'coconut yogurt', 'tofu', 'tempeh', 'beans',
+  'lentils', 'chicken', 'fish', 'eggs', 'nuts', 'plant-based protein shake',
+];
+
+/**
+ * Derive the effective dietary restriction from EITHER the dietary_pattern enum
+ * (set in chat/admin) OR the dietary_restriction free-text captured at signup
+ * ("vegan", "kosher", "gluten-free", ...). Production bug 2026-06-13: a vegan
+ * who set it at signup (stored in dietary_restriction) still got salmon/chicken
+ * recommendations because every food path only read dietary_pattern.
+ */
+export function effectiveDietaryRestriction(
+  user: { dietary_pattern?: string | null; dietary_restriction?: string | null } | null | undefined,
+): DietaryRestriction | null {
+  if (!user) return null;
+  if (user.dietary_pattern) {
+    const r = buildRestrictionFromLabel(user.dietary_pattern);
+    if (r) return r;
+  }
+  if (user.dietary_restriction) {
+    const r = buildRestrictionFromLabel(user.dietary_restriction);
+    if (r) return r;
+  }
+  return null;
+}
+
 /**
  * Map a medication name (free-text on the user record) to one of the four
  * categories the content-checker recognizes. Single source of truth — used
@@ -3690,14 +3740,35 @@ export function inferMedicationType(
  * Centralizing here means the forbidden/allowed lists stay in sync.
  */
 export function buildRestrictionFromLabel(label: string): DietaryRestriction | null {
-  switch (label.toLowerCase()) {
+  // Normalize: lowercase, collapse separators ("gluten-free"/"gluten_free"/
+  // "gluten free" → "gluten free"), trim.
+  const norm = label.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  switch (norm) {
     case 'vegan':
+    case 'plant based':
       return { label: 'VEGAN', forbidden: VEGAN_FORBIDDEN, allowed: VEGAN_ALLOWED };
     case 'vegetarian':
+    case 'veggie':
       return { label: 'VEGETARIAN', forbidden: VEGETARIAN_FORBIDDEN, allowed: VEGETARIAN_ALLOWED };
     case 'pescatarian':
     case 'pescetarian':
       return { label: 'PESCATARIAN', forbidden: PESCATARIAN_FORBIDDEN, allowed: PESCATARIAN_ALLOWED };
+    case 'kosher':
+      return { label: 'KOSHER', forbidden: KOSHER_FORBIDDEN, allowed: [] };
+    case 'halal':
+      return { label: 'HALAL', forbidden: HALAL_FORBIDDEN, allowed: [] };
+    case 'gluten free':
+    case 'glutenfree':
+    case 'celiac':
+    case 'coeliac':
+    case 'no gluten':
+      return { label: 'GLUTEN-FREE', forbidden: GLUTEN_FREE_FORBIDDEN, allowed: GLUTEN_FREE_ALLOWED };
+    case 'dairy free':
+    case 'dairyfree':
+    case 'lactose free':
+    case 'lactose intolerant':
+    case 'no dairy':
+      return { label: 'DAIRY-FREE', forbidden: DAIRY_FREE_FORBIDDEN, allowed: DAIRY_FREE_ALLOWED };
     default:
       return null;
   }

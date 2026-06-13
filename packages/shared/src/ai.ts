@@ -33,7 +33,7 @@ export interface ToolResult {
 }
 
 export interface DietaryRestriction {
-  label: 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN';
+  label: 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN' | 'KOSHER' | 'HALAL' | 'GLUTEN-FREE' | 'DAIRY-FREE';
   /** Lower-case food words that must NEVER appear in a recommendation. */
   forbidden: string[];
   /** Suggested allowed protein alternatives. */

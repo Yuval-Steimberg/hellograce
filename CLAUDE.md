@@ -1065,6 +1065,39 @@ question-aware fallback when degraded) — never a generic clarification. Tests:
 
 ---
 
+### Food recommendations ignored the signup diet (read wrong field) (2026-06-13)
+
+Production: a vegan who set it at signup still got salmon/chicken dinner recs.
+
+Root cause: onboarding stores the diet in `users.dietary_restriction` (free
+text, `routes/users.ts:218`), but EVERY food-recommendation path read only
+`user.dietary_pattern` (the vegan/vegetarian/pescatarian ENUM, which signup
+never sets) → `buildRestrictionFromLabel(null)` → no filtering. The main
+orchestrator prompt (`buildPersonalisedPrompt`) DID inject `dietary_restriction`
++ a top banner, so the Gemini path respected it; the FOOD-QUESTION DIRECT path
+(the fast path for "dinner ideas") + the resilient fallback + the FAQ-cache
+diet check all bypassed it by reading only `dietary_pattern`.
+
+Fixes (`services/api/src/services/ai.service.ts`):
+1. New `effectiveDietaryRestriction(user)` — derives the restriction from
+   `dietary_pattern` ?? `dietary_restriction`. All food paths now use it
+   (handleFoodQuestionDirect, buildResilientFallback, the direct-path USER
+   PROFILE block, and the FAQ-cache safety check).
+2. `buildRestrictionFromLabel` extended beyond vegan/vegetarian/pescatarian to
+   kosher / halal / gluten-free (celiac/coeliac) / dairy-free (lactose), with
+   forbidden lists for each, and separator/synonym normalization
+   ("gluten-free"/"gluten_free"/"gluten free"/"plant-based").
+3. `DietaryRestriction.label` union widened (`packages/shared/src/ai.ts`) +
+   `DietaryRestrictionLite` in `orchestrator.ts` to match.
+
+Allergies / avoided ingredients already flow through `food_dislikes` (prompt +
+`buildForbiddenSet` post-gen filter) — unchanged. NOTE: deferred mapping signup
+`dietary_restriction` → the `dietary_pattern` enum at onboard (the effective
+helper reads the free-text directly, so not required). Tests:
+`dietary-restriction.test.ts` (7). 594 ai-core + 780 api green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

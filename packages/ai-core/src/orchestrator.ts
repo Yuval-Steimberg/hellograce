@@ -360,7 +360,7 @@ function pickDietKey(restriction: DietaryRestrictionLite | undefined | null): Di
 
 /** Lightweight subset of DietaryRestriction to avoid an import cycle. */
 interface DietaryRestrictionLite {
-  label: 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN';
+  label: 'VEGAN' | 'VEGETARIAN' | 'PESCATARIAN' | 'KOSHER' | 'HALAL' | 'GLUTEN-FREE' | 'DAIRY-FREE';
   forbidden: string[];
   allowed: string[];
 }

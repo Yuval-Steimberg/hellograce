@@ -158,21 +158,65 @@ function hasSpecificity(text: string): boolean {
 //   1. First time we see a vague mention → warm acknowledge + ask
 //   2. User REPLIED to a prior ask but their reply was still vague → softer
 //      ack ("got it") + more focused ask ("but which item specifically?")
-function buildClarification(matched: string, followUp: boolean): string {
-  const m = matched.replace(/\b\w/g, (c) => c.toUpperCase()); // title-case the brand
+// Per-category hint with a concrete example, so the clarification is specific
+// and actionable instead of the generic brand-style "what did you have at X".
+const CATEGORY_HINTS: Record<string, string> = {
+  pizza: 'how many slices and what kind (e.g. 2 slices of cheese)',
+  burger: 'what kind and how many (e.g. a single cheeseburger)',
+  sandwich: 'what was in it and the size (e.g. a turkey sub)',
+  sub: 'what was in it and the size (e.g. a 6-inch turkey)',
+  wrap: 'what was in it (e.g. a chicken caesar wrap)',
+  salad: 'what was in it and any dressing (e.g. a chicken caesar)',
+  pasta: 'what kind and roughly how much (e.g. a cup of spaghetti with meat sauce)',
+  burrito: "what's in it (e.g. a chicken burrito)",
+  taco: 'what kind and how many (e.g. 2 beef tacos)',
+  sushi: 'how many pieces or rolls (e.g. 6 pieces of salmon)',
+  soup: 'what kind and how much (e.g. a bowl of chicken noodle)',
+  curry: 'what kind and how much (e.g. a cup of chicken curry)',
+  noodles: 'what kind and roughly how much (e.g. a cup of lo mein)',
+  ramen: 'what was in it (e.g. a bowl of pork ramen)',
+  casserole: "what's in it (e.g. a cup of chicken-and-rice casserole)",
+  omelette: 'what was in it and how many eggs (e.g. a 3-egg cheese omelette)',
+  omelet: 'what was in it and how many eggs (e.g. a 3-egg cheese omelet)',
+  smoothie: "what's in it (e.g. a banana and protein-powder smoothie)",
+  milkshake: 'what size and flavor (e.g. a medium chocolate)',
+  stew: "what's in it (e.g. a bowl of beef stew)",
+  bowl: "what's in it (e.g. a chicken-and-rice bowl)",
+};
+
+function buildClarification(matched: string, matchType: 'brand' | 'category', followUp: boolean): string {
+  // ── Brand path (KFC, McDonald's…) — "what did you have AT <Brand>" reads
+  //    naturally because it's a place. ────────────────────────────────────
+  if (matchType === 'brand') {
+    const m = matched.replace(/\b\w/g, (c) => c.toUpperCase());
+    const initialTemplates = [
+      `Sounds like you enjoyed it 😊. What did you have at ${m}? Once I know roughly what you ordered, I can estimate the protein and calories accurately.`,
+      `Nice. To estimate the protein I'd need to know what you actually had at ${m} — was it tenders, a sandwich, a wrap? Share the specifics and I'll log it.`,
+      `Yum. What did you order at ${m}? The more specific (e.g. "3 tenders" or "a chicken sandwich"), the more accurate the protein estimate I can give you.`,
+    ];
+    const followUpTemplates = [
+      `Got it. Which specific item, though? ${m} has a few options — knowing the exact one lets me give you an accurate number instead of a guess.`,
+      `Noted. To estimate the protein accurately I still need to know which item — a sandwich, tenders, a wrap? Different items have very different protein.`,
+    ];
+    const templates = followUp ? followUpTemplates : initialTemplates;
+    let h = 0;
+    for (let i = 0; i < matched.length; i++) h = (h * 31 + matched.charCodeAt(i)) | 0;
+    return templates[Math.abs(h) % templates.length]!;
+  }
+
+  // ── Category path (pizza, salad, omelette…) — never say "at Pizza". Ask
+  //    what kind + give a concrete example so the user knows exactly what to
+  //    reply with. ──────────────────────────────────────────────────────────
+  const cat = matched.toLowerCase();
+  const hint = CATEGORY_HINTS[cat] ?? 'what was in it and roughly how much';
   const initialTemplates = [
-    `Sounds like you enjoyed it 😊. What did you have at ${m}? Once I know roughly what you ordered, I can estimate the protein and calories accurately.`,
-    `Nice. To estimate the protein I'd need to know what you actually had at ${m} — was it tenders, a sandwich, a wrap? Share the specifics and I'll log it.`,
-    `Got it — noting that you had ${m} this morning. ${m} portions vary a lot, so tell me which items and I can give you an accurate protein estimate.`,
-    `Yum. What did you order at ${m}? The more specific (e.g. "3 tenders" or "a chicken sandwich"), the more accurate the protein estimate I can give you.`,
+    `Nice 😊 For the ${cat}, ${hint}? Then I can estimate the protein and calories accurately.`,
+    `Sounds good. To log that ${cat} accurately I just need a bit more: ${hint}? The protein and calories vary a lot with what's in it.`,
   ];
   const followUpTemplates = [
-    `Got it. Which specific item, though? ${m} has a few options — knowing the exact one lets me give you an accurate number instead of a guess.`,
-    `Noted. To estimate the protein accurately I still need to know which item — a sandwich, tenders, a wrap? Different items have very different protein.`,
-    `Thanks. Just to nail the protein down: which item exactly from ${m}? Each has a different protein range so I don't want to give you a wrong number.`,
+    `Got it. Just need a bit more on the ${cat}: ${hint}? Then I can give you an accurate protein and calorie number instead of a guess.`,
   ];
   const templates = followUp ? followUpTemplates : initialTemplates;
-  // Stable hash so same input → same template (avoids feeling random).
   let h = 0;
   for (let i = 0; i < matched.length; i++) h = (h * 31 + matched.charCodeAt(i)) | 0;
   return templates[Math.abs(h) % templates.length]!;
@@ -259,10 +303,12 @@ export function detectVagueFood(text: string, lastGraceMessage?: string): VagueF
 
   // Find a matching brand (case-insensitive, word-boundaried).
   let matched: string | null = null;
+  let matchType: 'brand' | 'category' = 'category';
   for (const brand of BRAND_NAMES) {
     const escaped = brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     if (new RegExp(`\\b${escaped}\\b`, 'i').test(text)) {
       matched = brand;
+      matchType = 'brand';
       break;
     }
   }
@@ -305,11 +351,11 @@ export function detectVagueFood(text: string, lastGraceMessage?: string): VagueF
   return {
     vague: true,
     matched,
-    response: buildClarification(matched, followUp),
+    response: buildClarification(matched, matchType, followUp),
   };
 }
 
 // Detects whether the previous Grace message was OUR vague-food clarification.
 // Matches all four initial templates AND all three follow-up templates.
 const PRIOR_ASK_RE =
-  /\b(what did you (have|order|get|eat)|what(?:'s)? did you (?:actually )?have|which (?:specific )?item|which item|estimate the protein accurately|share the specifics|the more specific|how was the .* prepared|grilled, baked, or fried|any sauce or oil)\b/i;
+  /\b(what did you (have|order|get|eat)|what(?:'s)? did you (?:actually )?have|which (?:specific )?item|which item|estimate the protein accurately|share the specifics|the more specific|how was the .* prepared|grilled, baked, or fried|any sauce or oil|what kind of|to log that .* accurately|a bit more on the)\b/i;

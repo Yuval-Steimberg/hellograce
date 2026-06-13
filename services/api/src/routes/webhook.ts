@@ -204,6 +204,20 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             }
           }
 
+          // ── Bare "SETTINGS" / "preferences" keyword → settings link ───────
+          // Advertised in the welcome message, so it must actually work. Uses
+          // this deployment's PUBLIC_WEB_URL (settings-flow's link is hardcoded
+          // to graceglp.com) so the link is correct for the running environment.
+          if (user && isSettingsKeyword(normalized.text)) {
+            const settingsUrl = buildSettingsUrl(user.phone, deps.env.PUBLIC_WEB_URL);
+            await deps.sender.send({
+              to: normalized.userId,
+              channel: normalized.channel,
+              body: `You can update your check-in times, medication, reminders, and other preferences here: ${settingsUrl}`,
+            });
+            return;
+          }
+
           // ── Settings & Profile Update Flow (2026-06-06).
           // Centralized read/update handler for every other profile field
           // — timezone, medication, dose, weight, goal weight, height, sex,
@@ -953,6 +967,17 @@ export function detectPauseIntent(text: string): boolean {
  * existing v1 Supabase edge function (create-checkout) which then redirects
  * to Stripe Checkout.
  */
+// Bare "settings" / "preferences" / "update my settings" → reply with the
+// settings link. Anchored so it only fires on a settings-intent message, not
+// on "what's my wake time" (handled by the settings READ flow) or prose that
+// merely contains the word.
+const SETTINGS_KEYWORD_RE =
+  /^\s*(settings?|preferences?|account|profile|my\s+(settings?|preferences?|account|profile)|(change|update|edit|manage|open|see|view)\s+(my\s+)?(settings?|preferences?|account|profile))[.!?]?\s*$/i;
+
+export function isSettingsKeyword(text: string): boolean {
+  return SETTINGS_KEYWORD_RE.test(text.trim());
+}
+
 export function buildUpgradeUrl(phone: string, webUrl: string = DEFAULT_WEB_URL): string {
   const encoded = encodeURIComponent(phone);
   const base = webUrl.replace(/\/$/, '');

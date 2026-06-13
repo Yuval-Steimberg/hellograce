@@ -232,11 +232,21 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     const user = await users.getByPhone(phone);
     if (!user) throw new Error('user_not_found_after_upsert');
 
-    // Send welcome message.
+    // Send welcome message. Append a deterministic "how to use Grace" block so
+    // the first message always explains what the user can do and the available
+    // commands (SETTINGS / STOP), regardless of what the LLM/template body says.
     try {
       const welcome = await generator.generate('welcome', user);
-      await sender.send({ to: phone, body: welcome, channel: 'whatsapp' });
-      await users.recordCheckIn({ userId: user.id, phone, type: 'welcome', messageSent: welcome });
+      const howTo =
+        "A few things you can do anytime: text me what you ate, your weight, or how you're feeling and I'll track it. " +
+        "Send a meal photo or a voice note and I'll read it. " +
+        'Text SETTINGS to update your check-in times, medication, or preferences, and STOP to pause messages.';
+      const welcomeFull = `${welcome}\n\n${howTo}`;
+      // raw: the generator already sanitized its body, and howTo is clean prose
+      // I control — sending raw avoids the 420-char outbound cap truncating the
+      // SETTINGS/STOP commands off the end of the welcome.
+      await sender.send({ to: phone, body: welcomeFull, channel: 'whatsapp', raw: true });
+      await users.recordCheckIn({ userId: user.id, phone, type: 'welcome', messageSent: welcomeFull });
     } catch (err) {
       req.log.warn({ err, phone }, 'onboard.welcome_send.failed');
     }

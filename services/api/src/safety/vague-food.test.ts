@@ -221,6 +221,31 @@ describe('detectVagueFood — uber-vague quantity guard (QA report 2026-06-03)',
     }
   });
 
+  // ── 2026-06-13 category-aware clarification (no "at Pizza") ──────────────────
+  describe('category clarification wording', () => {
+    it('"i just add pizza" → asks what kind + example, NOT "at Pizza"', () => {
+      const r = detectVagueFood('i just add pizza');
+      expect(r.vague).toBe(true);
+      expect(r.response).not.toMatch(/\bat\s+pizza\b/i); // the reported bug ("at Pizza")
+      expect(r.response!.toLowerCase()).toContain('pizza');
+      expect(r.response).toMatch(/slices/i);             // concrete example
+      expect(r.response).toMatch(/protein and calories|accurate/i);
+    });
+
+    it('salad asks about contents + dressing with an example', () => {
+      const r = detectVagueFood('I had a salad');
+      expect(r.vague).toBe(true);
+      expect(r.response).toMatch(/dressing/i);
+      expect(r.response).not.toMatch(/\bat\s+salad\b/i);
+    });
+
+    it('brands still read naturally ("at KFC")', () => {
+      const r = detectVagueFood('I ate KFC');
+      expect(r.vague).toBe(true);
+      expect(r.response).toMatch(/at KFC/i);
+    });
+  });
+
   // ── 2026-06-13 prep-method clarification (fried/sauce-heavy) ─────────────────
   describe('prep-method clarification', () => {
     const needsPrep = ['I had chicken', 'I had fish', 'chicken', 'I ate salmon', 'shrimp', 'I had pork'];

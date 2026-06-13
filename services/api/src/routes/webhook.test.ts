@@ -5,6 +5,7 @@ import {
   buildSignupUrl,
   isAccessAllowed,
   needsRegistration,
+  isSettingsKeyword,
   coalesceMessages,
   detectPauseIntent,
   shouldSkipCoalesce,
@@ -209,6 +210,19 @@ describe('buildUpgradeUrl', () => {
     expect(buildUpgradeUrl('+15551234567', 'https://example.com/')).toBe(
       'https://example.com/upgrade?phone=%2B15551234567',
     );
+  });
+});
+
+describe('isSettingsKeyword', () => {
+  it('matches bare settings-intent messages', () => {
+    for (const t of ['settings', 'SETTINGS', 'Settings', 'preferences', 'my settings', 'update my settings', 'change settings', 'manage preferences', 'profile', 'account']) {
+      expect(isSettingsKeyword(t)).toBe(true);
+    }
+  });
+  it('does NOT fire on prose that merely contains the word', () => {
+    for (const t of ["what's my wake time", 'my settings are wrong because of the timezone', 'I changed my mind about settings later', 'can you change my injection day']) {
+      expect(isSettingsKeyword(t)).toBe(false);
+    }
   });
 });
 

@@ -2067,6 +2067,36 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       }
     }
 
+    // ── Reasoning-request intercept ("How 88g" / "why" about a number) ───────
+    // When the user challenges a number Grace JUST gave ("How 88g", "how 88 g
+    // of protein", "why 32"), explain that number deterministically — never
+    // switch topics or let Gemini ramble. detectReasoningRequest is gated on
+    // the prior Grace turn actually containing a number/target, so it only
+    // fires when there IS something to explain. Production failure 2026-06-13:
+    // "How 88g" → generic GLP-1 fallback; "How 88 g of protein" → a confused
+    // re-ask of what they ate (which they'd already told Grace).
+    if (flags.toolsEnabled && detectReasoningRequest(input.text, lastGraceMessage)) {
+      const { getToolAwareFallback } = await import('@grace/ai-core');
+      const explanation = getToolAwareFallback(intentClass.type, [], {
+        isReasoningRequest: true,
+        lastAssistantMessage: lastGraceMessage,
+        userMessage: input.text,
+      });
+      this.deps.logger.info({ userId: input.userId, textPreview: input.text.slice(0, 60) }, 'ai.handle.reasoning_explanation');
+      void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
+        .catch((err) => this.deps.logger.warn({ err }, 'reasoning.append_user.failed'));
+      void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: explanation })
+        .catch((err) => this.deps.logger.warn({ err }, 'reasoning.append_assistant.failed'));
+      return {
+        text: explanation,
+        intent: 'reasoning_explanation',
+        confidence: 'high' as const,
+        toolResults: [],
+        usedRetrieval: false,
+        latencyMs: Date.now() - t0,
+      };
+    }
+
     // ── FAQ semantic cache (2026-05-30 latency optimization #2) ─────────────
     // For fresh / near-fresh conversations whose user message embeds within
     // 0.92 cosine of a pre-seeded educational FAQ, return the canonical

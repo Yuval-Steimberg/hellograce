@@ -1288,6 +1288,36 @@ true — a message ending in a URL is complete. Genuine mid-word truncation (no
 URL) still repairs. Tests: +4 in `sender.test.ts` (full link preserved, link +
 trailing period, bare-domain link, real truncation still trimmed). 815 api green.
 
+---
+
+### Reasoning-about-a-number intercept ("How 88g") — deterministic, never rambles (2026-06-13)
+
+Production: after "What I ate today?" → "Eggs ×2, pizza ×2, salmon, rice. That's
+88g protein…", the user asked "How 88g" / "How 88 g of protein". Grace replied
+with (a) the generic GLP-1 "changes on a GLP-1…" fallback and (b) a confused
+Gemini ramble that re-asked what they ate (already told). The #53 reasoning fix
+only covered the orchestrator FALLBACK path — the degraded resilient-fallback
+(`buildResilientFallback`, common on free-tier quota) didn't pass
+`isReasoningRequest`, and a bad-but-non-empty Gemini generation bypassed the
+fallback entirely.
+
+Fix: a deterministic reasoning intercept in `ai.service.handleMessageInner`
+(right after the health-concern guard, BEFORE the FAQ cache / force-log /
+orchestrator): when `detectReasoningRequest(input.text, lastGraceMessage)` is
+true — gated on the prior Grace turn containing a number/target, so it only
+fires when there's a number to explain — it returns the topic-aware
+`getToolAwareFallback(..., { isReasoningRequest: true })` explanation
+("that 88g is added up from the foods you logged… tell me serving sizes and
+I'll tighten it") and short-circuits. Covers "How 88g", "How 88 g of protein",
+"why 32", bare "how?", in both live and degraded modes — never a generic or
+confused answer. Trade-off (accepted for reliability): a reasoning challenge no
+longer reaches Gemini for a richer per-item breakdown; the deterministic
+explanation is on-topic + offers to refine with portions. 815 api green.
+
+---
+
+## Where to start in a new session
+
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).
 2. `git log --oneline -10` to see recent commits.
 3. Active branch: `main`. Latest commit: `9b365c9` — Engagement cooldown: configurable, applies to all non-critical proactive types. All Phase 15 work has been merged to main.

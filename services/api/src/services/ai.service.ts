@@ -348,6 +348,7 @@ import type { UsdaFoodService } from './usda-food.service.js';
 import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+import { detectHealthConcern } from '../safety/health-concern.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
@@ -2021,6 +2022,36 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         return {
           text: vague.response!,
           intent: 'vague_food_clarification',
+          confidence: 'high' as const,
+          toolResults: [],
+          usedRetrieval: false,
+          latencyMs: Date.now() - t0,
+        };
+      }
+    }
+
+    // ── Health-concern guard ────────────────────────────────────────────────
+    // A personal concern / guidance request about an out-of-scope vital (blood
+    // pressure, heart rate, palpitations, cholesterol) must NOT be force-logged
+    // or answered with generic education. Respond supportively: acknowledge,
+    // ask focused clarifying questions, and point to their clinician — calm and
+    // within scope. Runs BEFORE the FAQ cache and the force-log so a health
+    // concern can never become "Logged." (production failure 2026-06-13).
+    // Crisis/emergency wording is handled earlier by the SafetyGuard.
+    if (flags.toolsEnabled) {
+      const health = detectHealthConcern(input.text, lastGraceMessage);
+      if (health.concern) {
+        this.deps.logger.info(
+          { userId: input.userId, vital: health.vital, textPreview: input.text.slice(0, 100) },
+          'ai.handle.health_concern',
+        );
+        void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
+          .catch((err) => this.deps.logger.warn({ err }, 'health_concern.append_user.failed'));
+        void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: health.response! })
+          .catch((err) => this.deps.logger.warn({ err }, 'health_concern.append_assistant.failed'));
+        return {
+          text: health.response!,
+          intent: 'health_concern',
           confidence: 'high' as const,
           toolResults: [],
           usedRetrieval: false,

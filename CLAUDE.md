@@ -895,6 +895,36 @@ green.
 
 ---
 
+### Health-concern guard: stop logging out-of-scope vitals questions (2026-06-13)
+
+Production: "I'm having blood pressure problems what should I do" → Grace replied
+"Logged." A health concern + guidance request got routed into a logging
+workflow. Earlier "How about my blood pressure?" got a generic GLP-1 education
+blurb instead of recognizing the user was asking about THEMSELVES.
+
+Fix: new `services/api/src/safety/health-concern.ts` — `detectHealthConcern(text,
+lastGraceMessage?)` flags PERSONAL concern / guidance phrasing ("my bp", "I'm
+having…", "what should I do") about out-of-scope cardiovascular vitals (blood
+pressure / heart rate / pulse / palpitations / cholesterol; blood sugar
+deliberately excluded — GLP-1-relevant). Wired into `ai.service.handleMessageInner`
+right after the vague-food guard and BEFORE the FAQ cache + force-log, returning
+a supportive, clarifying, scope-aware referral and short-circuiting so it can
+NEVER be logged or answered with generic education. Pure education ("does GLP-1
+affect blood pressure?") does NOT fire — it flows to the educational pipeline.
+Follow-up aware: once we've asked, a vital-less reply ("high readings") recovers
+the vital from our prior question and gives a refer-focused answer instead of
+re-asking. Crisis/emergency stays with the SafetyGuard (runs earlier). Tests:
+`health-concern.test.ts` (8). 771 api green.
+
+Note (deferred): the broader "mandatory relevance validation on every response"
+(user ask) is partially served by the existing LLM relevance-check
+(`packages/ai-core/src/relevance-check.ts`), which is gated by
+`RELEVANCE_CHECK_ENABLED` / disabled under `TRUST_GEMINI`. This guard adds
+deterministic coverage for the reported failure class without re-enabling the
+LLM judge.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

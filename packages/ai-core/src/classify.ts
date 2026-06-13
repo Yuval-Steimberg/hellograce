@@ -588,5 +588,21 @@ export function classifyMessage(rawText: string): ClassifyResult {
   if (matches(text, EMOTIONAL)) return { type: 'emotional', confidence: 0.85 };
   if (matches(text, SCHEDULING)) return { type: 'scheduling', confidence: 0.9 };
   if (matches(text, KNOWLEDGE)) return { type: 'knowledge', confidence: 0.75 };
+  // A genuine question that matched no specific intent is still a request for
+  // information / explanation — route it to the knowledge path (strongest
+  // reasoning budget + the knowledge fallback bank + always-on relevance
+  // check) instead of the generic 'general' bucket, which produces
+  // clarification-style fallbacks. By here, food/medication/scheduling/pause/
+  // symptom questions are already handled, so a remaining question is a
+  // knowledge/info question. Production failures 2026-06-13: "is it possible
+  // that i feel my muscles get smaller?" / "...my hair is shorter?" fell to
+  // general → "What's the rest of that?" / "I'm with you."
+  // Require some substance (>= 8 chars) so bare one-word follow-ups ("Why",
+  // "What?", "How?") stay 'general' for the reasoning/continuation handlers.
+  const interrogative =
+    isQuestion || /^(is|are|am|can|could|would|should|will|does|do|did|why|how|what|whats|when|where|which|who)\b/i.test(text.trim());
+  if (interrogative && text.trim().length >= 8) {
+    return { type: 'knowledge', confidence: 0.55 };
+  }
   return { type: 'general', confidence: 0.5 };
 }

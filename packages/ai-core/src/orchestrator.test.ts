@@ -764,6 +764,25 @@ describe('getToolAwareFallback — health questions answered, not clarified (202
     const reply = getToolAwareFallback('general', [], { userMessage: 'mmhm sure thing then' });
     expect(reply).not.toMatch(/rest of that/i);
   });
+
+  it('a question with no topic match still gets a real answer, never a generic clarification', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    // No knowledge topic matches "why do i feel weird", but it's a question —
+    // must not return "I'm with you" / "tell me more".
+    const reply = getToolAwareFallback('general', [], { userMessage: 'why do i feel weird lately?' });
+    expect(reply).not.toMatch(/i'?m with you|tell me a bit more|what would you like|rest of that/i);
+    expect(reply.length).toBeGreaterThan(60);
+  });
+});
+
+describe('classifyMessage — substantive questions route to knowledge (2026-06-13)', () => {
+  it('routes fell-through questions to knowledge, not general', async () => {
+    const { classifyMessage } = await import('./classify.js') as any;
+    expect(classifyMessage('is it possible that i feel that my hair is shorter?').type).toBe('knowledge');
+    expect(classifyMessage('why do i feel so weird on this').type).toBe('knowledge');
+    // Bare one-word follow-ups stay general (handled by reasoning/continuation).
+    expect(classifyMessage('Why').type).not.toBe('knowledge');
+  });
 });
 
 describe('getToolAwareFallback — Level 2 mood-ladder (2026-06-06)', () => {

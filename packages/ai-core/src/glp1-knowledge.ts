@@ -136,8 +136,8 @@ const TOPICS: KnowledgeTopic[] = [
   },
   {
     id: 'hair_loss',
-    match: (m) => has(m, 'hair') && /\b(loss|loose|losing|fall|falling|fell|shed|shedding|thin|thinning|coming out|falling out)\b/.test(m),
-    answer: "Hair shedding (telogen effluvium) is common with significant or rapid weight loss, including on GLP-1s — it's usually temporary and tied to the rapid loss and lower intake, not the drug directly. Hitting your protein target and checking iron/ferritin with your doctor helps.",
+    match: (m) => has(m, 'hair') && /\b(loss|loose|losing|lose|fall|falling|fell|shed|shedding|thin|thinning|thinner|coming out|falling out|shorter|short|different|differently|change|changed|changing|texture|volume|dry|brittle|breaking|frizzy|weaker)\b/.test(m),
+    answer: "Hair doesn't actually get shorter from a GLP-1 itself — but rapid weight loss and eating less can trigger temporary shedding, thinning, or texture changes (telogen effluvium) that make hair look or feel different. It's usually temporary and tied to the rapid loss, not the medication directly. Hitting your protein target and checking iron/ferritin with your doctor helps. Have you noticed more shedding lately?",
   },
   {
     id: 'muscle',

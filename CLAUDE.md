@@ -1031,6 +1031,40 @@ later cleanup once the bank is confirmed in prod.
 
 ---
 
+### Every knowledge question routed to the reasoning path; no generic fallback for questions (2026-06-13)
+
+Production: "Is it possible that I feel that my hair is shorter?" → "I'm with
+you. What can I help with right now?" — a clear question got a generic fallback.
+
+This is an ENGINE-LAYER fix (not a hair patch), applying to every knowledge
+question:
+1. **`classify.ts`** — final catch-all: a substantive question (>= 8 chars,
+   ending in `?` OR starting with is/are/can/could/would/should/will/does/do/
+   did/why/how/what/when/where/which/who) now classifies as `knowledge`, not
+   `general`. By that point food/medication/scheduling/pause/symptom questions
+   are already routed, so a remaining question is a genuine info request → it
+   gets the knowledge path (strongest reasoning budget + always-on relevance
+   check + the knowledge bank). Bare one-word follow-ups ("Why") stay `general`
+   (length gate) for the reasoning/continuation handlers.
+2. **`orchestrator.getToolAwareFallback`** — final safety net: if the message is
+   a question (`?` or interrogative start) and nothing else matched, it returns
+   an honest, on-topic answer ("changes on a GLP-1 trace back to the weight loss
+   itself…, share what you're noticing, anything off → your doctor") instead of
+   a generic "I'm with you / tell me more" clarification. So a question can never
+   resolve to a generic engagement prompt, regardless of topic.
+3. **Hair topic broadened** (`glp1-knowledge.ts`) beyond loss to appearance
+   changes (shorter/thinner/different/texture/volume/dry/brittle), with an
+   answer that addresses "feels shorter".
+
+Net: ANY genuine question is routed to the knowledge/reasoning path and answered
+(by Gemini when available; by the comprehensive bank or the honest
+question-aware fallback when degraded) — never a generic clarification. Tests:
++ hair-appearance cases, + classify question-routing, + question-aware fallback
+(and caught my own fallback using the banned "tell me a bit more" phrasing).
+594 ai-core + 773 api green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

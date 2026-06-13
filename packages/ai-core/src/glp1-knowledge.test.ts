@@ -19,6 +19,8 @@ describe('answerGlp1Topic — comprehensive coverage', () => {
     ['i feel dizzy and lightheaded', 'dizziness'],
     ['constant headaches', 'headache'],
     ['hair is falling out', 'hair_loss'],
+    ['is it possible that i feel that my hair is shorter?', 'hair_loss'],
+    ['my hair feels different and thinner', 'hair_loss'],
     ['whats ozempic face', 'face_skin'],
     ['my appetite is gone, not hungry at all', 'food_noise'],
     ['feels like its wearing off before my next dose', 'appetite_return'],

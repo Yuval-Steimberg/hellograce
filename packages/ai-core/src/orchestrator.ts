@@ -692,6 +692,23 @@ export function getToolAwareFallback(
     }
   }
 
+  // Final safety net: a genuine QUESTION must NEVER get a generic "tell me
+  // more" / "I'm with you" clarification. If we reached here with no topic
+  // match and no tool data (e.g. Gemini was down and the question didn't hit
+  // the knowledge bank), give an honest, on-topic answer that addresses the
+  // question's shape and invites specifics — not a bare engagement prompt.
+  // Production failures 2026-06-13: muscle / hair questions got the general
+  // clarification fallback.
+  if (opts?.userMessage) {
+    const um = opts.userMessage.trim();
+    const isQuestionLike =
+      /\?/.test(um) ||
+      /^(is|are|am|can|could|would|should|will|does|do|did|why|how|what|whats|when|where|which|who)\b/i.test(um);
+    if (isQuestionLike) {
+      return "That's a fair question. A lot of what people notice on a GLP-1 — changes in your body, hair, energy, or appetite — traces back to the weight loss itself and eating less, more than the medication directly. Share exactly what you're noticing and I'll walk through it with you. Anything that feels off or worsens is always worth raising with your doctor.";
+    }
+  }
+
   return getTypedFallback(type);
 }
 

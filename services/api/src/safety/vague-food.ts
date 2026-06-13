@@ -51,6 +51,9 @@ const VAGUE_CATEGORIES = [
   // Generic foods
   'pizza', 'burger', 'sandwich', 'pasta', 'burrito', 'taco', 'sushi',
   'wrap', 'soup', 'stir fry', 'stir-fry', 'curry', 'sub', 'salad',
+  // 2026-06-13 expansion — categories whose macros swing widely by contents:
+  'casserole', 'bowl', 'noodles', 'ramen', 'omelette', 'omelet',
+  'smoothie', 'milkshake', 'stew',
   // Cuisine names
   'chinese food', 'thai food', 'mexican food', 'indian food',
   'italian food', 'japanese food', 'korean food', 'vietnamese food',
@@ -100,13 +103,13 @@ const SPECIFIC_ITEM_RE = new RegExp(
 // Protein-qualifier + vague-category: "chicken burrito", "veggie pizza",
 // "beef tacos". Naming the protein/filling makes the category specific enough.
 const QUALIFIED_CATEGORY_RE =
-  /\b(chicken|beef|pork|fish|salmon|tuna|tofu|veggie|veg|vegetarian|vegan|bean|black\s+bean|steak|carnitas|barbacoa|al\s+pastor|carne\s+asada|shrimp|cheese|pepperoni|sausage|mushroom|spinach|margherita|hawaiian|bbq|buffalo|turkey|ham|bacon|egg|breakfast|club|tuna|caesar|cobb|greek|caprese)\s+(?:pizza|burger|sandwich|sub|wrap|salad|burrito|taco|bowl|pasta|stir[\s-]fry|curry|soup)\b/i;
+  /\b(chicken|beef|pork|fish|salmon|tuna|tofu|veggie|veg|vegetarian|vegan|bean|black\s+bean|steak|carnitas|barbacoa|al\s+pastor|carne\s+asada|shrimp|cheese|pepperoni|sausage|mushroom|spinach|margherita|hawaiian|bbq|buffalo|turkey|ham|bacon|egg|breakfast|club|tuna|caesar|cobb|greek|caprese|ham\s+and\s+cheese|western|denver|veggie)\s+(?:pizza|burger|sandwich|sub|wrap|salad|burrito|taco|bowl|pasta|stir[\s-]fry|curry|soup|omelette|omelet|noodles|casserole|stew)\b/i;
 
 // Size words placed near the food (small/medium/large pizza, half a sandwich).
 // More restrictive than catching "big" anywhere — must reach a food word within
 // up to 3 intervening tokens (allows for brand names: "small Wendy's burger").
 const SIZED_PORTION_RE =
-  /\b(small|medium|large|big|tiny|huge|half|quarter|whole|full|footlong|six[\s-]inch|6[\s-]inch|12[\s-]inch|personal|individual|family[\s-]size|kid'?s?|kids|junior|regular)\b(?:\s+\S+){0,3}\s+(?:pizza|burger|sandwich|sub|wrap|salad|burrito|taco|bowl|fries|drink|coffee|soda|shake|coke|sprite|frappuccino|latte|meal|combo|order|pie|portion)\b/i;
+  /\b(small|medium|large|big|tiny|huge|half|quarter|whole|full|footlong|six[\s-]inch|6[\s-]inch|12[\s-]inch|personal|individual|family[\s-]size|kid'?s?|kids|junior|regular)\b(?:\s+\S+){0,3}\s+(?:pizza|burger|sandwich|sub|wrap|salad|burrito|taco|bowl|fries|drink|coffee|soda|shake|coke|sprite|frappuccino|latte|meal|combo|order|pie|portion|omelette|omelet|smoothie|milkshake|casserole|noodles|stew)\b/i;
 
 // ── Uber-vague quantity overrides (QA report 2026-06-03, Step 3) ─────────
 // Some "sized" portions are SO variable they should never count as specific.
@@ -198,6 +201,54 @@ function buildClarification(matched: string, followUp: boolean): string {
 const CONSIDERATION_RE =
   /\b(how about|what about|thinking (?:about|of)|considering|maybe i(?:'?ll| should| could| might)?|should i (?:have|eat|get|order|try|do)|can i (?:have|eat|get|order|try)|could i (?:have|eat|get)|is (?:it ok|.{0,20} (?:ok|okay|fine|good|healthy|allowed|alright))|what if i|planning (?:to|on)|going to (?:have|eat|get|order|try)|want(?:ing)? to (?:have|eat|get|order|try)|do you think i should|would (?:it be|.{0,15}) ok)\b/i;
 
+// ── Prep-method clarification (2026-06-13) ───────────────────────────────────
+// Some bare proteins/sides are commonly served fried OR grilled/baked, and the
+// prep swings calories ~2x (grilled chicken breast ~180 kcal vs fried ~400).
+// When the user names ONLY such a food with no prep/sauce detail and no
+// quantity, ask how it was prepared instead of assuming. Naming a quantity,
+// prep word, or sauce skips the ask — we then have enough to estimate.
+const PREP_AMBIGUOUS_FOODS = [
+  'chicken', 'fish', 'salmon', 'shrimp', 'prawns', 'tofu', 'pork', 'wings',
+  'wing', 'eggplant', 'potato', 'potatoes', 'cauliflower', 'tilapia', 'cod',
+];
+const PREP_FOOD_RE = new RegExp(`^(?:${PREP_AMBIGUOUS_FOODS.join('|')})$`, 'i');
+
+// Prep already specified → no need to ask.
+const PREP_GIVEN_RE =
+  /\b(grill\w*|bak\w*|fry|fried|frying|deep[-\s]?fried|pan[-\s]?fried|air[-\s]?fried|boil\w*|steam\w*|roast\w*|poach\w*|saut[eé]\w*|sear\w*|smok\w*|brais\w*|raw|breaded|battered|crispy|mashed|stir[-\s]?fr\w*|sashimi)\b/i;
+const SAUCE_GIVEN_RE =
+  /\b(sauce|gravy|glaze|marinad\w*|teriyaki|bbq|barbecue|buffalo|alfredo|curry|butter|oil|creamy|cheesy|honey|sweet[-\s]and[-\s]sour|tikka|masala|parm\w*|piccata|scampi|katsu)\b/i;
+
+// Conversational scaffolding stripped so we can see whether the remaining
+// content is a single bare prep-food.
+const PREP_SCAFFOLD_RE =
+  /\b(hey|hi|hello|so|well|ok|okay|yeah|today|this\s+morning|this\s+afternoon|tonight|earlier|just\s+now|for\s+(?:breakfast|lunch|dinner|supper|brunch|a\s+snack)|breakfast|lunch|dinner|supper|brunch|snack|i|just|also|then|only|had|ate|eat|eating|grabbed|made|cooked|got|having|enjoyed|some|a|an|the|my|one|of|plain|piece|pieces|bit|little)\b/gi;
+
+function detectPrepNeeded(text: string): { food: string; response: string } | null {
+  // A quantity present → they gave a portion; don't pile a prep ask on top
+  // (keeps friction low and preserves existing quantity-based logs).
+  if (/\d/.test(text)) return null;
+  if (PREP_GIVEN_RE.test(text) || SAUCE_GIVEN_RE.test(text)) return null;
+
+  const core = text
+    .toLowerCase()
+    .replace(PREP_SCAFFOLD_RE, ' ')
+    .replace(/[^a-z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Single bare prep-food only — naming a cut ("chicken breast"), a dish, or
+  // listing multiple foods ("chicken rice") leaves >1 token here and is skipped.
+  if (!PREP_FOOD_RE.test(core)) return null;
+
+  const templates = [
+    `How was the ${core} prepared, grilled, baked, or fried? And any sauce or oil? That swings the calories a lot, so I'd rather log it accurately than guess.`,
+    `Quick one so I log the ${core} accurately: grilled, baked, or fried, and any sauce or oil on it? Those change the calories quite a bit.`,
+  ];
+  let h = 0;
+  for (let i = 0; i < core.length; i++) h = (h * 31 + core.charCodeAt(i)) | 0;
+  return { food: core, response: templates[Math.abs(h) % templates.length]! };
+}
+
 export function detectVagueFood(text: string, lastGraceMessage?: string): VagueFoodCheck {
   const lower = text.toLowerCase().trim();
   if (lower.length === 0) return { vague: false };
@@ -236,7 +287,13 @@ export function detectVagueFood(text: string, lastGraceMessage?: string): VagueF
     if (uberMatch) matched = uberMatch;
   }
 
-  if (!matched) return { vague: false };
+  if (!matched) {
+    // No brand/category — but a bare prep-ambiguous food (fried/sauce-prone)
+    // with no prep info still needs a clarification (calories swing ~2x).
+    const prep = detectPrepNeeded(text);
+    if (prep) return { vague: true, matched: prep.food, response: prep.response };
+    return { vague: false };
+  }
 
   // If the message has any specificity, it's NOT vague — let log_food run.
   if (hasSpecificity(text)) return { vague: false };
@@ -255,4 +312,4 @@ export function detectVagueFood(text: string, lastGraceMessage?: string): VagueF
 // Detects whether the previous Grace message was OUR vague-food clarification.
 // Matches all four initial templates AND all three follow-up templates.
 const PRIOR_ASK_RE =
-  /\b(what did you (have|order|get|eat)|what(?:'s)? did you (?:actually )?have|which (?:specific )?item|which item|estimate the protein accurately|share the specifics|the more specific)\b/i;
+  /\b(what did you (have|order|get|eat)|what(?:'s)? did you (?:actually )?have|which (?:specific )?item|which item|estimate the protein accurately|share the specifics|the more specific|how was the .* prepared|grilled, baked, or fried|any sauce or oil)\b/i;

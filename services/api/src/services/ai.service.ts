@@ -2177,7 +2177,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     const isBriefDetail = input.text.trim().split(/\s+/).length <= 4;
     // Broadened so brief replies after a vague-food clarification ("3 tenders",
     // "a chicken sandwich", "4 wings") trigger continuation log_food.
-    const briefDetailMatchesFood = /\b(scoop|scoops|cup|cups|tbsp|tsp|grams?|oz|ounces?|servings?|with|and|small|medium|large|big|tiny|tender|tenders|wing|wings|nugget|nuggets|piece|pieces|slice|slices|sandwich|sandwiches|burger|burgers|taco|tacos|burrito|burritos|wrap|wraps|bowl|bowls|sub|subs|footlong|combo|meal|chicken|beef|fish|salmon|tuna|veggie|cheese)\b/i.test(input.text);
+    const briefDetailMatchesFood = /\b(scoop|scoops|cup|cups|tbsp|tsp|grams?|oz|ounces?|servings?|with|and|small|medium|large|big|tiny|tender|tenders|wing|wings|nugget|nuggets|piece|pieces|slice|slices|sandwich|sandwiches|burger|burgers|taco|tacos|burrito|burritos|wrap|wraps|bowl|bowls|sub|subs|footlong|combo|meal|chicken|beef|fish|salmon|tuna|veggie|cheese|grilled|fried|baked|roasted|boiled|steamed|poached|sauteed|seared|smoked|breaded|crispy|mashed|sauce|gravy|oil)\b/i.test(input.text);
     if (
       !shouldForceLogFood &&
       flags.toolsEnabled &&

@@ -234,6 +234,28 @@ describe('estimateMultiItemFood — full multi-clause comprehension', () => {
     expect(r!.protein_g).toBeGreaterThanOrEqual(40);
   });
 
+  // 2026-06-13 user examples — sentence-per-meal + newline list.
+  it('parses "for breakfast i ate eggs. for lunch chicken breast, rice and salad"', () => {
+    const r = estimateMultiItemFood('for breakfast i ate eggs. for lunch chicken breast, rice and salad');
+    expect(r).not.toBeNull();
+    const names = r!.items.map((i) => i.food).join(' | ');
+    expect(names).toMatch(/egg/i);
+    expect(names).toMatch(/chicken/i);
+    expect(names).toMatch(/rice/i);
+    expect(names).toMatch(/salad/i);
+    // eggs(12) + chicken breast(30) + rice(4) + salad(3) = 49g
+    expect(r!.protein_g).toBe(49);
+  });
+
+  it('parses a newline-separated list ("rice\\nchicken")', () => {
+    const r = estimateMultiItemFood('rice\nchicken');
+    expect(r).not.toBeNull();
+    const names = r!.items.map((i) => i.food).join(' | ');
+    expect(names).toMatch(/rice/i);
+    expect(names).toMatch(/chicken/i);
+    expect(r!.items.length).toBe(2);
+  });
+
   it('resolves a punctuation-free run of multiple foods in one clause', () => {
     // "2 eggs chicken breast rice" — no joiners; the greedy token resolver
     // must still pull out all three foods rather than dropping the run.

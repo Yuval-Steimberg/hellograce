@@ -796,6 +796,47 @@ hardening) rather than asking per-item.
 
 ---
 
+### Vague-category expansion + prep-method clarification + multi-item formats (2026-06-13)
+
+Follow-on to the fast-path fix above. All in `safety/vague-food.ts` (single
+source of truth — `detectVagueFood` is called by both the food-log fast path
+and the pipeline gate, so changes here cover both automatically).
+
+- **Expanded `VAGUE_CATEGORIES`**: added `casserole, bowl, noodles, ramen,
+  omelette, omelet, smoothie, milkshake, stew` (+ `salad` from the prior fix).
+  Qualified forms stay specific: added `omelette|omelet|noodles|casserole|stew`
+  to `QUALIFIED_CATEGORY_RE` ("cheese omelette", "chicken noodles", "beef stew")
+  and to `SIZED_PORTION_RE`. Note: bare `bowl` is intentionally inconsistent —
+  "rice bowl"/"poke bowl" → vague, but "a bowl"/"a bowl of X" reads as a
+  quantity (bowl is a UNIT_WORD) → specific. `shake` was NOT added (would break
+  "protein shake"); only `milkshake`.
+- **Prep-method clarification** (`detectPrepNeeded`, folded into
+  `detectVagueFood`): a bare prep-ambiguous protein/side (`chicken, fish,
+  salmon, shrimp, prawns, tofu, pork, wings, eggplant, potato(es),
+  cauliflower, tilapia, cod`) with NO prep word, NO sauce word, and NO quantity
+  → asks "grilled, baked, or fried? any sauce or oil?" (calories swing ~2x).
+  Tightly scoped to a SINGLE bare food: naming a cut ("chicken breast"), a dish,
+  a quantity ("6 oz salmon"), prep ("grilled chicken", "mashed potatoes"), or
+  listing multiple foods ("chicken and rice") all skip the ask and log normally.
+  The prep question contains "calories" + "?" so the existing continuation gate
+  (`lastWasFoodQuestion`) fires; `briefDetailMatchesFood` (ai.service ~2180)
+  gained prep words (grilled/fried/baked/…/sauce/oil) so a one-word reply
+  ("grilled") combines + logs. `PRIOR_ASK_RE` recognizes the prep ask for
+  follow-up templating.
+- **Multi-item formats**: `estimateMultiItemFood` already split on newlines,
+  periods, commas, "and", and meal labels — verified with tests for the two
+  requested formats: "for breakfast i ate eggs. for lunch chicken breast, rice
+  and salad" → eggs+chicken breast+rice+salad = 49g; "rice\nchicken" → 2 items.
+  No code change needed there; the splitter was already correct.
+
+Tests: +34 (vague-food: expanded categories + prep matrix; log-food: the two
+multi-item formats; food-log-fast from the prior fix). 754 api + 534 ai-core
+green, typecheck clean. Still a regression/scoping change to the EXISTING
+clarification gate — not an ask-always policy; multi-item + portioned + dish/cut
+logs are untouched.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

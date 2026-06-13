@@ -197,4 +197,51 @@ describe('detectVagueFood — uber-vague quantity guard (QA report 2026-06-03)',
       expect(detectVagueFood('I ate pizza').vague).toBe(true);
     });
   });
+
+  // ── 2026-06-13 expanded vague categories ────────────────────────────────────
+  describe('expanded vague categories', () => {
+    const vague = [
+      'I had a casserole', 'I had a poke bowl', 'I had noodles', 'I had ramen',
+      'I had an omelette', 'I had an omelet', 'I had a smoothie',
+      'I had a milkshake', 'I had stew', 'I had a salad',
+    ];
+    for (const m of vague) {
+      it(`"${m}" → vague`, () => expect(detectVagueFood(m).vague).toBe(true));
+    }
+
+    // Naming the filling/protein makes the category specific enough to log.
+    // ("a bowl of X" is specific — the portion is given; "large pasta" stays
+    // vague because pasta protein hinges on sauce/meat, not size.)
+    const specific = [
+      'cheese omelette', 'veggie omelette', 'chicken noodles', 'beef stew',
+      'chicken casserole', 'a bowl of oatmeal', 'chicken salad', 'chicken pasta',
+    ];
+    for (const m of specific) {
+      it(`"${m}" → not vague`, () => expect(detectVagueFood(m).vague).toBe(false));
+    }
+  });
+
+  // ── 2026-06-13 prep-method clarification (fried/sauce-heavy) ─────────────────
+  describe('prep-method clarification', () => {
+    const needsPrep = ['I had chicken', 'I had fish', 'chicken', 'I ate salmon', 'shrimp', 'I had pork'];
+    for (const m of needsPrep) {
+      it(`"${m}" → asks about prep`, () => {
+        const r = detectVagueFood(m);
+        expect(r.vague).toBe(true);
+        expect(r.response).toMatch(/grilled, baked, or fried|prepared/i);
+        expect(r.response).toMatch(/calories/i); // continuation gate needs this + '?'
+      });
+    }
+
+    const enough = [
+      'grilled chicken', 'fried fish', 'baked salmon', 'chicken with bbq sauce',
+      'chicken breast',             // named cut → log
+      'chicken and rice',           // multi-item → not a single bare food
+      '6 oz of salmon',             // quantity given
+      'mashed potatoes',            // prep given
+    ];
+    for (const m of enough) {
+      it(`"${m}" → no prep ask`, () => expect(detectVagueFood(m).vague).toBe(false));
+    }
+  });
 });

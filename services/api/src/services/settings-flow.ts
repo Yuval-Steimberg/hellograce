@@ -50,6 +50,14 @@ const PROFILE_REDIRECT =
   `settings can only be updated from the Settings page. Please update it there ` +
   `and I'll use the updated information moving forward: ${SETTINGS_URL}`;
 
+// General settings/profile MODIFICATION intent — a modify verb + a settings/
+// goal/profile field. Field nouns are SETTING phrasings ("protein goal", not
+// bare "protein") so nutrition questions are not caught.
+const MODIFY_VERB_RE =
+  /\b(change|update|edit|modify|adjust|set|lower|raise|increase|decrease|reduce|fix|correct|switch|reset|customize|customise)\b/i;
+const SETTINGS_FIELD_RE =
+  /(protein\s*(?:goal|target)|calorie\s*(?:goal|target)|macro\s*(?:goal|target)s?|(?:goal|current|starting)\s*weight|weight\s*goal|\bheight\b|\bmy\s+age\b|\bmy\s+(?:sex|gender)\b|\bmy\s+name\b|time\s?zone|wake[\s-]*(?:time|up)|sleep[\s-]*(?:time|schedule)|\bmedication\b|\bmy\s+dose\b|\bdosage\b|primary\s+goal|\bmy\s+goals?\b|\bmy\s+diet(?:ary)?\b|food\s+(?:dislikes?|preferences?|restrictions?)|dietary\s+(?:preference|restriction)s?|\breminders?\b|check[\s-]?ins?|\bmy\s+profile\b|\bmy\s+settings?\b|\bpreferences?\b)/i;
+
 export interface SettingsHandlerDeps {
   logger: MinimalLogger;
 }
@@ -512,6 +520,24 @@ export async function tryHandleSettings(
 ): Promise<string | null> {
   const trimmed = text.trim();
   if (trimmed.length === 0 || trimmed.length > 200) return null;
+
+  // 0. GENERAL settings/profile MODIFICATION intent (2026-06-13).
+  // A modify verb + a settings/goal/profile field → redirect to Settings, even
+  // without a target value ("change my protein goal", "I want to update my
+  // reminders", "edit my goal weight"). This distinguishes an ACTION (modify →
+  // Settings) from an INFO request ("what's my protein goal" → answered by the
+  // READ loop below) BEFORE the read path, so a change request is never
+  // answered with the current value. Excludes injection-day (its own in-chat
+  // handler) and check-in frequency (REMINDER_REDIRECT) — both run earlier in
+  // the webhook. Production failure 2026-06-13: "Change my protein goal" →
+  // "Your daily protein target is 114g" (treated as a read), then a clarify
+  // loop. The field nouns are the SETTING phrasings ("protein goal", not bare
+  // "protein") so nutrition questions ("how do I increase my protein intake")
+  // are untouched.
+  if (MODIFY_VERB_RE.test(trimmed) && SETTINGS_FIELD_RE.test(trimmed) && !/\binjection\s+day\b/i.test(trimmed)) {
+    deps.logger.info({ userId: user.phone, action: 'settings_modify_redirect' }, 'settings_flow.modify_redirect');
+    return PROFILE_REDIRECT;
+  }
 
   // 1. READ request? Always allowed — Grace may read and use settings.
   for (const field of FIELDS) {

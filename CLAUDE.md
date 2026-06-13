@@ -1122,6 +1122,35 @@ typecheck + 780 tests green; web typecheck + build clean.
 
 ---
 
+### Settings modification intent: "change my X" redirects, never reads (2026-06-13)
+
+Production: "Change my protein goal" → "Your daily protein target is 114g" — a
+MODIFY request answered as an INFO request, then a clarify loop.
+
+Root cause: `settings-flow.ts` had no field for `protein_goal_grams` /
+`calorie_goal_kcal`, and existing fields' update patterns required an explicit
+"to <value>". So "change my protein goal" matched nothing → fell to the AI,
+which force-called get_user_profile and read the value.
+
+Fix: a GENERAL settings-modification detector at the TOP of `tryHandleSettings`
+(before the READ loop): `MODIFY_VERB_RE` (change/update/edit/modify/adjust/set/
+lower/raise/increase/decrease/reduce/fix/correct/switch/reset/customize) +
+`SETTINGS_FIELD_RE` (protein goal/target, calorie goal, goal/current/starting
+weight, height, age, sex, name, timezone, wake/sleep time, medication, dose,
+primary goal, my goals, my diet/dietary, food dislikes/preferences/restrictions,
+reminders, check-ins, my profile/settings, preferences) → returns
+`PROFILE_REDIRECT`. Distinguishes ACTION from INFO so a change request is never
+answered with the current value. Field nouns are SETTING phrasings ("protein
+goal", not bare "protein"), so nutrition questions ("how do I increase my
+protein intake") are untouched. Injection-day excluded (its own in-chat
+handler); check-in frequency handled earlier in the webhook (REMINDER_REDIRECT).
+Resolves the action-vs-info, repeated-clarification-loop, and
+non-deterministic-flow failures in one deterministic gate. Applies to ALL
+settings/survey fields, not just protein. Tests: +12 in `settings-flow.test.ts`.
+792 api tests green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

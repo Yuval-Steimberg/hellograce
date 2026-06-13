@@ -207,6 +207,42 @@ describe('settings-flow dietary changes redirect to Settings', () => {
   }
 });
 
+// ─── Settings MODIFICATION intent → redirect, not read (2026-06-13) ───────────
+
+describe('settings modification requests redirect to Settings (never read the value)', () => {
+  const modifyRequests = [
+    'Change my protein goal',          // the production failure
+    'change my protein goal to 120',
+    'update my calorie goal',
+    'I want to change my settings',
+    'edit my goal weight',
+    'lower my protein target',
+    'adjust my reminders',
+    'update my diet',
+    'change my name',
+    'set my wake time',
+  ];
+  for (const phrase of modifyRequests) {
+    it(`"${phrase}" → Settings redirect`, async () => {
+      const reply = await tryHandleSettings(phrase, makeUser(), deps);
+      expect(reply).toBeTruthy();
+      expect(reply!.toLowerCase()).toContain('settings page');
+      // Must NOT echo a current value (the bug: "Your daily protein target is …").
+      expect(reply).not.toMatch(/114g|target is/i);
+    });
+  }
+
+  it('an INFO request still reads the value (not redirected)', async () => {
+    const reply = await tryHandleSettings('what is my timezone?', makeUser({ timezone: 'America/New_York' }), deps);
+    expect(reply).toMatch(/timezone/i);
+  });
+
+  it('nutrition questions are NOT caught (bare "protein", no "goal/target")', async () => {
+    expect(await tryHandleSettings('how do I increase my protein intake?', makeUser(), deps)).toBeNull();
+    expect(await tryHandleSettings('should I eat more protein?', makeUser(), deps)).toBeNull();
+  });
+});
+
 // ─── Does NOT trigger on normal chat ──────────────────────────────────────────
 
 describe('settings-flow does NOT trigger on normal chat', () => {

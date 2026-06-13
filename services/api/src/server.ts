@@ -158,6 +158,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       authToken: env.TWILIO_AUTH_TOKEN,
       ...(env.TWILIO_FROM_NUMBER ? { fromSms: env.TWILIO_FROM_NUMBER } : {}),
       ...(env.TWILIO_WHATSAPP_FROM ? { fromWhatsapp: env.TWILIO_WHATSAPP_FROM } : {}),
+      canonicalWebUrl: env.PUBLIC_WEB_URL,
     },
     logger,
   );

@@ -1,5 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeOutbound } from './sender.js';
+import { sanitizeOutbound, rewriteCanonicalLinks } from './sender.js';
+
+describe('rewriteCanonicalLinks — settings link points at the deployment (2026-06-13)', () => {
+  const web = 'https://grace-admin-silk.vercel.app';
+  it('rewrites a protocol URL', () => {
+    expect(rewriteCanonicalLinks('Update it at https://graceglp.com/settings', web))
+      .toBe('Update it at https://grace-admin-silk.vercel.app/settings');
+  });
+  it('rewrites a bare host (no protocol), preserving the path', () => {
+    expect(rewriteCanonicalLinks('see graceglp.com/settings to change it', web))
+      .toBe('see grace-admin-silk.vercel.app/settings to change it');
+  });
+  it('rewrites www + other paths (e.g. /upgrade)', () => {
+    expect(rewriteCanonicalLinks('https://www.graceglp.com/upgrade?phone=x', web))
+      .toBe('https://grace-admin-silk.vercel.app/upgrade?phone=x');
+  });
+  it('no-op when no webUrl, or when the deployment IS graceglp.com', () => {
+    expect(rewriteCanonicalLinks('https://graceglp.com/settings')).toBe('https://graceglp.com/settings');
+    expect(rewriteCanonicalLinks('https://graceglp.com/settings', 'https://graceglp.com')).toBe('https://graceglp.com/settings');
+  });
+  it('leaves unrelated text untouched', () => {
+    expect(rewriteCanonicalLinks('Aim for 100g protein today.', web)).toBe('Aim for 100g protein today.');
+  });
+});
 
 describe('sanitizeOutbound — em-dash replacement', () => {
   it('replaces em-dashes with commas', () => {

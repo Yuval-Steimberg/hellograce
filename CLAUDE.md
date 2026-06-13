@@ -1249,6 +1249,25 @@ or SMS). A user must be registered (onboarded) to receive a code.
 
 ---
 
+### Every outbound message rewrites graceglp.com → the deployment URL (2026-06-13)
+
+The deterministic settings-flow redirects already use `PUBLIC_WEB_URL`, but
+Gemini-generated responses still echo `graceglp.com/settings` from the system
+prompt (`prompts.ts`) + a few orchestrator fallback strings, so some settings
+replies showed the wrong (non-resolving) link. Rather than thread a URL through
+the 2,500-line prompt, the guaranteed fix is at the OUTBOUND layer:
+`twilio/sender.ts` `rewriteCanonicalLinks(text, webUrl)` rewrites any
+`graceglp.com` host (protocol'd, www, or bare) to the deployment host while
+preserving the path (`/settings`, `/upgrade?phone=…`). Applied to EVERY outbound
+in `TwilioSender.send()` — raw + sanitized — so links from the LLM, the system
+prompt, fallbacks, or the DB-active prompt all resolve. `TwilioSenderConfig`
+gains `canonicalWebUrl` (wired from `env.PUBLIC_WEB_URL` in server.ts). No-op
+when the deployment IS graceglp.com (set `PUBLIC_WEB_URL=https://graceglp.com`
+once that domain is live and links follow automatically). Tests: +5 in
+`sender.test.ts`. 811 api green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

@@ -8,6 +8,26 @@ export interface TwilioSenderConfig {
   authToken: string;
   fromSms?: string;
   fromWhatsapp?: string;
+  /** Deployment web URL (PUBLIC_WEB_URL). When set, any `graceglp.com` link in
+   *  an outbound message is rewritten to this host so users always get a link
+   *  that resolves — covers links echoed by the LLM/system prompt, not just
+   *  the deterministic settings-flow redirects. */
+  canonicalWebUrl?: string;
+}
+
+/**
+ * Rewrite the legacy/canonical `graceglp.com` host in any URL to the running
+ * deployment's host (preserving the path: /settings, /upgrade, …). No-op when
+ * webUrl is absent or already graceglp.com. Applied to EVERY outbound message.
+ */
+export function rewriteCanonicalLinks(text: string, webUrl?: string): string {
+  if (!webUrl) return text;
+  const host = webUrl.replace(/\/+$/, '');
+  const bareHost = host.replace(/^https?:\/\//, '');
+  if (/graceglp\.com/i.test(bareHost)) return text; // deployment IS graceglp.com
+  return text
+    .replace(/https?:\/\/(?:www\.)?graceglp\.com/gi, host)
+    .replace(/\bgraceglp\.com/gi, bareHost);
 }
 
 export interface OutboundMessage {
@@ -187,6 +207,10 @@ export class TwilioSender {
         }
       }
     }
+
+    // Final pass on EVERY outbound (raw + sanitized): point any graceglp.com
+    // link at the running deployment so the link the user taps actually works.
+    body = rewriteCanonicalLinks(body, this.cfg.canonicalWebUrl);
 
     try {
       const result = await this.client.messages.create({ from, to, body });

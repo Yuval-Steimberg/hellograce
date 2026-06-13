@@ -751,6 +751,21 @@ web typecheck clean, web build clean. Live Stripe/WhatsApp/deploy verification
 deferred to the checklist in `docs/ADMIN_DASHBOARD.md` (no Stripe keys / live
 sender / deploy in CI).
 
+**Registration gate fix (same branch, 2026-06-13):** a deleted user could keep
+using Grace — `ensureUser` re-INSERTs their row on the next inbound message
+with `trial_start = NULL`, and `isAccessAllowed` treated `trial_start = NULL`
+as "allow" (unlimited, never-expiring access), so they reappeared as Active and
+chatted normally. Fixed in `routes/webhook.ts`: `isAccessAllowed` now returns
+`false` for a null trial; new `needsRegistration(user)` (`!is_paid && !is_pro &&
+!trial_start`) fires a sign-up message (`buildSignupUrl` → `/onboarding`, new
+`register` template key w/ fallback) BEFORE the trial-expired paywall, then
+returns. Effect: only web-onboarded (`trial_start` set by `POST /users/onboard`)
+or paid/pro users get AI access; any unregistered number — brand-new OR
+deleted — gets the sign-up prompt on its first message. Admin delete +
+GDPR self-delete now also call `UserService.invalidate(phone)` (new public
+method) so the deleted user isn't served from the 60s in-memory cache. Tests:
++5 in `webhook.test.ts` (gate matrix). 718 api tests green.
+
 ---
 
 ## Where to start in a new session

@@ -1275,7 +1275,11 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     await deps.pool.query('DELETE FROM food_logs WHERE user_id = $1', [phone]).catch(() => null);
     await deps.pool.query('DELETE FROM weight_logs WHERE user_id = $1', [phone]).catch(() => null);
     await deps.pool.query('DELETE FROM users WHERE phone = $1', [phone]).catch(() => null);
-    void auditLog(deps.pool, 'admin.user_deleted', req.ip);
+    // Evict the in-memory user cache so a subsequent inbound message doesn't
+    // read the deleted user from cache. ensureUser recreates the row fresh
+    // (trial_start = NULL → registration gate fires).
+    deps.users?.invalidate(phone);
+    void auditLogFull(deps.pool, { action: 'admin.user_deleted', ip: req.ip, actor: actorOf(req), targetUser: phone });
     return { ok: true };
   });
 

@@ -409,6 +409,26 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             return;
           }
 
+          // Registration gate — a user with no subscription and no trial ever
+          // started (brand-new number, OR a deleted user whose row was just
+          // recreated by ensureUser with trial_start = NULL) must sign up via
+          // the web onboarding flow before they can use Grace. Without this,
+          // deleting a user did nothing — the next inbound message recreated
+          // them with unlimited access.
+          if (user && needsRegistration(user)) {
+            const signupUrl = buildSignupUrl(deps.env.PUBLIC_WEB_URL);
+            const body = deps.templates
+              ? await deps.templates.render(
+                  'register',
+                  { signup_url: signupUrl, first_name: user.first_name ?? '' },
+                  `Welcome to Grace 🧡 To start your daily check-ins, sign up here: ${signupUrl}. It only takes a minute.`,
+                )
+              : `Welcome to Grace 🧡 To start your daily check-ins, sign up here: ${signupUrl}. It only takes a minute.`;
+            await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
+            req.log.info({ phone: user.phone }, 'webhook.registration_required');
+            return;
+          }
+
           // Subscription gate — users with an expired trial and no active subscription
           // get a soft paywall nudge instead of the AI response.
           if (user && !isAccessAllowed(user)) {
@@ -523,11 +543,30 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
 
 const TRIAL_DAYS = 3;
 
-function isAccessAllowed(user: { is_paid: boolean; is_pro: boolean; trial_start: Date | null }): boolean {
+export function isAccessAllowed(user: { is_paid: boolean; is_pro: boolean; trial_start: Date | null }): boolean {
   if (user.is_paid || user.is_pro) return true;
-  if (!user.trial_start) return true; // no trial_start = not yet onboarded via v2, allow
+  if (!user.trial_start) return false; // no trial_start = not registered → needsRegistration handles it
   const msElapsed = Date.now() - new Date(user.trial_start).getTime();
   return msElapsed < TRIAL_DAYS * 24 * 3_600_000;
+}
+
+/**
+ * A user "needs registration" when they have no subscription AND no trial ever
+ * started. This is the state of:
+ *   - a brand-new number that texted Grace without onboarding via the web flow
+ *   - a DELETED user — `ensureUser` re-INSERTs their row on the next inbound
+ *     message, but with `trial_start = NULL`, so they must register again.
+ * Onboarding (`POST /users/onboard`) is what sets `trial_start`, so a properly
+ * onboarded user (even one whose trial later expired) never matches this — they
+ * fall through to the trial-expired paywall instead.
+ *
+ * Previously `isAccessAllowed` returned `true` for `trial_start = NULL`, which
+ * meant deleted users silently regained unlimited access (the row was recreated
+ * with a null trial that never expires). Production bug surfaced 2026-06-13:
+ * an admin-deleted user kept chatting normally and reappeared as Active.
+ */
+export function needsRegistration(user: { is_paid: boolean; is_pro: boolean; trial_start: Date | null }): boolean {
+  return !user.is_paid && !user.is_pro && !user.trial_start;
 }
 
 // ─── Natural-language opt-out ────────────────────────────────────────────────
@@ -904,6 +943,16 @@ export function buildUpgradeUrl(phone: string, webUrl: string = DEFAULT_WEB_URL)
   const encoded = encodeURIComponent(phone);
   const base = webUrl.replace(/\/$/, '');
   return `${base}/upgrade?phone=${encoded}`;
+}
+
+/**
+ * Signup / onboarding URL. Sent to unregistered users (never onboarded, or
+ * deleted and re-texting) so they can register via the web flow, which sets
+ * trial_start and grants access. The onboarding flow collects the phone
+ * itself, so no query param is needed.
+ */
+export function buildSignupUrl(webUrl: string = DEFAULT_WEB_URL): string {
+  return `${webUrl.replace(/\/$/, '')}/onboarding`;
 }
 
 /**

@@ -171,6 +171,13 @@ export class UserService {
     }
   }
 
+  /** Public cache eviction by phone (and id if known). Used by the admin
+   *  delete endpoint so a hard-deleted user isn't served from the in-memory
+   *  cache on a subsequent read. */
+  invalidate(phone: string, id?: string): void {
+    this.invalidateUserCache([phone, id]);
+  }
+
   private cacheUser(user: GraceUser): void {
     const expiresAt = Date.now() + this.USER_CACHE_TTL_MS;
     if (user.id) this.userCache.set(String(user.id), { user, expiresAt });

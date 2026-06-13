@@ -275,6 +275,10 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     await pool.query('DELETE FROM weight_logs WHERE user_id = $1', [phone]).catch(() => null);
     await pool.query('DELETE FROM feedback WHERE user_id = $1', [phone]).catch(() => null);
     await pool.query('DELETE FROM users WHERE phone = $1', [phone]).catch(() => null);
+    // Evict the in-memory cache so a subsequent message recreates the user
+    // fresh (trial_start = NULL → must register again) instead of reading the
+    // pre-delete cached row.
+    users.invalidate(phone);
     req.log.info('user.data_deleted');
     return { ok: true };
   });

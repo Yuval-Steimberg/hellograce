@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   detectUpgradeIntent,
   buildUpgradeUrl,
+  buildSignupUrl,
+  isAccessAllowed,
+  needsRegistration,
   coalesceMessages,
   detectPauseIntent,
   shouldSkipCoalesce,
@@ -206,6 +209,43 @@ describe('buildUpgradeUrl', () => {
     expect(buildUpgradeUrl('+15551234567', 'https://example.com/')).toBe(
       'https://example.com/upgrade?phone=%2B15551234567',
     );
+  });
+});
+
+describe('buildSignupUrl', () => {
+  it('points at the onboarding flow (no phone param needed)', () => {
+    expect(buildSignupUrl('https://example.com')).toBe('https://example.com/onboarding');
+    expect(buildSignupUrl('https://example.com/')).toBe('https://example.com/onboarding');
+  });
+});
+
+describe('registration gate (deleted / never-onboarded users)', () => {
+  const base = { is_paid: false, is_pro: false, trial_start: null as Date | null };
+
+  it('a recreated/deleted user (no trial_start, not paid) needs registration', () => {
+    expect(needsRegistration(base)).toBe(true);
+    // and is therefore NOT granted access (previously this returned true → the bug)
+    expect(isAccessAllowed(base)).toBe(false);
+  });
+
+  it('an onboarded user inside their trial does NOT need registration and has access', () => {
+    const u = { is_paid: false, is_pro: false, trial_start: new Date() };
+    expect(needsRegistration(u)).toBe(false);
+    expect(isAccessAllowed(u)).toBe(true);
+  });
+
+  it('an onboarded user with an EXPIRED trial needs no registration but hits the paywall', () => {
+    const fourDaysAgo = new Date(Date.now() - 4 * 24 * 3_600_000);
+    const u = { is_paid: false, is_pro: false, trial_start: fourDaysAgo };
+    expect(needsRegistration(u)).toBe(false); // → paywall path, not the signup path
+    expect(isAccessAllowed(u)).toBe(false);
+  });
+
+  it('a paid/pro user never needs registration and always has access', () => {
+    expect(needsRegistration({ is_paid: true, is_pro: false, trial_start: null })).toBe(false);
+    expect(isAccessAllowed({ is_paid: true, is_pro: false, trial_start: null })).toBe(true);
+    expect(needsRegistration({ is_paid: false, is_pro: true, trial_start: null })).toBe(false);
+    expect(isAccessAllowed({ is_paid: false, is_pro: true, trial_start: null })).toBe(true);
   });
 });
 

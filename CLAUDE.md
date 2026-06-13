@@ -692,6 +692,67 @@ green; battery 82/82.
 
 ---
 
+### Admin dashboard ops pass: Stripe two-way sync + manual ops + deep audit (2026-06-13)
+
+Branch `claude/grace-admin-dashboard-4n3s37`. Full operator guide +
+live-verification checklist: `docs/ADMIN_DASHBOARD.md`. The dashboard already
+covered ~70% of the requested spec; this pass closed the genuine gaps
+(RBAC roles were explicitly out of scope this session).
+
+**Migration `20260613000001_admin_dashboard_ops.sql` (NEW — run in Supabase):**
+adds `users.stripe_customer_id / stripe_subscription_id / subscription_status /
+subscription_plan / stripe_synced_at / stripe_sync_error`; extends `audit_logs`
+with `actor / target_user / before / after / reason`; creates `stripe_events`
+(unique on `stripe_event_id` → idempotent + retryable), `admin_notes`,
+`flagged_responses`. RLS-enabled (default-deny; API uses direct PG, bypasses).
+
+**Stripe two-way sync (`services/api/src/services/stripe.service.ts`):**
+`syncSubscriptionToDb` (mirror live status/plan/`is_paid`/`is_pro`; no-customer
+→ leaves `is_paid` untouched; error → `stripe_sync_error`, never throws),
+`reactivateSubscription`, `changePlan(base|pro)`, `handleStripeWebhookEvent`
+(created/updated/deleted + invoice failed/succeeded; resolves user by
+`stripe_customer_id` then customer.metadata.phone, backfilling the id),
+`recordStripeEvent`, `constructWebhookEvent`. New v2 webhook
+`POST /webhook/stripe` (`services/api/src/routes/stripe-webhook.ts`) —
+registered ONLY when `STRIPE_WEBHOOK_SECRET` set; encapsulated Fastify scope
+with a raw-buffer JSON parser for signature verification; records every event.
+The v1 Supabase `stripe-webhook` edge fn is still live — v2 is additive +
+idempotent; cut Stripe over to one endpoint and retire v1 once verified.
+
+**New admin endpoints (`routes/admin.ts`):** `POST /admin/users/:phone/stripe/{sync,reactivate,change-plan}`,
+`GET /admin/stripe/events`, `POST /admin/stripe/events/:id/retry`,
+`POST /admin/users/:phone/send-message` (real WhatsApp send + persists turn as
+`intent:'admin_manual'`), `POST /admin/users/:phone/{pause,resume}`,
+`GET/POST /admin/users/:phone/notes` + `DELETE /admin/notes/:id`,
+`POST /admin/messages/:id/flag` + `GET /admin/flagged` + `PUT /admin/flagged/:id/resolve`,
+`GET /admin/audit-logs`. `AdminDeps` gained `sender`, `memory`,
+`stripeBasePriceId`, `stripeProPriceId` (wired in `server.ts`).
+
+**Deep audit:** `auditLogFull()` helper + `actorOf(req)` (reads `X-Admin-Actor`
+header, defaults `admin` — attribution without RBAC). `PUT /admin/users/:phone`
+now records a before→after diff (PII decrypted) + `X-Admin-Reason`. Stripe
+actions / manual send / pause-resume / notes / flags all audit. All audit/
+notes/flags/event writes are best-effort (swallow missing table/column).
+
+**Env (`config/env.ts`):** `STRIPE_WEBHOOK_SECRET` (optional), `STRIPE_BASE_PRICE_ID`
++ `STRIPE_PRO_PRICE_ID` (default to the test-account prices).
+
+**Frontend:** `lib/api.ts` sends `X-Admin-Actor` (from `localStorage.grace_admin_actor`)
++ new `stripe.*`, `sendMessage`, `pauseUser/resumeUser`, `notes.*`, `flags.*`,
+`auditLogs` calls + `getActor/setActor`. New page `pages/admin/AuditLogPage.tsx`
+(Audit & Ops: Audit Log / Flagged / Stripe Events tabs, route `/admin/audit`,
+nav entry added). `UserDrawer.tsx` gained Sync-from-Stripe / Reactivate /
+Switch-plan buttons + last-sync/error line, a manual-message box, and an
+internal-notes section.
+
+**Tests:** `stripe.service.test.ts` (15, mocked Stripe SDK) +
+`admin-ops.test.ts` (10, Fastify inject) — **713 api tests green**, api +
+web typecheck clean, web build clean. Live Stripe/WhatsApp/deploy verification
+deferred to the checklist in `docs/ADMIN_DASHBOARD.md` (no Stripe keys / live
+sender / deploy in CI).
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

@@ -10,14 +10,26 @@ export function clearToken(): void {
   localStorage.removeItem('grace_admin_token');
 }
 
+// Admin actor label (e.g. the operator's name/email). Sent as X-Admin-Actor so
+// every audited action is attributed to a person, not just "admin". Optional —
+// defaults server-side to 'admin' when unset.
+export function getActor(): string | null {
+  return localStorage.getItem('grace_admin_actor');
+}
+export function setActor(actor: string): void {
+  localStorage.setItem('grace_admin_actor', actor);
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
+  const actor = getActor();
   const hasBody = init?.body != null;
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(actor ? { 'X-Admin-Actor': actor } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -176,6 +188,60 @@ export interface UserDetail {
   checkin_count_per_day: number | null;
   created_at: string;
   updated_at: string;
+  // Stripe sync state (migration 20260613000001). Optional — absent on an
+  // un-migrated DB.
+  stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
+  subscription_status?: string | null;
+  subscription_plan?: string | null;
+  stripe_synced_at?: string | null;
+  stripe_sync_error?: string | null;
+}
+
+export interface AdminNote {
+  id: number;
+  target_user: string;
+  author: string;
+  note: string;
+  created_at: string;
+}
+
+export interface FlaggedResponse {
+  id: number;
+  message_id: string | null;
+  user_id: string;
+  reason: string;
+  note: string | null;
+  status: 'open' | 'reviewed';
+  created_by: string;
+  resolved_by: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface AuditLogEntry {
+  id: number;
+  action: string;
+  actor: string | null;
+  target_user: string | null;
+  admin_ip: string | null;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  reason: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface StripeEvent {
+  id: number;
+  stripe_event_id: string;
+  type: string;
+  status: string;
+  target_user: string | null;
+  error: string | null;
+  attempts: number;
+  created_at: string;
+  processed_at: string | null;
 }
 
 export interface BusinessData {
@@ -420,6 +486,73 @@ export const api = {
       `/admin/users/${encodeURIComponent(phone)}/cancel-subscription`,
       { method: 'POST' },
     ),
+
+  stripe: {
+    sync: (phone: string) =>
+      apiFetch<{ ok: boolean; customer_id: string | null; status: string | null; is_paid: boolean | null; is_pro: boolean | null; error?: string }>(
+        `/admin/users/${encodeURIComponent(phone)}/stripe/sync`,
+        { method: 'POST' },
+      ),
+    reactivate: (phone: string) =>
+      apiFetch<{ ok: boolean; subscription_id: string }>(
+        `/admin/users/${encodeURIComponent(phone)}/stripe/reactivate`,
+        { method: 'POST' },
+      ),
+    changePlan: (phone: string, plan: 'base' | 'pro') =>
+      apiFetch<{ ok: boolean; subscription_id: string; plan: string }>(
+        `/admin/users/${encodeURIComponent(phone)}/stripe/change-plan`,
+        { method: 'POST', body: JSON.stringify({ plan }) },
+      ),
+    events: (params?: { status?: string; limit?: number; offset?: number }) => {
+      const qs = params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
+      return apiFetch<{ events: StripeEvent[] }>(`/admin/stripe/events${qs}`);
+    },
+    retryEvent: (id: number) =>
+      apiFetch<{ ok: boolean; status: string; target_user: string | null }>(
+        `/admin/stripe/events/${id}/retry`,
+        { method: 'POST' },
+      ),
+  },
+
+  sendMessage: (phone: string, text: string, channel?: 'whatsapp' | 'sms') =>
+    apiFetch<{ ok: boolean; sid: string }>(`/admin/users/${encodeURIComponent(phone)}/send-message`, {
+      method: 'POST',
+      body: JSON.stringify({ text, ...(channel ? { channel } : {}) }),
+    }),
+
+  pauseUser: (phone: string) =>
+    apiFetch<{ ok: boolean; paused: boolean }>(`/admin/users/${encodeURIComponent(phone)}/pause`, { method: 'POST' }),
+  resumeUser: (phone: string) =>
+    apiFetch<{ ok: boolean; paused: boolean }>(`/admin/users/${encodeURIComponent(phone)}/resume`, { method: 'POST' }),
+
+  notes: {
+    list: (phone: string) =>
+      apiFetch<{ notes: AdminNote[] }>(`/admin/users/${encodeURIComponent(phone)}/notes`),
+    add: (phone: string, note: string) =>
+      apiFetch<{ ok: boolean; note: AdminNote }>(`/admin/users/${encodeURIComponent(phone)}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ note }),
+      }),
+    remove: (id: number) =>
+      apiFetch<{ ok: boolean }>(`/admin/notes/${id}`, { method: 'DELETE' }),
+  },
+
+  flags: {
+    flag: (messageId: string, body: { user_id: string; reason: string; note?: string }) =>
+      apiFetch<{ ok: boolean; flag: FlaggedResponse }>(`/admin/messages/${messageId}/flag`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    list: (status: 'open' | 'reviewed' = 'open') =>
+      apiFetch<{ flags: FlaggedResponse[] }>(`/admin/flagged?status=${status}`),
+    resolve: (id: number) =>
+      apiFetch<{ ok: boolean }>(`/admin/flagged/${id}/resolve`, { method: 'PUT' }),
+  },
+
+  auditLogs: (params?: { action?: string; target_user?: string; date?: 'today' | '7d' | '30d'; limit?: number; offset?: number }) => {
+    const qs = params ? '?' + new URLSearchParams(params as Record<string, string>).toString() : '';
+    return apiFetch<{ logs: AuditLogEntry[] }>(`/admin/audit-logs${qs}`);
+  },
 
   onboard: (body: {
     firstName: string; phone: string; medication: string;

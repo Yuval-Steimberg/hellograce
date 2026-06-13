@@ -24,6 +24,7 @@ import { startWorkers, stopWorkers } from './workers/index.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerWebhookRoutes } from './routes/webhook.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerStripeWebhookRoutes } from './routes/stripe-webhook.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerUserRoutes } from './routes/users.js';
 import { UserService } from './user/user.service.js';
@@ -486,7 +487,26 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService });
   registerUserRoutes(app, { pool, users, sender, generator });
   registerChatRoutes(app, ai, pool);
-  registerAdminRoutes(app, { pool, cache, llm, promptOptimizer, reloadActivePrompt, redis, templates: messageTemplatesService, faqCache, users, memoryMd, ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}) });
+  registerAdminRoutes(app, {
+    pool, cache, llm, promptOptimizer, reloadActivePrompt, redis,
+    templates: messageTemplatesService, faqCache, users, memoryMd,
+    sender, memory,
+    stripeBasePriceId: env.STRIPE_BASE_PRICE_ID,
+    stripeProPriceId: env.STRIPE_PRO_PRICE_ID,
+    ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}),
+  });
+
+  // v2 Stripe webhook — only when a signing secret is configured. Keeps the
+  // v1 Supabase edge function as the handler until the user cuts Stripe over
+  // to this endpoint (both are idempotent on stripe_event_id / is_paid).
+  if (env.STRIPE_WEBHOOK_SECRET) {
+    registerStripeWebhookRoutes(app, {
+      pool,
+      logger,
+      webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+      proPriceId: env.STRIPE_PRO_PRICE_ID,
+    });
+  }
 
   const shutdown = async () => {
     app.log.info('shutdown.start');

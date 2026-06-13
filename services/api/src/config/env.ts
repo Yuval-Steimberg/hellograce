@@ -54,6 +54,18 @@ const EnvSchema = z.object({
    *  via `fly secrets set STRIPE_SECRET_KEY=sk_live_...`. */
   STRIPE_SECRET_KEY: z.string().optional(),
 
+  /** Stripe webhook signing secret (whsec_...). When set, the v2 webhook at
+   *  POST /webhook/stripe verifies signatures and records every event in
+   *  stripe_events. When unset, the route is not registered (the v1 Supabase
+   *  edge function keeps handling webhooks). */
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+
+  /** Stripe price IDs for the Standard (base) and Pro plans. Used by the admin
+   *  change-plan action. Default to the test-account price IDs the Supabase
+   *  edge functions already use, so behavior is unchanged when unset. */
+  STRIPE_BASE_PRICE_ID: z.string().default('price_1TWgb5LMk6wjvxD9Y9azDUfZ'),
+  STRIPE_PRO_PRICE_ID: z.string().default('price_1TLla9E0DcWyPH4XZnep2X7G'),
+
   /** FAQ semantic cache — when true, fresh-conversation messages whose
    *  embedding matches a seeded FAQ entry above the threshold bypass the
    *  full LLM pipeline and return the canonical response (~50ms vs ~1500ms).

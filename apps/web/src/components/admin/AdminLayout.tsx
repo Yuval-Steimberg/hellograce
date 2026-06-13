@@ -27,6 +27,7 @@ import {
   ChevronRight,
   Target,
   Microscope,
+  ScrollText,
 } from 'lucide-react';
 
 const NAV = [
@@ -47,6 +48,7 @@ const NAV = [
   { to: '/admin/content-rules', label: 'Content Rules', icon: Shield, end: false },
   { to: '/admin/subscription-messages', label: 'Subscription Messages', icon: CreditCard, end: false },
   { to: '/admin/system-health', label: 'System Health', icon: Activity, end: false },
+  { to: '/admin/audit', label: 'Audit & Ops', icon: ScrollText, end: false },
 ];
 
 const stagger = {

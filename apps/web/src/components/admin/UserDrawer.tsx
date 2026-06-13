@@ -158,6 +158,66 @@ export default function UserDrawer({ user, onClose }: Props) {
     onError: (err) => toast.error(err instanceof Error ? err.message : 'Cancel failed'),
   });
 
+  const syncStripeMutation = useMutation({
+    mutationFn: () => api.stripe.sync(user!.phone),
+    onSuccess: (r) => {
+      toast[r.error ? 'error' : 'success'](r.error ? `Stripe sync error: ${r.error}` : 'Synced from Stripe');
+      void qc.invalidateQueries({ queryKey: ['user-stripe', user?.phone] });
+      void qc.invalidateQueries({ queryKey: ['user-detail', user?.phone] });
+      void qc.invalidateQueries({ queryKey: ['admin-users'] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Sync failed'),
+  });
+
+  const reactivateMutation = useMutation({
+    mutationFn: () => api.stripe.reactivate(user!.phone),
+    onSuccess: () => {
+      toast.success('Subscription reactivated');
+      void qc.invalidateQueries({ queryKey: ['user-stripe', user?.phone] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Reactivate failed'),
+  });
+
+  const changePlanMutation = useMutation({
+    mutationFn: (plan: 'base' | 'pro') => api.stripe.changePlan(user!.phone, plan),
+    onSuccess: (r) => {
+      toast.success(`Plan changed to ${r.plan}`);
+      void qc.invalidateQueries({ queryKey: ['user-stripe', user?.phone] });
+      void qc.invalidateQueries({ queryKey: ['user-detail', user?.phone] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Change plan failed'),
+  });
+
+  const [manualMsg, setManualMsg] = useState('');
+  const sendMessageMutation = useMutation({
+    mutationFn: (text: string) => api.sendMessage(user!.phone, text),
+    onSuccess: () => {
+      toast.success('Message sent');
+      setManualMsg('');
+      void qc.invalidateQueries({ queryKey: ['user-detail', user?.phone] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : 'Send failed'),
+  });
+
+  const [noteText, setNoteText] = useState('');
+  const notesQuery = useQuery({
+    queryKey: ['user-notes', user?.phone],
+    queryFn: () => api.notes.list(user!.phone),
+    enabled: !!user,
+  });
+  const addNoteMutation = useMutation({
+    mutationFn: (note: string) => api.notes.add(user!.phone, note),
+    onSuccess: () => {
+      setNoteText('');
+      void qc.invalidateQueries({ queryKey: ['user-notes', user?.phone] });
+    },
+    onError: () => toast.error('Add note failed'),
+  });
+  const deleteNoteMutation = useMutation({
+    mutationFn: (id: number) => api.notes.remove(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['user-notes', user?.phone] }),
+  });
+
   // Confirmation dialog for paid/pro toggle-OFF: ask whether to also cancel
   // the Stripe subscription. Two choices: just override (toggle DB only) or
   // cancel Stripe too. Cancel button to abort entirely.
@@ -453,6 +513,91 @@ export default function UserDrawer({ user, onClose }: Props) {
                         )}
                       </div>
                     )}
+
+                    {/* Two-way sync actions */}
+                    <div className="mt-3 space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" className="h-8 text-xs"
+                          disabled={syncStripeMutation.isPending}
+                          onClick={() => syncStripeMutation.mutate()}>
+                          {syncStripeMutation.isPending ? 'Syncing…' : 'Sync from Stripe'}
+                        </Button>
+                        {stripeData?.subscription?.cancel_at_period_end && (
+                          <Button size="sm" variant="outline" className="h-8 text-xs"
+                            disabled={reactivateMutation.isPending}
+                            onClick={() => reactivateMutation.mutate()}>
+                            Reactivate
+                          </Button>
+                        )}
+                        {stripeData?.subscription && (
+                          <Button size="sm" variant="outline" className="h-8 text-xs"
+                            disabled={changePlanMutation.isPending}
+                            onClick={() => changePlanMutation.mutate(detail?.is_pro ? 'base' : 'pro')}>
+                            Switch to {detail?.is_pro ? 'Standard' : 'Pro'}
+                          </Button>
+                        )}
+                      </div>
+                      {(detail?.stripe_synced_at || detail?.stripe_sync_error) && (
+                        <p className={`text-[11px] ${detail?.stripe_sync_error ? 'text-rose-400' : 'text-muted-foreground'}`}>
+                          {detail?.stripe_sync_error
+                            ? `Last sync error: ${detail.stripe_sync_error}`
+                            : `Last synced ${formatDate(detail?.stripe_synced_at ?? null)}`}
+                        </p>
+                      )}
+                    </div>
+                  </section>
+
+                  <Separator />
+
+                  {/* Manual message + internal notes */}
+                  <section>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3 flex items-center gap-1.5">
+                      <MessageSquare className="h-3.5 w-3.5" /> Send a message
+                    </p>
+                    <textarea
+                      value={manualMsg}
+                      onChange={(e) => setManualMsg(e.target.value)}
+                      placeholder="Type a WhatsApp message to send to this user…"
+                      rows={3}
+                      maxLength={1500}
+                      className="w-full text-sm rounded-md border bg-transparent px-3 py-2 resize-y"
+                    />
+                    <Button
+                      className="mt-2 w-full"
+                      size="sm"
+                      disabled={!manualMsg.trim() || sendMessageMutation.isPending}
+                      onClick={() => sendMessageMutation.mutate(manualMsg.trim())}
+                    >
+                      {sendMessageMutation.isPending ? 'Sending…' : 'Send WhatsApp message'}
+                    </Button>
+
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mt-5 mb-2">Internal notes</p>
+                    <div className="flex gap-2">
+                      <Input
+                        value={noteText}
+                        onChange={(e) => setNoteText(e.target.value)}
+                        placeholder="Add an internal note…"
+                        onKeyDown={(e) => { if (e.key === 'Enter' && noteText.trim()) addNoteMutation.mutate(noteText.trim()); }}
+                      />
+                      <Button size="sm" variant="outline" disabled={!noteText.trim() || addNoteMutation.isPending}
+                        onClick={() => addNoteMutation.mutate(noteText.trim())}>
+                        Add
+                      </Button>
+                    </div>
+                    <div className="mt-2 space-y-1.5">
+                      {(notesQuery.data?.notes ?? []).map((n) => (
+                        <div key={n.id} className="text-xs rounded-md border px-3 py-2 flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-foreground">{n.note}</p>
+                            <p className="text-muted-foreground mt-0.5">{n.author} · {formatDate(n.created_at)}</p>
+                          </div>
+                          <button className="text-muted-foreground hover:text-destructive" onClick={() => deleteNoteMutation.mutate(n.id)}>×</button>
+                        </div>
+                      ))}
+                      {(notesQuery.data?.notes ?? []).length === 0 && (
+                        <p className="text-xs text-muted-foreground">No notes yet.</p>
+                      )}
+                    </div>
                   </section>
 
                   <Separator />

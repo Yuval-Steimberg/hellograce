@@ -7,7 +7,15 @@ import { fileURLToPath } from 'url';
 import { GRACE_SYSTEM_PROMPT } from '@grace/ai-core';
 import { UnauthorizedError, ValidationError } from '../errors.js';
 import { encryptField, decryptField } from '../crypto/field-encrypt.js';
-import { getBillingSnapshot, cancelSubscriptionAtPeriodEnd, isStripeEnabled, ensureStripeCustomer } from '../services/stripe.service.js';
+import {
+  getBillingSnapshot,
+  cancelSubscriptionAtPeriodEnd,
+  isStripeEnabled,
+  ensureStripeCustomer,
+  syncSubscriptionToDb,
+  reactivateSubscription,
+  changePlan,
+} from '../services/stripe.service.js';
 import type { Cache } from '../cache/cache.js';
 import type { LLMProvider } from '@grace/shared';
 import type { PromptOptimizer } from '../scheduler/prompt-optimizer.js';
@@ -36,6 +44,60 @@ export interface AdminDeps {
   users?: import('../user/user.service.js').UserService;
   /** Phase D — memory.md pilot enrollment management. Optional. */
   memoryMd?: import('../memory/memory-md.service.js').MemoryMdService;
+  /** Outbound sender — used by POST /admin/users/:phone/send-message to send a
+   *  real WhatsApp/SMS message from the dashboard. */
+  sender?: import('../twilio/sender.js').TwilioSender;
+  /** Memory service — persists admin-sent messages into the conversation
+   *  thread so they show up in the conversation viewer + the user's context. */
+  memory?: import('../memory/memory.service.js').MemoryService;
+  /** Stripe price IDs for the admin change-plan action. */
+  stripeBasePriceId?: string;
+  stripeProPriceId?: string;
+}
+
+/** Read the acting admin's identity from the X-Admin-Actor header (set by the
+ *  dashboard from the logged-in admin's label). Falls back to 'admin' so audit
+ *  rows are never anonymous-null. */
+function actorOf(req: { headers: Record<string, unknown> }): string {
+  const raw = req.headers['x-admin-actor'];
+  const val = Array.isArray(raw) ? raw[0] : raw;
+  const s = typeof val === 'string' ? val.trim() : '';
+  return s.length > 0 && s.length <= 200 ? s : 'admin';
+}
+
+interface AuditEntry {
+  action: string;
+  ip?: string;
+  actor?: string;
+  targetUser?: string;
+  before?: unknown;
+  after?: unknown;
+  reason?: string;
+  details?: Record<string, unknown>;
+}
+
+/** Structured audit write: admin identity, target user, before/after, reason.
+ *  Best-effort — a missing audit_logs table or column is swallowed so an
+ *  un-migrated DB never fails the underlying admin action. */
+async function auditLogFull(pool: Pool, entry: AuditEntry): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (action, admin_ip, actor, target_user, before, after, reason, details)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        entry.action,
+        entry.ip ?? null,
+        entry.actor ?? 'admin',
+        entry.targetUser ?? null,
+        entry.before != null ? JSON.stringify(entry.before) : null,
+        entry.after != null ? JSON.stringify(entry.after) : null,
+        entry.reason ?? null,
+        entry.details ? JSON.stringify(entry.details) : '{}',
+      ],
+    );
+  } catch {
+    // audit_logs table/columns may not exist yet — silently skip.
+  }
 }
 
 async function auditLog(pool: Pool, action: string, ip: string, details?: Record<string, unknown>): Promise<void> {
@@ -47,6 +109,19 @@ async function auditLog(pool: Pool, action: string, ip: string, details?: Record
   } catch {
     // audit_logs table may not exist yet — silently skip
   }
+}
+
+/** Set a boolean flag on a user, preferring UserService.update so the
+ *  in-memory user cache is invalidated immediately (otherwise the next
+ *  handleMessage reads stale data for up to the 60s TTL). */
+async function applyUserFlag(deps: AdminDeps, phone: string, patch: Record<string, boolean>): Promise<void> {
+  if (deps.users) {
+    await deps.users.update(phone, patch as Parameters<typeof deps.users.update>[1]);
+    return;
+  }
+  const keys = Object.keys(patch);
+  const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
+  await deps.pool.query(`UPDATE users SET ${sets}, updated_at = now() WHERE phone = $1`, [phone, ...keys.map((k) => patch[k])]);
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void {
@@ -625,8 +700,19 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     ]);
     // Decrypt encrypted-at-rest fields so the admin sees plaintext in the
     // inputs (otherwise first_name and medication show as `enc:...` ciphertext).
+    // Stripe sync-state columns are fetched separately + best-effort so a DB
+    // that hasn't run migration 20260613000001 yet still returns user detail.
+    const { rows: stripeStateRows } = await deps.pool
+      .query<Record<string, unknown>>(
+        `SELECT stripe_customer_id, stripe_subscription_id, subscription_status,
+                subscription_plan, stripe_synced_at, stripe_sync_error
+         FROM users WHERE phone = $1`,
+        [phone],
+      )
+      .catch(() => ({ rows: [] as Record<string, unknown>[] }));
     const decryptedUser = {
       ...userRows[0],
+      ...(stripeStateRows[0] ?? {}),
       ...(userRows[0].first_name ? { first_name: decryptField(userRows[0].first_name) } : {}),
       ...(userRows[0].medication ? { medication: decryptField(userRows[0].medication) } : {}),
     };
@@ -680,6 +766,25 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     const parsed = UpdateUserSchema.safeParse(req.body);
     if (!parsed.success) throw new ValidationError(parsed.error.message);
     const fields = parsed.data as Record<string, unknown>;
+    // Snapshot the prior values of exactly the fields being changed, for an
+    // audit before/after diff. Keys come from the Zod schema (known column
+    // names), so the dynamic SELECT is safe. PII is decrypted for readability.
+    const requested = { ...parsed.data } as Record<string, unknown>;
+    const auditKeys = Object.keys(requested);
+    let beforeSnapshot: Record<string, unknown> = {};
+    if (auditKeys.length > 0) {
+      const { rows: priorRows } = await deps.pool
+        .query<Record<string, unknown>>(`SELECT ${auditKeys.join(', ')} FROM users WHERE phone = $1`, [phone])
+        .catch(() => ({ rows: [] as Record<string, unknown>[] }));
+      if (priorRows[0]) {
+        beforeSnapshot = { ...priorRows[0] };
+        for (const piiKey of ['first_name', 'medication'] as const) {
+          if (typeof beforeSnapshot[piiKey] === 'string' && beforeSnapshot[piiKey]) {
+            beforeSnapshot[piiKey] = decryptField(beforeSnapshot[piiKey] as string);
+          }
+        }
+      }
+    }
     // Re-encrypt fields that are stored encrypted at rest. Without this, the
     // admin save would write plaintext to columns that ai.service.ts expects
     // to decrypt, corrupting the row (subsequent reads decrypt a non-cipher).
@@ -718,6 +823,16 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
          FROM users WHERE phone = $1`,
       [phone],
     );
+    const reasonHdr = req.headers['x-admin-reason'];
+    void auditLogFull(deps.pool, {
+      action: 'admin.user_update',
+      ip: req.ip,
+      actor: actorOf(req),
+      targetUser: phone,
+      before: beforeSnapshot,
+      after: requested,
+      reason: typeof reasonHdr === 'string' ? reasonHdr : undefined,
+    });
     return { ok: true, user: refreshed[0] ?? null };
   });
 
@@ -801,7 +916,13 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         reply.code(404);
         return { error: 'No active subscription to cancel' };
       }
-      void auditLog(deps.pool, 'admin.stripe_cancel_subscription', req.ip);
+      void auditLogFull(deps.pool, {
+        action: 'admin.stripe_cancel_subscription',
+        ip: req.ip,
+        actor: actorOf(req),
+        targetUser: phone,
+        after: result,
+      });
       return { ok: true, ...result };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -809,6 +930,334 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       reply.code(500);
       return { error: `Cancel failed: ${msg}` };
     }
+  });
+
+  /** Repair drift: pull live Stripe state and mirror it into the users row
+   *  (status, plan, is_paid/is_pro, customer/subscription IDs). Records
+   *  stripe_synced_at + any stripe_sync_error. */
+  app.post('/admin/users/:phone/stripe/sync', async (req, reply) => {
+    if (!isStripeEnabled()) {
+      reply.code(503);
+      return { error: 'Stripe not configured' };
+    }
+    const { phone } = req.params as { phone: string };
+    const result = await syncSubscriptionToDb(deps.pool, phone, { proPriceId: deps.stripeProPriceId });
+    if (!result) {
+      reply.code(404);
+      return { error: 'User not found' };
+    }
+    void auditLogFull(deps.pool, {
+      action: 'admin.stripe_sync',
+      ip: req.ip,
+      actor: actorOf(req),
+      targetUser: phone,
+      after: result,
+    });
+    if (!result.synced) {
+      reply.code(502);
+      return { ok: false, error: result.error ?? 'Stripe sync failed' };
+    }
+    return { ok: true, ...result };
+  });
+
+  /** Undo a scheduled cancellation. */
+  app.post('/admin/users/:phone/stripe/reactivate', async (req, reply) => {
+    if (!isStripeEnabled()) {
+      reply.code(503);
+      return { error: 'Stripe not configured' };
+    }
+    const { phone } = req.params as { phone: string };
+    try {
+      const result = await reactivateSubscription(deps.pool, phone);
+      if (!result) {
+        reply.code(404);
+        return { error: 'No reactivatable subscription (already canceled or none scheduled to cancel)' };
+      }
+      // Mirror the change locally so the dashboard reflects it before the
+      // webhook lands.
+      await syncSubscriptionToDb(deps.pool, phone, { proPriceId: deps.stripeProPriceId }).catch(() => null);
+      void auditLogFull(deps.pool, {
+        action: 'admin.stripe_reactivate',
+        ip: req.ip,
+        actor: actorOf(req),
+        targetUser: phone,
+        after: result,
+      });
+      return { ok: true, ...result };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      req.log.error({ err: msg, phone }, 'admin.stripe_reactivate_failed');
+      reply.code(500);
+      return { error: `Reactivate failed: ${msg}` };
+    }
+  });
+
+  /** Move the user between Standard and Pro plans (pro-rated). */
+  app.post('/admin/users/:phone/stripe/change-plan', async (req, reply) => {
+    if (!isStripeEnabled()) {
+      reply.code(503);
+      return { error: 'Stripe not configured' };
+    }
+    const { phone } = req.params as { phone: string };
+    const parsed = z.object({ plan: z.enum(['base', 'pro']) }).safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('plan must be "base" or "pro"');
+    try {
+      const result = await changePlan(deps.pool, phone, parsed.data.plan, {
+        basePriceId: deps.stripeBasePriceId ?? '',
+        proPriceId: deps.stripeProPriceId ?? '',
+      });
+      if (!result) {
+        reply.code(404);
+        return { error: 'No active subscription to change' };
+      }
+      await syncSubscriptionToDb(deps.pool, phone, { proPriceId: deps.stripeProPriceId }).catch(() => null);
+      void auditLogFull(deps.pool, {
+        action: 'admin.stripe_change_plan',
+        ip: req.ip,
+        actor: actorOf(req),
+        targetUser: phone,
+        after: result,
+      });
+      return { ok: true, ...result };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      req.log.error({ err: msg, phone }, 'admin.stripe_change_plan_failed');
+      reply.code(500);
+      return { error: `Change plan failed: ${msg}` };
+    }
+  });
+
+  /** Stripe webhook event log — visibility into deliveries + failures. */
+  app.get('/admin/stripe/events', async (req) => {
+    const q = req.query as Record<string, string>;
+    const limit = Math.min(Number(q.limit) || 100, 500);
+    const offset = Number(q.offset) || 0;
+    const status = q.status; // optional filter
+    const params: unknown[] = [];
+    let where = '';
+    if (status) {
+      params.push(status);
+      where = `WHERE status = $1`;
+    }
+    params.push(limit, offset);
+    const { rows } = await deps.pool
+      .query(
+        `SELECT id, stripe_event_id, type, status, target_user, error, attempts,
+                created_at, processed_at
+         FROM stripe_events ${where}
+         ORDER BY created_at DESC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params,
+      )
+      .catch(() => ({ rows: [] as unknown[] }));
+    return { events: rows };
+  });
+
+  /** Re-process a previously-recorded (e.g. failed) Stripe event from its
+   *  stored payload. Lets an admin recover from a transient processing bug
+   *  without waiting for Stripe to redeliver. */
+  app.post('/admin/stripe/events/:id/retry', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { rows } = await deps.pool
+      .query<{ stripe_event_id: string; type: string; payload: unknown }>(
+        `SELECT stripe_event_id, type, payload FROM stripe_events WHERE id = $1`,
+        [id],
+      )
+      .catch(() => ({ rows: [] as { stripe_event_id: string; type: string; payload: unknown }[] }));
+    const row = rows[0];
+    if (!row) {
+      reply.code(404);
+      return { error: 'Event not found' };
+    }
+    const { handleStripeWebhookEvent, recordStripeEvent } = await import('../services/stripe.service.js');
+    const reconstructed = {
+      id: row.stripe_event_id,
+      type: row.type,
+      data: { object: row.payload },
+    } as never;
+    try {
+      const result = await handleStripeWebhookEvent(deps.pool, reconstructed, { proPriceId: deps.stripeProPriceId });
+      await recordStripeEvent(deps.pool, reconstructed, result);
+      void auditLogFull(deps.pool, {
+        action: 'admin.stripe_event_retry',
+        ip: req.ip,
+        actor: actorOf(req),
+        targetUser: result.target_user ?? undefined,
+        after: { event_id: row.stripe_event_id, status: result.status },
+      });
+      return { ok: true, status: result.status, target_user: result.target_user };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await recordStripeEvent(deps.pool, reconstructed, { status: 'failed', target_user: null, error: msg });
+      reply.code(500);
+      return { error: `Retry failed: ${msg}` };
+    }
+  });
+
+  // ─── Manual operations: send message, pause/resume ───────────────────────────
+
+  /** Send a real WhatsApp/SMS message to a user from the dashboard. Persists
+   *  the message into the conversation thread (role 'assistant') so it shows
+   *  in the viewer and the user's context. */
+  app.post('/admin/users/:phone/send-message', async (req, reply) => {
+    const { phone } = req.params as { phone: string };
+    const parsed = z
+      .object({ text: z.string().trim().min(1).max(1500), channel: z.enum(['whatsapp', 'sms']).optional() })
+      .safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('text is required (1-1500 chars)');
+    if (!deps.sender) {
+      reply.code(503);
+      return { error: 'Sender not configured' };
+    }
+    const channel = parsed.data.channel ?? 'whatsapp';
+    try {
+      const result = await deps.sender.send({ to: phone, body: parsed.data.text, channel, raw: true });
+      // Persist into the conversation so it appears in history + context.
+      if (deps.memory) {
+        const conversationId = await deps.memory.ensureConversation(phone).catch(() => null);
+        if (conversationId) {
+          await deps.memory
+            .appendTurn({ userId: phone, role: 'assistant', content: parsed.data.text, conversationId, intent: 'admin_manual' })
+            .catch(() => undefined);
+        }
+      }
+      void auditLogFull(deps.pool, {
+        action: 'admin.send_message',
+        ip: req.ip,
+        actor: actorOf(req),
+        targetUser: phone,
+        after: { channel, text: parsed.data.text, sid: result.sid },
+      });
+      return { ok: true, sid: result.sid };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      req.log.error({ err: msg, phone }, 'admin.send_message_failed');
+      reply.code(502);
+      return { error: `Send failed: ${msg}` };
+    }
+  });
+
+  /** Pause Grace for a user (no proactive messages). Dedicated, audited. */
+  app.post('/admin/users/:phone/pause', async (req) => {
+    const { phone } = req.params as { phone: string };
+    await applyUserFlag(deps, phone, { paused: true });
+    void auditLogFull(deps.pool, { action: 'admin.pause', ip: req.ip, actor: actorOf(req), targetUser: phone, after: { paused: true } });
+    return { ok: true, paused: true };
+  });
+
+  app.post('/admin/users/:phone/resume', async (req) => {
+    const { phone } = req.params as { phone: string };
+    await applyUserFlag(deps, phone, { paused: false });
+    void auditLogFull(deps.pool, { action: 'admin.resume', ip: req.ip, actor: actorOf(req), targetUser: phone, after: { paused: false } });
+    return { ok: true, paused: false };
+  });
+
+  // ─── Internal admin notes (per user) ─────────────────────────────────────────
+
+  app.get('/admin/users/:phone/notes', async (req) => {
+    const { phone } = req.params as { phone: string };
+    const { rows } = await deps.pool
+      .query(`SELECT id, target_user, author, note, created_at FROM admin_notes WHERE target_user = $1 ORDER BY created_at DESC LIMIT 200`, [phone])
+      .catch(() => ({ rows: [] as unknown[] }));
+    return { notes: rows };
+  });
+
+  app.post('/admin/users/:phone/notes', async (req) => {
+    const { phone } = req.params as { phone: string };
+    const parsed = z.object({ note: z.string().trim().min(1).max(4000) }).safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('note is required (1-4000 chars)');
+    const author = actorOf(req);
+    const { rows } = await deps.pool.query(
+      `INSERT INTO admin_notes (target_user, author, note) VALUES ($1, $2, $3)
+       RETURNING id, target_user, author, note, created_at`,
+      [phone, author, parsed.data.note],
+    );
+    void auditLogFull(deps.pool, { action: 'admin.note_add', ip: req.ip, actor: author, targetUser: phone, after: { note: parsed.data.note } });
+    return { ok: true, note: rows[0] };
+  });
+
+  app.delete('/admin/notes/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const { rows } = await deps.pool.query<{ target_user: string }>(`DELETE FROM admin_notes WHERE id = $1 RETURNING target_user`, [id]);
+    void auditLogFull(deps.pool, { action: 'admin.note_delete', ip: req.ip, actor: actorOf(req), targetUser: rows[0]?.target_user, after: { id } });
+    return { ok: true };
+  });
+
+  // ─── Flagged responses / conversations marked for review ─────────────────────
+
+  app.post('/admin/messages/:id/flag', async (req) => {
+    const { id } = req.params as { id: string };
+    const parsed = z
+      .object({ user_id: z.string().min(1), reason: z.string().trim().min(1).max(500), note: z.string().trim().max(2000).optional() })
+      .safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('user_id and reason are required');
+    const author = actorOf(req);
+    const { rows } = await deps.pool.query(
+      `INSERT INTO flagged_responses (message_id, user_id, reason, note, created_by)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, message_id, user_id, reason, note, status, created_by, created_at`,
+      [id === 'conversation' ? null : id, parsed.data.user_id, parsed.data.reason, parsed.data.note ?? null, author],
+    );
+    void auditLogFull(deps.pool, { action: 'admin.flag_response', ip: req.ip, actor: author, targetUser: parsed.data.user_id, after: { message_id: id, reason: parsed.data.reason } });
+    return { ok: true, flag: rows[0] };
+  });
+
+  app.get('/admin/flagged', async (req) => {
+    const q = req.query as Record<string, string>;
+    const status = q.status ?? 'open';
+    const limit = Math.min(Number(q.limit) || 100, 500);
+    const { rows } = await deps.pool
+      .query(
+        `SELECT id, message_id, user_id, reason, note, status, created_by, resolved_by, created_at, resolved_at
+         FROM flagged_responses WHERE status = $1 ORDER BY created_at DESC LIMIT $2`,
+        [status, limit],
+      )
+      .catch(() => ({ rows: [] as unknown[] }));
+    return { flags: rows };
+  });
+
+  app.put('/admin/flagged/:id/resolve', async (req) => {
+    const { id } = req.params as { id: string };
+    const resolver = actorOf(req);
+    const { rows } = await deps.pool.query<{ user_id: string }>(
+      `UPDATE flagged_responses SET status = 'reviewed', resolved_by = $2, resolved_at = now() WHERE id = $1 RETURNING user_id`,
+      [id, resolver],
+    );
+    void auditLogFull(deps.pool, { action: 'admin.flag_resolve', ip: req.ip, actor: resolver, targetUser: rows[0]?.user_id, after: { id } });
+    return { ok: true };
+  });
+
+  // ─── Audit log viewer ────────────────────────────────────────────────────────
+
+  app.get('/admin/audit-logs', async (req) => {
+    const q = req.query as Record<string, string>;
+    const limit = Math.min(Number(q.limit) || 100, 500);
+    const offset = Number(q.offset) || 0;
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (q.action) {
+      params.push(q.action);
+      clauses.push(`action = $${params.length}`);
+    }
+    if (q.target_user) {
+      params.push(q.target_user);
+      clauses.push(`target_user = $${params.length}`);
+    }
+    if (q.date === 'today') clauses.push(`created_at > now() - interval '1 day'`);
+    else if (q.date === '7d') clauses.push(`created_at > now() - interval '7 days'`);
+    else if (q.date === '30d') clauses.push(`created_at > now() - interval '30 days'`);
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    params.push(limit, offset);
+    const { rows } = await deps.pool
+      .query(
+        `SELECT id, action, actor, target_user, admin_ip, before, after, reason, details, created_at
+         FROM audit_logs ${where}
+         ORDER BY created_at DESC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params,
+      )
+      .catch(() => ({ rows: [] as unknown[] }));
+    return { logs: rows };
   });
 
   /** Permanently delete a user and all their data. */

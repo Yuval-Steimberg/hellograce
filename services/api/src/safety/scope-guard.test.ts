@@ -45,6 +45,18 @@ describe('Scope Guard — blocks off-topic questions', () => {
     it('blocks "how do I get rich"', () => {
       expect(classifyScope('How do I get rich fast?').blocked).toBe(true);
     });
+
+    it('refers to a financial professional, not a flat refusal', () => {
+      expect(classifyScope('Should I invest in bitcoin?').response).toMatch(/financial (advisor|professional)/i);
+    });
+  });
+
+  describe('legal referral', () => {
+    it('refers to a lawyer / legal professional', () => {
+      const r = classifyScope('Can I sue my employer?');
+      expect(r.blocked).toBe(true);
+      expect(r.response).toMatch(/lawyer|legal/i);
+    });
   });
 
   describe('tech / coding', () => {

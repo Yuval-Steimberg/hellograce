@@ -1581,10 +1581,20 @@ export class AIOrchestrator {
     const looksLikeQuestion =
       /\?/.test(input.text) ||
       /\b(how|what|why|when|where|am i|are you|can i|should i|is it|do you|does this|but i|but my)\b/i.test(input.text);
+    // A short response is only "trivial" (skip the relevance/behavioral judges)
+    // when the user's message ISN'T a question. A bare "Logged." / "Got it 👍"
+    // is fine as a reply to "I ate 2 eggs", but it is NOT an acceptable answer
+    // to "what should I do about my blood pressure?" — that mismatch must still
+    // be validated + regenerated. Closing this carve-out makes the validation
+    // layer cover the "short off-topic reply to a real question" failure class
+    // globally, for every non-food intent (food/log intents stay skipped via
+    // RELEVANCE_SKIP_INTENTS to avoid the known false positives).
+    // Production failure 2026-06-13: "I'm having blood pressure problems what
+    // should I do" → "Logged." shipped because the response was < 40 chars.
     const isTrivial =
       classification.type === 'greeting' ||
       classification.type === 'gibberish' ||
-      validated.text.length < 40;
+      (validated.text.length < 40 && !looksLikeQuestion);
     // 2026-06-04 latency cut: skip relevance check for food intents. The
     // response is constrained by the dietary filter + food rules to be about
     // food; the relevance check was producing false positives (telemetry

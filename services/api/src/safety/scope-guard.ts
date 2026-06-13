@@ -258,8 +258,25 @@ const RESPONSES_META: readonly string[] = [
   "That stays behind the curtain — privacy first, always. I'm fully focused on your GLP-1 journey if you want to talk through anything.",
 ] as const;
 
+// Domain-specific referrals — when the user asks for help outside Grace's
+// expertise, acknowledge and point them to the RIGHT professional rather than
+// a flat "not my area" (per the global scope-handling requirement, 2026-06-13).
+const RESPONSES_LEGAL: readonly string[] = [
+  "That's really one for a lawyer — I'm not able to give legal advice. I'm here for your GLP-1 journey though: food, symptoms, weight, or how you're feeling.",
+  "A legal professional is the right person for that one. What I can help with: your medication, nutrition, symptoms, or progress.",
+] as const;
+
+const RESPONSES_FINANCE: readonly string[] = [
+  "A financial advisor is the right person for that — it's outside what I can help with. I can help with your nutrition, medication, symptoms, or how today's going.",
+  "I'll leave money decisions to a financial professional. I'm here for your health journey: food, protein, symptoms, or your goals.",
+] as const;
+
 function pickResponse(text: string, category: ScopeCategory): string {
-  const pool = category === 'meta_internals' ? RESPONSES_META : RESPONSES_GENERAL;
+  const pool =
+    category === 'meta_internals' ? RESPONSES_META
+    : category === 'legal' ? RESPONSES_LEGAL
+    : category === 'finance' ? RESPONSES_FINANCE
+    : RESPONSES_GENERAL;
   // Stable hash of the inbound text → same off-topic message always gets the
   // same template for the same user. Across users the choice still varies.
   let h = 0;

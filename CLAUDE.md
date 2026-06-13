@@ -925,6 +925,41 @@ LLM judge.
 
 ---
 
+### Global response-validation gap + scope referrals (2026-06-13)
+
+Reframing the BP failure as a CORE conversation-engine issue, not a topic patch.
+The "response validation layer" the spec describes already exists and is ON by
+default: `RELEVANCE_CHECK_ENABLED` / `BEHAVIORAL_GUARD_ENABLED` /
+`QUALITY_GUARD_STRICT` all default TRUE, `TRUST_GEMINI` defaults FALSE
+(`config/env.ts`). The relevance check (`relevance-check.ts`) regenerates any
+response that doesn't address the user's latest message.
+
+The gap was its skip rule. `orchestrator.ts` treated ANY response < 40 chars as
+`isTrivial` and skipped the relevance/behavioral judges — so a bare "Logged." to
+"what should I do about my blood pressure?" was never validated. Fix: a short
+response is only trivial-skip when the user's message is NOT a question
+(`validated.text.length < 40 && !looksLikeQuestion`). Now a suspiciously short
+reply to a real question is validated + regenerated, globally, for every
+non-food intent. Food/log intents remain in `RELEVANCE_SKIP_INTENTS` (the
+2026-06-04 carve-out that fixed clearly-on-topic dinner responses being flagged
+"not relevant" — deliberately kept).
+
+Scope handling made global with professional referrals (`safety/scope-guard.ts`):
+legal → "one for a lawyer", finance → "a financial advisor is the right person",
+instead of a flat "not my area". Combined with the medical health-concern guard
+(refers to doctor) and the existing politics/war/tech/meta categories, every
+out-of-scope domain now acknowledges + refers appropriately. Tests: +2 scope
+referral cases. 534 ai-core + 773 api green.
+
+Deferred (not a clearly-observed failure, and risks misrouting legit flows):
+an account/billing "contact support" referral category; removing the food
+relevance carve-out. The conversation pipeline now is: classify intent →
+deterministic routing (scope / health-concern / vague-food / continuation) →
+generate → validate (content + grounding + relevance + behavioral + quality) →
+regen on failure.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

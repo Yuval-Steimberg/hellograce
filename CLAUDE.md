@@ -1163,6 +1163,33 @@ api green.
 
 ---
 
+### Terse "How 32" reasoning challenges explain the number, not switch topics (2026-06-13)
+
+Production: user logged food, Grace said "32g protein", user asked "How 32"
+(= how did you get 32g?) → Grace replied with a GLP-1 side-effects/hair/appetite
+lecture. Two failures:
+1. `detectReasoningRequest` (`orchestrator.ts`) missed terse challenges: its
+   `REASONING_TRIGGERS_RE` "how" branch requires "how did you calculate/get…",
+   and the shared trailing `\b` rejects alternatives ending in '?' or a unit. So
+   "How 32" / "how 32g?" / bare "how"/"how?" weren't detected as reasoning →
+   fell to the question-aware general fallback (the GLP-1 framing added earlier).
+   Fix: explicit terse checks in `detectReasoningRequest` — `^how\s*\??$` (bare)
+   and `^(?:how|why|where)\b[^?]*?\d` (number challenge) — still gated by
+   `PRIOR_REASONING_ANCHOR_RE` (prior Grace msg must contain a number/target).
+2. The reasoning fallback was weight/goal-specific. Now it's topic-aware: if the
+   prior message was about protein (or has a `\d+g`) → explains the protein
+   estimate ("that 32g is added up from the foods you logged… tell me serving
+   sizes and I'll tighten it"); calories → calorie version; weight/goal → the
+   weight math; else a generic "want me to walk you through it?". Transparent
+   (it's an estimate) + offers to refine with portions, never switches topics.
+
+The live path (Gemini up) already had history to explain; this fixes the
+degraded/fallback path AND the routing (so a number-challenge is treated as
+reasoning, never the generic fallback). +1 test (`orchestrator.test.ts`). 595
+ai-core + 796 api green.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

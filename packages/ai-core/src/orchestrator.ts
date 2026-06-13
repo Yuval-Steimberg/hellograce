@@ -438,13 +438,25 @@ export function getToolAwareFallback(
   // failed to generate; use a fallback that at least acknowledges the
   // reasoning request and offers to walk through.
   if (opts?.isReasoningRequest) {
-    // If we can reference the prior answer, include it; otherwise stay
-    // generic but ACT like Grace is explaining, not deflecting.
-    const prior = opts.lastAssistantMessage?.trim().slice(0, 120);
-    if (prior && prior.length >= 10) {
+    // Explain the SAME thing the prior answer was about — never switch topics
+    // (production failure 2026-06-13: "How 32" → GLP-1 side-effects lecture).
+    // Be transparent: it's an estimate from logged foods; offer to refine with
+    // portions. Extract the number from the prior message when present.
+    const prior = (opts.lastAssistantMessage ?? '').trim();
+    const proteinM = /(\d+)\s*g\b/i.exec(prior);
+    const calM = /(\d+)\s*(?:kcal|cal|calories)\b/i.exec(prior);
+    if (/\bprotein\b/i.test(prior) || (proteinM && !calM)) {
+      const n = proteinM ? `${proteinM[1]}g` : 'that';
+      return `That ${n} is an estimate I add up from the foods you logged — each one's typical protein per serving. Since exact portions weren't given, it's a rough total. Tell me the serving sizes (like how many oz of salmon, or how many eggs) and I'll tighten it up.`;
+    }
+    if (calM || /\bcalorie/i.test(prior)) {
+      const n = calM ? `${calM[1]} calories` : 'that';
+      return `That ${n} is an estimate from the foods you logged, using typical calories per serving. Portions weren't exact so it's approximate — give me the serving sizes and I'll refine it.`;
+    }
+    if (prior.length >= 10) {
       return `That comes from your current weight, goal, and the GLP-1 muscle-preservation math — want me to walk you through the numbers?`;
     }
-    return `Good question — that takes a sec to break down. Want the short version or the full math?`;
+    return `Good question — that takes a sec to break down. Want me to walk you through it?`;
   }
   // Successfully logged food → reference the actual protein count.
   // Note: outer `r.ok` means the tool didn't throw; the tool's internal
@@ -876,6 +888,14 @@ export function detectReasoningRequest(
   // questions ("why am I so tired today?") not reasoning asks.
   const words = trimmed.split(/\s+/).filter(Boolean);
   if (words.length > 12) return false;
+  // Terse challenges the main trigger regex misses (its shared trailing \b
+  // rejects alternatives ending in '?' or a unit): bare "how"/"how?" and
+  // "how/why/where <number>" ("How 32", "how 32g?", "why 32"). Production
+  // failure 2026-06-13: "How 32" (= how did you get 32g?) → GLP-1 lecture.
+  const terse =
+    /^(?:and|but|so|wait|ok)?\s*how\s*\??$/i.test(trimmed) ||
+    /^(?:and|but|so|wait|ok)?\s*(?:how|why|where)\b[^?]*?\d/i.test(trimmed);
+  if (terse) return PRIOR_REASONING_ANCHOR_RE.test(lastAssistantMessage);
   if (!REASONING_TRIGGERS_RE.test(trimmed)) return false;
   // Context gate: the prior Grace turn must have SOMETHING to explain
   // (a number, a recommendation, a target). Otherwise it's an open Q.

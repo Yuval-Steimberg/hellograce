@@ -520,6 +520,19 @@ describe('detectReasoningRequest — explain-vs-repeat gate (2026-06-03)', () =>
     expect(detectReasoningRequest('Where did that number come from?', calculatedPrior)).toBe(true);
   });
 
+  it('fires on terse number-challenges ("How 32", "how 32g?", "why 32") — production 2026-06-13', async () => {
+    const { detectReasoningRequest, getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const proteinPrior = "Logged salmon, rice, and 2 eggs — roughly 32g protein. You're at 32g today.";
+    for (const m of ['How 32', 'how 32g?', 'why 32', 'how']) {
+      expect(detectReasoningRequest(m, proteinPrior)).toBe(true);
+    }
+    // And the fallback explains the PROTEIN number — never switches to GLP-1 education.
+    const fb = getToolAwareFallback('general', [], { isReasoningRequest: true, lastAssistantMessage: proteinPrior, userMessage: 'How 32' });
+    expect(fb).toMatch(/32g/);
+    expect(fb).toMatch(/estimate|serving|portion/i);
+    expect(fb).not.toMatch(/side effect|hair|appetite/i);
+  });
+
   it('fires on "can you explain?" after a recommendation', async () => {
     const { detectReasoningRequest } = await import('./orchestrator.js');
     expect(detectReasoningRequest('Can you explain?', recommendationPrior)).toBe(true);

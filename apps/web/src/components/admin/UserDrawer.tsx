@@ -73,6 +73,9 @@ export default function UserDrawer({ user, onClose }: Props) {
     goal_weight: '',
     age: '',
     protein_goal_grams: '',
+    calorie_goal_kcal: '',
+    dietary_pattern: '',
+    dietary_restriction: '',
     glp1_start_date: '',
     checkin_count_per_day: '',
   });
@@ -92,6 +95,9 @@ export default function UserDrawer({ user, onClose }: Props) {
       goal_weight: detail.goal_weight?.toString() ?? '',
       age: detail.age?.toString() ?? '',
       protein_goal_grams: detail.protein_goal_grams?.toString() ?? '',
+      calorie_goal_kcal: detail.calorie_goal_kcal?.toString() ?? '',
+      dietary_pattern: detail.dietary_pattern ?? '',
+      dietary_restriction: detail.dietary_restriction ?? '',
       glp1_start_date: detail.glp1_start_date ? detail.glp1_start_date.split('T')[0] : '',
       checkin_count_per_day: detail.checkin_count_per_day?.toString() ?? '',
     });
@@ -260,6 +266,10 @@ export default function UserDrawer({ user, onClose }: Props) {
       goal_weight: form.goal_weight ? Number(form.goal_weight) : null,
       age: form.age ? Number(form.age) : null,
       protein_goal_grams: form.protein_goal_grams ? Number(form.protein_goal_grams) : null,
+      calorie_goal_kcal: form.calorie_goal_kcal ? Number(form.calorie_goal_kcal) : null,
+      // Empty select → null (PUT enum rejects ''). Free-text restriction → null when blank.
+      dietary_pattern: (form.dietary_pattern || null) as 'vegan' | 'vegetarian' | 'pescatarian' | null,
+      dietary_restriction: form.dietary_restriction.trim() || null,
       glp1_start_date: form.glp1_start_date || null,
       checkin_count_per_day: form.checkin_count_per_day ? Number(form.checkin_count_per_day) : undefined,
     });
@@ -405,6 +415,27 @@ export default function UserDrawer({ user, onClose }: Props) {
                       <div className="space-y-1">
                         <Label className="text-xs">Protein goal (g/day)</Label>
                         <Input type="number" placeholder="e.g. 100" value={form.protein_goal_grams} onChange={(e) => setForm({ ...form, protein_goal_grams: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Calorie goal (kcal/day)</Label>
+                        <Input type="number" placeholder="e.g. 1500" value={form.calorie_goal_kcal} onChange={(e) => setForm({ ...form, calorie_goal_kcal: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Diet (drives food recs)</Label>
+                        <select
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          value={form.dietary_pattern}
+                          onChange={(e) => setForm({ ...form, dietary_pattern: e.target.value })}
+                        >
+                          <option value="">No restriction</option>
+                          <option value="vegan">Vegan</option>
+                          <option value="vegetarian">Vegetarian</option>
+                          <option value="pescatarian">Pescatarian</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Other diet (kosher, halal, gluten-free…)</Label>
+                        <Input placeholder="e.g. kosher" value={form.dietary_restriction} onChange={(e) => setForm({ ...form, dietary_restriction: e.target.value })} />
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">GLP-1 start date</Label>

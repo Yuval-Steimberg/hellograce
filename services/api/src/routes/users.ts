@@ -228,6 +228,25 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       }
     }
 
+    // Also populate the dietary_pattern ENUM when the signup diet is one of the
+    // three the enum supports, so every code path that reads dietary_pattern
+    // (admin display, chat detection persistence) sees it too — not just the
+    // effectiveDietaryRestriction() helper that reads the free-text. Best-effort.
+    if (b.dietaryRestriction) {
+      const norm = b.dietaryRestriction.toLowerCase().replace(/[_-]+/g, ' ').trim();
+      const pattern =
+        /^(vegan|plant based)$/.test(norm) ? 'vegan' :
+        /^(vegetarian|veggie)$/.test(norm) ? 'vegetarian' :
+        /^(pesc[ae]tarian)$/.test(norm) ? 'pescatarian' : null;
+      if (pattern) {
+        try {
+          await users.update(phone, { dietary_pattern: pattern } as Partial<Parameters<typeof users.update>[1]>);
+        } catch {
+          req.log.warn({ phone }, 'onboard.dietary_pattern.skipped (likely missing migration 20260516000004)');
+        }
+      }
+    }
+
     // Fetch completed profile for message generation.
     const user = await users.getByPhone(phone);
     if (!user) throw new Error('user_not_found_after_upsert');

@@ -184,6 +184,9 @@ export interface UserDetail {
   trial_start: string | null;
   age: number | null;
   protein_goal_grams: number | null;
+  calorie_goal_kcal: number | null;
+  dietary_pattern: string | null;
+  dietary_restriction: string | null;
   glp1_start_date: string | null;
   checkin_count_per_day: number | null;
   created_at: string;

@@ -1098,6 +1098,30 @@ helper reads the free-text directly, so not required). Tests:
 
 ---
 
+### Dietary end-to-end: signup → enum → admin visibility/edit (2026-06-13)
+
+Completes the dietary chain so it works perfectly end-to-end:
+- **Signup form** already collects + sends `dietaryRestriction` (`Onboarding.tsx`
+  → FoodStep). Confirmed.
+- **Onboard now also populates the `dietary_pattern` ENUM** when the signup diet
+  is vegan/vegetarian/pescatarian (best-effort), so every path that reads the
+  enum (admin, chat-detection persistence) sees it — not just the
+  `effectiveDietaryRestriction()` free-text reader (`routes/users.ts`).
+- **Admin detail** (`GET /admin/users/:phone`) now returns `dietary_pattern` +
+  `calorie_goal_kcal` (were missing from the SELECT; `dietary_restriction` was
+  already there).
+- **UserDrawer** gained a Diet dropdown (none/vegan/vegetarian/pescatarian →
+  `dietary_pattern`), an "Other diet" free-text (`dietary_restriction`, for
+  kosher/halal/gluten-free/etc.), and a Calorie-goal field — all editable and
+  saved via the existing `PUT /admin/users/:phone` (empty select → null so the
+  Zod enum doesn't reject ''). Frontend `UserDetail` type extended.
+
+Net chain: survey → stored (free-text + enum) → respected in every food rec via
+`effectiveDietaryRestriction` → visible + editable in the admin drawer. api
+typecheck + 780 tests green; web typecheck + build clean.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

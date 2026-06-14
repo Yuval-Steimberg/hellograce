@@ -260,6 +260,86 @@ describe('food_summary_today: aggregated, non-repetitive summary (2026-06-11)', 
   });
 });
 
+describe('multi-intent: status preamble + question (2026-06-14)', () => {
+  // Production failure (WhatsApp screenshot): "Feeling good. What I ate today"
+  // → Grace asked the user to LIST their foods instead of checking the log.
+  // The anchored patterns matched whole turns only, so the "Feeling good."
+  // preamble blocked the food-history question. Now we strip a pure
+  // status/greeting clause and route on the surviving question.
+  it('"Feeling good. What I ate today" → food summary, with a status ack', async () => {
+    const users = {
+      getById: vi.fn().mockResolvedValue({ protein_goal_grams: 80, calorie_goal_kcal: 1800 }),
+      getTodaysFoodSummary: vi.fn().mockResolvedValue({
+        protein_g: 34, calories: 410, items: ['eggs', 'yogurt', 'coffee'], items_detailed: [],
+      }),
+    } as unknown as UserService;
+    const r = await tryQueryFast('Feeling good. What I ate today', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('food_summary_today');
+    expect(r!.text).toMatch(/^Good to hear\./);
+    expect(r!.text).toContain('Eggs');
+    expect(r!.text).toContain('34g protein');
+  });
+
+  it('empty log still answers the question instead of asking the user to list food', async () => {
+    const users = {
+      getById: vi.fn().mockResolvedValue({ protein_goal_grams: 80 }),
+      getTodaysFoodSummary: vi.fn().mockResolvedValue({
+        protein_g: 0, calories: 0, items: [], items_detailed: [],
+      }),
+    } as unknown as UserService;
+    const r = await tryQueryFast('Feeling good. What have I eaten so far', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('food_summary_today');
+    expect(r!.text).toMatch(/nothing logged yet/i);
+  });
+
+  it('"Feeling great, how much protein today?" → protein_today with ack', async () => {
+    const users = mockUsers({ protein_goal_grams: 100, todayProtein: 40 });
+    const r = await tryQueryFast('Feeling great, how much protein today?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('protein_today');
+    expect(r!.text).toMatch(/^Good to hear\./);
+    expect(r!.text).toContain('40g protein');
+  });
+
+  it('a tired preamble gets a sympathetic ack', async () => {
+    const users = mockUsers({ todayProtein: 40, protein_goal_grams: 100 });
+    const r = await tryQueryFast("I'm exhausted. how much protein today", { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('protein_today');
+    expect(r!.text).toMatch(/wiped/i);
+  });
+
+  it('does NOT fast-path when a clause is a food LOG (must reach the orchestrator)', async () => {
+    // "I ate eggs" is a write action, not a query-fast category, so it counts
+    // as a second substantive clause → bail so the log is never dropped.
+    const users = mockUsers();
+    const r = await tryQueryFast('I ate eggs. how much protein today', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).toBeNull();
+  });
+
+  it('does NOT fast-path two substantive questions', async () => {
+    const users = mockUsers();
+    const r = await tryQueryFast("what's my weight goal? how much protein today", { users, logger: noopLogger, userId: 'u1' });
+    expect(r).toBeNull();
+  });
+
+  it('a bare food-history question (no preamble) still works unchanged', async () => {
+    const users = {
+      getById: vi.fn().mockResolvedValue({ protein_goal_grams: 80 }),
+      getTodaysFoodSummary: vi.fn().mockResolvedValue({
+        protein_g: 34, calories: 410, items: ['eggs'], items_detailed: [],
+      }),
+    } as unknown as UserService;
+    const r = await tryQueryFast('What I ate today', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('food_summary_today');
+    // No ack prefix when there was no status preamble.
+    expect(r!.text).not.toMatch(/^Good to hear\./);
+  });
+});
+
 describe('is_protein_enough / is_calorie_enough (2026-06-06)', () => {
   // Production failure: "Is 80g of protein enough?" routed to knowledge_direct
   // → generic muscle-loss explanation, no comparison to user's 60g target or

@@ -77,10 +77,10 @@ const WEIGHT_GOAL_RE =
 // accepted "have i had" / "did i have"; real users drop the auxiliary and say
 // "protein I had" / "protein I ate". Added those forms.
 const PROTEIN_TODAY_RE =
-  /^(?:how much\s+protein\s+(?:have i\s+(?:had|eaten|consumed|logged)|did i\s+(?:have|eat)|i\s+(?:had|ate|got|consumed|logged|have had|have eaten|have))|what(?:'?s| is)\s+my\s+protein\s+(?:today|so far))(?:\s+today)?\??$/i;
+  /^(?:how much\s+protein\s+(?:have i\s+(?:had|eaten|consumed|logged)|did i\s+(?:have|eat)|i\s+(?:had|ate|got|consumed|logged|have had|have eaten|have))|what(?:'?s| is)\s+my\s+protein\s+(?:today|so far)|how much\s+protein\s+(?:today|so far))(?:\s+today)?\??$/i;
 
 const CALORIE_TODAY_RE =
-  /^(?:how (?:many|much)\s+(?:calories|cal|kcal)\s+(?:have i\s+(?:had|eaten|consumed|logged)|did i\s+(?:have|eat))|what(?:'?s| is)\s+my\s+(?:calorie|cal|kcal)\s+(?:total\s+)?(?:today|so far))(?:\s+today)?\??$/i;
+  /^(?:how (?:many|much)\s+(?:calories|cal|kcal)\s+(?:have i\s+(?:had|eaten|consumed|logged)|did i\s+(?:have|eat))|what(?:'?s| is)\s+my\s+(?:calorie|cal|kcal)\s+(?:total\s+)?(?:today|so far)|how (?:many|much)\s+(?:calories|cals?|kcal)\s+(?:today|so far)|(?:calories|cals?|kcal)\s+so far)(?:\s+today)?\??$/i;
 
 // "How many calories do I have left today?" / "calories remaining" / "how much
 // protein do I have left". These are the LIVE-total questions the goal/total
@@ -107,8 +107,11 @@ const BARE_TARGET_RE =
 // "what did I have" / "today's log". Production failure 2026-06-05: "What I
 // ate today" went through the orchestrator → ship "Tell me a bit more?"
 // instead of listing the day's food. Deterministic: list the foods today.
+// 2026-06-14 expansion: added "so far"/"yet"/"already" suffixes, "did I log
+// breakfast?", "what's logged today?", "is there anything I already ate?" —
+// all Scenario-A food-history phrasings from the production report. Read-only.
 const FOOD_SUMMARY_LIST_RE =
-  /^(?:what (?:did i|i)(?:'ve)? (?:eat|ate|eaten|had|logged)(?:\s+today)?|what have i (?:had|eaten|logged)(?:\s+today)?|(?:show|list|tell me|summari[sz]e)(?:\s+me)? my (?:food|meals?|logs?|food log|day|intake|eating|nutrition|diet)(?:\s+today)?|summari[sz]e (?:my |today'?s )?(?:food|meals?|day|intake|eating|nutrition)|(?:today'?s|my today'?s) (?:food|meals?|log|logs?|intake|eating)|food i (?:had|ate|logged) today|my (?:food )?(?:totals?|log)(?:\s+today)?)\s*\??$/i;
+  /^(?:what (?:did i|i)(?:'ve)? (?:eat|ate|eaten|had|logged)(?:\s+(?:today|so far|yet|already))?|what (?:have|'?ve) i (?:had|eaten|logged|ate)(?:\s+(?:today|so far|yet|already))?|what(?:'?s| is| has)(?: been)? logged(?:\s+(?:today|so far))?|what(?:'?s| is) (?:in|on) my (?:food )?log(?:\s+today)?|did i (?:log|eat|have|track)(?: any| anything| something| any food)? (?:breakfast|lunch|dinner|anything|something|food|today)(?:\s+(?:today|yet))?|is there (?:anything|something) (?:i(?:'ve)? )?(?:already )?(?:ate|eaten|had|logged)(?:\s+(?:today|yet))?|(?:show|list|tell me|summari[sz]e)(?:\s+me)? my (?:food|meals?|logs?|food log|day|intake|eating|nutrition|diet)(?:\s+today)?|summari[sz]e (?:my |today'?s )?(?:food|meals?|day|intake|eating|nutrition)|(?:today'?s|my today'?s) (?:food|meals?|log|logs?|intake|eating)|food i (?:had|ate|logged)(?:\s+today)?|my (?:food )?(?:totals?|log)(?:\s+today)?)\s*\??$/i;
 
 // "How am I doing today" / "how am I doing on protein" / "progress check"
 const PROGRESS_TODAY_RE =
@@ -195,29 +198,14 @@ function matchCalorieEnough(t: string): { proposed: number; verdict: string } | 
 }
 
 /**
- * Attempt to answer the message as a deterministic profile/progress query.
- * Returns null when the message doesn't qualify — caller falls through to the
- * full orchestrator.
- *
- * Hard guards:
- *   - Message must be the WHOLE turn (anchored ^...$). Compound messages
- *     ("what's my protein goal? I also ate eggs") fall through to the
- *     orchestrator so the food-log isn't silently dropped.
- *   - Each pattern requires the data point to be present (we don't fabricate
- *     "no goal set" answers via fast path — those go through normal LLM so
- *     the response can be warm + helpful).
+ * Map a single normalized turn to a query-fast category, or null if no pattern
+ * matches. Extracted so the compound-message path (a status/greeting preamble
+ * followed by a stats/history question) can re-run categorization on a stripped
+ * clause. Every category here is a READ — never a write — so re-routing a clause
+ * can never drop a food log.
  */
-export async function tryQueryFast(
-  text: string,
-  deps: QueryFastDeps,
-): Promise<QueryFastResult | null> {
-  // Normalize iOS smart-quote apostrophes (U+2019) → ASCII before regex match.
-  // See packages/ai-core/src/text-normalize.ts.
-  const t = normalizeUserText(text).trim().replace(/[!.]+$/, '').trim();
-  if (t.length === 0 || t.length > 80) return null;
-
-  // Cheap regex tests first — bail before any DB read if no pattern matches.
-  const matchedCategory: QueryFastResult['category'] | null =
+function categorizeQuery(t: string): QueryFastResult['category'] | null {
+  return (
     PROTEIN_GOAL_RE.test(t) ? 'protein_goal'
     : CALORIE_GOAL_RE.test(t) ? 'calorie_goal'
     : WEIGHT_GOAL_RE.test(t) ? 'weight_goal'
@@ -238,13 +226,114 @@ export async function tryQueryFast(
     : matchProteinEnough(t) ? 'is_protein_enough'
     : matchCalorieEnough(t) ? 'is_calorie_enough'
     : BARE_TARGET_RE.test(t) ? 'protein_goal'
-    : null;
+    : null
+  );
+}
+
+// A clause that is PURELY a greeting / status update ("feeling good", "hi",
+// "doing great", "I'm tired today") — nothing else. Used to strip a status
+// preamble off a compound message so the real question still routes. Tight
+// whitelist: a food log, a second question, or any substantive content fails
+// these, so the compound path can never swallow a log or a real ask.
+const GREETING_ONLY_RE =
+  /^(?:(?:hi|hey|hello|hiya|yo|sup|gm|morning|good morning|good afternoon|good evening|hey there|hi there)[\s,]*)+$/i;
+const STATUS_CLAUSE_RE =
+  /^(?:(?:hi|hey|hello|hiya|yo|sup|gm|morning|good morning|good afternoon|good evening|hey there|hi there)[\s,]*)*(?:i'?m|i am|im|i feel|i'?m feeling|im feeling|feeling|feel)?\s*(?:really |pretty |very |so |quite |doing |all )?(?:good|great|fine|ok|okay|well|alright|amazing|wonderful|fantastic|happy|content|grateful|blessed|calm|relaxed|hopeful|better|decent|meh|so-?so|not bad|hanging in(?: there)?|tired|exhausted|sleepy|drained|wiped)(?:\s+(?:today|so far|right now|thanks|thank you|too))*$/i;
+
+function isPureStatusClause(clause: string): boolean {
+  const c = clause.trim().toLowerCase().replace(/[.!?,;]+$/, '').trim();
+  if (!c || c.length > 30) return false;
+  return GREETING_ONLY_RE.test(c) || STATUS_CLAUSE_RE.test(c);
+}
+
+/** A short, warm acknowledgment for the status preamble we stripped, so the
+ *  reply still responds to the emotional component (multi-intent). Empty for a
+ *  bare greeting — the answer itself carries the turn. */
+function statusAckFor(preamble: string): string {
+  const p = preamble.toLowerCase();
+  if (/\b(tired|exhausted|sleepy|drained|wiped|meh|so-?so|not bad)\b/.test(p)) {
+    return 'Sorry you’re wiped.';
+  }
+  if (/\b(good|great|fine|well|amazing|wonderful|fantastic|happy|better|grateful|blessed|content|calm|relaxed|hopeful|decent|alright|ok|okay)\b/.test(p)) {
+    return 'Good to hear.';
+  }
+  return '';
+}
+
+/**
+ * Compound multi-intent handler. The query-fast patterns are anchored to the
+ * WHOLE turn, so a status/greeting preamble ("Feeling good. What I ate today")
+ * blocks the real stats/history question. Split on clause boundaries; if every
+ * clause but ONE is a pure status/greeting, route on that single remaining
+ * clause and carry a short ack for the status.
+ *
+ * Safety: the surviving clause must itself match a READ-only query-fast
+ * category. If two or more clauses are substantive (e.g. a food LOG plus a
+ * question), we bail to the orchestrator so nothing is dropped.
+ */
+function splitCompoundStatusQuery(
+  t: string,
+): { rest: string; category: QueryFastResult['category']; ack: string } | null {
+  const clauses = t.split(/[.!?,;\n]+/).map((c) => c.trim()).filter(Boolean);
+  if (clauses.length < 2) return null;
+  const statusClauses = clauses.filter(isPureStatusClause);
+  const substantive = clauses.filter((c) => !isPureStatusClause(c));
+  if (statusClauses.length === 0 || substantive.length !== 1) return null;
+  const category = categorizeQuery(substantive[0]!);
+  if (!category) return null;
+  return { rest: substantive[0]!, category, ack: statusAckFor(statusClauses.join(' ')) };
+}
+
+
+/**
+ * Attempt to answer the message as a deterministic profile/progress query.
+ * Returns null when the message doesn't qualify — caller falls through to the
+ * full orchestrator.
+ *
+ * Hard guards:
+ *   - Message must be the WHOLE turn (anchored ^...$). Compound messages
+ *     ("what's my protein goal? I also ate eggs") fall through to the
+ *     orchestrator so the food-log isn't silently dropped.
+ *   - Each pattern requires the data point to be present (we don't fabricate
+ *     "no goal set" answers via fast path — those go through normal LLM so
+ *     the response can be warm + helpful).
+ */
+export async function tryQueryFast(
+  text: string,
+  deps: QueryFastDeps,
+): Promise<QueryFastResult | null> {
+  // Normalize iOS smart-quote apostrophes (U+2019) → ASCII before regex match.
+  // See packages/ai-core/src/text-normalize.ts.
+  // Keep the leading/internal punctuation (only trim trailing) so the compound
+  // splitter below can see clause boundaries ("Feeling good. What I ate today").
+  let t = normalizeUserText(text).trim().replace(/[!.]+$/, '').trim();
+  if (t.length === 0 || t.length > 80) return null;
+
+  // Cheap regex tests first — bail before any DB read if no pattern matches.
+  let matchedCategory = categorizeQuery(t);
+  // Compound multi-intent ("Feeling good. What I ate today"): strip a pure
+  // status/greeting preamble and route on the surviving question clause.
+  let statusAck = '';
+  if (!matchedCategory) {
+    const compound = splitCompoundStatusQuery(t);
+    if (compound) {
+      matchedCategory = compound.category;
+      t = compound.rest; // the rest of the switch operates on the question clause
+      statusAck = compound.ack;
+    }
+  }
   if (!matchedCategory) return null;
+
+  // Prepend the status ack (if any) to whatever the switch returns, so a
+  // compound message responds to BOTH the status and the question.
+  const withAck = (r: QueryFastResult | null): QueryFastResult | null =>
+    r && statusAck ? { ...r, text: `${statusAck} ${r.text}` } : r;
 
   try {
     const user = await deps.users.getById(deps.userId).catch(() => null);
     if (!user) return null;
 
+    const result: QueryFastResult | null = await (async (): Promise<QueryFastResult | null> => {
     switch (matchedCategory) {
       case 'protein_goal': {
         const g = user.protein_goal_grams;
@@ -668,6 +757,9 @@ export async function tryQueryFast(
         };
       }
     }
+    return null;
+    })();
+    return withAck(result);
   } catch (err) {
     deps.logger.warn(
       { err: err instanceof Error ? err.message : String(err), userId: deps.userId },

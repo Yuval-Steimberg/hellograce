@@ -300,6 +300,51 @@ describe('detectVagueFood — uber-vague quantity guard (QA report 2026-06-03)',
   });
 });
 
+describe('require-quantity gate — no assumptions on a bare food log (2026-06-14)', () => {
+  const log = (m: string) => detectVagueFood(m, undefined, { requireQuantity: true });
+
+  it('a SINGLE bare food with no amount asks for a portion', () => {
+    // Non-prep-ambiguous foods → the missing-quantity ask.
+    for (const m of ['I had rice', 'rice', 'had eggs', 'oatmeal', 'beef', 'beans', 'lentils']) {
+      const r = log(m);
+      expect(r.vague).toBe(true);
+      expect(r.response).toMatch(/how much|how many|rough amount/i);
+    }
+  });
+
+  it('a bare prep-ambiguous food still asks (about prep, also a clarification)', () => {
+    for (const m of ['I ate salmon', 'salmon', 'tofu', 'fish']) {
+      const r = log(m);
+      expect(r.vague).toBe(true);
+      expect(r.response).toContain('?'); // a clarifying question either way
+    }
+  });
+
+  it('a quantity or single-unit article makes it specific (logs, no ask)', () => {
+    for (const m of ['two eggs', '6 oz salmon', '1 cup rice', 'a banana', 'an apple', '3 slices of toast']) {
+      expect(log(m).vague).toBe(false);
+    }
+  });
+
+  it('a prep / sauce detail makes it specific (logs, no ask)', () => {
+    for (const m of ['grilled chicken', 'baked salmon', 'fried fish', 'chicken in bbq sauce']) {
+      expect(log(m).vague).toBe(false);
+    }
+  });
+
+  it('a multi-food list is NOT asked here (handled by the multi-item logger)', () => {
+    expect(log('chicken and rice').vague).toBe(false);
+    expect(log('eggs and toast').vague).toBe(false);
+  });
+
+  it('does NOT fire without requireQuantity — food questions / mentions never get the portion ask', () => {
+    expect(detectVagueFood('is salmon healthy?').vague).toBe(false);
+    expect(detectVagueFood('I had rice').vague).toBe(false);   // no requireQuantity → no portion ask
+    expect(detectVagueFood('oatmeal').vague).toBe(false);
+    expect(detectVagueFood('do you like beef?').vague).toBe(false);
+  });
+});
+
 describe('findVagueAddOnItem — compound clear-item + vague add-on (2026-06-14)', () => {
   it('finds the snack in the exact production message', () => {
     expect(findVagueAddOnItem('Had two eggs for breakfast. Now having a small snack')).toBe('snack');

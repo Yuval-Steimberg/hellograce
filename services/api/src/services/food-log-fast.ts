@@ -88,7 +88,7 @@ export async function tryFoodLogFastResponse(
   // "what exactly did you have?" clarification.
   // Production bug 2026-06-13: "I had pizza" → "Logged pizza (2 slices),
   // roughly 22g protein" — an assumed portion the user never gave.
-  if (detectVagueFood(trimmed).vague) return null;
+  if (detectVagueFood(trimmed, undefined, { requireQuantity: true }).vague) return null;
 
   const macros = lookupCommonFoodMacros(trimmed);
   if (!macros) return null;

@@ -20,6 +20,8 @@
 //   - Specificity-aware (numbers + units + specific items override)
 //   - Varied response templates (stable hash so same input → same template)
 
+import { FOOD_TOKEN_SET } from '../tools/log-food.js';
+
 export interface VagueFoodCheck {
   vague: boolean;
   matched?: string;
@@ -369,7 +371,41 @@ export function findVagueAddOnItem(text: string): string | null {
   return raw;
 }
 
-export function detectVagueFood(text: string, lastGraceMessage?: string): VagueFoodCheck {
+// A concrete amount / portion indicator. "a/an/one" count as a single unit
+// (so "a banana" is specific); "some/few/several" do NOT (still vague).
+const QUANTITY_PRESENT_RE =
+  /\d|\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|half|quarter)\b|\b(cup|cups|slice|slices|piece|pieces|serving|servings|oz|ounce|ounces|g|gram|grams|lb|lbs|pound|pounds|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|handful|handfuls|bowl|bowls|plate|plates|glass|glasses|bottle|bottles|can|cans|scoop|scoops|bar|bars|stick|sticks|packet|packets|portion|portions|spoonful|spoonfuls|pinch|loaf|loaves|cube|cubes|chunk|chunks)\b|\b(small|medium|large|big|huge|tiny|little)\b/i;
+
+// "No assumptions" gate (2026-06-14): a SINGLE bare food logged with NO amount
+// or portion can't be tracked accurately, so ask instead of guessing a serving.
+// Scoped to a single food — multi-food lists go through the multi-item logger,
+// and brands/categories/prep/low-confidence are already caught upstream.
+function detectMissingQuantity(text: string): { matched: string; response: string } | null {
+  const lower = text.toLowerCase();
+  // Specific enough when it carries an amount/portion, OR a prep/sauce detail
+  // (per "specific amount OR details" — "grilled chicken" / "chicken in bbq
+  // sauce" name how it was made, so we log rather than nag for a portion).
+  if (QUANTITY_PRESENT_RE.test(lower)) return null;
+  if (PREP_GIVEN_RE.test(lower) || SAUCE_GIVEN_RE.test(lower)) return null;
+  let food: string | null = null;
+  for (const tok of FOOD_TOKEN_SET) {
+    if (new RegExp(`\\b${tok}\\b`, 'i').test(lower)) {
+      if (food) return null; // two+ distinct foods → multi-item path handles it
+      food = tok;
+    }
+  }
+  if (!food) return null; // not a recognizable food log → don't ask
+  return {
+    matched: food,
+    response: `For the ${food}, roughly how much or how many? Even a rough amount (a cup, 4 oz, a handful) lets me log it accurately.`,
+  };
+}
+
+export function detectVagueFood(
+  text: string,
+  lastGraceMessage?: string,
+  opts?: { requireQuantity?: boolean },
+): VagueFoodCheck {
   const lower = text.toLowerCase().trim();
   if (lower.length === 0) return { vague: false };
 
@@ -418,6 +454,14 @@ export function detectVagueFood(text: string, lastGraceMessage?: string): VagueF
     // lunch") names no food at all → ask what it was instead of logging 0g.
     const lowConf = detectLowConfidenceMeal(text);
     if (lowConf) return { vague: true, matched: lowConf.item, response: lowConf.response };
+    // No-assumptions gate: a single bare food with no amount → ask for one.
+    // ONLY when the caller says this is a food LOG (requireQuantity) — never on
+    // casual food mentions or food questions ("is salmon healthy?"), which also
+    // flow through this function.
+    if (opts?.requireQuantity) {
+      const missingQty = detectMissingQuantity(text);
+      if (missingQty) return { vague: true, matched: missingQty.matched, response: missingQty.response };
+    }
     return { vague: false };
   }
 

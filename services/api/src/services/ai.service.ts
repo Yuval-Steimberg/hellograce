@@ -2100,7 +2100,11 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
 
     lat.mark('vague_food_check');
     if (flags.toolsEnabled) {
-      const vague = detectVagueFood(input.text, lastGraceMessage);
+      // requireQuantity only when this is actually a food LOG â€” so the bare-food
+      // "how much?" ask never fires on a food question / casual mention.
+      const vague = detectVagueFood(input.text, lastGraceMessage, {
+        requireQuantity: intentClass.type === 'food_log',
+      });
       if (vague.vague) {
         this.deps.logger.info(
           { userId: input.userId, matched: vague.matched, plannerPlannedLogFood: prePlannedDecision.toolCalls.some((c) => c.name === 'log_food'), textPreview: input.text.slice(0, 100) },
@@ -2374,8 +2378,8 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       // fabricate a macro estimate for "a small snack" (the production bug:
       // eggs were dropped and the snack was logged as a guessed "snack plate").
       if (meals.length >= 2) {
-        const vagueMeals = meals.filter((m) => detectVagueFood(m).vague);
-        const clearMeals = meals.filter((m) => !detectVagueFood(m).vague);
+        const vagueMeals = meals.filter((m) => detectVagueFood(m, undefined, { requireQuantity: true }).vague);
+        const clearMeals = meals.filter((m) => !detectVagueFood(m, undefined, { requireQuantity: true }).vague);
         if (clearMeals.length >= 1 && vagueMeals.length >= 1) {
           const clearText = clearMeals.join('. ');
           const est = estimateMultiItemFood(clearText);

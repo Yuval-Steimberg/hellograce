@@ -1028,7 +1028,7 @@ function resolvePieceTokens(piece: string): Array<{ food: string; protein_g: num
 // Set of distinctive food tokens harvested from COMMON_FOODS — single words
 // that are unambiguously foods. Used by hasOtherFoodTokens to detect when a
 // multi-item meal slipped past the substring matcher.
-const FOOD_TOKEN_SET: Set<string> = (() => {
+export const FOOD_TOKEN_SET: Set<string> = (() => {
   const STOP = new Set([
     'with', 'and', 'of', 'cup', 'cups', 'slice', 'slices', 'piece', 'pieces',
     'serving', 'servings', 'oz', 'g', 'gram', 'grams', 'tbsp', 'tsp',

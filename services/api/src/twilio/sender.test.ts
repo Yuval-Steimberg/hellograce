@@ -221,5 +221,18 @@ describe('sanitizeOutbound — placeholder & role-marker stripping', () => {
       const input = 'Greek yogurt, cottage cheese, eggs all sit well on a GLP-1 stomach.';
       expect(sanitizeOutbound(input)).toBe(input);
     });
+
+    // ── Residual-markdown guarantee (2026-06-14) ─────────────────────────
+    it('strips a stray bullet after a comma (production failure)', () => {
+      const out = sanitizeOutbound(
+        "Since you're vegetarian and gentle on a GLP-1 stomach, * Greek yogurt power bowl: Mix nonfat Greek yogurt with blueberries.",
+      );
+      expect(out).not.toContain('*');
+      expect(out).toContain('Greek yogurt power bowl');
+    });
+
+    it('strips an unpaired/unclosed asterisk', () => {
+      expect(sanitizeOutbound('Try *Greek yogurt for protein today.')).not.toContain('*');
+    });
   });
 });

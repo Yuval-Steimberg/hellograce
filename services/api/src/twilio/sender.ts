@@ -119,6 +119,13 @@ export function sanitizeOutbound(input: string, logger?: Logger): string {
   text = text.replace(/^\s*\d+\.\s+/gm, '');                  // 1. item → item
   // Backticks for inline code — strip wrapping, keep content.
   text = text.replace(/`([^`\n]+)`/g, '$1');
+  // Residual-markdown guarantee (2026-06-14): any UNPAIRED asterisk (a stray
+  // bullet or unclosed emphasis like "* Greek yogurt power bowl:") and markdown
+  // separators (---, ___) survive the paired strips above. Grace never emits a
+  // literal "*", so remove every remaining one; collapse separator runs.
+  text = text.replace(/(?:^|\n)[ \t]*(?:-{3,}|_{3,})[ \t]*(?=\n|$)/g, '\n');
+  text = text.replace(/\*+/g, '');
+  text = text.replace(/[ \t]{2,}/g, ' ');
 
   // Replace em-dash, en-dash, and 2+ hyphens with comma (preserves words).
   text = text.replace(/\s*[—–]\s*/g, ', ');

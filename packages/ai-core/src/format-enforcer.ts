@@ -451,10 +451,49 @@ export function enforceFormat(
   // bullet marker (not a list) sneaked through because bulletListRegex
   // requires 2+ consecutive items. Strip lone leading "* " / "- " markers
   // at the start of any sentence or line.
-  if (/(?:^|[.!?]\s+|\n\s*)[*-]\s+[A-Z]/.test(text)) {
-    text = text.replace(/((?:^|[.!?]\s+|\n\s*))[*-]\s+(?=[A-Z])/g, '$1');
+  // 2026-06-14 production failure: "...gentle on a GLP-1 stomach, * Greek
+  // yogurt power bowl:" — the bullet followed a COMMA, not a sentence
+  // terminator, so it escaped. Boundary widened to include , ; : as well.
+  if (/(?:^|[.!?,;:]\s+|\n\s*)[*-]\s+[A-Z]/.test(text)) {
+    text = text.replace(/((?:^|[.!?,;:]\s+|\n\s*))[*-]\s+(?=[A-Z])/g, '$1');
     fixes.push('lone_bullet_stripped');
   }
+
+  // ─── Residual markdown / formatting-symbol sweep (2026-06-14) ───────────
+  // STRICT requirement: zero markdown artifacts reach the user. The
+  // structured rules above handle WELL-FORMED markdown (paired **bold** /
+  // *italic*, line-start bullets, headers, multi-item lists). This final
+  // sweep catches the MALFORMED leftovers that slip through — an UNPAIRED
+  // asterisk has no closing `*`, so the italic strip never touched it.
+  // Grace never legitimately emits a literal `*`, so any survivor is an
+  // artifact and is removed.
+  //
+  // 1. Horizontal-rule / separator lines (---, ***, ___).
+  if (/(?:^|\n)[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*(?=\n|$)/.test(text)) {
+    text = text.replace(/(?:^|\n)[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*(?=\n|$)/g, '\n');
+    fixes.push('separator_line_stripped');
+  }
+  // 2. Any remaining asterisk(s) — unpaired emphasis or stray bullet.
+  if (text.includes('*')) {
+    text = text.replace(/\*+/g, '');
+    fixes.push('residual_asterisk_stripped');
+  }
+  // 3. Residual header markers (# / ## / ###) anywhere, not just line start.
+  //    Requires a following space so "#1" / "channel #5" are left untouched.
+  if (/(?:^|\s)#{1,6}\s+/.test(text)) {
+    text = text.replace(/(?:^|\s)#{1,6}\s+/g, ' ');
+    fixes.push('residual_header_stripped');
+  }
+  // 4. Three-or-more underscores (separator / leftover rule).
+  if (/_{3,}/.test(text)) {
+    text = text.replace(/_{3,}/g, '');
+    fixes.push('residual_underscore_stripped');
+  }
+  // Tidy spacing + orphaned leading punctuation the strips may have left.
+  // (No blanket recapitalization — the lone-bullet rule already preserves the
+  // capital after a leading bullet, and capitalizing every lowercase start
+  // would corrupt inputs that legitimately begin lowercase.)
+  text = text.replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([,.!?;:])/g, '$1').trim();
 
   // ─── Greeting exclamation ("Good morning!" → "Good morning.") ──────────
   // The prompt forbids "!" on greetings. Auto-strip the offender.

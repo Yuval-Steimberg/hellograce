@@ -67,6 +67,46 @@ describe('enforceFormat', () => {
     });
   });
 
+  describe('residual markdown sweep — zero artifacts reach the user (2026-06-14)', () => {
+    it('strips a stray bullet that follows a comma (the exact production failure)', () => {
+      const input =
+        "Since you're vegetarian and looking for something gentle on a GLP-1 stomach, * Greek yogurt power bowl: Mix nonfat Greek yogurt with blueberries.";
+      const { text } = enforceFormat(input, { messageContext: 'food_question' });
+      expect(text).not.toContain('*');
+      // The bullet + its leading comma-space collapse cleanly into prose.
+      expect(text).toContain('GLP-1 stomach, Greek yogurt power bowl');
+    });
+
+    it('removes an unpaired (unclosed) asterisk anywhere', () => {
+      const { text, fixes } = enforceFormat('Try *Greek yogurt for protein.');
+      expect(text).not.toContain('*');
+      expect(fixes).toContain('residual_asterisk_stripped');
+    });
+
+    it('removes a trailing stray asterisk', () => {
+      const { text } = enforceFormat('Greek yogurt is great *');
+      expect(text).not.toContain('*');
+    });
+
+    it('strips horizontal-rule separator lines (---, ___)', () => {
+      const { text } = enforceFormat('Here is the plan.\n---\nEat more protein.');
+      expect(text).not.toMatch(/---/);
+      expect(text).toContain('Eat more protein.');
+    });
+
+    it('strips an inline header marker mid-text but keeps "#1" / "#5"', () => {
+      const { text } = enforceFormat('Protein matters. # Summary stuff here.');
+      expect(text).not.toMatch(/#\s/);
+      const keep = enforceFormat('You are my #1 priority.');
+      expect(keep.text).toContain('#1');
+    });
+
+    it('does not touch clean prose with no markdown', () => {
+      const clean = 'A Greek yogurt bowl is a great option. Mix it with berries and chia seeds.';
+      expect(enforceFormat(clean).text).toBe(clean);
+    });
+  });
+
   describe('list flattening', () => {
     it('flattens numbered lists into prose', () => {
       const input = 'Good options:\n1. Greek yogurt\n2. Cottage cheese\n3. Eggs';

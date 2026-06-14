@@ -65,6 +65,24 @@ describe('splitMultiMealText — multi-meal preprocessor (2026-06-01 fix)', () =
     expect(splitMultiMealText('I had 2 eggs for breakfast and that was filling')).toEqual([]);
   });
 
+  it('preserves food that comes BEFORE the meal label (2026-06-14 memory bug)', () => {
+    // Production: "Had two eggs for breakfast. Now having a small snack" logged
+    // ONLY the snack — the eggs (before "for breakfast") were dropped because
+    // the old splitter captured from the label forward ("for breakfast").
+    const out = splitMultiMealText('Had two eggs for breakfast. Now having a small snack');
+    expect(out.length).toBe(2);
+    expect(out[0]?.toLowerCase()).toContain('eggs'); // ← eggs NO LONGER dropped
+    expect(out[0]?.toLowerCase()).toContain('breakfast');
+    expect(out[1]?.toLowerCase()).toContain('snack');
+  });
+
+  it('keeps food before the label across "food for meal" phrasing', () => {
+    const out = splitMultiMealText('chicken for lunch. salmon for dinner');
+    expect(out.length).toBe(2);
+    expect(out[0]?.toLowerCase()).toContain('chicken');
+    expect(out[1]?.toLowerCase()).toContain('salmon');
+  });
+
   it('does NOT dedupe distinct meals that share the same label', () => {
     // Pathological: two "lunch" mentions. We keep both segments distinct
     // (the food differs) but the dedupe check is on exact-string match,

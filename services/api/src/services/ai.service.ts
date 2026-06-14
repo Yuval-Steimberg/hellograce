@@ -2349,6 +2349,47 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       // input and schedule a separate log_food call per meal so each gets
       // its own macro estimate.
       const meals = splitMultiMealText(input.text);
+      // 2026-06-14: when a multi-meal message mixes a CLEAR meal with a purely
+      // VAGUE one ("Had two eggs for breakfast. Now having a small snack"), log
+      // the clear meal(s) deterministically and ASK about the vague one — never
+      // fabricate a macro estimate for "a small snack" (the production bug:
+      // eggs were dropped and the snack was logged as a guessed "snack plate").
+      if (meals.length >= 2) {
+        const vagueMeals = meals.filter((m) => detectVagueFood(m).vague);
+        const clearMeals = meals.filter((m) => !detectVagueFood(m).vague);
+        if (clearMeals.length >= 1 && vagueMeals.length >= 1) {
+          const clearText = clearMeals.join('. ');
+          const est = estimateMultiItemFood(clearText);
+          if (est && est.items.length > 0) {
+            const totals = await this.persistEstimatedFood(input.userId, est, clearText).catch(() => null);
+            const names = est.items.map((i) => i.food);
+            const last = names.pop()!;
+            const list = names.length > 0 ? `${names.join(', ')}, and ${last}` : last;
+            const macros = est.calories > 0
+              ? `about ${est.protein_g}g protein and ${est.calories} calories`
+              : `about ${est.protein_g}g protein`;
+            const vagueItem = findVagueAddOnItem(input.text) ?? 'snack';
+            const totalsClause = totals && totals.goal > 0 ? ` You're at ${totals.dailyProtein}g/${totals.goal}g today.` : '';
+            const reply = `Got it — ${list}. Roughly ${macros}.${totalsClause} What was the ${vagueItem}, so I can log that too?`;
+            this.deps.logger.info(
+              { userId: input.userId, clearMeals: clearMeals.length, vagueMeals: vagueMeals.length },
+              'ai.handle.multi_meal_partial_vague',
+            );
+            void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
+              .catch((err) => this.deps.logger.warn({ err }, 'multi_meal_partial.append_user.failed'));
+            void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: reply })
+              .catch((err) => this.deps.logger.warn({ err }, 'multi_meal_partial.append_assistant.failed'));
+            return {
+              text: reply,
+              intent: 'food_log',
+              confidence: 'high' as const,
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: Date.now() - t0,
+            };
+          }
+        }
+      }
       const toolCalls = meals.length >= 2
         ? meals.map((m) => ({ name: 'log_food', args: { food: m } }))
         : [{ name: 'log_food', args: { food: input.text } }];
@@ -3660,17 +3701,28 @@ function buildFoodLogArg(analysis: string): string {
  */
 export function splitMultiMealText(text: string): string[] {
   const cleaned = text.replace(/\s+/g, ' ').trim();
-  // Split on meal-label boundaries: keep the meal label with its segment.
-  // Pattern: optional "for " + meal label + everything up to the next meal
-  // label or the end of input.
-  const mealLabelRe = /\b(?:for\s+)?(breakfast|lunch|dinner|snack|brunch)\b[^.!?]*?(?=\.|!|\?|\bfor\s+(?:breakfast|lunch|dinner|snack|brunch)\b|$)/gi;
-  const matches = cleaned.match(mealLabelRe);
-  if (!matches || matches.length < 2) return [];
-  // Each segment is one meal. Trim, dedupe, drop empties.
-  const segments = matches
-    .map((s) => s.trim().replace(/[.!?]+$/, '').trim())
-    .filter((s) => s.length > 0)
-    .filter((s, i, arr) => arr.indexOf(s) === i);
+  // 2026-06-14 fix: the old version anchored on the meal label and captured
+  // FORWARD, so "Had two eggs for breakfast" collapsed to "for breakfast" —
+  // the food (two eggs) BEFORE the label was silently dropped, and only the
+  // snack got logged (production memory bug). Now we split into CLAUSES on
+  // sentence terminators, newlines, and temporal transitions, keeping each
+  // clause's FULL content (food may come before OR after the label).
+  const clauses = cleaned
+    .split(/[.!?\n]+|\b(?:and then|then|after that|afterwards|later)\b/gi)
+    .map((s) => s.replace(/^[\s,;:.\-]+|[\s,;:.\-]+$/g, '').trim())
+    .filter(Boolean);
+  // Keep the splitter's narrow scope: only treat the message as multi-meal when
+  // at least two clauses each reference a meal label. Single-meal multi-food
+  // ("chicken and rice") is handled by estimateMultiItemFood, not here.
+  const MEAL_LABEL_RE = /\b(breakfast|lunch|dinner|snack|brunch|supper)\b/i;
+  const mealClauses = clauses.filter((c) => MEAL_LABEL_RE.test(c));
+  const seen = new Set<string>();
+  const segments = mealClauses.filter((m) => {
+    const k = m.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
   return segments.length >= 2 ? segments : [];
 }
 

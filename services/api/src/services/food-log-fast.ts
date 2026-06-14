@@ -24,7 +24,7 @@ import { createHash } from 'crypto';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { lookupCommonFoodMacros } from '../tools/log-food.js';
-import { detectVagueFood } from '../safety/vague-food.js';
+import { detectVagueFood, findVagueAddOnItem } from '../safety/vague-food.js';
 
 const TEMPLATES = [
   '{food} — about {protein}g protein. You\'re at {total}g/{goal}g today.',
@@ -134,12 +134,22 @@ export async function tryFoodLogFastResponse(
 
     const goalG = deps.proteinGoalGrams && deps.proteinGoalGrams > 0 ? deps.proteinGoalGrams : null;
     const template = pickTemplate(deps.userId, goalG !== null);
-    const text = renderTemplate(template, {
+    let text = renderTemplate(template, {
       food: macros.food,
       protein: macros.protein_g,
       total: dailyProteinG,
       goal: goalG ?? 0,
     });
+
+    // Multi-item completeness: the message logged a clear food but ALSO named a
+    // vague snack/bite/treat that carries no macro info ("two eggs ... now
+    // having a small snack"). Log the clear item AND ask what the vague one was
+    // instead of silently dropping it. Production failure 2026-06-14.
+    const addOn = findVagueAddOnItem(trimmed);
+    if (addOn) {
+      text += ` What was the ${addOn}, so I can log that too?`;
+      deps.logger.info({ userId: deps.userId, addOn }, 'ai.food_log_fast.vague_addon_ask');
+    }
 
     deps.logger.info(
       { userId: deps.userId, food: macros.food, protein: macros.protein_g, dailyProteinG },

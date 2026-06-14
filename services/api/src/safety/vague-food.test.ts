@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectVagueFood } from './vague-food.js';
+import { detectVagueFood, findVagueAddOnItem } from './vague-food.js';
 
 describe('detectVagueFood — flags vague brand/category mentions', () => {
   it('flags the exact production bug case: "I ate kfc this morning it was delicious"', () => {
@@ -268,5 +268,55 @@ describe('detectVagueFood — uber-vague quantity guard (QA report 2026-06-03)',
     for (const m of enough) {
       it(`"${m}" → no prep ask`, () => expect(detectVagueFood(m).vague).toBe(false));
     }
+  });
+
+  describe('low-confidence references — pure case asks (2026-06-14)', () => {
+    const pureVague = [
+      'now having a small snack',
+      'having a snack',
+      'just had some food',
+      'ate a little something',
+      'had a bite to eat',
+      'grabbed a treat',
+      'had lunch',
+      'i just had dinner',
+    ];
+    for (const m of pureVague) {
+      it(`"${m}" → vague, asks what it was`, () => {
+        const r = detectVagueFood(m);
+        expect(r.vague).toBe(true);
+        expect(r.response).toMatch(/what (was|did you have)/i);
+      });
+    }
+
+    it('a meal label with real food is NOT pure-vague ("eggs for breakfast")', () => {
+      expect(detectVagueFood('two eggs for breakfast').vague).toBe(false);
+      expect(detectVagueFood('had a chicken sandwich for lunch').vague).toBe(false);
+    });
+
+    it('a quantified snack is NOT vague ("2 cookies as a snack")', () => {
+      expect(detectVagueFood('2 cookies as a snack').vague).toBe(false);
+    });
+  });
+});
+
+describe('findVagueAddOnItem — compound clear-item + vague add-on (2026-06-14)', () => {
+  it('finds the snack in the exact production message', () => {
+    expect(findVagueAddOnItem('Had two eggs for breakfast. Now having a small snack')).toBe('snack');
+  });
+
+  it('finds a bite / treat add-on', () => {
+    expect(findVagueAddOnItem('I had chicken and a bite of something')).toBe('bite');
+    expect(findVagueAddOnItem('eggs and a treat after')).toBe('treat');
+    expect(findVagueAddOnItem('chicken breast and some food later')).toBe('snack');
+  });
+
+  it('returns null when the snack is qualified by a real food ("snack of almonds")', () => {
+    expect(findVagueAddOnItem('two eggs and a snack of almonds')).toBeNull();
+  });
+
+  it('returns null when there is no vague add-on', () => {
+    expect(findVagueAddOnItem('two eggs and a banana')).toBeNull();
+    expect(findVagueAddOnItem('grilled chicken with rice')).toBeNull();
   });
 });

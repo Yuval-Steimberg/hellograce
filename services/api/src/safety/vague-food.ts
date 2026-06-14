@@ -293,6 +293,82 @@ function detectPrepNeeded(text: string): { food: string; response: string } | nu
   return { food: core, response: templates[Math.abs(h) % templates.length]! };
 }
 
+// ── Low-confidence "I ate, but named nothing" references (2026-06-14) ────────
+// Production failure: "Had two eggs for breakfast. Now having a small snack" →
+// Grace logged the eggs (12g) and silently dropped the snack. "a small snack",
+// "some food", "a bite", "a treat", or a bare meal label ("had lunch") carry
+// ZERO macro info — logging them fabricates nutrition, ignoring them loses it.
+//
+// LOWCONF_NOUNS includes meal labels so a BARE "had lunch" asks for content,
+// but they're also stripped from the core check below so "eggs for breakfast"
+// (a real food + a meal label) does NOT trip the pure-low-confidence path.
+const LOWCONF_NOUNS = [
+  'snack', 'snacks', 'something', 'food', 'bite', 'bites', 'treat', 'treats',
+  'nibble', 'nibbles', 'breakfast', 'lunch', 'dinner', 'supper', 'brunch', 'meal',
+];
+const MEAL_LABELS = new Set(['breakfast', 'lunch', 'dinner', 'supper', 'brunch', 'meal']);
+
+// Scaffolding around a low-confidence reference — deliberately does NOT include
+// any real food word, so a named food survives and disqualifies the pure match.
+const LOWCONF_SCAFFOLD_RE =
+  /\b(hey|hi|hello|so|well|ok|okay|yeah|now|just|currently|today|tonight|earlier|right|this|morning|afternoon|evening|for|i|im|i'?m|am|also|then|only|had|have|having|ate|eat|eating|grabbed|made|cooked|got|getting|gonna|going|to|enjoyed|some|a|an|the|my|one|of|small|quick|little|light|tiny|big|bit|nice|good|tasty)\b/gi;
+
+function buildLowConfClarification(item: string): string {
+  if (MEAL_LABELS.has(item)) {
+    return `Got it. What did you have for ${item}? Even a rough list (e.g. eggs and toast) lets me log the protein and calories accurately.`;
+  }
+  if (item === 'food' || item === 'something') {
+    return `Got it. What did you have? Even a rough idea (an apple, a granola bar, some nuts) lets me log the protein and calories accurately.`;
+  }
+  const noun = item.replace(/s$/, '');
+  return `Got it. What was the ${noun}? Even a rough idea (an apple, a granola bar, some nuts) lets me log the protein and calories accurately.`;
+}
+
+// PURE case: the message is ESSENTIALLY ONLY a low-confidence reference (no
+// identifiable food). Returns the clarification; null when a real food is also
+// present (the compound case is handled by the add-on detector below).
+function detectLowConfidenceMeal(text: string): { item: string; response: string } | null {
+  const lower = text.toLowerCase();
+  const nounRe = new RegExp(`\\b(${LOWCONF_NOUNS.join('|')})\\b`);
+  const nm = lower.match(nounRe);
+  if (!nm) return null;
+  // A number means a quantity was given ("2 cookies", "3pm") — don't treat as
+  // pure-vague; let it log / flow normally.
+  if (/\d/.test(text)) return null;
+  const core = lower
+    .replace(LOWCONF_SCAFFOLD_RE, ' ')
+    .replace(/[^a-z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const withoutNoun = core
+    .replace(new RegExp(`\\b(${LOWCONF_NOUNS.join('|')})\\b`, 'g'), '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (withoutNoun.length > 0) return null; // a real food word survived
+  return { item: nm[1]!, response: buildLowConfClarification(nm[1]!) };
+}
+
+// ADD-ON case: a clear food was (or will be) logged AND the message also names
+// a vague snack/bite/treat that carries no macro info. Returns the noun so the
+// caller can append "What was the snack, so I can log it too?". Meal labels are
+// NOT add-ons (they're context, not a separate item).
+const VAGUE_ADDON_RE =
+  /\b(?:a|an|the|some|small|quick|little|light|big|another)\s+(snack|bite|treat|nibble)\b|\bsome\s+(food)\b|\ba\s+little\s+(something)\b/i;
+export function findVagueAddOnItem(text: string): string | null {
+  const m = VAGUE_ADDON_RE.exec(text);
+  if (!m) return null;
+  const raw = (m[1] ?? m[2] ?? m[3] ?? 'snack').toLowerCase();
+  // If the vague noun is qualified by a REAL food ("snack of almonds"), it's
+  // specific enough — skip the ask. But "bite of something" / "snack of food"
+  // is still vague, so only skip when the "of X" word isn't itself vague.
+  const tail = text.slice(m.index + m[0].length, m.index + m[0].length + 30).toLowerCase();
+  const ofMatch = /^\s+of\s+(\w+)/.exec(tail);
+  if (ofMatch && !LOWCONF_NOUNS.includes(ofMatch[1]!)) return null;
+  // Normalize to a friendly noun for the "What was the ___?" question.
+  if (raw === 'food' || raw === 'something' || raw === 'nibble') return 'snack';
+  return raw;
+}
+
 export function detectVagueFood(text: string, lastGraceMessage?: string): VagueFoodCheck {
   const lower = text.toLowerCase().trim();
   if (lower.length === 0) return { vague: false };
@@ -338,6 +414,10 @@ export function detectVagueFood(text: string, lastGraceMessage?: string): VagueF
     // with no prep info still needs a clarification (calories swing ~2x).
     const prep = detectPrepNeeded(text);
     if (prep) return { vague: true, matched: prep.food, response: prep.response };
+    // A pure low-confidence reference ("a small snack", "some food", "had
+    // lunch") names no food at all → ask what it was instead of logging 0g.
+    const lowConf = detectLowConfidenceMeal(text);
+    if (lowConf) return { vague: true, matched: lowConf.item, response: lowConf.response };
     return { vague: false };
   }
 

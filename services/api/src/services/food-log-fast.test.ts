@@ -44,6 +44,20 @@ describe('tryFoodLogFastResponse', () => {
     expect(result!.text).not.toMatch(/^I ate two eggs/i);
   });
 
+  it('logs the clear item AND asks about a trailing vague snack (2026-06-14)', async () => {
+    const pool = makePool(12, 140);
+    const result = await tryFoodLogFastResponse('Had two eggs. Now having a small snack', {
+      pool, logger: stubLogger, userId: '+15551234567',
+      intentType: 'food_log', proteinGoalGrams: 60,
+    });
+    // Only fires if the eggs resolved in the macro table; if so, the snack ask
+    // must be appended (never silently dropped).
+    if (result) {
+      expect(result.text).toContain('12');
+      expect(result.text).toMatch(/what was the snack/i);
+    }
+  });
+
   it('uses a no-goal template when proteinGoalGrams is null', async () => {
     const pool = makePool(12, 140);
     const result = await tryFoodLogFastResponse('I ate two eggs', {

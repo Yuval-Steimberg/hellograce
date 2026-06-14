@@ -359,7 +359,7 @@ import type { TopicTrackerService } from './topic-tracker.service.js';
 import type { UsdaFoodService } from './usda-food.service.js';
 import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
-import { detectVagueFood } from '../safety/vague-food.js';
+import { detectVagueFood, findVagueAddOnItem } from '../safety/vague-food.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -1286,10 +1286,17 @@ export class AIService {
           const macros = est.calories > 0
             ? `about ${est.protein_g}g protein and ${est.calories} calories`
             : `about ${est.protein_g}g protein`;
+          // Completeness: if the message ALSO named a vague snack/bite/treat
+          // that didn't resolve to a logged item, ask what it was instead of
+          // dropping it silently (production failure 2026-06-14).
+          const addOn = findVagueAddOnItem(text);
+          const addOnAsk = addOn && !est.items.some((i) => i.food.toLowerCase().includes(addOn))
+            ? ` What was the ${addOn}, so I can log that too?`
+            : '';
           if (totals && totals.goal > 0) {
-            return `Got it — ${list}. Roughly ${macros}. You're at ${totals.dailyProtein}g/${totals.goal}g today.`;
+            return `Got it — ${list}. Roughly ${macros}. You're at ${totals.dailyProtein}g/${totals.goal}g today.${addOnAsk}`;
           }
-          return `Got it — ${list}. Roughly ${macros}${totals ? `, ${totals.dailyProtein}g protein today so far` : ''}.`;
+          return `Got it — ${list}. Roughly ${macros}${totals ? `, ${totals.dailyProtein}g protein today so far` : ''}.${addOnAsk}`;
         }
         return "Got it. Roughly how much was it — small, medium, or large portions? I'll total up the protein for you.";
       }

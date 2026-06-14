@@ -30,6 +30,11 @@ interface SchedulerDeps {
    *  all non-critical proactive reminders are suppressed for this window.
    *  Default 2h. Set to 0 to disable. Configurable via ENGAGEMENT_COOLDOWN_HOURS. */
   engagementCooldownHours?: number;
+  /** Master switch for the background optimizer crons (prompt optimizer,
+   *  anomaly detector, research scrape, research auto-fix). When false, none of
+   *  them are scheduled. Does NOT affect the per-minute proactive tick or the
+   *  daily personalization engine. Default true. Set via OPTIMIZERS_ENABLED. */
+  optimizersEnabled?: boolean;
 }
 
 export class Scheduler {
@@ -46,6 +51,17 @@ export class Scheduler {
     this.tasks.push(
       cron.schedule('0 3 * * *', () => void this.runPersonalizationEngine()),
     );
+    // Master kill switch (OPTIMIZERS_ENABLED): when off, skip ALL background
+    // optimizer crons below (prompt optimizer, anomaly detector, research
+    // scrape, research auto-fix). The per-minute proactive tick and the daily
+    // personalization engine above keep running — they're core product, not
+    // optimizers.
+    const optimizersEnabled = this.deps.optimizersEnabled !== false;
+    if (!optimizersEnabled) {
+      this.deps.logger.warn('scheduler.optimizers_disabled');
+      this.deps.logger.info('scheduler.started');
+      return;
+    }
     // Prompt optimizer runs WEEKLY (Sunday 05:30 UTC). Throttled from daily to
     // weekly (2026-06-08 cost pass) — the optimizer + its post-activation
     // coverage smoke (~50 cases through the full orchestrator) is one of the

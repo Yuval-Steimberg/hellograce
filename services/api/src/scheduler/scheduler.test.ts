@@ -1034,3 +1034,40 @@ describe('Scheduler — timing varies day to day (jitter)', () => {
     }
   });
 });
+
+describe('Scheduler — OPTIMIZERS_ENABLED kill switch (2026-06-14)', () => {
+  const baseDeps = () => {
+    const logger = { info: () => {}, warn: () => {}, error: () => {} } as never;
+    const noopRedis = {} as never;
+    const promptOptimizer = { run: async () => {}, runIfMissedToday: async () => {} } as never;
+    return {
+      users: {} as never,
+      sender: {} as never,
+      generator: {} as never,
+      logger,
+      redis: noopRedis,
+      promptOptimizer,
+      researchScrape: async () => {},
+      researchAutoFix: async () => {},
+    };
+  };
+
+  it('schedules only the core tick + personalization crons when disabled', () => {
+    const scheduler = new Scheduler({ ...baseDeps(), optimizersEnabled: false });
+    scheduler.start();
+    // Only the per-minute tick and the daily personalization engine — none of
+    // the optimizer/research crons.
+    // @ts-expect-error — reaching into private tasks for the assertion
+    expect(scheduler.tasks.length).toBe(2);
+    scheduler.stop();
+  });
+
+  it('schedules the optimizer crons when enabled (default)', () => {
+    const scheduler = new Scheduler({ ...baseDeps(), optimizersEnabled: true });
+    scheduler.start();
+    // tick + personalization + promptOptimizer + researchScrape + researchAutoFix
+    // @ts-expect-error — reaching into private tasks for the assertion
+    expect(scheduler.tasks.length).toBeGreaterThan(2);
+    scheduler.stop();
+  });
+});

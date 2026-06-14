@@ -414,6 +414,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     researchScrape,
     researchAutoFix,
     engagementCooldownHours: env.ENGAGEMENT_COOLDOWN_HOURS,
+    optimizersEnabled: env.OPTIMIZERS_ENABLED,
   });
 
   // Shared hot-reload routine — used by SIGHUP and the admin sync endpoint.

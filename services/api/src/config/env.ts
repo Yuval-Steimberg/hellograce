@@ -98,6 +98,15 @@ const EnvSchema = z.object({
    *  not a notification system. Set to 0 to disable. */
   ENGAGEMENT_COOLDOWN_HOURS: z.coerce.number().min(0).max(48).default(2),
 
+  /** Master kill switch for the self-improvement / background optimizer crons:
+   *  the RLHF prompt optimizer (weekly), behavioral anomaly detector (nightly),
+   *  research scrape (weekly), and research auto-fix (weekly). When false, none
+   *  of them are scheduled — the per-minute proactive message tick and the
+   *  daily personalization engine are NOT affected (those are core product, not
+   *  optimizers). Default true (preserves documented behavior); set to false to
+   *  pause all optimizer activity without a code change. */
+  OPTIMIZERS_ENABLED: z.coerce.boolean().default(true),
+
   /** TRUST GEMINI mode (2026-06-04 architecture refactor).
    *
    *  When TRUST_GEMINI=true, the response pipeline collapses 7 guard layers

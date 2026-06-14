@@ -32,6 +32,7 @@ export interface QueryFastResult {
     | 'protein_today'
     | 'calorie_today'
     | 'progress_today'
+    | 'daily_focus'
     | 'food_summary_today'
     | 'start_date'
     | 'week_number'
@@ -116,6 +117,21 @@ const FOOD_SUMMARY_LIST_RE =
 // "How am I doing today" / "how am I doing on protein" / "progress check"
 const PROGRESS_TODAY_RE =
   /^(?:how am i doing(?:\s+(?:today|on (?:protein|calories)|so far))?|progress (?:check|today|update)|status (?:check|today|update)|where am i (?:at|on (?:protein|calories)))\??$/i;
+
+// ─── Daily planning / focus questions (2026-06-14 production failure) ──────
+// "What should I focus on today?" after a symptom turn → Grace CONTINUED the
+// symptom discussion instead of answering the planning question. A planning
+// question must switch to PLANNING MODE: a data-grounded answer built from the
+// user's goals + today's progress, with symptoms as supporting context only —
+// never the main answer. Answering it deterministically here (before history /
+// the orchestrator) guarantees the previous topic can't anchor the response.
+//
+// Tolerates an optional leading greeting ("Hi what I should focus today") with
+// no delimiter (the compound splitter only splits on punctuation). Ambiguous
+// nouns ("goal"/"target") are only treated as planning when "today" is present,
+// so a bare "what's my goal" still routes to the protein-goal matcher.
+const PLAN_TODAY_RE =
+  /^(?:(?:hi|hey|hello|good morning|morning|gm)[\s,]*)?(?:what (?:should i|do i|can i|shall i|i should)\s+(?:focus|work|prioriti[sz]e|concentrate)(?:\s+on)?(?:\s+today)?|what (?:are|should be) my (?:priorit(?:y|ies)|focus(?:es)?)(?:\s+today)?|what(?:'?s| is) my (?:focus|priority|plan)(?:\s+(?:for )?today)?|what(?:'?s| is) my goal (?:for )?today|what should i do today|give me (?:a |my )?(?:plan|game plan|focus)(?:\s+(?:for )?today)?|(?:my )?plan for today|how should i (?:approach|tackle|start|do) (?:my )?(?:day|today)|what(?:'?s| is) the plan(?:\s+(?:for )?today)?)\s*\??$/i;
 
 // ─── Personal-data queries (added 2026-06-04 after production failure) ─────
 // User asked "When did I start injections?" and "What's my week number?" —
@@ -214,6 +230,7 @@ function categorizeQuery(t: string): QueryFastResult['category'] | null {
     : PROTEIN_LEFT_RE.test(t) ? 'protein_today'
     : CALORIE_LEFT_RE.test(t) ? 'calorie_today'
     : PROGRESS_TODAY_RE.test(t) ? 'progress_today'
+    : PLAN_TODAY_RE.test(t) ? 'daily_focus'
     : FOOD_SUMMARY_LIST_RE.test(t) ? 'food_summary_today'
     : START_DATE_RE.test(t) ? 'start_date'
     : WEEK_NUMBER_RE.test(t) ? 'week_number'
@@ -282,6 +299,55 @@ function splitCompoundStatusQuery(
   const category = categorizeQuery(substantive[0]!);
   if (!category) return null;
   return { rest: substantive[0]!, category, ack: statusAckFor(statusClauses.join(' ')) };
+}
+
+/**
+ * Build a data-grounded daily plan/focus answer from the user's goals and
+ * today's progress. PLANNING MODE: leads with protein goal + progress (Grace's
+ * headline metric), adds a weight-progress clause when available, and frames
+ * food choice gently (covers a sore-stomach day without making symptoms the
+ * answer). When there's no goal AND nothing logged, gives an honest
+ * profile-based default + a nudge to log — never a generic "stay hydrated".
+ */
+function renderDailyFocus(
+  user: {
+    protein_goal_grams?: number | null;
+    calorie_goal_kcal?: number | null;
+    current_weight?: number | null;
+    goal_weight?: number | null;
+  },
+  summary: { protein_g: number; calories: number; items: string[] } | null,
+): string {
+  const proteinGoal = user.protein_goal_grams ?? 0;
+  const proteinToday = summary ? Math.round(summary.protein_g) : 0;
+  const loggedAnything = !!summary && summary.items.length > 0;
+
+  if (proteinGoal <= 0 && !loggedAnything) {
+    return `I don't have much from today yet. Based on your profile, I'd focus on hitting your protein target and keeping meals consistent and gentle on your stomach. Have you logged anything yet today?`;
+  }
+
+  const parts: string[] = [];
+  if (proteinGoal > 0) {
+    const remaining = Math.max(0, proteinGoal - proteinToday);
+    parts.push(
+      remaining > 0
+        ? `Your protein goal today is ${proteinGoal}g and you've logged ${proteinToday}g so far, so the biggest win is the next ${remaining}g, ideally from foods that sit comfortably`
+        : `You've already hit your ${proteinGoal}g protein target (${proteinToday}g so far), so today's focus is staying hydrated and keeping meals gentle`,
+    );
+  } else {
+    parts.push(
+      `You've logged ${proteinToday}g protein so far, so front-loading protein at each meal is the most useful focus today, aiming for the GLP-1 range of 1.2-1.6g per kg`,
+    );
+  }
+
+  const cw = user.current_weight ?? 0;
+  const gw = user.goal_weight ?? 0;
+  if (cw > 0 && gw > 0 && cw > gw) {
+    const toGo = Math.round((cw - gw) * 10) / 10;
+    parts.push(`You're ${toGo} lbs from your ${gw} lbs goal, and steady daily logging is what moves that`);
+  }
+
+  return parts.join('. ') + '.';
 }
 
 
@@ -471,6 +537,14 @@ export async function tryQueryFast(
         return {
           text: `You're at ${parts.join(' and ')} today.`,
           category: 'progress_today',
+        };
+      }
+
+      case 'daily_focus': {
+        const summary = await deps.users.getTodaysFoodSummary(deps.userId).catch(() => null);
+        return {
+          text: renderDailyFocus(user, summary),
+          category: 'daily_focus',
         };
       }
 
@@ -782,6 +856,7 @@ export const __testing = {
   CALORIE_LEFT_RE,
   BARE_TARGET_RE,
   PROGRESS_TODAY_RE,
+  PLAN_TODAY_RE,
   START_DATE_RE,
   WEEK_NUMBER_RE,
   MEDICATION_RE,

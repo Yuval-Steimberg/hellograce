@@ -260,6 +260,67 @@ describe('food_summary_today: aggregated, non-repetitive summary (2026-06-11)', 
   });
 });
 
+describe('daily planning / focus — switches to planning mode (2026-06-14)', () => {
+  // Production failure: after "I'm hungry. My stomach hurts and I'm nervous",
+  // "What should I focus on today?" CONTINUED the symptom discussion instead
+  // of answering with goals + progress. query-fast runs before history, so the
+  // old topic can never anchor this answer.
+  it('"What should I focus on today?" leads with protein goal + progress', async () => {
+    const users = mockUsers({ protein_goal_grams: 120, todayProtein: 35 });
+    const r = await tryQueryFast('What should I focus on today?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('daily_focus');
+    expect(r!.text).toContain('120g');
+    expect(r!.text).toContain('35g');
+    expect(r!.text).toContain('85g'); // remaining
+    // Symptoms are NEVER the answer here.
+    expect(r!.text.toLowerCase()).not.toContain('nervous');
+  });
+
+  it('"Hi what I should focus today" (greeting prefix, no delimiter) routes to planning', async () => {
+    const users = mockUsers({ protein_goal_grams: 100, todayProtein: 40 });
+    const r = await tryQueryFast('Hi what I should focus today', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('daily_focus');
+    expect(r!.text).toContain('60g'); // 100 - 40
+  });
+
+  it('adds a weight-progress clause when current + goal weight are known', async () => {
+    const users = mockUsers({ protein_goal_grams: 100, todayProtein: 40, current_weight: 180, goal_weight: 160 });
+    const r = await tryQueryFast('what are my priorities today', { users, logger: noopLogger, userId: 'u1' });
+    expect(r!.category).toBe('daily_focus');
+    expect(r!.text).toContain('160 lbs goal');
+    expect(r!.text).toContain('20 lbs');
+  });
+
+  it('honest profile-based default when no goal and nothing logged', async () => {
+    const users = {
+      getById: vi.fn().mockResolvedValue({ protein_goal_grams: null, calorie_goal_kcal: null }),
+      getTodaysFoodSummary: vi.fn().mockResolvedValue({ protein_g: 0, calories: 0, items: [], items_detailed: [] }),
+    } as unknown as UserService;
+    const r = await tryQueryFast('give me a plan for today', { users, logger: noopLogger, userId: 'u1' });
+    expect(r!.category).toBe('daily_focus');
+    expect(r!.text).toMatch(/don't have much from today yet/i);
+    expect(r!.text).toMatch(/logged anything yet today/i);
+  });
+
+  it('"what\'s my goal today" → planning, but bare "what\'s my protein goal" stays protein_goal', async () => {
+    const users = mockUsers({ protein_goal_grams: 90, todayProtein: 10 });
+    const focus = await tryQueryFast("what's my goal today", { users, logger: noopLogger, userId: 'u1' });
+    expect(focus!.category).toBe('daily_focus');
+    const goal = await tryQueryFast("what's my protein goal", { users, logger: noopLogger, userId: 'u1' });
+    expect(goal!.category).toBe('protein_goal');
+  });
+
+  it('"Feeling good. What should I focus on today" → planning with status ack', async () => {
+    const users = mockUsers({ protein_goal_grams: 120, todayProtein: 35 });
+    const r = await tryQueryFast('Feeling good. What should I focus on today', { users, logger: noopLogger, userId: 'u1' });
+    expect(r!.category).toBe('daily_focus');
+    expect(r!.text).toMatch(/^Good to hear\./);
+    expect(r!.text).toContain('120g');
+  });
+});
+
 describe('multi-intent: status preamble + question (2026-06-14)', () => {
   // Production failure (WhatsApp screenshot): "Feeling good. What I ate today"
   // → Grace asked the user to LIST their foods instead of checking the log.

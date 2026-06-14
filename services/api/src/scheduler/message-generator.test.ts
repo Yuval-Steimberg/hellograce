@@ -34,6 +34,30 @@ function makeStubLlm(reply: string) {
   return { llm, calls };
 }
 
+describe('welcome message — deterministic, compliance-correct (2026-06-14)', () => {
+  it('ships the fixed welcome verbatim WITHOUT calling the LLM', async () => {
+    const { llm, calls } = makeStubLlm('SOME LLM PARAPHRASE THAT MUST NOT SHIP');
+    const gen = new MessageGenerator(llm);
+    const out = await gen.generate('welcome', makeUser({ first_name: 'Yuval' }));
+    // The LLM is never consulted for the welcome.
+    expect(calls).toHaveLength(0);
+    expect(out).not.toContain('PARAPHRASE');
+    // Name + the key beats + the A2P compliance footer (verbatim, at the end).
+    expect(out).toContain('Hi Yuval, it\'s Grace, your new GLP-1 sidekick.');
+    expect(out).toContain('snap a pic');
+    expect(out).toContain('Save this number');
+    expect(out.trimEnd().endsWith('Reply STOP to cancel, HELP for help. Msg & data rates may apply.')).toBe(true);
+  });
+
+  it('falls back to "there" when no first name is set', async () => {
+    const { llm } = makeStubLlm('x');
+    const gen = new MessageGenerator(llm);
+    const noName = { ...makeUser(), first_name: undefined } as unknown as GraceUser;
+    const out = await gen.generate('welcome', noName);
+    expect(out).toContain('Hi there, it\'s Grace');
+  });
+});
+
 describe('sanitizeProactiveOutput — mail-merge salutation openers (2026-06-11 production bug)', () => {
   it('strips the exact production failure "For Yuval, Hope you\'re having a good day…"', () => {
     const out = sanitizeProactiveOutput(

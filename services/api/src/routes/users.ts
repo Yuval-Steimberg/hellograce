@@ -251,19 +251,14 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     const user = await users.getByPhone(phone);
     if (!user) throw new Error('user_not_found_after_upsert');
 
-    // Send welcome message. Append a deterministic "how to use Grace" block so
-    // the first message always explains what the user can do and the available
-    // commands (SETTINGS / STOP), regardless of what the LLM/template body says.
+    // Send the welcome message. It's deterministic (generator short-circuits
+    // 'welcome' to a fixed template) and self-contained — it already explains
+    // what Grace does, how to log food/photos, and ends with the A2P compliance
+    // footer (STOP/HELP, "Msg & data rates may apply"), which must stay at the
+    // end. So we send it as-is with NO appended block. raw: skips the outbound
+    // sanitizer's 420-char cap so the full message (incl. the footer) ships.
     try {
-      const welcome = await generator.generate('welcome', user);
-      const howTo =
-        "A few things you can do anytime: text me what you ate, your weight, or how you're feeling and I'll track it. " +
-        "Send a meal photo or a voice note and I'll read it. " +
-        'Text SETTINGS to update your check-in times, medication, or preferences, and STOP to pause messages.';
-      const welcomeFull = `${welcome}\n\n${howTo}`;
-      // raw: the generator already sanitized its body, and howTo is clean prose
-      // I control — sending raw avoids the 420-char outbound cap truncating the
-      // SETTINGS/STOP commands off the end of the welcome.
+      const welcomeFull = await generator.generate('welcome', user);
       await sender.send({ to: phone, body: welcomeFull, channel: 'whatsapp', raw: true });
       await users.recordCheckIn({ userId: user.id, phone, type: 'welcome', messageSent: welcomeFull });
     } catch (err) {

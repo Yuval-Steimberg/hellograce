@@ -275,10 +275,11 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
   },
   welcome: (u) => {
     const name = u.first_name ?? 'there';
-    const med = u.medication ?? 'your GLP-1';
-    // Welcome must: feel strong + welcoming, explain what Grace does, set expectations,
-    // explain how to interact, make user feel supported. Concise + confident + human.
-    return `Hi ${name} — I'm Grace, your ${med} companion 🤍\n\nI'll text you 1-2 times a day with a light check-in. You can text me anytime about food, symptoms, weight, or just how you're feeling. Photos and voice notes work too.\n\nNo pressure to reply — even "tired" or a thumbs-up is enough. I'm here when you need me.`;
+    // Deterministic, compliance-correct welcome (2026-06-14). NOT LLM-generated:
+    // the STOP/HELP + "Msg & data rates may apply" footer is an A2P requirement
+    // and must ship verbatim — an LLM would paraphrase or drop it. generate()
+    // short-circuits 'welcome' to this template so the exact wording always ships.
+    return `Hi ${name}, it's Grace, your new GLP-1 sidekick. I'll check in daily with meal ideas, protein tips, and encouragement. Text me what you ate (or snap a pic) and I'll log it. Ask me anything, anytime. Save this number so you never miss a check-in. Reply STOP to cancel, HELP for help. Msg & data rates may apply.`;
   },
   trial_expiry_reminder: (u) => {
     const upgradeUrl = buildUpgradeUrl(u.phone);
@@ -345,6 +346,11 @@ export class MessageGenerator {
     // template lookup fails for any reason, fall through to the hard-coded
     // FALLBACKS map so the user is never left silent.
     const fallback = await this.resolveFallback(type, user, opts);
+    // The welcome is deterministic — it carries the A2P compliance footer
+    // (STOP/HELP, "Msg & data rates may apply") which must ship verbatim, so we
+    // never route it through the LLM. resolveFallback still lets ops override it
+    // via the message_templates 'welcome' row without a deploy.
+    if (type === 'welcome') return fallback;
     try {
       const userCtx = this.buildUserCtx(user);
       const prompt = this.buildPrompt(type, user, opts);
@@ -361,7 +367,9 @@ export class MessageGenerator {
         disableThinking: true,
       });
 
-      const sanitized = sanitizeProactiveOutput(resp.text, type === 'welcome' ? null : user.first_name);
+      // 'welcome' is handled deterministically above and never reaches here,
+      // so every message at this point should have the user's name stripped.
+      const sanitized = sanitizeProactiveOutput(resp.text, user.first_name);
       if (!sanitized) return fallback;
 
       // Anti-repetition: never ship a reminder that duplicates one of the

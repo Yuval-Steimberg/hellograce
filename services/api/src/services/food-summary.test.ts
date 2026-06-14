@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { aggregateFoodItems, formatAggregatedInline, renderDailyFoodSummary } from './food-summary.js';
+import {
+  aggregateFoodItems,
+  formatAggregatedInline,
+  renderDailyFoodSummary,
+  renderProteinBreakdown,
+  renderCalorieBreakdown,
+} from './food-summary.js';
 
 describe('aggregateFoodItems', () => {
   it('dedupes identical foods into a single entry with a count', () => {
@@ -101,5 +107,79 @@ describe('renderDailyFoodSummary', () => {
     expect(renderDailyFoodSummary(['black coffee'], 0, 0)).toBe(
       "Today you've had Black coffee. That's 0g protein.",
     );
+  });
+});
+
+describe('renderProteinBreakdown — "How 88g" itemized walk-through (2026-06-13)', () => {
+  const detailed = [
+    { food: '2 eggs', protein_g: 12, calories: 140, logged_at: '' },
+    { food: 'pizza (2 slices)', protein_g: 44, calories: 560, logged_at: '' },
+    { food: 'salmon (5oz)', protein_g: 22, calories: 290, logged_at: '' },
+    { food: 'rice (1 cup)', protein_g: 4, calories: 200, logged_at: '' },
+  ];
+
+  it('walks every food with its grams, summing to the stated total', () => {
+    const out = renderProteinBreakdown(detailed, 88);
+    expect(out).toContain('Your 88g adds up from');
+    expect(out).toContain('Pizza ~44g');
+    expect(out).toContain('Salmon ~22g');
+    // Quantity prefix is kept (the protein already reflects "2 eggs"), so we
+    // don't multiply twice — the label reads "2 eggs ~12g".
+    expect(out).toContain('2 eggs ~12g');
+    expect(out).toContain('Rice ~4g');
+    expect(out).not.toContain('\n'); // single line
+  });
+
+  it('orders foods by protein descending', () => {
+    const out = renderProteinBreakdown(detailed, 88)!;
+    expect(out.indexOf('Pizza')).toBeLessThan(out.indexOf('Salmon'));
+    expect(out.indexOf('Salmon')).toBeLessThan(out.indexOf('2 eggs'));
+  });
+
+  it('sums identical food labels into one entry', () => {
+    const out = renderProteinBreakdown(
+      [
+        { food: 'eggs', protein_g: 6, calories: 70, logged_at: '' },
+        { food: 'eggs', protein_g: 6, calories: 70, logged_at: '' },
+      ],
+      12,
+    )!;
+    expect(out).toContain('Eggs ~12g');
+    expect(out.match(/Eggs/g)?.length).toBe(1);
+  });
+
+  it('rolls a long tail into "plus N more foods"', () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      food: `food${i}`,
+      protein_g: 10 - i,
+      calories: 50,
+      logged_at: '',
+    }));
+    const out = renderProteinBreakdown(many, 55)!;
+    expect(out).toMatch(/plus \d+ more foods?/);
+  });
+
+  it('returns null when nothing has protein (caller falls back to generic)', () => {
+    expect(renderProteinBreakdown([], 0)).toBeNull();
+    expect(
+      renderProteinBreakdown([{ food: 'black coffee', protein_g: 0, calories: 0, logged_at: '' }], 0),
+    ).toBeNull();
+  });
+});
+
+describe('renderCalorieBreakdown', () => {
+  const detailed = [
+    { food: '2 eggs', protein_g: 12, calories: 140, logged_at: '' },
+    { food: 'pizza (2 slices)', protein_g: 44, calories: 560, logged_at: '' },
+  ];
+  it('walks every food with its calories, ordered by calories', () => {
+    const out = renderCalorieBreakdown(detailed, 700)!;
+    expect(out).toContain('Your 700 calories add up from');
+    expect(out).toContain('Pizza ~560 cal');
+    expect(out).toContain('2 eggs ~140 cal');
+    expect(out.indexOf('Pizza')).toBeLessThan(out.indexOf('2 eggs'));
+  });
+  it('returns null when nothing has calories', () => {
+    expect(renderCalorieBreakdown([], 0)).toBeNull();
   });
 });

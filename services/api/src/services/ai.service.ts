@@ -24,7 +24,12 @@ import {
 import { tryFastPath } from './fast-path.js';
 import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
 import { estimateMultiItemFood } from '../tools/log-food.js';
-import { aggregateFoodItems, formatAggregatedInline } from './food-summary.js';
+import {
+  aggregateFoodItems,
+  formatAggregatedInline,
+  renderProteinBreakdown,
+  renderCalorieBreakdown,
+} from './food-summary.js';
 import { buildFoodFitAnswer } from '../tools/food-fit.js';
 import { createHash } from 'crypto';
 import type { GraceUser } from '../user/user.service.js';
@@ -2076,12 +2081,34 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     // "How 88g" → generic GLP-1 fallback; "How 88 g of protein" → a confused
     // re-ask of what they ate (which they'd already told Grace).
     if (flags.toolsEnabled && detectReasoningRequest(input.text, lastGraceMessage)) {
-      const { getToolAwareFallback } = await import('@grace/ai-core');
-      const explanation = getToolAwareFallback(intentClass.type, [], {
-        isReasoningRequest: true,
-        lastAssistantMessage: lastGraceMessage,
-        userMessage: input.text,
-      });
+      // First try a REAL per-item breakdown from today's logged rows. When the
+      // number being challenged is a protein/calorie total ("How 88g", "how 88
+      // g of protein"), walk the user through the actual foods that summed to
+      // it — "Your 88g adds up from Eggs ~12g, Pizza ~44g, Salmon ~22g, Rice
+      // ~4g." This is the accurate, itemized answer; the generic explanation
+      // below is the fallback when nothing's logged or the number isn't a
+      // food total. items_detailed always sums to the stored total, so the
+      // breakdown can never contradict the number Grace already gave.
+      let explanation: string | null = null;
+      const lastMsgLower = (lastGraceMessage ?? '').toLowerCase();
+      const isCalorieReasoning = /\b[\d,]+\s*(cal|calorie|kcal)/i.test(lastMsgLower) && !/\d+\s*g\b/i.test(lastMsgLower);
+      const isProteinReasoning = /\d+\s*g\b|protein/i.test(lastMsgLower);
+      if (isCalorieReasoning || isProteinReasoning) {
+        const todays = await this.deps.users.getTodaysFoodSummary(input.userId).catch(() => null);
+        if (todays && todays.items_detailed.length > 0) {
+          explanation = isCalorieReasoning
+            ? renderCalorieBreakdown(todays.items_detailed, todays.calories)
+            : renderProteinBreakdown(todays.items_detailed, todays.protein_g);
+        }
+      }
+      if (!explanation) {
+        const { getToolAwareFallback } = await import('@grace/ai-core');
+        explanation = getToolAwareFallback(intentClass.type, [], {
+          isReasoningRequest: true,
+          lastAssistantMessage: lastGraceMessage,
+          userMessage: input.text,
+        });
+      }
       this.deps.logger.info({ userId: input.userId, textPreview: input.text.slice(0, 60) }, 'ai.handle.reasoning_explanation');
       void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
         .catch((err) => this.deps.logger.warn({ err }, 'reasoning.append_user.failed'));

@@ -105,6 +105,98 @@ export function formatAggregatedInline(items: AggregatedFood[], max = 10): strin
  * Totals are passed in (summed upstream from the rows) — never recomputed here,
  * so presentation can never change the day's nutrition numbers.
  */
+/** Per-row macro detail as stored in food_logs (one entry per log row). */
+export interface FoodMacroDetail {
+  food: string;
+  protein_g: number;
+  calories: number;
+}
+
+/**
+ * Aggregate per-row macro details into deduped {name, protein, calories}
+ * groups, ordered by protein descending. Identical food labels are summed
+ * (e.g. two "eggs" rows of 6g each → "Eggs 12g"). Portion parentheticals are
+ * stripped from the display name. Quantity prefixes are KEPT in the name here
+ * (so "2 eggs" stays "2 eggs") because the protein number already reflects the
+ * logged quantity — we don't want to multiply twice.
+ */
+function aggregateMacroDetails(
+  detailed: FoodMacroDetail[],
+): Array<{ name: string; protein_g: number; calories: number }> {
+  const groups = new Map<string, { name: string; protein_g: number; calories: number; order: number }>();
+  let order = 0;
+  for (const d of detailed) {
+    const clean = (d.food ?? '').replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    const existing = groups.get(key);
+    if (existing) {
+      existing.protein_g += d.protein_g ?? 0;
+      existing.calories += d.calories ?? 0;
+    } else {
+      groups.set(key, { name: titleCase(clean), protein_g: d.protein_g ?? 0, calories: d.calories ?? 0, order: order++ });
+    }
+  }
+  return [...groups.values()]
+    .sort((a, b) => b.protein_g - a.protein_g || a.order - b.order)
+    .map(({ name, protein_g, calories }) => ({ name, protein_g, calories }));
+}
+
+/**
+ * Answer "How did I reach Xg protein?" / "How 88g" with a REAL per-item
+ * walk-through built from the day's logged rows — never a generic "it's an
+ * estimate" deflection. One conversational line, survives the WhatsApp
+ * outbound enforcer (no bullets/headers).
+ *
+ *   "Your 88g adds up from Eggs ~12g, Pizza ~44g, Salmon ~22g, Rice ~4g.
+ *    Send serving sizes if you want me to tighten any of those."
+ *
+ * The TOTAL is passed in (summed upstream) — the per-item numbers are shown
+ * as approximate (`~`) because they're estimates, but they always sum to the
+ * day's stored total, so the breakdown can never contradict the number Grace
+ * already gave. Returns null when there's nothing logged (caller falls back to
+ * the generic explanation).
+ */
+export function renderProteinBreakdown(
+  detailed: FoodMacroDetail[],
+  proteinTotal: number,
+  maxShown = 6,
+): string | null {
+  const agg = aggregateMacroDetails(detailed).filter((i) => i.protein_g > 0);
+  if (agg.length === 0) return null;
+  const shown = agg.slice(0, maxShown).map((i) => `${i.name} ~${Math.round(i.protein_g)}g`);
+  const tail = agg.slice(maxShown);
+  let list = shown.join(', ');
+  if (tail.length > 0) {
+    const tailProtein = Math.round(tail.reduce((s, i) => s + i.protein_g, 0));
+    list += `, plus ${tail.length} more food${tail.length === 1 ? '' : 's'} (~${tailProtein}g)`;
+  }
+  return `Your ${Math.round(proteinTotal)}g adds up from ${list}. Send serving sizes if you want me to tighten any of those.`;
+}
+
+/**
+ * Calorie counterpart of renderProteinBreakdown — "How did I reach 2,040
+ * calories?" Returns null when nothing has calories logged.
+ */
+export function renderCalorieBreakdown(
+  detailed: FoodMacroDetail[],
+  calTotal: number,
+  maxShown = 6,
+): string | null {
+  const agg = aggregateMacroDetails(detailed)
+    .filter((i) => i.calories > 0)
+    .sort((a, b) => b.calories - a.calories);
+  if (agg.length === 0) return null;
+  const shown = agg.slice(0, maxShown).map((i) => `${i.name} ~${Math.round(i.calories)} cal`);
+  const tail = agg.slice(maxShown);
+  let list = shown.join(', ');
+  if (tail.length > 0) {
+    const tailCal = Math.round(tail.reduce((s, i) => s + i.calories, 0));
+    list += `, plus ${tail.length} more food${tail.length === 1 ? '' : 's'} (~${tailCal} cal)`;
+  }
+  return `Your ${calTotal.toLocaleString('en-US')} calories add up from ${list}. Send serving sizes if you want me to tighten any of those.`;
+}
+
 export function renderDailyFoodSummary(
   rawItems: string[],
   proteinTotal: number,

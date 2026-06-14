@@ -360,6 +360,12 @@ import type { UsdaFoodService } from './usda-food.service.js';
 import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood, findVagueAddOnItem } from '../safety/vague-food.js';
+import {
+  looksLikeRecommendation,
+  isRecommendationFollowUp,
+  isRecipeRequest,
+  extractLastRecommendation,
+} from './recommendation-context.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -534,17 +540,23 @@ export class AIService {
       // firing on EVERY inbound message (~150-180ms wasted on the ~95% of
       // turns where the message clearly isn't an affirmation). Only fetch
       // recent turns when the text shape actually matches an affirmation.
-      const isAffirmation = /^(?:yes|yep|yeah|yup|sure|ok|okay|sounds good|please do|please|alright|go ahead|do it|let'?s do it|yes please|absolutely)[!.?]?\s*$/i.test(input.text.trim());
+      const isAffirmation = /^(?:yes|yep|yeah|yup|sure|ok|okay|sounds good|sound good|sounds great|sounds nice|please do|please|alright|go ahead|do it|let'?s do it|yes please|absolutely|great|perfect|love it|nice)[!.?]?\s*$/i.test(input.text.trim());
       let skipFastPathDueToOffer = false;
       if (isAffirmation) {
         const recentTurns = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
         const lastAssistant = [...recentTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
         const lastWasOfferQuestion = /\?\s*$/.test(lastAssistant.trim()) &&
           /\b(want me to|would you (?:like|want)|should i|can i|may i|how about|do you want|interested in|let me know if you'?d like|let me know if you want|i can (?:walk you|show you|share|give|explain|break|go through|run through))\b/i.test(lastAssistant);
-        skipFastPathDueToOffer = lastWasOfferQuestion;
+        // CRITICAL fix (2026-06-14 audit): an "okay" / "sounds good" / "yes"
+        // right after a RECOMMENDATION must NOT get a canned "Got it 👍" — that
+        // dead-ends the thread AND the canned ack then becomes a topic-closer
+        // turn that strips the recommendation from history. Route to the
+        // orchestrator so Grace can advance ("want the recipe, or other ideas?").
+        const lastWasRecommendation = looksLikeRecommendation(lastAssistant);
+        skipFastPathDueToOffer = lastWasOfferQuestion || lastWasRecommendation;
         if (skipFastPathDueToOffer) {
           this.deps.logger.info(
-            { userId: input.userId, last: lastAssistant.slice(0, 80), text: input.text },
+            { userId: input.userId, last: lastAssistant.slice(0, 80), text: input.text, reason: lastWasRecommendation ? 'recommendation' : 'offer' },
             'ai.fast_path.skipped_offer_followthrough',
           );
         }
@@ -886,6 +898,53 @@ export class AIService {
           this.deps.logger.warn(
             { err: err instanceof Error ? err.message : String(err) },
             'ai.followup_direct.error',
+          );
+        }
+      }
+
+      // ── Recommendation follow-up (2026-06-14 audit fix) ──────────────────
+      // "recipe?" / "how do I make it?" / "any other ideas?" / "how much
+      // protein was in that?" / "the first one" all depend on a PRIOR
+      // recommendation. Route them through knowledge_direct — which injects the
+      // user's dietary restriction + dislikes AND runs a post-gen forbidden-food
+      // filter — with the earlier recommendation re-injected, so the thread
+      // EVOLVES with full context (recipe, alternatives, macros) instead of
+      // restarting or listing generic foods. Fires only when a prior
+      // recommendation actually exists in recent history (extended 16-turn
+      // window so it survives the "10 messages later" case).
+      if (isRecommendationFollowUp(input.text)) {
+        try {
+          const recTurns = await this.deps.memory.getRecentTurns(input.userId, 16).catch(() => [] as ChatTurn[]);
+          const lastRec = extractLastRecommendation(recTurns);
+          if (lastRec) {
+            const mode = isRecipeRequest(input.text)
+              ? 'They want a recipe: give simple ingredients and 3-5 short steps for that dish.'
+              : 'If they want other ideas, suggest DIFFERENT options than before (never repeat the same ones). If they ask about portions, protein, or calories, answer for that specific food.';
+            const enriched = `${input.text}\n\n[CONTEXT — earlier you recommended: "${lastRec.slice(0, 300)}". The user is following up on THAT. ${mode} Keep every suggestion within their dietary preferences and dislikes. Stay on this food; do not switch topics.]`;
+            lat.mark('recommendation_followup');
+            const direct = await this.runDirectPath('knowledge', enriched, input.userId, reconHint);
+            if (direct) {
+              const stageTimings = lat.snapshot();
+              const totalMs = Date.now() - t0;
+              this.deps.logger.info(
+                { userId: input.userId, latencyMs: totalMs, recipe: isRecipeRequest(input.text) },
+                'ai.recommendation_followup.served',
+              );
+              this.persistLatency(input.userId, 'recommendation_followup', totalMs, stageTimings, input.text, direct);
+              return {
+                text: direct,
+                confidence: 'high',
+                intent: 'recommendation_followup',
+                toolResults: [],
+                usedRetrieval: true,
+                latencyMs: totalMs,
+              };
+            }
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.recommendation_followup.error',
           );
         }
       }
@@ -1360,9 +1419,16 @@ export class AIService {
     // Intent hierarchy (2026-06-11): a question about a SPECIFIC food ("how
     // about burger for dinner?") gets a direct fit answer for THAT food —
     // general recommendations must never override a direct question.
+    // Dietary/dislike context for the content checker — without it, a food-fit
+    // or curated answer naming a forbidden/disliked food was NOT caught
+    // (2026-06-14 audit). Shared across all three checks below.
+    const dietCheckOpts = {
+      ...(dietaryRestriction ? { dietaryRestriction } : {}),
+      ...(dislikes.length > 0 ? { foodDislikes: dislikes } : {}),
+    };
     const fit = buildFoodFitAnswer(userText, { dietLabel: user?.dietary_pattern ?? user?.dietary_restriction ?? null });
     if (fit) {
-      const fitViolations = checkContent(fit, { userMessage: userText, ...(dbRules.length > 0 ? { dbRules } : {}) });
+      const fitViolations = checkContent(fit, { userMessage: userText, ...dietCheckOpts, ...(dbRules.length > 0 ? { dbRules } : {}) });
       if (!fitViolations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) {
         this.deps.logger.info({ userId: input.userId }, 'ai.food_fit.served');
         return fit;
@@ -1383,7 +1449,7 @@ export class AIService {
       const reply = `A few options: ${list}. Anything sound good?`;
       // Run through format-enforce + content-check for consistency.
       const formatted = enforceFormat(reply, { userMessage: userText });
-      const violations = checkContent(formatted.text, { userMessage: userText, ...(dbRules.length > 0 ? { dbRules } : {}) });
+      const violations = checkContent(formatted.text, { userMessage: userText, ...dietCheckOpts, ...(dbRules.length > 0 ? { dbRules } : {}) });
       // No severity = code-level banned phrase = regen (see runDirectPath note).
       if (violations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) return null;
       return formatted.text;
@@ -1466,7 +1532,7 @@ CRITICAL CONTEXT RULES — apply on every turn:
       userMessage: userText,
       ...(lastAssistantMessage ? { lastAssistantMessage } : {}),
     });
-    const violations = checkContent(formatted.text, { userMessage: userText, ...(dbRules.length > 0 ? { dbRules } : {}) });
+    const violations = checkContent(formatted.text, { userMessage: userText, ...dietCheckOpts, ...(dbRules.length > 0 ? { dbRules } : {}) });
     // No severity = code-level banned phrase = regen (see runDirectPath note).
     if (violations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) {
       this.deps.logger.info(
@@ -2728,7 +2794,14 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       );
     } else if (history.length >= 2) {
       const lastUserTurn = [...history].reverse().find((t) => t.role === 'user');
-      if (lastUserTurn && TOPIC_CLOSERS.test(lastUserTurn.content.trim())) {
+      // CRITICAL fix (2026-06-14 audit): if the CURRENT message is a
+      // recommendation follow-up ("recipe?", "any other ideas?", "how much
+      // protein was in that?"), the user is CONTINUING the recommendation
+      // thread — do NOT strip the recommendation out of history just because
+      // the prior turn was a brief "okay". Only strip when they've genuinely
+      // moved on (the current message isn't a back-referencing follow-up).
+      const currentIsFollowUp = isRecommendationFollowUp(input.text);
+      if (!currentIsFollowUp && lastUserTurn && TOPIC_CLOSERS.test(lastUserTurn.content.trim())) {
         const lastUserIdx = history.lastIndexOf(lastUserTurn);
         effectiveHistory = history.slice(Math.max(0, lastUserIdx));
       }

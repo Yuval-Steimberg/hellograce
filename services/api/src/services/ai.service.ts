@@ -365,6 +365,7 @@ import {
   isRecommendationFollowUp,
   isRecipeRequest,
   extractLastRecommendation,
+  buildRecommendationAckAdvance,
 } from './recommendation-context.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
@@ -559,6 +560,24 @@ export class AIService {
             { userId: input.userId, last: lastAssistant.slice(0, 80), text: input.text, reason: lastWasRecommendation ? 'recommendation' : 'offer' },
             'ai.fast_path.skipped_offer_followthrough',
           );
+        }
+        // Deterministic advance for an ack right after a recommendation: offer
+        // the recipe or more ideas instead of the LLM's generic "Happy to help"
+        // (observed in testing). Skip when the prior turn was an OFFER question
+        // (those need the promised content, handled downstream).
+        if (lastWasRecommendation && !lastWasOfferQuestion) {
+          const reply = buildRecommendationAckAdvance(`${input.userId}|${input.text}`);
+          const totalMs = Date.now() - t0;
+          this.deps.logger.info({ userId: input.userId, text: input.text }, 'ai.recommendation_ack.served');
+          this.persistLatency(input.userId, 'recommendation_ack', totalMs, lat.snapshot(), input.text, reply);
+          return {
+            text: reply,
+            confidence: 'high',
+            intent: 'recommendation_ack',
+            toolResults: [],
+            usedRetrieval: false,
+            latencyMs: totalMs,
+          };
         }
       }
       const fast = skipFastPathDueToOffer ? null : tryFastPath(input.text, input.userId);

@@ -86,3 +86,20 @@ export function extractLastRecommendation(history: ChatTurn[]): string | null {
   }
   return null;
 }
+
+/**
+ * When the user acks a recommendation ("sounds good" / "okay" / "yes"), give a
+ * deterministic reply that ADVANCES the thread (offer the recipe or more ideas)
+ * instead of the LLM's generic "Happy to help." Rotated by a stable seed so the
+ * same user doesn't see the identical line twice in a row.
+ */
+const ACK_ADVANCE_REPLIES: readonly string[] = [
+  'Glad those sound good. Want the recipe for one, or a few other ideas?',
+  'Nice. I can walk you through how to make one, or suggest a couple more, whichever helps.',
+  'Good pick. Want a quick recipe, or some other options?',
+];
+export function buildRecommendationAckAdvance(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return ACK_ADVANCE_REPLIES[Math.abs(h) % ACK_ADVANCE_REPLIES.length]!;
+}

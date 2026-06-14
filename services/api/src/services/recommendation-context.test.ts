@@ -5,6 +5,7 @@ import {
   isRecipeRequest,
   isRecommendationFollowUp,
   extractLastRecommendation,
+  buildRecommendationAckAdvance,
 } from './recommendation-context.js';
 
 describe('looksLikeRecommendation', () => {
@@ -76,6 +77,12 @@ describe('extractLastRecommendation', () => {
       { role: 'assistant', content: 'Hey there.' } as ChatTurn,
     ];
     expect(extractLastRecommendation(history)).toBeNull();
+  });
+  it('builds a deterministic, advancing ack reply (offers recipe / more ideas)', () => {
+    const r = buildRecommendationAckAdvance('+15551234567|sounds good');
+    expect(r).toMatch(/recipe|ideas|options|make one/i);
+    // Stable for the same seed.
+    expect(buildRecommendationAckAdvance('+15551234567|sounds good')).toBe(r);
   });
   it('finds an exercise recommendation across a 10-message gap', () => {
     const history: ChatTurn[] = [

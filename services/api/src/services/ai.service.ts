@@ -370,10 +370,19 @@ import {
   isRecipeRequest,
   extractLastRecommendation,
   buildRecommendationAckAdvance,
-  isMealSelection,
   extractSelectedFood,
   proteinAddOns,
 } from './recommendation-context.js';
+import {
+  detectMealConsumption,
+  isBareConsumptionBackReference,
+  mentionsFood,
+} from './meal-lifecycle.js';
+import {
+  setActiveMeal,
+  getActiveMeal,
+  clearActiveMeal,
+} from './meal-recommendation-store.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -654,6 +663,63 @@ export class AIService {
             const totalMs = Date.now() - t0;
             return { text: ask, confidence: 'high', intent: 'water_clarify', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
           }
+        }
+      }
+
+      // ── Meal lifecycle: preference ≠ consumption (2026-06-15) ────────────
+      // "Halloumi and roasted vegetable plate sounds good" / "maybe the dal" /
+      // "I'll have the omelet" express INTEREST, not eating. They must NEVER
+      // update protein/calorie totals. Only an explicit consumption signal
+      // ("I ate / had it", "log it", "ended up having it") logs. Runs BEFORE
+      // every logging path so preference language can't reach the fast-log,
+      // the force-log, or the orchestrator's log_food tool.
+      {
+        const mealState = detectMealConsumption(input.text);
+        const wordCount = input.text.trim().split(/\s+/).filter(Boolean).length;
+        if (mealState === 'preference' && !input.text.includes('?') && wordCount <= 12) {
+          // Only treat preference language as a MEAL preference when there's
+          // real food context: the message names a food ("the omelet sounds
+          // good"), OR Grace's last turn was a food recommendation. Without
+          // this, a bare "that sounds good" / "that works" reply to a non-food
+          // offer ("want me to walk you through the numbers?") would be hijacked.
+          let mealContext = mentionsFood(input.text);
+          if (!mealContext) {
+            const recent = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
+            const lastAsst = [...recent].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+            mealContext = looksLikeRecommendation(lastAsst) && mentionsFood(lastAsst);
+          }
+          if (mealContext) {
+            try {
+              const reply = await this.buildMealSuggestionReply(input.userId, input.text);
+              const totalMs = Date.now() - t0;
+              this.deps.logger.info({ userId: input.userId, text: input.text.slice(0, 80) }, 'ai.meal_suggested.served');
+              this.persistLatency(input.userId, 'meal_suggested', totalMs, lat.snapshot(), input.text, reply);
+              return {
+                text: reply,
+                confidence: 'high',
+                intent: 'meal_suggested',
+                toolResults: [],
+                usedRetrieval: false,
+                latencyMs: totalMs,
+              };
+            } catch (err) {
+              this.deps.logger.warn(
+                { err: err instanceof Error ? err.message : String(err) },
+                'ai.meal_suggested.error',
+              );
+              // Fall through — better to answer than to drop the turn.
+            }
+          }
+        }
+        // Consumption confirmed. If it's a bare back-reference ("I ended up
+        // making it", "had it") with no named food, resolve the meal from the
+        // stored active recommendation and log THAT, so the user needn't repeat
+        // the dish. A consumption message that DOES name the food falls through
+        // to the normal food-log paths (and we clear the stale suggestion).
+        if (mealState === 'consumed') {
+          const resolved = await this.tryLogStoredMeal(input.userId, input.text, t0, lat).catch(() => null);
+          if (resolved) return resolved;
+          void clearActiveMeal(this.deps.redis, input.userId).catch(() => {});
         }
       }
 
@@ -1053,64 +1119,10 @@ export class AIService {
         }
       }
 
-      // ── Meal selection (2026-06-15) — concise, goal-aware confirmation ────
-      // "Lentil dal sounds good" / "I'll go with the omelet" after a
-      // recommendation. NOT a log (not eaten yet). Production: this got a long,
-      // listy LLM essay. Instead: confirm the pick, quantify protein/cals,
-      // relate to the remaining protein target, and suggest a diet-appropriate
-      // add-on ONLY if there's a gap — in 1-2 sentences, deterministic.
-      if (isMealSelection(input.text)) {
-        try {
-          const food = extractSelectedFood(input.text);
-          const recTurns = await this.deps.memory.getRecentTurns(input.userId, 8).catch(() => [] as ChatTurn[]);
-          const lastRec = extractLastRecommendation(recTurns);
-          if (lastRec && food.length >= 3) {
-            const [user, summary] = await Promise.all([
-              this.deps.users.getByPhone(input.userId).catch(() => null),
-              this.deps.users.getTodaysFoodSummary(input.userId).catch(() => null),
-            ]);
-            const est = estimateMultiItemFood(food);
-            const proteinEst = est && est.protein_g > 0 ? est.protein_g : 0;
-            const goal = user?.protein_goal_grams ?? 0;
-            const today = Math.round(summary?.protein_g ?? 0);
-            const dietLabel = user?.dietary_pattern ?? user?.dietary_restriction ?? null;
-            const cap = food.charAt(0).toUpperCase() + food.slice(1);
-            let reply = `${cap} is a solid pick`;
-            if (proteinEst > 0) {
-              reply += `, roughly ${proteinEst}g protein${est && est.calories > 0 ? ` and about ${est.calories} calories` : ''}.`;
-            } else {
-              reply += '.';
-            }
-            if (goal > 0) {
-              const afterMeal = today + proteinEst;
-              const remainingAfter = goal - afterMeal;
-              if (proteinEst > 0) {
-                reply += ` That'd put you near ${afterMeal}g of your ${goal}g protein target`;
-                reply += remainingAfter > 20 ? `, so add ${proteinAddOns(dietLabel)} to close the gap.` : '.';
-              } else if (goal - today > 20) {
-                reply += ` You're at ${today}g of your ${goal}g protein target, so pair it with ${proteinAddOns(dietLabel)}.`;
-              } else {
-                reply += ` You're close to your ${goal}g protein target.`;
-              }
-            }
-            this.deps.logger.info({ userId: input.userId, food, proteinEst }, 'ai.meal_selection.served');
-            this.persistLatency(input.userId, 'meal_selection', Date.now() - t0, lat.snapshot(), input.text, reply);
-            return {
-              text: reply,
-              confidence: 'high',
-              intent: 'meal_selection',
-              toolResults: [],
-              usedRetrieval: false,
-              latencyMs: Date.now() - t0,
-            };
-          }
-        } catch (err) {
-          this.deps.logger.warn(
-            { err: err instanceof Error ? err.message : String(err) },
-            'ai.meal_selection.error',
-          );
-        }
-      }
+      // Meal selection ("lentil dal sounds good" / "I'll go with the omelet")
+      // is handled by the meal-lifecycle preference guard earlier in this
+      // method — it never reaches here (it short-circuits with a non-logging
+      // "meal_suggested" reply). See detectMealConsumption() above.
 
       // 2026-06-05 production failure: "what should I eat for breakfast
       // tomorrow?" → orchestrator → Gemini refused with AI disclaimer
@@ -1400,6 +1412,106 @@ export class AIService {
     if (parts.length === 0) return null;
     const joined = parts.join(', and ');
     return joined.charAt(0).toUpperCase() + joined.slice(1) + '.';
+  }
+
+  // ── Meal lifecycle (2026-06-15) ──────────────────────────────────────────
+  // The user is EXPLORING / SELECTING a recommended meal ("X sounds good",
+  // "I'll have the omelet", "maybe the dal"). This is NOT consumption — it must
+  // never log. Build a concise, goal-aware confirmation that keeps the meal in
+  // the "suggested" state and offers to log it once they've actually eaten.
+  // Also stores the meal as the active recommendation so a later bare "I ended
+  // up making it" can be resolved without the user repeating the dish name.
+  private async buildMealSuggestionReply(userId: string, text: string): Promise<string> {
+    const recTurns = await this.deps.memory.getRecentTurns(userId, 8).catch(() => [] as ChatTurn[]);
+    const selected = extractSelectedFood(text);
+    const lastRec = extractLastRecommendation(recTurns);
+    // Only keep the extracted text when it actually names a food — extraction
+    // of "I might make that" yields "might make", which is not a dish.
+    const food = selected.length >= 3 && mentionsFood(selected) ? selected : '';
+
+    // Remember the named dish (status: suggested) for later logging. No-ops
+    // when the message named no concrete food (setActiveMeal ignores < 3 chars).
+    void setActiveMeal(this.deps.redis, userId, food, this.deps.logger).catch(() => {});
+
+    if (!food && !lastRec) {
+      // No identifiable dish — acknowledge interest, defer logging, don't ask
+      // twice. Keeps it short.
+      return "Sounds like a good option. Let me know once you've actually had it and I'll log it for you.";
+    }
+
+    const [user, summary] = await Promise.all([
+      this.deps.users.getByPhone(userId).catch(() => null),
+      this.deps.users.getTodaysFoodSummary(userId).catch(() => null),
+    ]);
+    const est = food ? estimateMultiItemFood(food) : null;
+    const proteinEst = est && est.protein_g > 0 ? est.protein_g : 0;
+    const goal = user?.protein_goal_grams ?? 0;
+    const today = Math.round(summary?.protein_g ?? 0);
+    const dietLabel = user?.dietary_pattern ?? user?.dietary_restriction ?? null;
+
+    const dishName = food || 'That';
+    const cap = dishName.charAt(0).toUpperCase() + dishName.slice(1);
+    let reply = food ? `${cap} is a solid pick` : 'Good choice';
+    if (proteinEst > 0) {
+      reply += `, roughly ${proteinEst}g protein${est && est.calories > 0 ? ` and about ${est.calories} calories` : ''}.`;
+    } else {
+      reply += '.';
+    }
+    if (goal > 0 && proteinEst > 0) {
+      const afterMeal = today + proteinEst;
+      const remainingAfter = goal - afterMeal;
+      reply += ` That'd put you near ${afterMeal}g of your ${goal}g protein target`;
+      reply += remainingAfter > 20 ? `, so add ${proteinAddOns(dietLabel)} to close the gap.` : '.';
+    } else if (goal > 0 && goal - today > 20) {
+      reply += ` You're at ${today}g of your ${goal}g protein target, so pair it with ${proteinAddOns(dietLabel)}.`;
+    }
+    // Make the lifecycle explicit: this is a suggestion, not a log.
+    reply += " Let me know once you've had it and I'll log it.";
+    return reply;
+  }
+
+  // Consumption back-reference resolver: when the user confirms eating WITHOUT
+  // naming the dish ("I ended up making it", "had it"), pull the meal from the
+  // stored active recommendation, log it deterministically, and clear the
+  // suggestion. Returns null when there's no active meal to resolve (caller
+  // falls through to the normal pipeline, which will ask what they had).
+  private async tryLogStoredMeal(
+    userId: string,
+    text: string,
+    t0: number,
+    lat: LatencyTracker,
+  ): Promise<OrchestratorOutput | null> {
+    if (!isBareConsumptionBackReference(text)) return null;
+    const active = await getActiveMeal(this.deps.redis, userId, this.deps.logger).catch(() => null);
+    if (!active || active.meal.length < 3) return null;
+    const est = estimateMultiItemFood(active.meal);
+    if (!est || est.items.length === 0) return null;
+    const totals = await this.persistEstimatedFood(userId, est, active.meal).catch(() => null);
+    void clearActiveMeal(this.deps.redis, userId).catch(() => {});
+    const cap = active.meal.charAt(0).toUpperCase() + active.meal.slice(1);
+    const macros = est.calories > 0
+      ? `about ${est.protein_g}g protein and ${est.calories} calories`
+      : `about ${est.protein_g}g protein`;
+    const totalsClause = totals && totals.goal > 0 ? ` You're at ${totals.dailyProtein}g/${totals.goal}g today.` : '';
+    const reply = `Logged the ${cap} — roughly ${macros}.${totalsClause}`;
+    this.deps.logger.info({ userId, meal: active.meal }, 'ai.meal_backref_logged.served');
+    this.persistLatency(userId, 'food_log_backref', Date.now() - t0, lat.snapshot(), text, reply);
+    return {
+      text: reply,
+      confidence: 'high',
+      intent: 'food_log',
+      toolResults: [
+        {
+          name: 'log_food',
+          args: { food: active.meal },
+          output: { food: active.meal, protein_g: est.protein_g, calories: est.calories },
+          latencyMs: 0,
+          ok: true,
+        },
+      ],
+      usedRetrieval: false,
+      latencyMs: Date.now() - t0,
+    };
   }
 
   // Persist a deterministically-estimated multi-item meal as a single
@@ -2505,8 +2617,15 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       );
     }
 
+    // Meal-lifecycle guard (2026-06-15): preference / planning language
+    // ("X sounds good", "I'll have the dal", "maybe the omelet") is NOT
+    // consumption and must never be force-logged. The early preference guard in
+    // handleMessage already short-circuits these, but this is defense-in-depth
+    // so a reorder can't silently start logging un-eaten meals again.
+    const isMealPreference = detectMealConsumption(input.text) === 'preference';
     const shouldForceLogFood =
       !hasFoodDistress &&
+      !isMealPreference &&
       flags.toolsEnabled &&
       !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food') &&
       (intentClass.type === 'food_log' || obviousFoodMention);

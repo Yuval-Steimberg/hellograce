@@ -1316,6 +1316,55 @@ explanation is on-topic + offers to refine with portions. 815 api green.
 
 ---
 
+### Meal lifecycle: interest ≠ consumption — preference language never logs (2026-06-15)
+
+Branch `claude/meal-lifecycle-states-7ayf7w`. Production bug: after Grace
+recommended a meal, "Halloumi and roasted vegetable plate sounds good" (INTEREST)
+was logged as if eaten — inflating protein/calorie totals for a meal the user
+never had. Root cause: no explicit meal lifecycle (suggested → consumed); the
+old `meal_selection` guard fired too late (after the food-log fast path) and only
+when a recommendation was found in history, so a missed recommendation let the
+message reach Gemini, which called `log_food`.
+
+**New deterministic lifecycle (single source of truth):**
+- **`services/api/src/services/meal-lifecycle.ts`** — `detectMealConsumption(text)`
+  → `'consumed' | 'preference' | 'neither'`. Consumption checked FIRST so
+  "I ended up eating the dal that sounded good" → consumed. `CONSUMPTION_RE`
+  (I ate/had, just finished, for <meal> I had, ended up having/making, "log/track/
+  add it" imperative) with a negation void ("didn't eat", "haven't had yet").
+  `PREFERENCE_RE` (sounds/looks good, I like that, maybe, I'll have/make/go with,
+  I think I'll have, I might make it, planning to eat, considering it, that works,
+  going with, the X one). Plus `mentionsFood()` (broad dish vocabulary) and
+  `isBareConsumptionBackReference()` ("I ended up making it" / "had it").
+- **`services/api/src/services/meal-recommendation-store.ts`** — Redis-backed
+  active suggestion (`meal:rec:{phone}`, 5h TTL, status `suggested`). Set on
+  selection, overwritten on new pick, cleared after logging. Redis-optional
+  (no-ops + never throws when absent). Enables "I ended up making it" to log
+  without repeating the dish.
+
+**Wiring (`services/api/src/services/ai.service.ts`):**
+- Early guard BEFORE every logging path (fast-log / weight / classify / force-log
+  / orchestrator): `detectMealConsumption === 'preference'` (≤12 words, no `?`,
+  AND real food context — names a food OR Grace's last turn was a food
+  recommendation, so a bare "that sounds good" to a non-food offer isn't
+  hijacked) → returns a non-logging, goal-aware `meal_suggested` reply via
+  `buildMealSuggestionReply` ("…solid pick, ~Xg protein… Let me know once you've
+  had it and I'll log it.") and stores the dish. `=== 'consumed'` + bare
+  back-reference → `tryLogStoredMeal` logs the stored meal deterministically +
+  clears it; otherwise clears the stale suggestion and falls through.
+- The old `meal_selection` block (which required a detected recommendation) was
+  removed/subsumed. Defense-in-depth: `shouldForceLogFood` gained
+  `!isMealPreference`.
+- **`packages/ai-core/src/prompts.ts`** — new "MEAL LIFECYCLE — INTEREST IS NOT
+  CONSUMPTION" rule covers the LLM path for longer preference messages that
+  bypass the 12-word cap (lists never-log preference phrases vs. only-log
+  consumption phrases, with the exact production failure as a ✗/✓ pair).
+
+Tests: `meal-lifecycle.test.ts` (54) + `meal-recommendation-store.test.ts` (5).
+1009 api + 614 ai-core green; typecheck clean across all packages.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

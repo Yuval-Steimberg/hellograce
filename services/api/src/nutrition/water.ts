@@ -43,17 +43,30 @@ const VOLUME_UNIT_RE = new RegExp(`\\b(\\d+(?:\\.\\d+)?|a|an|one|two|three|four|
 // Food words that mean a volume is about FOOD, not water ("1 cup of rice").
 const SOLID_FOOD_NEARBY_RE = /\b(rice|oats?|oatmeal|yogurt|soup|cereal|pasta|beans|coffee|tea|juice|milk|soda|smoothie|shake|broth|wine|beer|protein)\b/i;
 
-// A water TOTAL query — must reference the running total ("today"/"so far"/
-// "had"/"total"…), NOT a bare "how much water" (that's a goal/education ask).
-const WATER_QUERY_RE =
-  /\bwater\b[^?]*\b(today|so far|already|left|remaining|total|intake|had)\b|\b(had|have i had|did i (?:drink|have))\b[^?]*\bwater\b|\bhow much water (?:have i had|did i (?:drink|have)|today|so far|already)\b|\bmy water (?:today|total|so far|intake)\b/i;
+// A water TOTAL query — interrogative AND about the running total. NOT a bare
+// "how much water" (goal/education) and NOT a declarative log ("I had water").
+const WATER_QUERY_RE = new RegExp([
+  // "how much/many water … today/so far/had/left/total/already/remaining"
+  String.raw`\bhow (?:much|many)\b[^?]*\bwater\b[^?]*\b(?:today|so far|had|left|remaining|total|already|intake|drunk|drank)\b`,
+  String.raw`\bhow (?:much|many) water (?:have i had|did i (?:drink|have)|today|so far|already|left|remaining)\b`,
+  // "have I had / did I drink / do I have … water"
+  String.raw`\b(?:have i had|did i (?:drink|have|log)|do i have)\b[^?]*\bwater\b`,
+  // "water total/left/remaining/intake", "my water today/total/so far"
+  String.raw`\bwater\b[^?]*\b(?:total|left|remaining|intake)\b`,
+  String.raw`\bmy water (?:today|total|so far|intake|level)\b`,
+].join('|'), 'i');
 
-// Unambiguous "drinking" verbs — these + a volume mean water/liquid even with
-// no "water" word ("I drank 20 oz"). "had"/"got"/"finished" are ambiguous
-// (could be food), so they need the water word or water context.
+// Interrogative / goal phrasing — these are questions, never a log. Keeps
+// "how much water should I drink" (education) and "did I drink water" (query)
+// out of the logging path even when they contain a drink verb.
+const INTERROGATIVE_RE =
+  /\b(how much|how many|should i|do i need|need to|what(?:'?s| is)|how do i|is it|can i|do i have|have i|did i)\b/i;
+
+// Consumption verbs (broad) — declarative intake. "drank/sipped" are
+// unambiguous liquids; "had/having/got/finished" are ambiguous (need a water
+// word or water context). Used for declarative log detection only.
+const CONSUME_VERB_RE = /\b(drank|drink|drinking|sipped|sipping|chugged|guzzled|downed|had|have|having|finished|got|getting|consumed)\b/i;
 const DRINK_VERB_RE = /\b(drank|drink|drinking|sipped|sipping|chugged|guzzled|downed)\b/i;
-
-export interface WaterParse { oz: number; }
 
 /** Parse a total ounces from any amount+unit phrases in the text (summing
  *  multiple, e.g. "a glass and 12 oz"). Returns null when no amount is found. */
@@ -76,20 +89,20 @@ export function parseWaterOz(text: string): number | null {
  *  (e.g. "Had already 65 oz today" right after a hydration reply). */
 export function isWaterLog(text: string, lastGraceMessage?: string): boolean {
   const t = text.trim();
-  if (t.includes('?')) return false; // a question is a query, not a log
+  if (t.includes('?')) return false;            // a question is a query, not a log
+  if (INTERROGATIVE_RE.test(t)) return false;   // "how much water should I drink" etc.
   const hasWaterWord = WATER_WORD_RE.test(t);
   const hasVolume = VOLUME_UNIT_RE.test(t);
   const hasSolidFood = SOLID_FOOD_NEARBY_RE.test(t);
-  // Explicit water + a volume or a drink verb.
-  if (hasWaterWord && (hasVolume || DRINK_VERB_RE.test(t))) return true;
-  if (hasSolidFood) return false; // a volume about food ("1 cup of rice", "coffee")
+  // Water explicitly named + a volume OR a consumption verb ("I had water",
+  // "drank a glass of water", "16 oz water").
+  if (hasWaterWord && (hasVolume || CONSUME_VERB_RE.test(t))) return true;
+  if (hasSolidFood) return false;               // a volume about food ("1 cup of rice", "coffee")
   // An unambiguous drink verb + a volume → water/liquid ("I drank 20 oz").
   if (hasVolume && DRINK_VERB_RE.test(t)) return true;
   // Bare volume ("65 oz today", "two glasses") with no water word → water only
   // when the previous Grace turn was about water (session context).
-  if (hasVolume && !hasWaterWord) {
-    if (lastGraceMessage && WATER_WORD_RE.test(lastGraceMessage)) return true;
-  }
+  if (hasVolume && !hasWaterWord && lastGraceMessage && WATER_WORD_RE.test(lastGraceMessage)) return true;
   return false;
 }
 

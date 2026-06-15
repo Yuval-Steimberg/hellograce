@@ -618,7 +618,21 @@ export class AIService {
         if (maybeWater) {
           const recent = await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
           const lastAsst = [...recent].reverse().find((t) => t.role === 'assistant')?.content ?? '';
-          // QUERY first so "how much water today" never hits the protein renderer.
+          // A message STATING an amount is a LOG, even if it also contains a
+          // query-ish word ("I had 54 oz water already" — "already" must not
+          // route it to the total query). So: LOG when an amount is present,
+          // QUERY only when the user is asking (no amount stated).
+          const oz = parseWaterOz(input.text);
+          const isLog = isWaterLog(input.text, lastAsst);
+          if (isLog && oz && oz > 0) {
+            const res = await logWater(this.deps.pool, this.deps.logger, input.userId, oz, input.text);
+            if (res) {
+              const totalMs = Date.now() - t0;
+              this.persistLatency(input.userId, 'water_log', totalMs, lat.snapshot(), input.text, res.text);
+              return { text: res.text, confidence: 'high', intent: 'water_log', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+            }
+          }
+          // QUERY (asking for the total) — never the protein renderer.
           if (wq) {
             const totalOz = await getTodaysWaterOz(this.deps.pool, input.userId);
             if (totalOz !== null) {
@@ -629,22 +643,11 @@ export class AIService {
               return { text, confidence: 'high', intent: 'water_query', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
             }
           }
-          // LOG: "I drank 20 oz", "65 oz of water", "Had already 65 oz today".
-          if (isWaterLog(input.text, lastAsst)) {
-            const oz = parseWaterOz(input.text);
-            if (oz && oz > 0) {
-              const res = await logWater(this.deps.pool, this.deps.logger, input.userId, oz, input.text);
-              if (res) {
-                const totalMs = Date.now() - t0;
-                this.persistLatency(input.userId, 'water_log', totalMs, lat.snapshot(), input.text, res.text);
-                return { text: res.text, confidence: 'high', intent: 'water_log', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
-              }
-            } else {
-              // Water log intent but no parseable amount → ask (no assumptions).
-              const ask = `Got it. How much water, in oz or glasses? (a glass is about 8 oz, aiming for ${WATER_GOAL_MIN_OZ}-${WATER_GOAL_MAX_OZ} oz a day)`;
-              const totalMs = Date.now() - t0;
-              return { text: ask, confidence: 'high', intent: 'water_clarify', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
-            }
+          // Water LOG intent but no parseable amount → ask (no assumptions).
+          if (isLog) {
+            const ask = `Got it. How much water, in oz or glasses? (a glass is about 8 oz, aiming for ${WATER_GOAL_MIN_OZ}-${WATER_GOAL_MAX_OZ} oz a day)`;
+            const totalMs = Date.now() - t0;
+            return { text: ask, confidence: 'high', intent: 'water_clarify', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
           }
         }
       }

@@ -44,6 +44,19 @@ describe('reconstructFoodFromClarification — continuation answer (2026-06-13)'
     // "chicken salad" is a qualified category → no longer vague → logs.
     expect(detectVagueFood(recon, undefined, { requireQuantity: true }).vague).toBe(false);
   });
+
+  // 2026-06-15 follow-up: "Just veggies" answered our CONTENTS re-ask → must
+  // LOG a veggie salad, not loop the same question.
+  it('reconstructs the food from our "what was in the X?" re-ask', () => {
+    const reask = 'Got it, no dressing. What was in the salad? For example just veggies, or with chicken, tuna, eggs, or cheese.';
+    expect(reconstructFoodFromClarification(reask, 'Just veggies')!.toLowerCase()).toContain('salad');
+  });
+
+  it('"just veggies salad" / "veggies salad" is specific enough to log (no loop)', () => {
+    expect(detectVagueFood('Just veggies salad', undefined, { requireQuantity: true }).vague).toBe(false);
+    expect(detectVagueFood('veggies salad', undefined, { requireQuantity: true }).vague).toBe(false);
+    expect(detectVagueFood('garden salad', undefined, { requireQuantity: true }).vague).toBe(false);
+  });
 });
 
 describe('splitMultiMealText — multi-meal preprocessor (2026-06-01 fix)', () => {

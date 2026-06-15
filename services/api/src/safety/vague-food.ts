@@ -105,7 +105,7 @@ const SPECIFIC_ITEM_RE = new RegExp(
 // Protein-qualifier + vague-category: "chicken burrito", "veggie pizza",
 // "beef tacos". Naming the protein/filling makes the category specific enough.
 const QUALIFIED_CATEGORY_RE =
-  /\b(chicken|beef|pork|fish|salmon|tuna|tofu|veggie|veg|vegetarian|vegan|bean|black\s+bean|steak|carnitas|barbacoa|al\s+pastor|carne\s+asada|shrimp|cheese|pepperoni|sausage|mushroom|spinach|margherita|hawaiian|bbq|buffalo|turkey|ham|bacon|egg|breakfast|club|tuna|caesar|cobb|greek|caprese|ham\s+and\s+cheese|western|denver|veggie)\s+(?:pizza|burger|sandwich|sub|wrap|salad|burrito|taco|bowl|pasta|stir[\s-]fry|curry|soup|omelette|omelet|noodles|casserole|stew)\b/i;
+  /\b(chicken|beef|pork|fish|salmon|tuna|tofu|veggie|veggies|veg|vegetarian|vegan|greens?|garden|green|side|house|mixed|leafy|lettuce|kale|arugula|romaine|antipasto|fruit|bean|black\s+bean|steak|carnitas|barbacoa|al\s+pastor|carne\s+asada|shrimp|cheese|pepperoni|sausage|mushroom|spinach|margherita|hawaiian|bbq|buffalo|turkey|ham|bacon|egg|breakfast|club|caesar|cobb|greek|caprese|ham\s+and\s+cheese|western|denver)\s+(?:pizza|burger|sandwich|sub|wrap|salad|burrito|taco|bowl|pasta|stir[\s-]fry|curry|soup|omelette|omelet|noodles|casserole|stew)\b/i;
 
 // Size words placed near the food (small/medium/large pizza, half a sandwich).
 // More restrictive than catching "big" anywhere — must reach a food word within

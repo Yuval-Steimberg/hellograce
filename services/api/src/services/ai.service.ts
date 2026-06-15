@@ -473,6 +473,7 @@ export function reconstructFoodFromClarification(lastGraceMsg: string, reply: st
   if ((m = /\bfor the ([a-z][a-z]*)\b/i.exec(lastGraceMsg))) food = m[1]!;
   else if ((m = /\blog (?:that|the) ([a-z]+)\b/i.exec(lastGraceMsg))) food = m[1]!;
   else if ((m = /\bhow was the ([a-z]+) prepared\b/i.exec(lastGraceMsg))) food = m[1]!;
+  else if ((m = /\bwhat was in the ([a-z]+)\b/i.exec(lastGraceMsg))) food = m[1]!; // our contents re-ask
   else if ((m = /\bmore on the ([a-z]+)\b/i.exec(lastGraceMsg))) food = m[1]!;
   if (!food) return null;
   food = food.toLowerCase();
@@ -2519,7 +2520,12 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       // piece. Keeps the food-logging flow alive across turns.
       {
         const reconVague = detectVagueFood(reconstructed, lastGraceMsg, { requireQuantity: true });
-        if (reconVague.vague) {
+        // Anti-loop: re-ask the contents AT MOST ONCE. If Grace's prior turn was
+        // already our contents re-ask, the user has answered twice ("No dressing"
+        // → "Just veggies") — log a best estimate instead of asking again. This
+        // is general (any food), not salad-specific.
+        const alreadyReasked = /for example just veggies, or with chicken|what was in the \w+\? for example/i.test(lastGraceMsg);
+        if (reconVague.vague && !alreadyReasked) {
           const negPrep = /^(no|nope|none|nothing|without)\b/i.test(input.text.trim())
             || /\b(no dressing|no sauce|plain|unseasoned)\b/i.test(input.text);
           const ack = negPrep ? `Got it, ${input.text.trim().toLowerCase()}. ` : 'Got it. ';

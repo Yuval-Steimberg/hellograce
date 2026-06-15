@@ -346,6 +346,7 @@ Give them a quick practical plan and move on.`,
 import { tryFoodLogFastResponse } from './food-log-fast.js';
 import { tryWeightLogFastResponse } from './weight-log-fast.js';
 import { tryQueryFast } from './query-fast.js';
+import { classifyIntentLLM } from './intent-llm.js';
 import { isWaterQuery, isWaterLog, parseWaterOz, WATER_GOAL_MIN_OZ, WATER_GOAL_MAX_OZ } from '../nutrition/water.js';
 import { getTodaysWaterOz, renderWaterTotal, logWater } from './water-log.js';
 import type { LLMProvider, PlannerDecision } from '@grace/shared';
@@ -870,7 +871,35 @@ export class AIService {
       reconHintForInner = reconHint;
 
       const earlyIntent = classifyIntent(routingText);
-      const directIntent = earlyIntent.type;
+      let directIntent = earlyIntent.type;
+
+      // Gemini semantic-intent fallback (2026-06-15): when the deterministic
+      // classifier can't place the message (lands on 'general'), ask Gemini to
+      // read the MEANING and route by intent instead of exact words. This is
+      // where unusual phrasings fail ("What I should do for dinner" → symptom
+      // blurb). Only runs for 'general' (clear messages keep the ~150ms path),
+      // skips trivial fragments, and fails safe (keeps 'general' on any error).
+      if (
+        directIntent === 'general' &&
+        this.deps.flags.toolsEnabled &&
+        input.media.length === 0 &&
+        routingText.trim().split(/\s+/).filter(Boolean).length >= 2 &&
+        routingText.trim().length <= 200
+      ) {
+        try {
+          lat.mark('intent_llm');
+          const recent = await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
+          const lastAsst = [...recent].reverse().find((t) => t.role === 'assistant')?.content;
+          const llmIntent = await classifyIntentLLM(this.deps.llm, this.deps.logger, routingText, lastAsst);
+          if (llmIntent?.mappedType && llmIntent.confidence >= 0.6) {
+            this.deps.logger.info(
+              { userId: input.userId, from: 'general', to: llmIntent.mappedType, primary: llmIntent.primary_intent },
+              'ai.intent_llm.reroute',
+            );
+            directIntent = llmIntent.mappedType as typeof directIntent;
+          }
+        } catch { /* keep 'general' */ }
+      }
 
       // 2026-06-06 production failure: user "Yes" after Grace asked "want
       // me to walk you through the numbers?" → got "Tell me a bit more?".

@@ -383,6 +383,12 @@ import {
   getActiveMeal,
   clearActiveMeal,
 } from './meal-recommendation-store.js';
+import {
+  detectReminderIntent,
+  buildNextReminderReply,
+  buildReminderExplainReply,
+  buildReminderChangeReply,
+} from './reminder-service.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -662,6 +668,49 @@ export class AIService {
             const ask = `Got it. How much water, in oz or glasses? (a glass is about 8 oz, aiming for ${WATER_GOAL_MIN_OZ}-${WATER_GOAL_MAX_OZ} oz a day)`;
             const totalMs = Date.now() - t0;
             return { text: ask, confidence: 'high', intent: 'water_clarify', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+          }
+        }
+      }
+
+      // ── Reminder questions → deterministic answer (2026-06-15) ───────────
+      // "When is my next reminder?" / "Would you send a reminder tomorrow
+      // morning?" / "Can you remind me at 3pm?" must be answered from the user's
+      // ACTUAL reminder config — never the LLM, which (under conflicting prompt
+      // rules) leaked capability denials ("I can't send reminders", "I don't
+      // have the ability to initiate messages"). Grace is the INTERFACE to the
+      // reminder system: she explains the schedule and redirects changes to
+      // Settings; she never creates/edits/disables reminders in chat.
+      {
+        const reminderIntent = detectReminderIntent(input.text);
+        if (reminderIntent) {
+          try {
+            const settingsUrl = 'https://graceglp.com/settings'; // rewritten to the deployment URL by TwilioSender
+            let reply: string;
+            if (reminderIntent === 'change') {
+              reply = buildReminderChangeReply(settingsUrl);
+            } else {
+              const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+              reply = reminderIntent === 'explain'
+                ? buildReminderExplainReply(user ?? {}, settingsUrl)
+                : buildNextReminderReply(user ?? {}, settingsUrl);
+            }
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info({ userId: input.userId, reminderIntent }, 'ai.reminder_query.served');
+            this.persistLatency(input.userId, `reminder_${reminderIntent}`, totalMs, lat.snapshot(), input.text, reply);
+            return {
+              text: reply,
+              confidence: 'high',
+              intent: `reminder_${reminderIntent}`,
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
+          } catch (err) {
+            this.deps.logger.warn(
+              { err: err instanceof Error ? err.message : String(err) },
+              'ai.reminder_query.error',
+            );
+            // Fall through to the normal pipeline rather than drop the turn.
           }
         }
       }

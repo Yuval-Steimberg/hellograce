@@ -781,6 +781,15 @@ function isNegated(lowerText: string, matchStart: number): boolean {
 // feedback acks, (7) AI-cliche openers, (8) empathy cliches, (9) sycophantic
 // acks, (10) capability denials, (11) profile-recall language, (12) corporate tone.
 const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
+  // Reminder/capability denial — Grace DOES send scheduled reminders. Exposing a
+  // platform/LLM limitation contradicts the product and confuses the user.
+  // Explain the schedule + redirect to Settings instead (2026-06-15).
+  { pattern: /\bi (can'?t|cannot|am unable to|am not able to|do not have the ability to|don'?t have the ability to) (send|schedule|set ?up|initiate|deliver) (you )?(a |any )?(reminders?|messages?|texts?|check.?ins?|notifications?)\b/i, reason: 'capability denial about reminders — Grace DOES send them; explain schedule + redirect to Settings' },
+  { pattern: /\bi (don'?t|do not) have (the ability|access) to (send|schedule|initiate|set|deliver)\b/i, reason: '"I don\'t have the ability/access to..." — capability denial, banned; explain config instead' },
+  { pattern: /\bi'?m unable to (send|schedule|initiate|deliver) (you )?(a |any )?(reminders?|messages?|texts?|check.?ins?)\b/i, reason: '"I\'m unable to send reminders" — capability denial, banned' },
+  { pattern: /\bi (can'?t|cannot) initiate (messages?|texts?|conversations?|reminders?)\b/i, reason: '"I can\'t initiate messages" — capability denial, banned' },
+  { pattern: /\binitiate (a )?(messages?|texts?|conversations?) (at a future time|in the future|on my own|proactively)\b/i, reason: '"initiate messages at a future time" — exposes scheduler internals, banned' },
+
   // Emotional amplification — sounds like a therapy chatbot, not a calm companion
   { pattern: /\boh,?\s*i'?m so sorry\b/i, reason: '"Oh, I\'m so sorry" — emotional amplification, banned' },
   { pattern: /\boh no,?\s*i'?m sorry\b/i, reason: '"Oh no, I\'m sorry" — emotional amplification, banned' },

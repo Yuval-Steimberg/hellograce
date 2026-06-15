@@ -1365,6 +1365,67 @@ Tests: `meal-lifecycle.test.ts` (54) + `meal-recommendation-store.test.ts` (5).
 
 ---
 
+### Reminders: Grace is the interface, never denies capability (2026-06-15)
+
+Branch `claude/meal-lifecycle-states-7ayf7w`. Production bug: user asked "When is
+my next reminder?" (Grace implied reminders exist) then "Would you send a reminder
+tomorrow morning?" → Grace replied **"I can't send reminders … I don't have the
+ability to initiate messages at a future time."** Two contradictions: (1) it
+exposed an LLM/architecture limitation, and (2) it denied the core product (Grace
+DOES send scheduled reminders).
+
+Root cause: reminder-status questions had NO deterministic handler — they fell
+through to Gemini, which faced **contradictory prompt rules**: one section said
+"echo the pre-computed Next scheduled reminder," another said "Grace has zero
+visibility into the proactive scheduler … NEVER state a future reminder time …
+banned absolutely." The model resolved the conflict by denying capability.
+
+**Fix — deterministic reminder service + ownership model:**
+- **`services/api/src/services/reminder-service.ts`** (NEW, pure/testable) — the
+  source of truth for ANSWERING reminder questions. `computeReminderSchedule(user,
+  now)` mirrors the scheduler math (morning = `wake_time`; evening = `sleep_time −
+  EVENING_LEAD_MIN`; midday Mon/Wed/Fri; injection day REPLACES the regular
+  schedule; quiet hours 21:00–07:00; `checkin_days_interval` walked forward to the
+  next eligible day; `paused` = disabled). Times are computed DYNAMICALLY from
+  wake/sleep settings via named offset constants (`MORNING_OFFSET_MIN`,
+  `EVENING_LEAD_MIN`) — never hardcoded 12pm/6pm. `detectReminderIntent(text)` →
+  `next | explain | change | null`. Reply builders explain the schedule + redirect
+  to Settings; the change builder ("I can't customize reminder times through chat,
+  but you can set them in Settings…") never exposes a limitation.
+- **`services/api/src/services/ai.service.ts`** — early deterministic intercept in
+  `handleMessage` (before the orchestrator): a reminder-intent message is answered
+  from the user's real config (`getByPhone` → reminder-service), short-circuiting
+  so it NEVER reaches Gemini. `change` → Settings redirect; `next`/`explain` →
+  computed answer. Settings URL uses `graceglp.com/settings` (rewritten to the
+  deployment host by `TwilioSender`). Verified the webhook's earlier short-circuits
+  (`isFrequencyChangeRequest`, `isSettingsKeyword` anchored, settings-flow READ
+  patterns anchored) do NOT pre-empt status/explain/change questions.
+- **`packages/ai-core/src/prompts.ts`** — reconciled the contradiction: the
+  "zero visibility / NEVER state a future reminder time / banned absolutely" rule
+  became "use the pre-computed Next scheduled reminder field; never INVENT a
+  different time." New **"REMINDERS — GRACE IS THE INTERFACE, NEVER EXPOSES
+  LIMITATIONS"** section with the BANNED capability-denial phrases ("I can't send
+  reminders", "I don't have the ability to…", "unable to initiate messages",
+  "I don't have access…") and explain-then-redirect examples.
+- **`packages/ai-core/src/content-checker.ts`** — backstop: 5 capability-denial
+  regexes added to `BANNED_PHRASES` (regen severity) so the phrasing can never
+  ship even if the LLM emits it.
+
+**Ownership model (per spec):** Settings own configuration; the scheduler owns
+delivery; Grace owns explanation only. Grace can tell when reminders fire, explain
+behavior/limits, and redirect to Settings — she cannot create/edit/disable
+reminders or promise a custom one-off in chat. The scheduler already implements
+the delivery rules correctly (morning at wake, evening before sleep, ≤ cadence/day,
+injection-day flow, quiet hours) — verified, no changes needed. Note:
+`reminders_enabled`/`morning_reminder`/`evening_reminder` columns don't exist;
+`paused` is the existing enable/disable toggle and the reminder service uses it.
+
+Tests: `reminder-service.test.ts` (18 — intent detection, schedule math incl.
+injection day / paused / every-other-day, and reply builders asserting no
+capability denial). 1026 api + 614 ai-core green; typecheck clean.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

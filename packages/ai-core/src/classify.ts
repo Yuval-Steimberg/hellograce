@@ -184,11 +184,22 @@ const FOOD_LOG: RegExp[] = [
 ];
 
 const FOOD_QUESTION: RegExp[] = [
-  /\bwhat (should|can|could) i (eat|have|make|cook|order|get|grab|pick|do|try)\b/i,
+  /\bwhat (should|can|could) i (eat|have|make|cook|order|get|grab|pick|do|try|fix|prepare)\b/i,
   // 2026-06-11 WhatsApp screenshot: "What I should eat for dinner" (dropped
   // auxiliary / inverted word order) missed the pattern above and routed to
   // 'general' → generic fallback. Catch the "what I should/can eat" form too.
-  /\bwhat (?:i should|i can|i could|i'?d|to) (eat|have|make|cook|order|get|grab|pick|try)\b/i,
+  // 2026-06-15: added "do/fix/prepare" — "What I should DO for dinner" was
+  // misclassified as a symptom question (shipped a GLP-1 side-effect blurb).
+  /\bwhat (?:i should|i can|i could|i'?d|to) (eat|have|make|cook|order|get|grab|pick|try|do|fix|prepare)\b/i,
+  // 2026-06-15: anchor on "<question> … for <meal>/tonight" — semantic catch-all
+  // so any "what should I do/have/make for dinner", "what can I get for lunch",
+  // etc. routes to food regardless of the exact verb.
+  /\bwhat\b[^?]{0,30}\bfor (?:breakfast|lunch|dinner|brunch|supper|a snack|dessert|tonight)\b/i,
+  // "Need help with dinner", "help deciding what to eat", "stuck on dinner".
+  /\b(?:need |want |looking for )?help (?:with|for|deciding|figuring out)\b[^?]{0,30}\b(breakfast|lunch|dinner|brunch|supper|snack|meal|what to (?:eat|make|cook|have)|food)\b/i,
+  /\b(?:i'?m |i am )?(?:not sure|unsure|don'?t know|no idea|stuck on)\b[^?]{0,30}\bwhat to (eat|make|have|cook|order|do|get|fix|prepare)\b/i,
+  // "what to eat/make tonight / for dinner" (no leading "what should I").
+  /\bwhat to (eat|make|have|cook|order|fix|prepare)\b[^?]{0,20}\b(tonight|today|for (?:breakfast|lunch|dinner|brunch|a snack)|right now)?/i,
   // "How about X for dinner?" / "What about a salad?" — considering a food.
   // Routes to the recommendation path instead of being logged as eaten.
   /^(?:how about|what about)\s+.{1,40}\b(for (?:breakfast|lunch|dinner|a snack|dessert)|to eat|instead)\b/i,

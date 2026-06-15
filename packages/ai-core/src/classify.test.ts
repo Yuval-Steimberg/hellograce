@@ -43,6 +43,30 @@ describe('classifyMessage — appointment_prep (session 3 production fix)', () =
 });
 
 describe('classifyMessage — food_question patterns (2026-05-31 production fix)', () => {
+  // 2026-06-15: "What I should DO for dinner" was misclassified (GLP-1 symptom
+  // blurb). These phrasings must all route to food_question.
+  for (const m of [
+    'What I should do for dinner',
+    'What should I do for dinner?',
+    'what should I eat tonight?',
+    'Dinner ideas?',
+    'Any suggestions for dinner?',
+    "I'm not sure what to make",
+    'Need help with dinner',
+    'What can I have tonight?',
+    'Any meal ideas?',
+    "What's a good dinner on Wegovy?",
+    'Hungry but not sure what to eat',
+    'what to make for dinner',
+  ]) {
+    it(`"${m}" → food_question`, () => {
+      expect(classifyMessage(m).type).toBe('food_question');
+    });
+  }
+  it('does NOT pull a symptom question into food ("what should I do about my nausea")', () => {
+    expect(classifyMessage('what should I do about my nausea').type).not.toBe('food_question');
+  });
+
   it('matches "How did I reached 40 g of protein?" (exact production failure)', () => {
     const result = classifyMessage('How did I reached 40 g of protein?');
     expect(result.type).toBe('food_question');

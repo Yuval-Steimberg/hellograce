@@ -370,6 +370,9 @@ import {
   isRecipeRequest,
   extractLastRecommendation,
   buildRecommendationAckAdvance,
+  isMealSelection,
+  extractSelectedFood,
+  proteinAddOns,
 } from './recommendation-context.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
@@ -1046,6 +1049,65 @@ export class AIService {
           this.deps.logger.warn(
             { err: err instanceof Error ? err.message : String(err) },
             'ai.recommendation_followup.error',
+          );
+        }
+      }
+
+      // ── Meal selection (2026-06-15) — concise, goal-aware confirmation ────
+      // "Lentil dal sounds good" / "I'll go with the omelet" after a
+      // recommendation. NOT a log (not eaten yet). Production: this got a long,
+      // listy LLM essay. Instead: confirm the pick, quantify protein/cals,
+      // relate to the remaining protein target, and suggest a diet-appropriate
+      // add-on ONLY if there's a gap — in 1-2 sentences, deterministic.
+      if (isMealSelection(input.text)) {
+        try {
+          const food = extractSelectedFood(input.text);
+          const recTurns = await this.deps.memory.getRecentTurns(input.userId, 8).catch(() => [] as ChatTurn[]);
+          const lastRec = extractLastRecommendation(recTurns);
+          if (lastRec && food.length >= 3) {
+            const [user, summary] = await Promise.all([
+              this.deps.users.getByPhone(input.userId).catch(() => null),
+              this.deps.users.getTodaysFoodSummary(input.userId).catch(() => null),
+            ]);
+            const est = estimateMultiItemFood(food);
+            const proteinEst = est && est.protein_g > 0 ? est.protein_g : 0;
+            const goal = user?.protein_goal_grams ?? 0;
+            const today = Math.round(summary?.protein_g ?? 0);
+            const dietLabel = user?.dietary_pattern ?? user?.dietary_restriction ?? null;
+            const cap = food.charAt(0).toUpperCase() + food.slice(1);
+            let reply = `${cap} is a solid pick`;
+            if (proteinEst > 0) {
+              reply += `, roughly ${proteinEst}g protein${est && est.calories > 0 ? ` and about ${est.calories} calories` : ''}.`;
+            } else {
+              reply += '.';
+            }
+            if (goal > 0) {
+              const afterMeal = today + proteinEst;
+              const remainingAfter = goal - afterMeal;
+              if (proteinEst > 0) {
+                reply += ` That'd put you near ${afterMeal}g of your ${goal}g protein target`;
+                reply += remainingAfter > 20 ? `, so add ${proteinAddOns(dietLabel)} to close the gap.` : '.';
+              } else if (goal - today > 20) {
+                reply += ` You're at ${today}g of your ${goal}g protein target, so pair it with ${proteinAddOns(dietLabel)}.`;
+              } else {
+                reply += ` You're close to your ${goal}g protein target.`;
+              }
+            }
+            this.deps.logger.info({ userId: input.userId, food, proteinEst }, 'ai.meal_selection.served');
+            this.persistLatency(input.userId, 'meal_selection', Date.now() - t0, lat.snapshot(), input.text, reply);
+            return {
+              text: reply,
+              confidence: 'high',
+              intent: 'meal_selection',
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: Date.now() - t0,
+            };
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.meal_selection.error',
           );
         }
       }

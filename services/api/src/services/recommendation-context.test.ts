@@ -6,6 +6,9 @@ import {
   isRecommendationFollowUp,
   extractLastRecommendation,
   buildRecommendationAckAdvance,
+  isMealSelection,
+  extractSelectedFood,
+  proteinAddOns,
 } from './recommendation-context.js';
 
 describe('looksLikeRecommendation', () => {
@@ -95,5 +98,23 @@ describe('extractLastRecommendation', () => {
       ),
     ];
     expect(extractLastRecommendation(history)).toMatch(/resistance training/);
+  });
+});
+
+describe('meal selection (2026-06-15)', () => {
+  it('detects a pick and extracts the food', () => {
+    expect(isMealSelection('Lentil dal sounds good')).toBe(true);
+    expect(extractSelectedFood('Lentil dal sounds good').toLowerCase()).toContain('lentil');
+    expect(isMealSelection("I'll go with the omelet")).toBe(true);
+    expect(extractSelectedFood("I'll go with the omelet").toLowerCase()).toContain('omelet');
+  });
+  it('is not a selection when it is a question or too long', () => {
+    expect(isMealSelection('does that sound good?')).toBe(false);
+    expect(isMealSelection('I had a really long day and I think lentil dal sounds good for many reasons honestly')).toBe(false);
+  });
+  it('diet-appropriate protein add-ons', () => {
+    expect(proteinAddOns('vegan')).toMatch(/edamame|tofu|soy/i);
+    expect(proteinAddOns('vegetarian')).toMatch(/yogurt|cottage|edamame/i);
+    expect(proteinAddOns(null)).toMatch(/egg|yogurt|chicken/i);
   });
 });

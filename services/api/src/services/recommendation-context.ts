@@ -103,3 +103,36 @@ export function buildRecommendationAckAdvance(seed: string): string {
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
   return ACK_ADVANCE_REPLIES[Math.abs(h) % ACK_ADVANCE_REPLIES.length]!;
 }
+
+// ── Meal selection (2026-06-15) ─────────────────────────────────────────────
+// The user is PICKING a recommended option ("lentil dal sounds good", "I'll go
+// with the omelet"). This is NOT a log (they haven't eaten it) — it should get
+// a concise, goal-aware confirmation, not a verbose essay.
+const MEAL_SELECTION_RE =
+  /\b(sounds (?:good|great|perfect|delicious|tasty|nice|amazing)|i'?ll (?:have|make|do|go with|take|try|get|cook)|let'?s (?:do|go with|try|make)|going with|i'?m gonna (?:have|make|do|cook)|i pick|i'?ll pick|i choose|i'?ll choose|love the|like the|that one|the \w+ one)\b/i;
+
+export function isMealSelection(text: string): boolean {
+  const t = text.trim();
+  if (t.includes('?')) return false;
+  if (t.split(/\s+/).filter(Boolean).length > 12) return false;
+  return MEAL_SELECTION_RE.test(t);
+}
+
+/** Strip the selection phrasing to recover the chosen food ("lentil dal sounds
+ *  good" → "lentil dal"). Returns '' when only a bare ack remains. */
+export function extractSelectedFood(text: string): string {
+  return text
+    .replace(MEAL_SELECTION_RE, ' ')
+    .replace(/\b(the|a|an|that|this|some|for|dinner|lunch|breakfast|tonight|today|please|then|maybe|i'?ll|i|will)\b/gi, ' ')
+    .replace(/[^a-z0-9\s-]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Diet-appropriate quick protein add-ons to close a remaining gap. */
+export function proteinAddOns(dietLabel: string | null | undefined): string {
+  const d = (dietLabel ?? '').toLowerCase();
+  if (/vegan|plant/.test(d)) return 'a side of edamame, tofu, or a soy-milk protein shake';
+  if (/vegetarian|pescatar/.test(d)) return 'a dollop of Greek yogurt, some cottage cheese, or edamame';
+  return 'a boiled egg, some Greek yogurt, or a few slices of chicken';
+}

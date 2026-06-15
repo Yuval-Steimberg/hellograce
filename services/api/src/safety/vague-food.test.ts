@@ -334,8 +334,37 @@ describe('require-quantity gate — no assumptions on a bare food log (2026-06-1
 
   it('a multi-food list without a high-variance protein is NOT asked (multi-item logger)', () => {
     // (a high-variance protein like chicken DOES trigger an ask — see below)
-    expect(log('eggs and toast').vague).toBe(false);
+    expect(log('yogurt and berries').vague).toBe(false);
     expect(log('rice and beans').vague).toBe(false);
+  });
+
+  it('eggs without a count ask "how many" (count is the high-impact detail)', () => {
+    expect(log('eggs and toast').vague).toBe(true);
+    expect(log('eggs and toast').response).toMatch(/how many eggs/i);
+    expect(log('2 eggs and toast').vague).toBe(false); // count given → log
+  });
+
+  it('expanded proteins (tempeh, sausage, meatballs) trigger the portion ask', () => {
+    expect(log('rice and tempeh').vague).toBe(true);
+    expect(log('sausage and peppers').vague).toBe(true);
+    expect(log('spaghetti and meatballs').vague).toBe(true);
+  });
+
+  it('restaurant / ate-out asks what was ordered', () => {
+    for (const m of ['I ate out', 'ate out for lunch', 'had a restaurant meal']) {
+      const r = log(m);
+      expect(r.vague).toBe(true);
+      expect(r.response).toMatch(/what did you order|portions vary/i);
+    }
+    // "takeout" also asks (via the existing vague-category gate).
+    expect(log('ordered takeout').vague).toBe(true);
+  });
+
+  it('protein shake without scoops/brand asks; with scoops logs', () => {
+    expect(log('I had a protein shake').vague).toBe(true);
+    expect(log('protein shake').response).toMatch(/how many scoops|brand/i);
+    expect(log('2 scoops of whey').vague).toBe(false);
+    expect(log('1 scoop protein shake').vague).toBe(false);
   });
 
   it('a multi-food meal with a high-variance protein asks about it (2026-06-15)', () => {
@@ -349,8 +378,8 @@ describe('require-quantity gate — no assumptions on a bare food log (2026-06-1
 
   it('a multi-food meal WITHOUT a high-variance protein still logs (multi-item estimate)', () => {
     expect(log('yogurt and berries').vague).toBe(false);
-    expect(log('eggs and toast').vague).toBe(false);
     expect(log('rice and beans').vague).toBe(false);
+    expect(log('apple and almonds').vague).toBe(false);
   });
 
   it('a multi-food meal with an amount or prep logs (no ask)', () => {

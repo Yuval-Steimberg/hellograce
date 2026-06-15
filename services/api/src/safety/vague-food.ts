@@ -379,10 +379,37 @@ const QUANTITY_PRESENT_RE =
 // High-variance proteins: the portion + cooking method dominate the macro
 // estimate, so a bare multi-food meal containing one of these gets a
 // clarification (2026-06-15: "rice and chicken" → ask about the chicken).
+// Expanded 2026-06-15 per the confidence-logging spec.
 const HIGH_VARIANCE_PROTEINS = new Set([
   'chicken', 'beef', 'steak', 'pork', 'fish', 'salmon', 'tuna', 'shrimp',
   'prawns', 'turkey', 'lamb', 'tofu', 'tilapia', 'cod', 'halibut', 'scallops',
+  'tempeh', 'seitan', 'meatballs', 'sausage', 'gyro', 'shawarma', 'egg', 'eggs',
 ]);
+
+// Restaurant / takeout / "ate out" — portions are unknown and large, so ask
+// what was ordered + rough amount instead of assuming a standard serving.
+const ATE_OUT_RE =
+  /\b(ate out|eating out|dined out|out to eat|at a restaurant|from a restaurant|restaurant meal|restaurant food|grabbed (?:takeout|take-?out|fast food)|ordered (?:out|in|takeout|take-?out|delivery))\b/i;
+function detectAteOut(text: string): { matched: string; response: string } | null {
+  if (!ATE_OUT_RE.test(text)) return null;
+  return {
+    matched: 'restaurant',
+    response: `Got it. What did you order, and roughly how much? Restaurant and takeout portions vary a lot, so I'd rather log it right than guess.`,
+  };
+}
+
+// Protein shakes/powders: the SCOOP count (or brand/size) drives the protein,
+// and "a protein shake" gives none of that — ask even though "a" is present.
+const PROTEIN_PRODUCT_RE = /\b(protein\s+shake|protein\s+drink|protein\s+powder|whey|mass\s+gainer)\b/i;
+const SCOOP_OR_BRAND_RE = /\b(\d+\s*scoops?|one scoop|two scoops|\d+\s*g\b|\d+\s*grams?\b|optimum|gold standard|fairlife|premier| orgain|huel|isopure|ghost|quest|myprotein)\b/i;
+function detectProteinProduct(text: string): { matched: string; response: string } | null {
+  if (!PROTEIN_PRODUCT_RE.test(text)) return null;
+  if (SCOOP_OR_BRAND_RE.test(text)) return null; // scoops/brand given → loggable
+  return {
+    matched: 'protein shake',
+    response: `Got it. How many scoops was the protein shake, or what brand and size? The scoop count swings the protein a lot.`,
+  };
+}
 
 // "No assumptions" gate (2026-06-14): a SINGLE bare food logged with NO amount
 // or portion can't be tracked accurately, so ask instead of guessing a serving.
@@ -414,9 +441,16 @@ function detectMissingQuantity(text: string): { matched: string; response: strin
   // multi-item estimator handle it. Ask the two highest-impact questions only.
   const protein = foods.find((f) => HIGH_VARIANCE_PROTEINS.has(f));
   if (!protein) return null;
+  // Eggs: the count is the high-impact detail, not portion/prep.
+  if (protein === 'egg' || protein === 'eggs') {
+    return {
+      matched: protein,
+      response: `Got it. How many eggs did you have? That changes the protein, so I'd rather count it right than guess.`,
+    };
+  }
   return {
     matched: protein,
-    response: `Got it. About how much ${protein} did you have, closer to a palm-sized portion or a full plate? And was it grilled, fried, or breaded? That swings the protein a lot, so I'd rather get it right than guess.`,
+    response: `Got it. About how much ${protein} did you have, closer to a palm-sized portion or a full plate? And was it grilled, fried, or breaded? That swings the protein and calories a lot, so I'd rather get it right than guess.`,
   };
 }
 
@@ -478,6 +512,10 @@ export function detectVagueFood(
     // casual food mentions or food questions ("is salmon healthy?"), which also
     // flow through this function.
     if (opts?.requireQuantity) {
+      const ateOut = detectAteOut(text);
+      if (ateOut) return { vague: true, matched: ateOut.matched, response: ateOut.response };
+      const proteinProduct = detectProteinProduct(text);
+      if (proteinProduct) return { vague: true, matched: proteinProduct.matched, response: proteinProduct.response };
       const missingQty = detectMissingQuantity(text);
       if (missingQty) return { vague: true, matched: missingQty.matched, response: missingQty.response };
     }

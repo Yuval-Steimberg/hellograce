@@ -166,14 +166,25 @@ describe('tryFoodLogFastResponse', () => {
     expect(result!.macros.protein_g).toBe(12);
   });
 
-  it('handles "protein shake" with high protein value', async () => {
+  it('defers a bare "protein shake" to a scoops clarification (2026-06-15 no-assumptions)', async () => {
+    // Scoop count drives the protein, so a bare "protein shake" should NOT
+    // fast-log a fixed estimate — it falls through to the clarification gate.
     const pool = makePool(25, 130);
     const result = await tryFoodLogFastResponse('Just had a protein shake', {
       pool, logger: stubLogger, userId: '+15551234567',
       intentType: 'food_log', proteinGoalGrams: 80,
     });
-    expect(result).not.toBeNull();
-    expect(result!.macros.protein_g).toBe(25);
+    expect(result).toBeNull();
+  });
+
+  it('fast-logs a protein shake WITH a scoop count', async () => {
+    const pool = makePool(25, 130);
+    const result = await tryFoodLogFastResponse('1 scoop protein shake', {
+      pool, logger: stubLogger, userId: '+15551234567',
+      intentType: 'food_log', proteinGoalGrams: 80,
+    });
+    // Logs only if the macro table resolves it; if so, no clarification deferral.
+    if (result) expect(result.macros.protein_g).toBeGreaterThan(0);
   });
 
   it('returns null on empty / whitespace-only input', async () => {

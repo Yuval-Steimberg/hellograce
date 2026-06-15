@@ -376,6 +376,13 @@ export function findVagueAddOnItem(text: string): string | null {
 const QUANTITY_PRESENT_RE =
   /\d|\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|half|quarter)\b|\b(cup|cups|slice|slices|piece|pieces|serving|servings|oz|ounce|ounces|g|gram|grams|lb|lbs|pound|pounds|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|handful|handfuls|bowl|bowls|plate|plates|glass|glasses|bottle|bottles|can|cans|scoop|scoops|bar|bars|stick|sticks|packet|packets|portion|portions|spoonful|spoonfuls|pinch|loaf|loaves|cube|cubes|chunk|chunks)\b|\b(small|medium|large|big|huge|tiny|little)\b/i;
 
+/** True when the food text carries an explicit amount/portion/unit (number,
+ *  unit word, single-unit article, or size). When FALSE, a logged item is a
+ *  standard-serving ESTIMATE and the confirmation should say so. */
+export function hasExplicitQuantity(text: string): boolean {
+  return QUANTITY_PRESENT_RE.test(text);
+}
+
 // High-variance proteins: the portion + cooking method dominate the macro
 // estimate, so a bare multi-food meal containing one of these gets a
 // clarification (2026-06-15: "rice and chicken" → ask about the chicken).

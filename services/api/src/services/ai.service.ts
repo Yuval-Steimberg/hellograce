@@ -360,6 +360,7 @@ import type { UsdaFoodService } from './usda-food.service.js';
 import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood, findVagueAddOnItem } from '../safety/vague-food.js';
+import { shouldDiscloseEstimate, estimateNote } from '../nutrition/estimate-note.js';
 import {
   looksLikeRecommendation,
   isRecommendationFollowUp,
@@ -1371,10 +1372,13 @@ export class AIService {
           const addOnAsk = addOn && !est.items.some((i) => i.food.toLowerCase().includes(addOn))
             ? ` What was the ${addOn}, so I can log that too?`
             : '';
+          // Medium-confidence estimate disclosure (no add-on ask + no explicit
+          // portion given) — invite a correction instead of presenting a guess.
+          const estTail = !addOnAsk && shouldDiscloseEstimate(text) ? ` ${estimateNote(input.userId)}` : '';
           if (totals && totals.goal > 0) {
-            return `Got it — ${list}. Roughly ${macros}. You're at ${totals.dailyProtein}g/${totals.goal}g today.${addOnAsk}`;
+            return `Got it — ${list}. Roughly ${macros}. You're at ${totals.dailyProtein}g/${totals.goal}g today.${addOnAsk}${estTail}`;
           }
-          return `Got it — ${list}. Roughly ${macros}${totals ? `, ${totals.dailyProtein}g protein today so far` : ''}.${addOnAsk}`;
+          return `Got it — ${list}. Roughly ${macros}${totals ? `, ${totals.dailyProtein}g protein today so far` : ''}.${addOnAsk}${estTail}`;
         }
         return "Got it. Roughly how much was it — small, medium, or large portions? I'll total up the protein for you.";
       }

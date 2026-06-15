@@ -26,6 +26,7 @@ import type { Logger } from 'pino';
 import { lookupCommonFoodMacros } from '../tools/log-food.js';
 import { detectVagueFood, findVagueAddOnItem } from '../safety/vague-food.js';
 import { USER_DAY_CTE, isCurrentUserDay } from '../nutrition/logging-window.js';
+import { shouldDiscloseEstimate, estimateNote } from '../nutrition/estimate-note.js';
 
 const TEMPLATES = [
   '{food} — about {protein}g protein. You\'re at {total}g/{goal}g today.',
@@ -146,6 +147,10 @@ export async function tryFoodLogFastResponse(
     if (addOn) {
       text += ` What was the ${addOn}, so I can log that too?`;
       deps.logger.info({ userId: deps.userId, addOn }, 'ai.food_log_fast.vague_addon_ask');
+    } else if (shouldDiscloseEstimate(trimmed)) {
+      // Medium confidence: logged a recognizable food with no explicit portion,
+      // so the macros are a standard-serving estimate — say so + invite a fix.
+      text += ` ${estimateNote(deps.userId)}`;
     }
 
     deps.logger.info(

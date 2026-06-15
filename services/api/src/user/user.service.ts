@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { encryptField, decryptField, hashField, isEncryptionEnabled } from '../crypto/field-encrypt.js';
 import type { TodayFoodCacheService } from '../cache/today-food-cache.js';
+import { USER_DAY_CTE, userDayExpr, isCurrentUserDay } from '../nutrition/logging-window.js';
 
 export interface GraceUser {
   id: string;
@@ -137,7 +138,7 @@ export class UserService {
         const u = await this.getById(userId).catch(() => null);
         const tz = u?.timezone ?? 'UTC';
         if (this.todayFoodCache) {
-          await this.todayFoodCache.invalidate(userId, tz).catch(() => undefined);
+          await this.todayFoodCache.invalidate(userId, tz, u?.wake_time ?? null).catch(() => undefined);
         }
       })();
     }
@@ -376,9 +377,10 @@ export class UserService {
   }
 
   /**
-   * Get today's food logs summary in the USER'S calendar day (not UTC, not a
-   * rolling 24h window). Boundary is computed from the user's timezone column,
-   * so the total resets at the user's local midnight and never mixes days.
+   * Get today's food logs summary in the USER'S personal logging day — the
+   * window from their wake_time to the next wake_time, in their timezone (see
+   * nutrition/logging-window.ts). Resets at wake_time, not midnight, so a late
+   * snack before bed still counts toward the day that began that morning.
    *
    * `items_detailed` carries the per-item protein/calorie breakdown so Grace
    * can answer "How did I reach 40g?" with item-level accuracy ("Eggs were
@@ -407,7 +409,7 @@ export class UserService {
       // user row (cheap, has its own 5s cache).
       const u = await this.getById(userId).catch(() => null);
       const tz = u?.timezone ?? 'UTC';
-      const redisHit = await this.todayFoodCache.get(userId, tz);
+      const redisHit = await this.todayFoodCache.get(userId, tz, u?.wake_time ?? null);
       if (redisHit) {
         // Re-warm L1 from L2 so the next read in the same burst doesn't
         // pay even the Redis round-trip.
@@ -421,18 +423,14 @@ export class UserService {
 
     // L3: source of truth — Postgres CTE.
     const { rows } = await this.pool.query<{ food: string; protein_g: number; calories: number; created_at: Date }>(
-      `WITH user_tz AS (
-         SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
-         FROM users WHERE phone = $1
-       )
+      `${USER_DAY_CTE}
        SELECT food,
               COALESCE(protein_g, 0) AS protein_g,
               COALESCE(calories, 0) AS calories,
               created_at
        FROM food_logs, user_tz
        WHERE user_id = $1
-         AND (created_at AT TIME ZONE user_tz.tz)::date
-             = (now()       AT TIME ZONE user_tz.tz)::date
+         AND ${isCurrentUserDay('created_at')}
        ORDER BY created_at DESC`,
       [userId],
     );
@@ -455,16 +453,16 @@ export class UserService {
       // Best-effort — never block the response on the L2 write.
       const u = await this.getById(userId).catch(() => null);
       const tz = u?.timezone ?? 'UTC';
-      void this.todayFoodCache.set(userId, tz, value).catch(() => undefined);
+      void this.todayFoodCache.set(userId, tz, value, u?.wake_time ?? null).catch(() => undefined);
     }
     return value;
   }
 
   /**
    * Get per-day protein/calorie totals for the last N days, including TODAY
-   * as the rightmost entry. Each row is one calendar day in the user's local
-   * timezone (same local-midnight boundary as today's summary, 12:00 AM –
-   * 11:59 PM). Used to answer queries
+   * as the rightmost entry. Each "day" is the user's personal logging day —
+   * wake_time to the next wake_time (see nutrition/logging-window.ts), the same
+   * window as today's summary. Used to answer queries
    * like "How much protein did I have yesterday?" or "Show me this week's
    * protein" — without this, Grace would have to guess or refuse.
    */
@@ -476,18 +474,15 @@ export class UserService {
   }>> {
     const safeDays = Math.max(1, Math.min(30, Math.floor(days)));
     const { rows } = await this.pool.query<{ day: string; protein_g: number; calories: number; item_count: string }>(
-      `WITH user_tz AS (
-         SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
-         FROM users WHERE phone = $1
-       )
-       SELECT (created_at AT TIME ZONE user_tz.tz)::date::text AS day,
+      `${USER_DAY_CTE}
+       SELECT ${userDayExpr('created_at')}::text AS day,
               COALESCE(SUM(protein_g), 0)::int AS protein_g,
               COALESCE(SUM(calories), 0)::int AS calories,
               COUNT(*)::int AS item_count
        FROM food_logs, user_tz
        WHERE user_id = $1
-         AND (created_at AT TIME ZONE user_tz.tz)::date
-             >= (now() AT TIME ZONE user_tz.tz)::date - ($2::int - 1)
+         AND ${userDayExpr('created_at')}
+             >= ${userDayExpr('now()')} - ($2::int - 1)
        GROUP BY day
        ORDER BY day DESC`,
       [userId, safeDays],

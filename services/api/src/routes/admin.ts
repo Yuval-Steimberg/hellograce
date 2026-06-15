@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import { z } from 'zod';
+import { USER_DAY_CTE, userDayExpr, isCurrentUserDay } from '../nutrition/logging-window.js';
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
@@ -1288,10 +1289,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     const { phone } = req.params as { phone: string };
     const dateParam = (req.query as Record<string, string>)['date']; // YYYY-MM-DD or omit for today
     const { rows } = await deps.pool.query(
-      `WITH user_tz AS (
-         SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
-         FROM users WHERE phone = $1
-       )
+      `${USER_DAY_CTE}
        SELECT fl.id, fl.food, fl.protein_g, fl.calories, fl.confidence,
               fl.source, fl.raw_text, fl.created_at,
               (fl.created_at AT TIME ZONE user_tz.tz)::text AS created_at_local
@@ -1299,9 +1297,8 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
        WHERE fl.user_id = $1
          AND CASE
            WHEN $2::date IS NOT NULL
-             THEN (fl.created_at AT TIME ZONE user_tz.tz)::date = $2::date
-           ELSE (fl.created_at AT TIME ZONE user_tz.tz)::date
-                = (now() AT TIME ZONE user_tz.tz)::date
+             THEN ${userDayExpr('fl.created_at')} = $2::date
+           ELSE ${isCurrentUserDay('fl.created_at')}
          END
        ORDER BY fl.created_at DESC`,
       [phone, dateParam ?? null],

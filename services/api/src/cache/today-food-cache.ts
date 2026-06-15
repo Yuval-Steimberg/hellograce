@@ -17,10 +17,11 @@
  *     ↓ miss
  *   L3 (Postgres CTE)
  *
- * Key strategy: `food:today:{phone}:{userTodayDate}` where userTodayDate
- * is the user's local calendar date (midnight-to-midnight in the user's
- * timezone). Each day naturally gets a fresh key at local midnight — no
- * cleanup job needed because stale keys age out via TTL.
+ * Key strategy: `food:today:{phone}:{loggingDayDate}` where loggingDayDate is
+ * the user's personal logging-day date (wake_time to next wake_time, in their
+ * timezone — see nutrition/logging-window.ts). Each logging day gets a fresh
+ * key at wake_time — no cleanup job needed because stale keys age out via TTL.
+ * MUST match the SQL window or the L2 cache would serve a different day.
  *
  * Write-through pattern: log_food / food-log-fast invalidate L2 on every
  * INSERT, same as the existing L1 invalidation. The next read recomputes
@@ -31,6 +32,7 @@
  */
 
 import type { Redis } from 'ioredis';
+import { computeUserLoggingDay } from '../nutrition/logging-window.js';
 
 const KEY_PREFIX = 'food:today:';
 /** TTL covers the maximum possible "today" window across timezones.
@@ -55,37 +57,8 @@ interface MinimalLogger {
   error: (obj: object, msg?: string) => void;
 }
 
-/**
- * Compute the user's "today" calendar date string (YYYY-MM-DD) using the
- * same convention as the Postgres CTE: `(now() AT TIME ZONE tz)::date`.
- * The day boundary is the user's LOCAL MIDNIGHT — 12:00 AM starts a fresh
- * day, 11:59 PM is still today. Must stay in lockstep with every food_logs
- * "today" SQL query or the L2 cache would serve a different day window
- * than the DB.
- */
-export function computeUserToday(timezone: string, now: Date = new Date()): string {
-  const tz = timezone && timezone.length > 0 ? timezone : 'UTC';
-  // en-CA returns ISO YYYY-MM-DD format directly via Intl formatter.
-  try {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(now);
-  } catch {
-    // Invalid timezone — fall back to UTC.
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'UTC',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(now);
-  }
-}
-
-function buildKey(phone: string, userTodayDate: string): string {
-  return `${KEY_PREFIX}${phone}:${userTodayDate}`;
+function buildKey(phone: string, loggingDayDate: string): string {
+  return `${KEY_PREFIX}${phone}:${loggingDayDate}`;
 }
 
 export class TodayFoodCacheService {
@@ -99,9 +72,9 @@ export class TodayFoodCacheService {
    * Redis errors fall through to a null result so the caller falls back
    * to the source-of-truth DB query.
    */
-  async get(phone: string, timezone: string): Promise<TodayFoodValue | null> {
+  async get(phone: string, timezone: string, wakeTime?: string | null): Promise<TodayFoodValue | null> {
     if (!this.redis) return null;
-    const key = buildKey(phone, computeUserToday(timezone));
+    const key = buildKey(phone, computeUserLoggingDay(timezone, wakeTime));
     try {
       const raw = await this.redis.get(key);
       if (!raw) return null;
@@ -120,9 +93,9 @@ export class TodayFoodCacheService {
    * blocks the caller because the in-memory L1 cache already covers the
    * immediate next read.
    */
-  async set(phone: string, timezone: string, value: TodayFoodValue): Promise<void> {
+  async set(phone: string, timezone: string, value: TodayFoodValue, wakeTime?: string | null): Promise<void> {
     if (!this.redis) return;
-    const key = buildKey(phone, computeUserToday(timezone));
+    const key = buildKey(phone, computeUserLoggingDay(timezone, wakeTime));
     try {
       await this.redis.set(key, JSON.stringify(value), 'EX', TTL_SECONDS);
     } catch (err) {
@@ -142,13 +115,13 @@ export class TodayFoodCacheService {
    * landing right at the midnight boundary or minor clock skew between
    * machines).
    */
-  async invalidate(phone: string, timezone: string): Promise<void> {
+  async invalidate(phone: string, timezone: string, wakeTime?: string | null): Promise<void> {
     if (!this.redis) return;
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const keys = [
-      buildKey(phone, computeUserToday(timezone, now)),
-      buildKey(phone, computeUserToday(timezone, yesterday)),
+      buildKey(phone, computeUserLoggingDay(timezone, wakeTime, now)),
+      buildKey(phone, computeUserLoggingDay(timezone, wakeTime, yesterday)),
     ];
     try {
       await this.redis.del(...keys);

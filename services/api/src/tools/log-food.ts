@@ -4,6 +4,7 @@ import type { Logger } from 'pino';
 import type { LLMProvider } from '@grace/shared';
 import type { Tool } from '@grace/ai-core';
 import type { UsdaFoodService } from '../services/usda-food.service.js';
+import { USER_DAY_CTE, isCurrentUserDay } from '../nutrition/logging-window.js';
 
 interface FoodEstimate {
   food: string;
@@ -403,16 +404,12 @@ export function makeLogFoodTool(deps: {
       // Query the live daily running total AFTER the insert so Grace reports
       // the correct cumulative number, not the stale pre-turn system-prompt snapshot.
       const totalsResult = await deps.pool.query<{ total_protein_g: number; total_calories: number }>(
-        `WITH user_tz AS (
-           SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
-           FROM users WHERE phone = $1
-         )
+        `${USER_DAY_CTE}
          SELECT COALESCE(SUM(fl.protein_g), 0) AS total_protein_g,
                 COALESCE(SUM(fl.calories), 0) AS total_calories
          FROM food_logs fl, user_tz
          WHERE fl.user_id = $1
-           AND (fl.created_at AT TIME ZONE user_tz.tz)::date
-               = (now()        AT TIME ZONE user_tz.tz)::date`,
+           AND ${isCurrentUserDay('fl.created_at')}`,
         [deps.userId],
       );
       const dailyProteinG = Math.round(totalsResult.rows[0]?.total_protein_g ?? 0);

@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { Tool } from '@grace/ai-core';
+import { USER_DAY_CTE, isCurrentUserDay } from '../nutrition/logging-window.js';
 
 /**
  * remove_food: delete one of today's food log entries.
@@ -10,9 +11,10 @@ import type { Tool } from '@grace/ai-core';
  * best-matching entry in today's food_logs (by food name, case-insensitive
  * partial match) and deletes it, then returns the updated daily totals.
  *
- * "Today" uses the same local-midnight boundary (12:00 AM – 11:59 PM in the
- * user's timezone) as log_food and getTodaysFoodSummary so the deleted entry
- * is always in the correct window.
+ * "Today" uses the same per-user logging-day window (wake_time to next
+ * wake_time, in the user's timezone — see nutrition/logging-window.ts) as
+ * log_food and getTodaysFoodSummary so the deleted entry is always in the
+ * correct window.
  */
 export function makeRemoveFoodTool(deps: {
   pool: Pool;
@@ -27,17 +29,13 @@ export function makeRemoveFoodTool(deps: {
       const food = typeof args['food'] === 'string' ? (args['food'] as string).trim() : '';
       if (!food) return { ok: false, error: 'no_food_provided' };
 
-      // Find matching entry in today's food window (local midnight reset, user timezone).
+      // Find matching entry in today's food window (per-user wake-time day).
       const matchResult = await deps.pool.query<{ id: string; food: string; protein_g: number; calories: number }>(
-        `WITH user_tz AS (
-           SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
-           FROM users WHERE phone = $1
-         )
+        `${USER_DAY_CTE}
          SELECT fl.id, fl.food, fl.protein_g, fl.calories
          FROM food_logs fl, user_tz
          WHERE fl.user_id = $1
-           AND (fl.created_at AT TIME ZONE user_tz.tz)::date
-               = (now()        AT TIME ZONE user_tz.tz)::date
+           AND ${isCurrentUserDay('fl.created_at')}
            AND lower(fl.food) LIKE '%' || lower($2) || '%'
          ORDER BY fl.created_at DESC
          LIMIT 1`,
@@ -47,14 +45,10 @@ export function makeRemoveFoodTool(deps: {
       if (matchResult.rows.length === 0) {
         // Nothing matched — return today's full list so Grace can tell the user
         const listResult = await deps.pool.query<{ food: string }>(
-          `WITH user_tz AS (
-             SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
-             FROM users WHERE phone = $1
-           )
+          `${USER_DAY_CTE}
            SELECT food FROM food_logs fl, user_tz
            WHERE fl.user_id = $1
-             AND (fl.created_at AT TIME ZONE user_tz.tz)::date
-                 = (now()        AT TIME ZONE user_tz.tz)::date
+             AND ${isCurrentUserDay('fl.created_at')}
            ORDER BY fl.created_at DESC`,
           [deps.userId],
         );
@@ -70,16 +64,12 @@ export function makeRemoveFoodTool(deps: {
 
       // Re-query live daily total after deletion.
       const totalsResult = await deps.pool.query<{ total_protein_g: number; total_calories: number }>(
-        `WITH user_tz AS (
-           SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
-           FROM users WHERE phone = $1
-         )
+        `${USER_DAY_CTE}
          SELECT COALESCE(SUM(fl.protein_g), 0) AS total_protein_g,
                 COALESCE(SUM(fl.calories), 0) AS total_calories
          FROM food_logs fl, user_tz
          WHERE fl.user_id = $1
-           AND (fl.created_at AT TIME ZONE user_tz.tz)::date
-               = (now()        AT TIME ZONE user_tz.tz)::date`,
+           AND ${isCurrentUserDay('fl.created_at')}`,
         [deps.userId],
       );
       const dailyProteinG = Math.round(totalsResult.rows[0]?.total_protein_g ?? 0);

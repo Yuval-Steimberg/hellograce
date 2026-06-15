@@ -25,6 +25,7 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { lookupCommonFoodMacros } from '../tools/log-food.js';
 import { detectVagueFood, findVagueAddOnItem } from '../safety/vague-food.js';
+import { USER_DAY_CTE, isCurrentUserDay } from '../nutrition/logging-window.js';
 
 const TEMPLATES = [
   '{food} — about {protein}g protein. You\'re at {total}g/{goal}g today.',
@@ -117,16 +118,12 @@ export async function tryFoodLogFastResponse(
 
     // Read the live daily total post-insert so the response is accurate.
     const totalsResult = await deps.pool.query<{ total_protein_g: number; total_calories: number }>(
-      `WITH user_tz AS (
-         SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
-         FROM users WHERE phone = $1
-       )
+      `${USER_DAY_CTE}
        SELECT COALESCE(SUM(fl.protein_g), 0) AS total_protein_g,
               COALESCE(SUM(fl.calories), 0) AS total_calories
          FROM food_logs fl, user_tz
         WHERE fl.user_id = $1
-          AND (fl.created_at AT TIME ZONE user_tz.tz)::date
-              = (now()        AT TIME ZONE user_tz.tz)::date`,
+          AND ${isCurrentUserDay('fl.created_at')}`,
       [deps.userId],
     );
     const dailyProteinG = Math.round(totalsResult.rows[0]?.total_protein_g ?? 0);

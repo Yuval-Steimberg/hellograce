@@ -2520,11 +2520,16 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       // piece. Keeps the food-logging flow alive across turns.
       {
         const reconVague = detectVagueFood(reconstructed, lastGraceMsg, { requireQuantity: true });
-        // Anti-loop: re-ask the contents AT MOST ONCE. If Grace's prior turn was
-        // already our contents re-ask, the user has answered twice ("No dressing"
-        // → "Just veggies") — log a best estimate instead of asking again. This
-        // is general (any food), not salad-specific.
-        const alreadyReasked = /for example just veggies, or with chicken|what was in the \w+\? for example/i.test(lastGraceMsg);
+        // Anti-loop (general, any food): Grace asks a food clarification AT MOST
+        // ONCE. Count how many clarification questions she's already asked in the
+        // recent turns — if she's asked 2+ times, the user has answered enough;
+        // log a best estimate instead of asking the same thing a third time.
+        // This is the hard guarantee that no food can loop the clarification.
+        const FOOD_CLARIFY_RE = /\b(what was in|what kind of|how much|how many|grilled, (?:baked|fried)|grilled, fried, or breaded|baked, or fried|any (?:dressing|sauce|oil)|palm-sized|full plate|roughly how much|what did you (?:have|order|get)|how many (?:scoops|eggs|slices)|how was the .{0,30} prepared|just need a bit more|how big)\b/i;
+        const priorClarifyCount = history.filter(
+          (turn) => turn.role === 'assistant' && turn.content.includes('?') && FOOD_CLARIFY_RE.test(turn.content),
+        ).length;
+        const alreadyReasked = priorClarifyCount >= 2;
         if (reconVague.vague && !alreadyReasked) {
           const negPrep = /^(no|nope|none|nothing|without)\b/i.test(input.text.trim())
             || /\b(no dressing|no sauce|plain|unseasoned)\b/i.test(input.text);

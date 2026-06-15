@@ -22,6 +22,7 @@ const UNIT_TO_OZ: Record<string, number> = {
   l: 33.814, liter: 33.814, liters: 33.814, litre: 33.814, litres: 33.814,
   glass: 8, glasses: 8,
   bottle: 16.9, bottles: 16.9,
+  gallon: 128, gallons: 128,
 };
 const UNIT_ALT = Object.keys(UNIT_TO_OZ).join('|');
 
@@ -42,6 +43,11 @@ const WATER_WORD_RE = /\b(water|hydrate|hydration|h2o|fluids?)\b/i;
 const VOLUME_UNIT_RE = new RegExp(`\\b(\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|twelve|couple)\\s*(${UNIT_ALT})\\b`, 'i');
 // Food words that mean a volume is about FOOD, not water ("1 cup of rice").
 const SOLID_FOOD_NEARBY_RE = /\b(rice|oats?|oatmeal|yogurt|soup|cereal|pasta|beans|coffee|tea|juice|milk|soda|smoothie|shake|broth|wine|beer|protein)\b/i;
+// Units almost nobody uses for solid food — a glass/bottle/liter/gallon means a
+// drink. With no solid-food word present, these are water ("finished 1 liter",
+// "had 2 bottles", "drank half a gallon").
+const WATER_IMPLYING_VOLUME_RE =
+  /\b(?:\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|twelve|couple|half|quarter)\s*(?:glass(?:es)?|bottles?|liters?|litres?|gallons?)\b/i;
 
 // A water TOTAL query — interrogative AND about the running total. NOT a bare
 // "how much water" (goal/education) and NOT a declarative log ("I had water").
@@ -71,9 +77,14 @@ const DRINK_VERB_RE = /\b(drank|drink|drinking|sipped|sipping|chugged|guzzled|do
 /** Parse a total ounces from any amount+unit phrases in the text (summing
  *  multiple, e.g. "a glass and 12 oz"). Returns null when no amount is found. */
 export function parseWaterOz(text: string): number | null {
+  // Normalize fractions ("half a gallon" → "0.5 gallon", "quarter of a liter"
+  // → "0.25 liter") so the amount+unit scan picks them up correctly.
+  const norm = text.toLowerCase()
+    .replace(/\b(?:a\s+)?half\s+(?:a\s+|an\s+|of\s+a\s+|of\s+an\s+)?/g, '0.5 ')
+    .replace(/\b(?:a\s+)?quarter\s+(?:a\s+|an\s+|of\s+a\s+|of\s+an\s+)?/g, '0.25 ');
   let total = 0;
   let found = false;
-  for (const m of text.matchAll(AMOUNT_UNIT_RE)) {
+  for (const m of norm.matchAll(AMOUNT_UNIT_RE)) {
     const rawQty = m[1]!.toLowerCase();
     const unit = m[2]!.toLowerCase();
     const qty = /^\d/.test(rawQty) ? parseFloat(rawQty) : (WORD_NUMBERS[rawQty] ?? 1);
@@ -100,6 +111,9 @@ export function isWaterLog(text: string, lastGraceMessage?: string): boolean {
   if (hasSolidFood) return false;               // a volume about food ("1 cup of rice", "coffee")
   // An unambiguous drink verb + a volume → water/liquid ("I drank 20 oz").
   if (hasVolume && DRINK_VERB_RE.test(t)) return true;
+  // A drink-only unit (glass/bottle/liter/gallon) with no solid food → water,
+  // even without the word "water" ("finished 1 liter", "had 2 bottles").
+  if (WATER_IMPLYING_VOLUME_RE.test(t)) return true;
   // Bare volume ("65 oz today", "two glasses") with no water word → water only
   // when the previous Grace turn was about water (session context).
   if (hasVolume && !hasWaterWord && lastGraceMessage && WATER_WORD_RE.test(lastGraceMessage)) return true;

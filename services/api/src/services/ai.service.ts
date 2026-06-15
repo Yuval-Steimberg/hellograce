@@ -2494,7 +2494,9 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     const isBriefDetail = input.text.trim().split(/\s+/).length <= 4;
     // Broadened so brief replies after a vague-food clarification ("3 tenders",
     // "a chicken sandwich", "4 wings") trigger continuation log_food.
-    const briefDetailMatchesFood = /\b(scoop|scoops|cup|cups|tbsp|tsp|grams?|oz|ounces?|servings?|with|and|small|medium|large|big|tiny|tender|tenders|wing|wings|nugget|nuggets|piece|pieces|slice|slices|sandwich|sandwiches|burger|burgers|taco|tacos|burrito|burritos|wrap|wraps|bowl|bowls|sub|subs|footlong|combo|meal|chicken|beef|fish|salmon|tuna|veggie|cheese|grilled|fried|baked|roasted|boiled|steamed|poached|sauteed|seared|smoked|breaded|crispy|mashed|sauce|gravy|oil)\b/i.test(input.text);
+    const briefDetailMatchesFood = /\b(scoop|scoops|cup|cups|tbsp|tsp|grams?|oz|ounces?|servings?|with|and|small|medium|large|big|tiny|tender|tenders|wing|wings|nugget|nuggets|piece|pieces|slice|slices|sandwich|sandwiches|burger|burgers|taco|tacos|burrito|burritos|wrap|wraps|bowl|bowls|sub|subs|footlong|combo|meal|chicken|beef|fish|salmon|tuna|veggie|veggies|cheese|grilled|fried|baked|roasted|boiled|steamed|poached|sauteed|seared|smoked|breaded|crispy|mashed|sauce|gravy|oil|dressing|lettuce|cucumber|tomato|tomatoes|spinach|kale|avocado|egg|eggs|nuts|almonds|quinoa|rice|beans|plain|none|nothing|without|vinaigrette|ranch|caesar|vinegar|lemon|olive|just)\b/i.test(input.text)
+      // Negative answers to a yes/no clarification ("no dressing", "no sauce", "nope").
+      || /^(no|nope|none|nothing|without)\b/i.test(input.text.trim());
     if (
       !shouldForceLogFood &&
       flags.toolsEnabled &&
@@ -2509,6 +2511,38 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       const reconstructed =
         reconstructFoodFromClarification(lastGraceMsg, input.text) ??
         `${input.text} ${lastGraceMsg.slice(0, 120).replace(/\?$/, '')}`;
+
+      // Partial-clarification handling (2026-06-15): if the reconstructed phrase
+      // is STILL vague (e.g. "no dressing" answered the dressing question but the
+      // salad's CONTENTS are unknown), don't force-log a guess and don't fall to
+      // a generic fallback â€” acknowledge what they answered and ask the missing
+      // piece. Keeps the food-logging flow alive across turns.
+      {
+        const reconVague = detectVagueFood(reconstructed, lastGraceMsg, { requireQuantity: true });
+        if (reconVague.vague) {
+          const negPrep = /^(no|nope|none|nothing|without)\b/i.test(input.text.trim())
+            || /\b(no dressing|no sauce|plain|unseasoned)\b/i.test(input.text);
+          const ack = negPrep ? `Got it, ${input.text.trim().toLowerCase()}. ` : 'Got it. ';
+          const food = (reconVague.matched ?? 'meal').toLowerCase();
+          const contentAsk = /salad|bowl|wrap|sandwich|stir|soup|pasta|omelette|omelet|casserole|stew/.test(food)
+            ? `What was in the ${food}? For example just veggies, or with chicken, tuna, eggs, or cheese.`
+            : reconVague.response ?? `What exactly did you have?`;
+          const reply = `${ack}${contentAsk}`;
+          this.deps.logger.info({ userId: input.userId, reconstructed, reply: reply.slice(0, 80) }, 'ai.handle.continuation_reask');
+          void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
+            .catch((err) => this.deps.logger.warn({ err }, 'continuation_reask.append_user.failed'));
+          void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: reply })
+            .catch((err) => this.deps.logger.warn({ err }, 'continuation_reask.append_assistant.failed'));
+          return {
+            text: reply,
+            intent: 'food_clarify',
+            confidence: 'high' as const,
+            toolResults: [],
+            usedRetrieval: false,
+            latencyMs: Date.now() - t0,
+          };
+        }
+      }
 
       // Prefer the deterministic fast-log so the answer is logged + confirmed
       // with real numbers, never a chatty LLM detour. Only when the clean

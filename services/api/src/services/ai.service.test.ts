@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { splitMultiMealText, reconstructFoodFromClarification } from './ai.service.js';
+import { detectVagueFood } from '../safety/vague-food.js';
 
 describe('reconstructFoodFromClarification — continuation answer (2026-06-13)', () => {
   // The exact production failure: Grace asked "For the pizza, how many slices…",
@@ -22,6 +23,26 @@ describe('reconstructFoodFromClarification — continuation answer (2026-06-13)'
   it('returns null when the prior message is not one of our clarifications', () => {
     expect(reconstructFoodFromClarification('How are you feeling today?', '2 slices')).toBeNull();
     expect(reconstructFoodFromClarification('What did you have at KFC?', '3 tenders')).toBeNull();
+  });
+
+  // 2026-06-15 production: salad clarification → "No dressing" → must STAY in
+  // the food flow (re-ask contents), not fall to a generic "what would you like
+  // to dig into?". The continuation reconstructs "no dressing" + "salad", and
+  // that phrase is still vague (contents unknown) → the re-ask fires.
+  it('"No dressing" after the salad ask reconstructs to a still-vague salad', () => {
+    const q = 'Sounds good. To log that salad accurately I just need a bit more: what was in it and any dressing (e.g. a chicken caesar)?';
+    const recon = reconstructFoodFromClarification(q, 'No dressing');
+    expect(recon).not.toBeNull();
+    expect(recon!.toLowerCase()).toContain('salad');
+    // Still vague (no contents) → the food flow re-asks instead of logging a guess.
+    expect(detectVagueFood(recon!, undefined, { requireQuantity: true }).vague).toBe(true);
+  });
+
+  it('"chicken" content answer makes the salad specific enough to log', () => {
+    const q = 'To log that salad accurately I just need a bit more: what was in it and any dressing?';
+    const recon = reconstructFoodFromClarification(q, 'chicken')!;
+    // "chicken salad" is a qualified category → no longer vague → logs.
+    expect(detectVagueFood(recon, undefined, { requireQuantity: true }).vague).toBe(false);
   });
 });
 

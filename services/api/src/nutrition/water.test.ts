@@ -8,7 +8,25 @@ describe('parseWaterOz', () => {
   it('parses ml → oz', () => expect(parseWaterOz('500 ml of water')).toBe(17));
   it('parses liters', () => expect(parseWaterOz('1 liter')).toBe(34));
   it('sums multiple amounts', () => expect(parseWaterOz('a glass and 12 oz')).toBe(20));
+  it('parses a gallon + fractions', () => {
+    expect(parseWaterOz('drank a gallon')).toBe(128);
+    expect(parseWaterOz('drank half a gallon')).toBe(64);
+    expect(parseWaterOz('quarter of a liter')).toBe(8);
+  });
   it('null when no amount', () => expect(parseWaterOz('drank some water')).toBeNull());
+});
+
+describe('isWaterLog — drink-only units imply water (no "water" word needed)', () => {
+  it('logs liters / bottles / gallons / glasses on their own', () => {
+    expect(isWaterLog('finished 1 liter')).toBe(true);
+    expect(isWaterLog('already had 2 bottles')).toBe(true);
+    expect(isWaterLog('drank half a gallon')).toBe(true);
+    expect(isWaterLog('had 3 glasses')).toBe(true);
+  });
+  it('excludes those units when a drink-food word makes it clearly not water', () => {
+    expect(isWaterLog('2 glasses of wine')).toBe(false);
+    expect(isWaterLog('a bottle of beer')).toBe(false);
+  });
 });
 
 describe('isWaterQuery — TOTAL questions only (not goal, not a log)', () => {

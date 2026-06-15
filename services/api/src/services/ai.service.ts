@@ -364,6 +364,7 @@ import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood, findVagueAddOnItem } from '../safety/vague-food.js';
 import { shouldDiscloseEstimate, estimateNote } from '../nutrition/estimate-note.js';
+import { USER_DAY_CTE, isCurrentUserDay } from '../nutrition/logging-window.js';
 import {
   looksLikeRecommendation,
   isRecommendationFollowUp,
@@ -3702,16 +3703,14 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     if (cached && cached.expiresAt > Date.now()) {
       return cached.value;
     }
-    // User's calendar day, not UTC — same fix as getTodaysFoodSummary.
+    // "Today" = the user's personal logging day (starts at wake_time), the SAME
+    // window as getTodaysFoodSummary — so "check-ins today" and "food today"
+    // never disagree at the pre-wake boundary.
     const { rows } = await this.deps.pool.query<{ count: string }>(
-      `WITH user_tz AS (
-         SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz
-         FROM users WHERE phone = $1
-       )
+      `${USER_DAY_CTE}
        SELECT count(*)::text FROM check_ins, user_tz
        WHERE user_id = $1
-         AND (created_at AT TIME ZONE user_tz.tz)::date
-             = (now() AT TIME ZONE user_tz.tz)::date`,
+         AND ${isCurrentUserDay('created_at')}`,
       [userId],
     );
     const value = Number(rows[0]?.count ?? 0);

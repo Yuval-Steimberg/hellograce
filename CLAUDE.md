@@ -1426,6 +1426,51 @@ capability denial). 1026 api + 614 ai-core green; typecheck clean.
 
 ---
 
+### Per-user food logging day = wake_time (verified end-to-end) (2026-06-15)
+
+Branch `claude/meal-lifecycle-states-7ayf7w`. Requirement: food/protein/calorie
+totals must reset on each user's PERSONAL day (starts at their `wake_time`), not
+the calendar day or a fixed reset. The window itself was already implemented in
+`services/api/src/nutrition/logging-window.ts` (`USER_DAY_CTE` / `userDayExpr` /
+`isCurrentUserDay` SQL helpers + `computeUserLoggingDay` JS twin; default
+`07:00`; a row's logging day = its local timestamp shifted back by wake_time,
+taken as a date). This session was a **full audit + verification** that it's
+applied everywhere, plus one consistency fix.
+
+**Verified on the wake window (no change needed):** `getTodaysFoodSummary` +
+`getDailyProteinHistory` (user.service — the source for nearly everything),
+the L2 Redis cache key (`today-food-cache` → `computeUserLoggingDay` with
+wake_time), `log-food` running total, `remove-food` (all 3 queries),
+`food-log-fast`, water log, admin `/admin/users/:phone/food-logs` (uses
+`userDayExpr`/`isCurrentUserDay`), `get-food-summary` tool, `query-fast`
+(protein/calorie today + remaining renderers), the ai.service context lines
+("Total protein/calories TODAY", "Foods logged today"), and the scheduler
+reminder/progress messages (`scheduler.ts` → `getDailyProteinHistory` for
+morning, `getTodaysFoodSummary` for evening). All food/protein/calorie "today"
+reads route through these — so a Settings wake-time change re-buckets totals
+dynamically (no rows move), and a pre-wake 2 AM snack counts toward the prior
+logging day across DB + cache identically.
+
+**Out of scope (correctly NOT a per-day window):** the anomaly detector's
+rolling multi-day `food_logs` counts (`now() - interval '3/10 days'`), the
+`persistEstimatedFood` 2-minute dedupe (a relative window — timezone-independent
+by construction), and the admin `messages/feedback/tool_logs` 30-day analytics
+(`DATE_TRUNC('day', …)` — global charting, not a user's food day).
+
+**Fixed (the one inconsistency):** `ai.service.countTodaysCheckIns` used a
+calendar-day boundary (`(created_at AT TIME ZONE tz)::date = …`), so "check-ins
+today" could disagree with "food today" at the pre-wake boundary. Now uses
+`USER_DAY_CTE` + `isCurrentUserDay('created_at')` — same window as food. (In
+practice they rarely differed because quiet hours block proactive sends before
+07:00, but "today" is now a single consistent concept system-wide.)
+
+Tests: `logging-window.test.ts` extended with the spec scenarios — 7 AM example
+(8 AM = today, 2 AM = prior day, 23:30 = same day), custom/late wake, wake-time
+change re-buckets the same timestamp, missing wake → 07:00 default, non-UTC tz.
+1031 api + 614 ai-core green; typecheck clean.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

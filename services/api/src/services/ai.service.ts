@@ -346,6 +346,8 @@ Give them a quick practical plan and move on.`,
 import { tryFoodLogFastResponse } from './food-log-fast.js';
 import { tryWeightLogFastResponse } from './weight-log-fast.js';
 import { tryQueryFast } from './query-fast.js';
+import { isWaterQuery, isWaterLog, parseWaterOz, WATER_GOAL_MIN_OZ, WATER_GOAL_MAX_OZ } from '../nutrition/water.js';
+import { getTodaysWaterOz, renderWaterTotal, logWater } from './water-log.js';
 import type { LLMProvider, PlannerDecision } from '@grace/shared';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { UserMemoryService } from '../memory/user-memory.service.js';
@@ -599,6 +601,52 @@ export class AIService {
           usedRetrieval: false,
           latencyMs: totalMs,
         };
+      }
+
+      // ── Water intercept (2026-06-15) — isolated hydration tracker ─────────
+      // Water has its OWN table; a water total query must NEVER return protein
+      // (production bug), and a water log must actually persist (not a
+      // fabricated "Logged."). Runs BEFORE the food/protein fast paths so
+      // hydration can't be misrouted. Cheap gate first to avoid a DB read on
+      // non-water messages; "1 cup of rice" is excluded (solid food present).
+      {
+        const wq = isWaterQuery(input.text);
+        const maybeWater = wq
+          || /\b(water|hydrate|hydration|h2o)\b/i.test(input.text)
+          || (/\b(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s*(oz|ounces?|ml|cups?|glass(?:es)?|bottles?|l|liters?|litres?)\b/i.test(input.text)
+              && !/\b(rice|oats?|oatmeal|yogurt|soup|cereal|pasta|beans|coffee|tea|juice|milk|soda|smoothie|shake|broth|wine|beer|protein)\b/i.test(input.text));
+        if (maybeWater) {
+          const recent = await this.deps.memory.getRecentTurns(input.userId, 2).catch(() => [] as ChatTurn[]);
+          const lastAsst = [...recent].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+          // QUERY first so "how much water today" never hits the protein renderer.
+          if (wq) {
+            const totalOz = await getTodaysWaterOz(this.deps.pool, input.userId);
+            if (totalOz !== null) {
+              const text = renderWaterTotal(totalOz);
+              const totalMs = Date.now() - t0;
+              this.persistLatency(input.userId, 'water_query', totalMs, lat.snapshot(), input.text, text);
+              this.deps.logger.info({ userId: input.userId, totalOz }, 'ai.water_query.served');
+              return { text, confidence: 'high', intent: 'water_query', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+            }
+          }
+          // LOG: "I drank 20 oz", "65 oz of water", "Had already 65 oz today".
+          if (isWaterLog(input.text, lastAsst)) {
+            const oz = parseWaterOz(input.text);
+            if (oz && oz > 0) {
+              const res = await logWater(this.deps.pool, this.deps.logger, input.userId, oz, input.text);
+              if (res) {
+                const totalMs = Date.now() - t0;
+                this.persistLatency(input.userId, 'water_log', totalMs, lat.snapshot(), input.text, res.text);
+                return { text: res.text, confidence: 'high', intent: 'water_log', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+              }
+            } else {
+              // Water log intent but no parseable amount → ask (no assumptions).
+              const ask = `Got it. How much water, in oz or glasses? (a glass is about 8 oz, aiming for ${WATER_GOAL_MIN_OZ}-${WATER_GOAL_MAX_OZ} oz a day)`;
+              const totalMs = Date.now() - t0;
+              return { text: ask, confidence: 'high', intent: 'water_clarify', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+            }
+          }
+        }
       }
 
       // Food-log fast-response: when the message is a clear food log AND the

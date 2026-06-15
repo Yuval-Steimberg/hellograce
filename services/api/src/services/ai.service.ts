@@ -23,7 +23,7 @@ import {
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
 import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
-import { estimateMultiItemFood } from '../tools/log-food.js';
+import { estimateMultiItemFood, FOOD_TOKEN_SET } from '../tools/log-food.js';
 import {
   aggregateFoodItems,
   formatAggregatedInline,
@@ -2493,6 +2493,10 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     const lastGraceMsg = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
     const lastWasFoodQuestion = /\b(how much|what|what was|how big|portion|scoop|protein|calories?|carbs?)\b.*\?/i.test(lastGraceMsg);
     const isBriefDetail = input.text.trim().split(/\s+/).length <= 4;
+    // A clarification ANSWER can be longer than 4 words ("cup of spaghetti with
+    // meat sauce"). When Grace just asked a food question, treat a reasonable-
+    // length reply as the answer so it doesn't fall to the LLM, which over-asks.
+    const isClarificationAnswer = lastWasFoodQuestion && input.text.trim().split(/\s+/).length <= 14;
     // Broadened so brief replies after a vague-food clarification ("3 tenders",
     // "a chicken sandwich", "4 wings") trigger continuation log_food.
     const briefDetailMatchesFood = /\b(scoop|scoops|cup|cups|tbsp|tsp|grams?|oz|ounces?|servings?|with|and|small|medium|large|big|tiny|tender|tenders|wing|wings|nugget|nuggets|piece|pieces|slice|slices|sandwich|sandwiches|burger|burgers|taco|tacos|burrito|burritos|wrap|wraps|bowl|bowls|sub|subs|footlong|combo|meal|chicken|beef|fish|salmon|tuna|veggie|veggies|cheese|grilled|fried|baked|roasted|boiled|steamed|poached|sauteed|seared|smoked|breaded|crispy|mashed|sauce|gravy|oil|dressing|lettuce|cucumber|tomato|tomatoes|spinach|kale|avocado|egg|eggs|nuts|almonds|quinoa|rice|beans|plain|none|nothing|without|vinaigrette|ranch|caesar|vinegar|lemon|olive|just)\b/i.test(input.text)
@@ -2502,7 +2506,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       !shouldForceLogFood &&
       flags.toolsEnabled &&
       lastWasFoodQuestion &&
-      isBriefDetail &&
+      (isBriefDetail || isClarificationAnswer) &&
       briefDetailMatchesFood &&
       !prePlannedDecision.toolCalls.some((c) => c.name === 'log_food')
     ) {
@@ -2512,6 +2516,12 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       const reconstructed =
         reconstructFoodFromClarification(lastGraceMsg, input.text) ??
         `${input.text} ${lastGraceMsg.slice(0, 120).replace(/\?$/, '')}`;
+      // If the reply ALREADY names a food ("cup of spaghetti with meat sauce"),
+      // it's a complete answer â€” log it as-is rather than appending the prior
+      // food (which would mangle it into "â€¦ of pasta"). Only fragments
+      // ("2 slices", "grilled", "no dressing") need reconstruction.
+      const replyHasFood = [...FOOD_TOKEN_SET].some((tok) => new RegExp(`\\b${tok}\\b`, 'i').test(input.text));
+      const candidate = replyHasFood ? input.text.trim() : reconstructed;
 
       // Partial-clarification handling (2026-06-15): if the reconstructed phrase
       // is STILL vague (e.g. "no dressing" answered the dressing question but the
@@ -2519,7 +2529,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       // a generic fallback â€” acknowledge what they answered and ask the missing
       // piece. Keeps the food-logging flow alive across turns.
       {
-        const reconVague = detectVagueFood(reconstructed, lastGraceMsg, { requireQuantity: true });
+        const reconVague = detectVagueFood(candidate, lastGraceMsg, { requireQuantity: true });
         // Anti-loop (general, any food): Grace asks a food clarification AT MOST
         // ONCE. Count how many clarification questions she's already asked in the
         // recent turns â€” if she's asked 2+ times, the user has answered enough;
@@ -2561,7 +2571,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       // orchestrator force-log with the clean phrase.
       try {
         const u = await this.deps.users.getByPhone(input.userId).catch(() => null);
-        const fast = await tryFoodLogFastResponse(reconstructed, {
+        const fast = await tryFoodLogFastResponse(candidate, {
           pool: this.deps.pool,
           logger: this.deps.logger,
           userId: input.userId,
@@ -2584,7 +2594,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
             confidence: 'high' as const,
             toolResults: [{
               name: 'log_food',
-              args: { food: reconstructed },
+              args: { food: candidate },
               output: { ...fast.macros, daily_protein_g: fast.dailyProteinG, daily_calories: fast.dailyCalories },
               latencyMs: 0,
               ok: true,
@@ -2600,7 +2610,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
       prePlannedDecision = {
         intent: 'log_food',
         needsTools: true,
-        toolCalls: [{ name: 'log_food', args: { food: reconstructed } }],
+        toolCalls: [{ name: 'log_food', args: { food: candidate } }],
         rationale: 'continuation_of_food_question',
       };
       this.deps.logger.info(

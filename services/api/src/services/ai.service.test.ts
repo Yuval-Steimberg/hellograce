@@ -57,6 +57,15 @@ describe('reconstructFoodFromClarification — continuation answer (2026-06-13)'
     expect(detectVagueFood('veggies salad', undefined, { requireQuantity: true }).vague).toBe(false);
     expect(detectVagueFood('garden salad', undefined, { requireQuantity: true }).vague).toBe(false);
   });
+
+  // 2026-06-15 follow-up: a complete clarification answer that NAMES a food +
+  // amount ("cup of spaghetti with meat sauce") is loggable as-is — it must not
+  // be re-asked for portion. (The continuation logs the reply directly when it
+  // already contains a recognized food, rather than appending the prior food.)
+  it('a complete answer with a food + amount is not vague (logs, no re-ask)', () => {
+    expect(detectVagueFood('cup of spaghetti with meat sauce', undefined, { requireQuantity: true }).vague).toBe(false);
+    expect(detectVagueFood('two cups of pasta', undefined, { requireQuantity: true }).vague).toBe(false);
+  });
 });
 
 describe('splitMultiMealText — multi-meal preprocessor (2026-06-01 fix)', () => {

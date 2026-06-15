@@ -332,9 +332,31 @@ describe('require-quantity gate — no assumptions on a bare food log (2026-06-1
     }
   });
 
-  it('a multi-food list is NOT asked here (handled by the multi-item logger)', () => {
-    expect(log('chicken and rice').vague).toBe(false);
+  it('a multi-food list without a high-variance protein is NOT asked (multi-item logger)', () => {
+    // (a high-variance protein like chicken DOES trigger an ask — see below)
     expect(log('eggs and toast').vague).toBe(false);
+    expect(log('rice and beans').vague).toBe(false);
+  });
+
+  it('a multi-food meal with a high-variance protein asks about it (2026-06-15)', () => {
+    // Production: "Had rice and chicken for lunch" → logged 34g without asking.
+    for (const m of ['rice and chicken', 'Had rice and chicken for lunch', 'chicken and broccoli', 'beef and rice']) {
+      const r = log(m);
+      expect(r.vague).toBe(true);
+      expect(r.response).toMatch(/how much|palm-sized|full plate|grilled, fried/i);
+    }
+  });
+
+  it('a multi-food meal WITHOUT a high-variance protein still logs (multi-item estimate)', () => {
+    expect(log('yogurt and berries').vague).toBe(false);
+    expect(log('eggs and toast').vague).toBe(false);
+    expect(log('rice and beans').vague).toBe(false);
+  });
+
+  it('a multi-food meal with an amount or prep logs (no ask)', () => {
+    expect(log('6 oz chicken and rice').vague).toBe(false);
+    expect(log('grilled chicken and rice').vague).toBe(false);
+    expect(log('2 eggs and toast').vague).toBe(false);
   });
 
   it('does NOT fire without requireQuantity — food questions / mentions never get the portion ask', () => {

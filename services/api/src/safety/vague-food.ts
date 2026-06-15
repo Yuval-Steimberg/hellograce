@@ -376,6 +376,14 @@ export function findVagueAddOnItem(text: string): string | null {
 const QUANTITY_PRESENT_RE =
   /\d|\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|half|quarter)\b|\b(cup|cups|slice|slices|piece|pieces|serving|servings|oz|ounce|ounces|g|gram|grams|lb|lbs|pound|pounds|tbsp|tablespoon|tablespoons|tsp|teaspoon|teaspoons|handful|handfuls|bowl|bowls|plate|plates|glass|glasses|bottle|bottles|can|cans|scoop|scoops|bar|bars|stick|sticks|packet|packets|portion|portions|spoonful|spoonfuls|pinch|loaf|loaves|cube|cubes|chunk|chunks)\b|\b(small|medium|large|big|huge|tiny|little)\b/i;
 
+// High-variance proteins: the portion + cooking method dominate the macro
+// estimate, so a bare multi-food meal containing one of these gets a
+// clarification (2026-06-15: "rice and chicken" → ask about the chicken).
+const HIGH_VARIANCE_PROTEINS = new Set([
+  'chicken', 'beef', 'steak', 'pork', 'fish', 'salmon', 'tuna', 'shrimp',
+  'prawns', 'turkey', 'lamb', 'tofu', 'tilapia', 'cod', 'halibut', 'scallops',
+]);
+
 // "No assumptions" gate (2026-06-14): a SINGLE bare food logged with NO amount
 // or portion can't be tracked accurately, so ask instead of guessing a serving.
 // Scoped to a single food — multi-food lists go through the multi-item logger,
@@ -387,17 +395,28 @@ function detectMissingQuantity(text: string): { matched: string; response: strin
   // sauce" name how it was made, so we log rather than nag for a portion).
   if (QUANTITY_PRESENT_RE.test(lower)) return null;
   if (PREP_GIVEN_RE.test(lower) || SAUCE_GIVEN_RE.test(lower)) return null;
-  let food: string | null = null;
+  const foods: string[] = [];
   for (const tok of FOOD_TOKEN_SET) {
-    if (new RegExp(`\\b${tok}\\b`, 'i').test(lower)) {
-      if (food) return null; // two+ distinct foods → multi-item path handles it
-      food = tok;
-    }
+    if (new RegExp(`\\b${tok}\\b`, 'i').test(lower)) foods.push(tok);
   }
-  if (!food) return null; // not a recognizable food log → don't ask
+  if (foods.length === 0) return null; // not a recognizable food log → don't ask
+  if (foods.length === 1) {
+    const food = foods[0]!;
+    return {
+      matched: food,
+      response: `For the ${food}, roughly how much or how many? Even a rough amount (a cup, 4 oz, a handful) lets me log it accurately.`,
+    };
+  }
+  // Multi-food meal with no amount and no prep. Only ask when a high-variance
+  // PROTEIN is present — that's what makes the estimate uncertain (a chicken
+  // portion + cooking method swings protein/calories far more than rice
+  // quantity). "rice and chicken" → ask; "yogurt and berries" → let the
+  // multi-item estimator handle it. Ask the two highest-impact questions only.
+  const protein = foods.find((f) => HIGH_VARIANCE_PROTEINS.has(f));
+  if (!protein) return null;
   return {
-    matched: food,
-    response: `For the ${food}, roughly how much or how many? Even a rough amount (a cup, 4 oz, a handful) lets me log it accurately.`,
+    matched: protein,
+    response: `Got it. About how much ${protein} did you have, closer to a palm-sized portion or a full plate? And was it grilled, fried, or breaded? That swings the protein a lot, so I'd rather get it right than guess.`,
   };
 }
 

@@ -236,3 +236,22 @@ describe('sanitizeOutbound — placeholder & role-marker stripping', () => {
     });
   });
 });
+
+describe('sanitizeOutbound — strips leading orphan punctuation (2026-06-16)', () => {
+  it('a stripped name leaving a leading comma is cleaned + capitalized', () => {
+    // Production: "<name>, what would you like to dig into?" → name stripped →
+    // ", what would you like to dig into?"
+    expect(sanitizeOutbound(', what would you like to dig into?')).toBe('What would you like to dig into?');
+  });
+  it('leading semicolon/colon/dash are stripped', () => {
+    expect(sanitizeOutbound('; here is the plan.')).toBe('Here is the plan.');
+    expect(sanitizeOutbound(': got it.')).toBe('Got it.');
+    expect(sanitizeOutbound('- noted.')).toBe('Noted.');
+  });
+  it('a leading emoji is preserved', () => {
+    expect(sanitizeOutbound('🤍 glad to hear it.')).toBe('🤍 glad to hear it.');
+  });
+  it('a normal sentence is unchanged', () => {
+    expect(sanitizeOutbound('That sounds like a good day.')).toBe('That sounds like a good day.');
+  });
+});

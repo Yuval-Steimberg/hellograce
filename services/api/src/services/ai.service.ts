@@ -431,6 +431,10 @@ export interface AIServiceDeps {
   users: UserService;
   logger: Logger;
   flags: { ragEnabled: boolean; toolsEnabled: boolean };
+  /** Recent conversation turns fed to the orchestrator so a message is never
+   *  interpreted in isolation. Default 12 when unset. Tuned via
+   *  CONVERSATION_HISTORY_TURNS. */
+  historyTurns?: number;
   geminiApiKey: string;
   geminiModel: string;
   twilioSid?: string;
@@ -2182,7 +2186,7 @@ CRITICAL RULES:
       users.getById(input.userId).catch(() => null),
       conversationPromise,
       users.isNewUser(input.userId).catch(() => false),
-      memory.getRecentTurns(input.userId, 6).catch(() => [] as ChatTurn[]),
+      memory.getRecentTurns(input.userId, this.deps.historyTurns ?? 12).catch(() => [] as ChatTurn[]),
       flags.toolsEnabled ? this.loadToolSettings() : Promise.resolve({} as Record<string, boolean>),
       mediaPromise,
       users.getTodaysFoodSummary(input.userId).catch(() => ({ protein_g: 0, calories: 0, items: [] })),

@@ -781,6 +781,18 @@ function isNegated(lowerText: string, matchStart: number): boolean {
 // feedback acks, (7) AI-cliche openers, (8) empathy cliches, (9) sycophantic
 // acks, (10) capability denials, (11) profile-recall language, (12) corporate tone.
 const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
+  // Diagnostic overconfidence — symptoms are CLUES, not conclusions. Grace must
+  // never volunteer a specific diagnosis from symptoms alone; she hedges ("one
+  // possibility is…") and gathers info. Production failure 2026-06-16 (screenshot):
+  // "That sounds like your blood sugar might be low. Grab a quick source of sugar
+  // now." The hedged forms ("can sometimes occur when blood sugar is low", "one
+  // possibility is…") are deliberately NOT matched.
+  { pattern: /\b(that|this|it)\s+sounds?\s+like\s+(your\s+|you\s+(?:have|might have|may have)\s+)?(low blood sugar|high blood sugar|blood sugar|hypoglycemi\w*|hyperglycemi\w*|dehydration|pancreatitis|a\s+(?:gallstone|gallbladder|thyroid|heart|kidney|stomach)\b)/i, reason: 'names a likely diagnosis from symptoms — hedge ("one possibility is…") and ask a clarifying question instead' },
+  { pattern: /\byour\s+blood\s+sugar\s+(is|'s|might\s+be|may\s+be|could\s+be|is\s+probably|is\s+likely|seems\s+to\s+be|has\s+(?:dropped|gotten))\s+(low|high|dropped|dropping|crashing|elevated|too\s+(?:low|high))\b/i, reason: 'states the user\'s blood sugar as fact from symptoms — hedge it and ask whether they\'ve checked it' },
+  { pattern: /\byou\s+(probably|likely|most\s+likely|might|may)\s+have\s+(hypoglycemi\w*|low blood sugar|hyperglycemi\w*|high blood sugar|dehydration|pancreatitis|gallstones?)\b/i, reason: 'guesses a diagnosis — symptoms are clues, not conclusions; hedge it' },
+  { pattern: /\b(this|it)\s+(is|'s)\s+(probably|likely|most\s+likely|definitely)\s+(hypoglycemi\w*|low blood sugar|hyperglycemi\w*|dehydration|pancreatitis)\b/i, reason: 'presents a possibility as a diagnosis — use hedged language' },
+  { pattern: /\b(sounds\s+like|likely|probably|most\s+likely)\s+(hypoglycemia|pancreatitis|dehydration|gallstones|hyperglycemia|a\s+gallbladder\s+attack)\b/i, reason: 'definitive diagnosis word from symptoms — hedge it' },
+
   // Reminder/capability denial — Grace DOES send scheduled reminders. Exposing a
   // platform/LLM limitation contradicts the product and confuses the user.
   // Explain the schedule + redirect to Settings instead (2026-06-15).

@@ -169,3 +169,51 @@ describe('every fast-path reply survives the webhook empty-response gate (2026-0
     expect(seen.size).toBeGreaterThan(40); // sanity: we actually sampled the pools
   });
 });
+
+describe('tryFastPath — conversational small talk (2026-06-16)', () => {
+  const U = '+15551230000';
+  // The exact production failure: an answer to Grace's "what's making you feel
+  // that way?" must get a warm ack, never a generic "what would you like to
+  // dig into?" fallback or a forced health pivot.
+  it('"just having good day" → warm brief_positive ack', () => {
+    const r = tryFastPath('just having good day', U);
+    expect(r).not.toBeNull();
+    expect(r?.category).toBe('brief_positive');
+  });
+
+  for (const m of [
+    'good day', 'had a good day', 'having a great week', 'just a nice day',
+    'all good', 'pretty good', 'doing fine', 'doing well', "can't complain",
+    'no complaints', 'not bad', 'not too bad', 'good thanks',
+  ]) {
+    it(`"${m}" → brief_positive`, () => {
+      const r = tryFastPath(m, U);
+      expect(r).not.toBeNull();
+      expect(r?.category).toBe('brief_positive');
+    });
+  }
+
+  for (const m of [
+    'not much', 'nothing much', 'same old', 'same as usual', 'just chilling',
+    'keeping busy', 'the usual', 'nothing new', 'taking it easy',
+  ]) {
+    it(`"${m}" → small_talk (warm neutral ack, no topic switch)`, () => {
+      const r = tryFastPath(m, U);
+      expect(r).not.toBeNull();
+      expect(r?.category).toBe('small_talk');
+      // Never pivots to food/protein/symptoms.
+      expect(r?.text.toLowerCase()).not.toMatch(/protein|calorie|food|eat|log|symptom|dig into/);
+    });
+  }
+
+  // Bare "same" is ambiguous → must NOT fast-path (flows to the pipeline where
+  // history can resolve it).
+  it('bare "same" is not fast-pathed (needs context)', () => {
+    expect(tryFastPath('same', U)).toBeNull();
+  });
+
+  // Still must not hijack a food/medical message that happens to read positive.
+  it('does not fast-path a food log', () => {
+    expect(tryFastPath('had a good amount of chicken', U)?.category).not.toBe('brief_positive');
+  });
+});

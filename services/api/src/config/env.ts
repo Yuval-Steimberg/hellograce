@@ -98,6 +98,15 @@ const EnvSchema = z.object({
    *  not a notification system. Set to 0 to disable. */
   ENGAGEMENT_COOLDOWN_HOURS: z.coerce.number().min(0).max(48).default(2),
 
+  /** How many recent conversation turns to feed the orchestrator/Gemini so a
+   *  message is never interpreted in isolation (short replies, multi-turn
+   *  continuity). Default 12 (was 6 — doubled now that the anchoring guards
+   *  — relevance check, topic-closer history stripping, "answer THIS message"
+   *  focus markers — make a larger window safe). Tunable up to 40 without a
+   *  deploy: more context = better understanding at a small latency/token cost
+   *  (accuracy is prioritized over latency). */
+  CONVERSATION_HISTORY_TURNS: z.coerce.number().int().min(4).max(40).default(12),
+
   /** Master kill switch for the self-improvement / background optimizer crons:
    *  the RLHF prompt optimizer (weekly), behavioral anomaly detector (nightly),
    *  research scrape (weekly), and research auto-fix (weekly). When false, none

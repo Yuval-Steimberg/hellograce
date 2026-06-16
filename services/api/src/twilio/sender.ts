@@ -191,6 +191,18 @@ export function sanitizeOutbound(input: string, logger?: Logger): string {
     }
   }
 
+  // Leading orphan punctuation strip (2026-06-16) — comprehensive final guard.
+  // Upstream edits (first-name stripping, greeting-prefix removal, em-dash →
+  // comma conversion, header/list-intro stripping) can leave a reply starting
+  // with stray punctuation: ", what would you like to dig into?" (a name was
+  // stripped from "<name>, what…"). A message must never begin with orphaned
+  // punctuation. Strip leading whitespace + punctuation (but never a leading
+  // emoji), then re-capitalize if the new first character is a lowercase letter.
+  const deOrphaned = text.replace(/^[\s.,;:!?)\]}·–—-]+/, '');
+  if (deOrphaned.length > 0) {
+    text = /^[a-z]/.test(deOrphaned) ? deOrphaned.charAt(0).toUpperCase() + deOrphaned.slice(1) : deOrphaned;
+  }
+
   return text;
 }
 

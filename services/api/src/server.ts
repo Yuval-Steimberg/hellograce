@@ -113,6 +113,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     users,
     logger,
     flags: { ragEnabled: env.RAG_ENABLED ?? true, toolsEnabled: env.TOOLS_ENABLED ?? true },
+    historyTurns: env.CONVERSATION_HISTORY_TURNS,
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
     twilioSid: env.TWILIO_ACCOUNT_SID,

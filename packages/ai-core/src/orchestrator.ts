@@ -147,9 +147,14 @@ const TYPED_FALLBACKS: Record<MessageType, string[]> = {
     // genuinely unclassifiable messages, not truncated ones. (Removed
     // "What's the rest of that?" — it read as "you didn't finish your sentence"
     // on complete questions. Production failure 2026-06-13.)
-    "Happy to help — what would you like to dig into?",
-    "I'm with you. What can I help with right now?",
-    "Tell me a bit more about what you're after.",
+    // Warm, open continuations — never a topic-switching interrogation. These
+    // fire only on genuinely unclassifiable messages (small talk / clear intents
+    // are handled upstream), so they acknowledge and leave the door open instead
+    // of "what would you like to dig into?" (flagged 2026-06-16 as robotic +
+    // topic-switching, and its em-dash mangled into a leading-comma reply).
+    "I'm with you. What's on your mind?",
+    "I'm here for it. Tell me more whenever you're ready.",
+    "Gotcha. What's going on for you right now?",
   ],
   // Phase 1 coverage expansion intents — short, warm fallbacks per type.
   exercise_log: [

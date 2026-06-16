@@ -131,6 +131,35 @@ describe('checkBannedPhrases', () => {
     expect(v).toHaveLength(0);
   });
 
+  // ── Diagnostic overconfidence (2026-06-16 screenshot) ──────────────────────
+  // Symptoms are clues, not conclusions — definitive/named diagnoses are banned;
+  // hedged language ("one possibility is…") must pass.
+  for (const m of [
+    'That sounds like your blood sugar might be low.',
+    'This sounds like hypoglycemia.',
+    'Your blood sugar is low — grab some juice.',
+    'Your blood sugar might be low, so have some sugar now.',
+    'You probably have low blood sugar.',
+    'This is likely dehydration.',
+    'This sounds like pancreatitis.',
+    'It sounds like a gallbladder issue.',
+  ]) {
+    it(`flags diagnostic overconfidence: "${m}"`, () => {
+      expect(checkBannedPhrases(m).length).toBeGreaterThan(0);
+    });
+  }
+
+  for (const m of [
+    'Those symptoms can sometimes occur when blood sugar is low, but there can be other causes.',
+    'One possibility is low blood sugar — have you checked it, and what other meds are you on?',
+    'This could be related to low blood sugar. Have you been able to check it?',
+    'There are a few possible explanations. Sit down somewhere safe and sip some water.',
+  ]) {
+    it(`allows hedged symptom language: "${m.slice(0, 40)}…"`, () => {
+      expect(checkBannedPhrases(m)).toHaveLength(0);
+    });
+  }
+
   // ── Model-identity leak protection (2026-05-29 production bug) ──────────────
   it('flags "I\'m a large language model"', () => {
     expect(checkBannedPhrases("I'm a large language model and my interactions happen across many different applications and services.").length).toBeGreaterThan(0);

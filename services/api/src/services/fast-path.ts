@@ -31,6 +31,11 @@ export interface FastPathResult {
     | 'denial'
     | 'confirmation'
     | 'identity'
+    // 2026-06-16 — conversational small talk. Short positive/neutral life
+    // updates ("just having a good day", "all good", "not much", "same old")
+    // that answer Grace's open question. They must get a warm continuation,
+    // never a generic fallback or a forced health-coaching pivot.
+    | 'small_talk'
     // 2026-06-05 — Phase B fast-path expansion. 8 more high-frequency
     // message shapes that today fall through to the orchestrator.
     | 'how_are_you'        // user asks Grace how she is
@@ -69,6 +74,24 @@ const GREETING_PREFIX_RE = /^(good\s+)?(morning|afternoon|evening|night)\s*[,.\-
 const FEELING_TYPO_RE = /\b(felling|feelign|feelin)\b/gi;
 
 const BRIEF_POSITIVE_RE = /^(i'?m\s+)?(feeling\s+|doing\s+)?(strong|great|good|amazing|wonderful|fantastic|awesome|excellent|fine|okay|ok|alright|well|happy|grateful|blessed|energized|motivated|focused|positive|chill|calm|peaceful|content|relaxed|refreshed|hopeful|optimistic|proud)\s*[.!]?\s*$/i;
+
+// Positive "good day" family — short rapport replies that today fall through to
+// the orchestrator and (when degraded) get a generic "what would you like to
+// dig into?" fallback. Production failure 2026-06-16: "just having good day"
+// (an answer to Grace's "what's making you feel that way?") → generic fallback.
+// "had a good day" / "having a good week" / "it's been a nice one" / "good day".
+const GOOD_DAY_RE = /^(just\s+)?((having|had|it'?s|its|been|i'?m\s+having|im\s+having)\s+)?(been\s+)?(a\s+)?(good|great|nice|lovely|wonderful|fantastic|amazing|decent|relaxing|productive|positive|chill|peaceful|calm|easy|quiet)\s+(day|one|morning|afternoon|evening|night|week|weekend|so\s+far)\b/i;
+
+// General positive state — "all good", "pretty good", "doing fine", "can't
+// complain", "not bad". Unambiguously positive → warm acknowledgment is safe.
+const POSITIVE_STATE_RE = /^(i'?m\s+|im\s+)?(all\s+good|pretty\s+good|really\s+good|so\s+good|very\s+good|quite\s+good|feeling\s+good|doing\s+(good|fine|well|alright|great|okay|ok|grand)|good\s+thanks|good\s+thank\s+you|great\s+thanks|fine\s+thanks|doing\s+ok\s+thanks|never\s+better|can'?t\s+complain|cant\s+complain|no\s+complaints?|not\s+(too\s+)?bad|not\s+bad\s+at\s+all|going\s+(good|well|great))\s*[.,!]?\s*$/i;
+
+// Neutral small talk — "not much", "nothing much", "same old", "just chilling",
+// "keeping busy". A reply to "how are you / what's up". Gets a warm neutral
+// acknowledgment with a soft door, never a topic-switching fallback. (Bare
+// "same" is deliberately EXCLUDED — it's ambiguous without context, so it
+// flows to the full pipeline where conversation history can resolve it.)
+const SMALL_TALK_RE = /^(just\s+)?(not\s+much|nothing\s+much|nothin\s+much|not\s+a\s+lot|same\s+old(\s+same\s+old)?|same\s+as\s+usual|same\s+ol'?|the\s+usual|just\s+the\s+usual|just\s+(chilling|chillin|relaxing|relaxin|hanging|hangin|hanging\s+out|around|here|busy|working|resting|taking\s+it\s+easy)|chilling|chillin|relaxing|hanging\s+(out|around)|keeping\s+busy|staying\s+busy|nothing\s+new|nothing\s+really|nothing\s+special|taking\s+it\s+easy)\s*[.,!]?\s*$/i;
 
 /** Normalize a brief message so the BRIEF_POSITIVE_RE can match common variants:
  *  - strip "morning," / "good morning," / "evening," prefixes
@@ -183,6 +206,17 @@ const BRIEF_POSITIVE_REPLIES: readonly string[] = [
   'Glad you\'re feeling that way.',
   'That makes me happy 🧡',
   'Solid.',
+] as const;
+
+// Neutral small talk — acknowledge warmly, leave a soft door, NEVER pivot to
+// food/protein/symptoms. Trust-building rapport (2026-06-16).
+const SMALL_TALK_REPLIES: readonly string[] = [
+  "Fair enough. I'm around if anything comes up 🤍",
+  'Sometimes a quiet one is exactly right.',
+  "Sounds like an easy day. I'm here whenever you want to chat.",
+  "Nice and low-key. I'm here if you need anything.",
+  "All good. Catch me whenever — I'm around.",
+  'Love that kind of day. Enjoy it.',
 ] as const;
 
 // 2026-06-06 v2 — Coverage audit emotional-engagement follow-up.
@@ -453,7 +487,17 @@ export function tryFastPath(text: string, userId: string): FastPathResult | null
   // EXCEPTION: meal_skip ("skipped breakfast") and feeling_worse use the
   // exclusion words but ARE valid fast-path categories.
   if (NEVER_FAST_PATH_RE.test(trimmed)) {
-    if (!MEAL_SKIP_RE.test(trimmed) && !FEELING_WORSE_RE.test(trimmed) && !FEELING_BETTER_RE.test(trimmed)) {
+    // MEAL_SKIP / FEELING_WORSE / FEELING_BETTER are valid categories that reuse
+    // exclusion words. GOOD_DAY too: "had a good day/week" trips the "had" food
+    // guard, but it names a day/week (never a food), so it's small talk, not a
+    // food log. (A real "had a good lunch/breakfast" does NOT match GOOD_DAY_RE
+    // and stays blocked.)
+    if (
+      !MEAL_SKIP_RE.test(trimmed) &&
+      !FEELING_WORSE_RE.test(trimmed) &&
+      !FEELING_BETTER_RE.test(trimmed) &&
+      !GOOD_DAY_RE.test(trimmed)
+    ) {
       return null;
     }
   }
@@ -508,6 +552,14 @@ export function tryFastPath(text: string, userId: string): FastPathResult | null
   const normalized = normalizeBriefText(trimmed);
   if (BRIEF_POSITIVE_RE.test(normalized)) {
     return { text: pickFromPool(BRIEF_POSITIVE_REPLIES, seed), category: 'brief_positive' };
+  }
+  // Positive small talk ("good day", "all good", "doing fine") → warm ack.
+  if (GOOD_DAY_RE.test(normalized) || POSITIVE_STATE_RE.test(normalized)) {
+    return { text: pickFromPool(BRIEF_POSITIVE_REPLIES, seed), category: 'brief_positive' };
+  }
+  // Neutral small talk ("not much", "same old", "just chilling") → soft ack.
+  if (SMALL_TALK_RE.test(normalized)) {
+    return { text: pickFromPool(SMALL_TALK_REPLIES, seed), category: 'small_talk' };
   }
   if (BRIEF_NEGATIVE_RE.test(normalized)) {
     return { text: pickFromPool(BRIEF_NEGATIVE_REPLIES, seed), category: 'brief_negative' };

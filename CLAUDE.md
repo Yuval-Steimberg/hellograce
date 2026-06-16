@@ -1471,6 +1471,116 @@ change re-buckets the same timestamp, missing wake → 07:00 default, non-UTC tz
 
 ---
 
+### Conversational continuity for small talk + leading-punctuation fix (2026-06-16)
+
+Branch `claude/meal-lifecycle-states-7ayf7w`. Production: Grace asked "anything
+specific making you feel that way?", user replied "just having good day", Grace
+replied ", what would you like to dig into?" — ignored the answer, switched
+topics, sounded robotic, and had a leading-comma formatting bug. Fixed as GENERAL
+mechanisms (per the report's "comprehensive, not specific to this one"), not a
+one-off:
+
+1. **Leading orphan-punctuation strip (ALL outbound)** —
+   `twilio/sender.ts sanitizeOutbound` now strips leading whitespace +
+   punctuation (`, ; : . ! ? ) ] } – —`) and re-capitalizes, as the final guard
+   before every send. Upstream edits (first-name stripping → "<name>, what…",
+   greeting-prefix removal, em-dash→comma) could leave a reply starting with
+   orphaned punctuation; this fixes the entire class from any source. A leading
+   emoji is preserved; an all-punctuation body is left unchanged (never emptied).
+2. **Comprehensive small-talk fast-path** (`services/api/src/services/fast-path.ts`)
+   — short rapport replies now get a warm continuation instead of degrading to a
+   generic fallback or a forced health pivot. `GOOD_DAY_RE` ("good day", "had a
+   good week", "just having a good day"), `POSITIVE_STATE_RE` ("all good",
+   "doing fine", "can't complain", "not bad") → `brief_positive`; new
+   `SMALL_TALK_RE` ("not much", "same old", "just chilling", "keeping busy") →
+   new `small_talk` category with acks that leave a soft door and NEVER mention
+   food/protein/symptoms. `GOOD_DAY_RE` is added as a `NEVER_FAST_PATH_RE`
+   exception (it trips the "had" food guard but names a day/week, never a food;
+   a real "had a good lunch/breakfast" doesn't match and stays blocked). Bare
+   "same" stays excluded (ambiguous → full pipeline resolves it with history).
+3. **Reworded the robotic `general` fallback** (`packages/ai-core/src/orchestrator.ts`)
+   — removed "Happy to help — what would you like to dig into?" (topic-switching
+   + its em-dash mangled into the leading comma). Replaced with warm, open
+   continuations for the residual genuinely-unclassifiable cases.
+
+Deliberately NOT done: the report's wholesale "dialogue state machine / give
+Gemini more ownership / multi-stage reasoning" rewrite. The response-validation
+layer it asks for already exists and is ON by default (relevance-check,
+behavioral-guard, content-checker, quality-guard — they regenerate off-topic /
+short responses), the pipeline already passes recent turns + reconstructs
+follow-ups, and the team deliberately avoids brittle LLM judges
+(`TRUST_GEMINI`). These three deterministic fixes resolve the reported failure
+class (small talk, short answers, formatting) without that risk.
+
+Tests: fast-path small-talk matrix (+ the exact production case, neutral acks
+don't pivot, bare "same" excluded, food log not hijacked) + sender
+leading-punctuation cases. 1060 api + 614 ai-core green; typecheck clean.
+
+---
+
+### Conversation context window is now tunable (default 12 turns) (2026-06-16)
+
+Branch `claude/meal-lifecycle-states-7ayf7w`. Driven by a "never interpret a
+message in isolation" request. The orchestrator history window had been cut
+12→6 (Phase 13) to fight old-topic anchoring; the anchoring guards added since
+(relevance check, topic-closer history stripping, "answer THIS message" focus
+markers) now make a larger window safe. New `CONVERSATION_HISTORY_TURNS` env
+(default **12**, clamp 4–40) threads through `AIServiceDeps.historyTurns` to the
+single orchestrator `getRecentTurns` call (`ai.service.ts` ~2189). Doubles the
+context Gemini sees (short-reply resolution, multi-turn continuity) at a small
+latency/token cost; tunable up to 40 without a deploy (accuracy prioritized over
+latency). 1060 api + 614 ai-core green.
+
+**Audit (the rest of the "universal conversation understanding" framework is
+already present):** validation layer = relevance/behavioral/content/quality
+guards (on by default, regenerate off-topic/short responses); multi-intent =
+"Grace MUST address EVERY meaningful part" prompt section + `splitMultiMealText`
++ symptom-before-food force-log suppression; short replies = `reconstructFollowUp`
++ continuation gates + (now) more history; emotional = EMOTION BEFORE DATA +
+small-talk fast-path; memory = RAG + `user_memories` (recency-weighted) +
+privacy scoping; unstructured input = typo-tolerant classifier + multi-item
+estimator. **Genuinely deferred (needs live-Gemini evals before wiring):** the
+persistent structured dialogue-state object (`active_topics`/`open_threads`/
+`awaiting_response`) and conversation-summary injection — `TopicTrackerService`
++ `ConversationSummaryService` are scaffolded but NOT instantiated (dead code);
+wiring them changes live behavior and must be eval-gated.
+
+---
+
+### Diagnostic confidence + contextual triage (symptoms are clues) (2026-06-16)
+
+Branch `claude/meal-lifecycle-states-7ayf7w`. Production screenshot: user said
+"I'm shaky, sweaty, and lightheaded" → Grace replied **"That sounds like your
+blood sugar might be low. Please grab a quick source of sugar right now…"** — a
+specific diagnosis AND a condition-specific treatment from symptoms alone.
+
+Two rules added (prompt + deterministic backstop):
+- **`packages/ai-core/src/prompts.ts`** — new **H8b DIAGNOSTIC CONFIDENCE**
+  (symptoms are clues, not conclusions: never volunteer a named diagnosis or
+  guess-based treatment; hedge with "one possibility is…" / "can sometimes occur
+  when…", ask the 1–2 questions that narrow it, give SAFE general steps, name the
+  signs that mean get help now; calibrate confidence to available info) with the
+  exact screenshot as ✗/✓, and **H8c CONTEXTUAL TRIAGE** (read symptoms ACROSS
+  recent turns, not in isolation; an evolving/worsening trajectory — especially
+  neurological: confusion, sudden weakness, fainting — means rising risk → raise
+  concern + escalate, don't repeat reassurance). The larger history window
+  (`CONVERSATION_HISTORY_TURNS`) is what lets Gemini see the earlier symptoms.
+- **`packages/ai-core/src/content-checker.ts`** — 5 regen-severity patterns that
+  catch definitive symptom→diagnosis framing ("that/this sounds like (your) low
+  blood sugar / hypoglycemia / dehydration / pancreatitis", "your blood sugar
+  is/might be low", "you probably have …", "this is likely …") while the hedged
+  forms ("can sometimes occur when blood sugar is low", "one possibility is…")
+  are deliberately NOT matched. Defense in depth so the phrasing can't ship even
+  when degraded.
+
+Note: the SafetyGuard (chest pain / breathing / self-harm → 988/911) is
+unchanged — this is about diagnostic LANGUAGE + cross-turn triage, not the
+emergency classifier. Tests: `content-checker.test.ts` (+12 — flags the
+definitive forms, allows the hedged forms). 1060 api + 626 ai-core green;
+typecheck clean.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

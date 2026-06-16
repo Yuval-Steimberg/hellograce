@@ -1407,7 +1407,7 @@ export class AIOrchestrator {
     // higher temperature only costs an occasional regen, never an unsafe reply.
     const generationTemperature = HIGH_PRECISION_INTENTS.has(classification.type)
       ? 0.25
-      : 0.75; // was 0.5; raised to close the naturalness gap on chat/emotional turns
+      : 0.8; // matches the competitor's reply temperature for natural friend-voice warmth
     const llmResp = await this.deps.llm.generate({
       messages: generationMessages,
       temperature: generationTemperature,

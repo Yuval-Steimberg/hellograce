@@ -105,7 +105,7 @@ const EnvSchema = z.object({
    *  focus markers — make a larger window safe). Tunable up to 40 without a
    *  deploy: more context = better understanding at a small latency/token cost
    *  (accuracy is prioritized over latency). */
-  CONVERSATION_HISTORY_TURNS: z.coerce.number().int().min(4).max(40).default(12),
+  CONVERSATION_HISTORY_TURNS: z.coerce.number().int().min(4).max(40).default(24),
 
   /** Master kill switch for the self-improvement / background optimizer crons:
    *  the RLHF prompt optimizer (weekly), behavioral anomaly detector (nightly),

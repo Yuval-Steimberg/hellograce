@@ -2223,7 +2223,7 @@ CRITICAL RULES:
       users.getById(input.userId).catch(() => null),
       conversationPromise,
       users.isNewUser(input.userId).catch(() => false),
-      memory.getRecentTurns(input.userId, this.deps.historyTurns ?? 12).catch(() => [] as ChatTurn[]),
+      memory.getRecentTurns(input.userId, this.deps.historyTurns ?? 24).catch(() => [] as ChatTurn[]),
       flags.toolsEnabled ? this.loadToolSettings() : Promise.resolve({} as Record<string, boolean>),
       mediaPromise,
       users.getTodaysFoodSummary(input.userId).catch(() => ({ protein_g: 0, calories: 0, items: [] })),

@@ -1399,9 +1399,15 @@ export class AIOrchestrator {
       'knowledge', 'medication_question', 'food_log', 'weight_log',
       'mood_log', 'exercise_log', 'injection_log',
     ]);
+    // Precision intents (knowledge/medication/food/weight/mood/exercise/injection)
+    // stay constrained at 0.25 — factual accuracy + no banned-phrase/list slips.
+    // Conversational + emotional intents run HOT (0.75) for natural, varied,
+    // friend-like warmth — matching the warmer texting voice (see HOW GRACE
+    // TEXTS in prompts.ts). The post-gen guards still catch any violation, so a
+    // higher temperature only costs an occasional regen, never an unsafe reply.
     const generationTemperature = HIGH_PRECISION_INTENTS.has(classification.type)
       ? 0.25
-      : 0.5; // was 0.6 across the board; lowered to 0.5 to reduce stylistic drift
+      : 0.75; // was 0.5; raised to close the naturalness gap on chat/emotional turns
     const llmResp = await this.deps.llm.generate({
       messages: generationMessages,
       temperature: generationTemperature,

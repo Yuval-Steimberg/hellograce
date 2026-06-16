@@ -391,6 +391,7 @@ import {
   buildReminderChangeReply,
 } from './reminder-service.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
+import { detectHypoglycemiaWarning, mightBeHypoSymptom, isWhatShouldIDo } from '../safety/hypoglycemia-warning.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
@@ -546,6 +547,42 @@ export class AIService {
         usedRetrieval: false,
         latencyMs: Date.now() - t0,
       };
+    }
+
+    // ── Hypoglycemia-warning cluster (2026-06-16) — deterministic + actionable.
+    // "I'm shaky, sweaty, and lightheaded" (and its "what should I do?" follow-up)
+    // must get a warm, ACTIONABLE, appropriately-hedged answer (quick sugar now +
+    // call your doctor; "this could be low blood sugar"), NOT a passive "you might
+    // be experiencing symptoms…" with no help — and it must NEVER "stick" with no
+    // reply. Runs before the fast-path/orchestrator so it's guaranteed regardless
+    // of Gemini's state. Cheap regex gate first; only reads history for the bare
+    // "what should I do?" follow-up. SafetyGuard (988/911) already ran above.
+    if (mightBeHypoSymptom(input.text) || isWhatShouldIDo(input.text)) {
+      let lastGrace: string | undefined;
+      let lastUser: string | undefined;
+      if (isWhatShouldIDo(input.text)) {
+        const recent = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
+        const rev = [...recent].reverse();
+        lastGrace = rev.find((m) => m.role === 'assistant')?.content;
+        lastUser = rev.find((m) => m.role === 'user')?.content;
+      }
+      const hypo = detectHypoglycemiaWarning(input.text, lastGrace, lastUser);
+      if (hypo.warning) {
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info(
+          { userId: input.userId, followUp: !!hypo.followUp },
+          'ai.hypoglycemia_warning.served',
+        );
+        this.persistLatency(input.userId, 'safety_hypoglycemia', totalMs, lat.snapshot(), input.text, hypo.response!);
+        return {
+          text: hypo.response!,
+          confidence: 'high',
+          intent: 'safety_hypoglycemia',
+          toolResults: [],
+          usedRetrieval: false,
+          latencyMs: totalMs,
+        };
+      }
     }
 
     // Fast-path: pure greetings, brief positive feelings, thanks, brief acks

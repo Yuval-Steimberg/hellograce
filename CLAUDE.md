@@ -1581,6 +1581,53 @@ typecheck clean.
 
 ---
 
+### Hypoglycemia warning: hedge the label, still give safe action (2026-06-16)
+
+Branch `claude/meal-lifecycle-states-7ayf7w`. Second screenshot on the same
+symptom cluster: "I'm shaky, sweaty and light headed" → Grace replied
+"You might be experiencing symptoms of low blood sugar or dehydration." (hedged
+but USELESS — no empathy, no action, no next step), then **stalled with NO reply**
+on the follow-up "What should I do?". The prior fix (H8b) had over-corrected into
+passivity. The user's desired behavior: empathy + the SAFE immediate action
+(quick sugar now + call your doctor) while HEDGING the label ("this could be low
+blood sugar"), and it must never stall.
+
+**Deterministic handler — `services/api/src/safety/hypoglycemia-warning.ts`:**
+`detectHypoglycemiaWarning(text, lastGrace?, lastUser?)` fires on (a) ≥2 distinct
+adrenergic/neuroglycopenic warning symptoms (shaky / sweaty / lightheaded-dizzy /
+weak / confused / palpitations / blurry vision) in the current message, or (b) a
+bare "what should I do?" follow-up when the prior turn established low-blood-sugar
+/ symptom context. Returns a warm, ACTIONABLE, hedged response ("Get some quick
+sugar in you right now — juice or regular soda — and call your doctor right away.
+This could be low blood sugar and needs a medical look. If you feel worse or more
+confused, call 911."). Wired in `ai.service.handleMessage` right after the
+SafetyGuard (before fast-path/orchestrator) so it's guaranteed regardless of
+Gemini's state and can never "stick". Cheap regex gate; only reads history for
+the follow-up. SafetyGuard (988/911) unchanged; `health-concern.ts` still
+excludes blood sugar (this module owns it).
+
+**Prompt H8b reworked** (`prompts.ts`): "hedge the LABEL, STILL give safe action"
+— hedging the diagnosis does NOT mean withholding help; for an acute cluster,
+lead with empathy + safe immediate action + hedged cause + call doctor, don't
+bury help behind clarifying questions. Both screenshots embedded as ✗ (the
+overconfident one AND the useless-passive one) with the desired ✓.
+
+**Content-checker acute exemption** (`content-checker.ts`): the pre-existing
+"call your doctor right away / immediately" escalation bans (added to stop alarm
+language on NORMAL effects) were blocking the legitimate urgent response. The 4
+escalation patterns are now `acuteExempt: true` and skipped when the response
+contains acute markers (`ACUTE_ESCALATION_CONTEXT_RE`: 911 / low blood sugar /
+quick sugar / fainting / dosing error / severe / can't keep liquids down) — so
+urgent escalation ships for a real warning but is still softened for a normal
+side effect. (The deterministic handler bypasses the content-checker anyway; this
+fixes the LLM path for all other acute cases.)
+
+Tests: `hypoglycemia-warning.test.ts` (12 — cluster, follow-up, no-fire cases,
+asserts hedged-not-definitive) + content-checker acute-exemption cases. 1069 api
++ 629 ai-core green; typecheck clean.
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

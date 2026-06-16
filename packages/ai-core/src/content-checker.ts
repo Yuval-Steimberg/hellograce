@@ -780,7 +780,15 @@ function isNegated(lowerText: string, matchStart: number): boolean {
 // (4) artificial reactions, (5) fabricated technical excuses, (6) developer-
 // feedback acks, (7) AI-cliche openers, (8) empathy cliches, (9) sycophantic
 // acks, (10) capability denials, (11) profile-recall language, (12) corporate tone.
-const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
+// Markers that the response is about a GENUINELY acute situation, where urgent
+// escalation ("call your doctor right away", "seek medical help") is correct —
+// not premature. Used to exempt the escalation bans (acuteExempt) so legitimate
+// urgent guidance (low blood sugar, fainting, dosing error) ships while the
+// same phrasing is still softened for normal side effects.
+const ACUTE_ESCALATION_CONTEXT_RE =
+  /\b(911|999|112|low blood sugar|quick sugar|fast(?:-| )acting sugar|glucose tab|juice or (?:regular )?soda|emergency|emergency room|\bER\b|urgent care|can'?t breathe|chest pain|passing out|pass out|fainting|faint|unconscious|slurred speech|injected too much|too much insulin|overdose|severe|won'?t stop|can'?t keep (?:anything|liquids?|food) down)\b/i;
+
+const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boolean }> = [
   // Diagnostic overconfidence — symptoms are CLUES, not conclusions. Grace must
   // never volunteer a specific diagnosis from symptoms alone; she hedges ("one
   // possibility is…") and gathers info. Production failure 2026-06-16 (screenshot):
@@ -825,11 +833,16 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\bi'?m (worried|concerned) about\b/i, reason: '"I\'m worried/concerned about" — alarm language, Grace observes calmly without dramatizing' },
   { pattern: /\bthis is (bad|dangerous|serious|alarming)\b/i, reason: '"this is bad/dangerous" — alarm language, use nuanced framing' },
 
-  // Premature medical escalation — Grace gathers context before escalating
-  { pattern: /\bcontact your (healthcare provider|doctor|clinician) (right away|immediately|as soon as possible|urgently)\b/i, reason: '"contact doctor right away" — premature escalation, gather context first and use conditional framing ("if this continues/worsens")' },
-  { pattern: /\b(call|see|visit|reach out to) (your|a) (doctor|healthcare provider|clinician) (right away|immediately|ASAP)\b/i, reason: 'immediate medical escalation — use gradual conditional escalation instead' },
-  { pattern: /\bseek (immediate )?medical (attention|help|care) (right away|immediately)?\b/i, reason: '"seek medical attention" — reserved for SafetyGuard emergencies only, not common side effects' },
-  { pattern: /\byou (need|should|must) (see|call|visit|contact) (a |your )(doctor|clinician|provider)\b/i, reason: 'directive medical escalation — use conditional "if X continues/worsens, worth mentioning to your doctor"' },
+  // Premature medical escalation — Grace gathers context before escalating.
+  // acuteExempt: these are LEGITIMATE when the response is about a genuinely
+  // urgent situation (911, low blood sugar + quick sugar, fainting, dosing
+  // error). The exemption is keyed off acute markers in the response itself
+  // (see ACUTE_ESCALATION_CONTEXT_RE) so "call your doctor right away" still
+  // gets softened for normal side effects but ships for a real warning.
+  { pattern: /\bcontact your (healthcare provider|doctor|clinician) (right away|immediately|as soon as possible|urgently)\b/i, reason: '"contact doctor right away" — premature escalation, gather context first and use conditional framing ("if this continues/worsens")', acuteExempt: true },
+  { pattern: /\b(call|see|visit|reach out to) (your|a) (doctor|healthcare provider|clinician) (right away|immediately|ASAP)\b/i, reason: 'immediate medical escalation — use gradual conditional escalation instead', acuteExempt: true },
+  { pattern: /\bseek (immediate )?medical (attention|help|care) (right away|immediately)?\b/i, reason: '"seek medical attention" — reserved for SafetyGuard emergencies only, not common side effects', acuteExempt: true },
+  { pattern: /\byou (need|should|must) (see|call|visit|contact) (a |your )(doctor|clinician|provider)\b/i, reason: 'directive medical escalation — use conditional "if X continues/worsens, worth mentioning to your doctor"', acuteExempt: true },
 
   // Artificial emotional reactions — Grace is calm, not dramatic
   { pattern: /^oh dear\b/im, reason: '"Oh dear" — artificial emotional reaction, banned' },
@@ -1247,7 +1260,12 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string }> = [
 
 export function checkBannedPhrases(text: string): ContentViolation[] {
   const hits: ContentViolation[] = [];
-  for (const { pattern, reason } of BANNED_PHRASES) {
+  const acute = ACUTE_ESCALATION_CONTEXT_RE.test(text);
+  for (const { pattern, reason, acuteExempt } of BANNED_PHRASES) {
+    // Urgent-escalation phrasing is legitimate in a genuinely acute response —
+    // don't soften "call your doctor right away" when it's paired with 911 /
+    // low blood sugar / fainting / a dosing error.
+    if (acuteExempt && acute) continue;
     const m = pattern.exec(text);
     if (m) {
       hits.push({

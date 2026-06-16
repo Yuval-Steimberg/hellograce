@@ -160,6 +160,22 @@ describe('checkBannedPhrases', () => {
     });
   }
 
+  // ── Acute escalation exemption (2026-06-16) ────────────────────────────────
+  // Urgent "call your doctor right away" is correct when the response is about a
+  // genuinely acute situation, but still softened for normal side effects.
+  it('allows urgent escalation in an acute (low blood sugar) response', () => {
+    const m = 'Get some quick sugar in you right now — juice or regular soda — and call your doctor right away. This could be low blood sugar and needs a medical look. If you feel worse or more confused, call 911.';
+    expect(checkBannedPhrases(m)).toHaveLength(0);
+  });
+  it('allows urgent escalation after a dosing error', () => {
+    const m = "If you injected too much, call your doctor right away to tell them what happened.";
+    expect(checkBannedPhrases(m)).toHaveLength(0);
+  });
+  it('still blocks over-escalation for a normal side effect', () => {
+    const m = 'Mild nausea is normal early on. If it lingers, call your doctor right away.';
+    expect(checkBannedPhrases(m).length).toBeGreaterThan(0);
+  });
+
   // ── Model-identity leak protection (2026-05-29 production bug) ──────────────
   it('flags "I\'m a large language model"', () => {
     expect(checkBannedPhrases("I'm a large language model and my interactions happen across many different applications and services.").length).toBeGreaterThan(0);

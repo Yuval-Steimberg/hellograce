@@ -193,7 +193,10 @@ export class GeminiProvider implements LLMProvider {
     }
     // thinkingConfig only works on Gemini 2.5+ models. Sending it to 2.0
     // models causes a 400 error. Check the model name before setting it.
-    if (req.disableThinking && /2\.5|gemini-exp/i.test(modelName)) {
+    // Gemini 3.x flash defaults to mandatory reasoning that burns the output
+    // budget (truncated/empty replies) — so disabling thinking is essential
+    // when we move the base model to 3.x. Covers 2.5, gemini-exp, and 3.x+.
+    if (req.disableThinking && /2\.5|gemini-exp|gemini-[3-9]/i.test(modelName)) {
       genConfig.thinkingConfig = { thinkingBudget: 0 };
     }
 
@@ -240,6 +243,16 @@ export class GeminiProvider implements LLMProvider {
           );
           throw err;
         }
+        // Model-not-found (404) will NEVER succeed on retry — retrying it 3x
+        // with backoff just adds ~2.4s of dead latency to every call before the
+        // GEMINI_FALLBACK_MODEL chain takes over. Fail fast so an unavailable
+        // primary model (e.g. a Gemini 3 id not yet on this key) falls back to
+        // the known-good fallback instantly. callGemini still routes 404 to the
+        // fallback model (isTransientGeminiError keeps returning true for it).
+        if (isModelNotFoundError(err)) {
+          this.logger.warn({ model: modelName }, 'gemini.model_not_found.fast_fallback');
+          throw err;
+        }
         if (!isTransientGeminiError(err) || attempt === maxAttempts - 1) {
           throw err;
         }
@@ -259,6 +272,17 @@ export class GeminiProvider implements LLMProvider {
  *  gemini-2.0-flash overnight and every call started returning 404, falling
  *  into the bare-bones emergency-fallback path that bypassed dietary/content
  *  guards. Now the fallback model kicks in BEFORE that path runs. */
+/** True specifically for "model not found" (404 / deprecated / unavailable).
+ *  Used to fail fast to the fallback model instead of retrying a primary that
+ *  can never succeed — makes upgrading GEMINI_MODEL to a new (e.g. Gemini 3) id
+ *  safe: if the id isn't on this key, every call falls back instantly. */
+function isModelNotFoundError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  if ((err as { status?: number }).status === 404) return true;
+  const message = (err as { message?: string }).message ?? '';
+  return /404|not found|no longer available|is not supported|not exist/i.test(message);
+}
+
 function isTransientGeminiError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const status = (err as { status?: number }).status;

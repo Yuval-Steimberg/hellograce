@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, type Part } from '@google/generative-ai';
 import { GoogleAIFileManager } from '@google/generative-ai/server';
 import { writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
@@ -8,17 +8,47 @@ import type { MessageMedia } from '@grace/shared';
 
 const TWILIO_FETCH_TIMEOUT_MS = 8_000;
 
+/** True for "model not found / unavailable" — mirrors the GeminiProvider check
+ *  so the multimodal path can fall back instead of silently returning null when
+ *  the primary model (e.g. a Gemini 3 id) isn't enabled on the active key. */
+function isModelNotFound(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  if ((err as { status?: number }).status === 404) return true;
+  const message = (err as { message?: string }).message ?? '';
+  return /404|not found|no longer available|is not supported|not exist/i.test(message);
+}
+
+/** Run generateContent on the primary model; if it 404s (model unavailable on
+ *  this key), retry once on the known-good fallback model. Mirrors callGemini's
+ *  fast-fallback so switching GEMINI_MODEL to Gemini 3 never dark-fails photos. */
+async function generateContentWithFallback(
+  client: GoogleGenerativeAI,
+  models: { primary: string; fallback?: string },
+  parts: Array<string | Part>,
+  logger: Logger,
+): ReturnType<ReturnType<GoogleGenerativeAI['getGenerativeModel']>['generateContent']> {
+  try {
+    return await client.getGenerativeModel({ model: models.primary }).generateContent(parts);
+  } catch (err) {
+    if (models.fallback && models.fallback !== models.primary && isModelNotFound(err)) {
+      logger.warn({ from: models.primary, to: models.fallback }, 'multimodal.model_not_found.fallback');
+      return await client.getGenerativeModel({ model: models.fallback }).generateContent(parts);
+    }
+    throw err;
+  }
+}
+
 export async function analyzeMedia(
   media: MessageMedia[],
-  opts: { apiKey: string; model: string; logger: Logger; twilio?: { sid: string; token: string } },
+  opts: { apiKey: string; model: string; fallbackModel?: string; logger: Logger; twilio?: { sid: string; token: string } },
 ): Promise<string | null> {
   if (media.length === 0) return null;
   const first = media[0]!;
+  const models = { primary: opts.model, fallback: opts.fallbackModel };
 
   try {
     const buf = await fetchMedia(first.url, opts.twilio);
     const client = new GoogleGenerativeAI(opts.apiKey);
-    const model = client.getGenerativeModel({ model: opts.model });
     // Strip codec/charset parameters from MIME type (e.g. "image/jpeg; name=foo" → "image/jpeg")
     // Gemini inline data only accepts the base MIME type without parameters.
     const cleanMime = first.contentType.split(';')[0]!.trim();
@@ -28,10 +58,10 @@ export async function analyzeMedia(
       // Pass 1: classify the image and — for food — produce a detailed visual
       // identification of items + quantities (NO macro calculation yet).
       // Body and Other analyses are fully resolved in this single pass.
-      const r1 = await model.generateContent([
+      const r1 = await generateContentWithFallback(client, models, [
         { inlineData },
         { text: IMAGE_CLASSIFY_AND_IDENTIFY_PROMPT },
-      ]);
+      ], opts.logger);
       const pass1 = r1.response.text().trim();
 
       // Pass 2 (food only): scientific macro calculation from the Pass 1
@@ -39,9 +69,9 @@ export async function analyzeMedia(
       // Body and Other use Pass 1 output directly — no change in their path.
       if (pass1.includes('IMAGE_TYPE: food')) {
         try {
-          const r2 = await model.generateContent([
+          const r2 = await generateContentWithFallback(client, models, [
             { text: buildFoodMacroCalculationPrompt(pass1) },
-          ]);
+          ], opts.logger);
           const pass2 = r2.response.text().trim();
           // Validate that Pass 2 returned the required format; fall back to Pass 1 if not.
           if (pass2.includes('IMAGE_TYPE: food') && pass2.includes('TOTAL:')) {
@@ -56,7 +86,7 @@ export async function analyzeMedia(
     }
 
     if (first.kind === 'audio') {
-      return await transcribeAudioViaFileApi(buf, first.contentType, opts.apiKey, opts.model, opts.logger);
+      return await transcribeAudioViaFileApi(buf, first.contentType, opts.apiKey, models, opts.logger);
     }
 
     return null;
@@ -79,7 +109,7 @@ async function transcribeAudioViaFileApi(
   buf: Buffer,
   contentType: string,
   apiKey: string,
-  modelName: string,
+  models: { primary: string; fallback?: string },
   logger: Logger,
 ): Promise<string | null> {
   // Strip codec parameters (e.g. "audio/ogg; codecs=opus" → "audio/ogg") so
@@ -98,11 +128,10 @@ async function transcribeAudioViaFileApi(
     });
 
     const client = new GoogleGenerativeAI(apiKey);
-    const model = client.getGenerativeModel({ model: modelName });
-    const r = await model.generateContent([
+    const r = await generateContentWithFallback(client, models, [
       { fileData: { mimeType: baseMime, fileUri: upload.file.uri } },
       { text: 'Transcribe this voice note exactly as spoken. Output only the spoken words, no preamble, no quotes.' },
-    ]);
+    ], logger);
 
     void fileManager.deleteFile(upload.file.name).catch((e) => logger.warn({ e }, 'gemini.file.delete.failed'));
 

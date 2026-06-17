@@ -107,6 +107,11 @@ describe('meal selection (2026-06-15)', () => {
     expect(extractSelectedFood('Lentil dal sounds good').toLowerCase()).toContain('lentil');
     expect(isMealSelection("I'll go with the omelet")).toBe(true);
     expect(extractSelectedFood("I'll go with the omelet").toLowerCase()).toContain('omelet');
+    // Production: user picked an option with "X will work".
+    expect(isMealSelection('Overnight oats will work')).toBe(true);
+    const oats = extractSelectedFood('Overnight oats will work').toLowerCase();
+    expect(oats).toContain('overnight oats');
+    expect(oats).not.toContain('work');
   });
   it('is not a selection when it is a question or too long', () => {
     expect(isMealSelection('does that sound good?')).toBe(false);

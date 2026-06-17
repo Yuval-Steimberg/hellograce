@@ -41,6 +41,11 @@ describe('detectMealConsumption — preference (never log)', () => {
     "I'll go with the omelet",
     "I'm gonna have the salmon",
     'Going with the chicken bowl',
+    // Picking a suggested option (production: user replied to breakfast ideas).
+    'Overnight oats will work',
+    'The oats work for me',
+    'Greek yogurt works for now',
+    "That'll do",
   ];
   for (const m of PREFERENCE) {
     it(`"${m}" → preference`, () => {

@@ -438,6 +438,10 @@ export interface AIServiceDeps {
   historyTurns?: number;
   geminiApiKey: string;
   geminiModel: string;
+  /** Known-good model the multimodal path falls back to if geminiModel isn't
+   *  available on the key (e.g. a Gemini 3 id not yet enabled). Mirrors the
+   *  GeminiProvider fallback so the photo/voice path never silently dies. */
+  geminiFallbackModel?: string;
   twilioSid?: string;
   twilioToken?: string;
   turnQueue?: Queue<TurnPersistJob>;
@@ -2190,6 +2194,7 @@ CRITICAL RULES:
       ? analyzeMedia(input.media, {
           apiKey: this.deps.geminiApiKey,
           model: this.deps.geminiModel,
+          fallbackModel: this.deps.geminiFallbackModel,
           logger,
           twilio: twilioAuth,
         })

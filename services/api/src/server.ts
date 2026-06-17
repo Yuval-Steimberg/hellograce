@@ -116,6 +116,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     historyTurns: env.CONVERSATION_HISTORY_TURNS,
     geminiApiKey: env.GEMINI_API_KEY,
     geminiModel: env.GEMINI_MODEL,
+    geminiFallbackModel: env.GEMINI_FALLBACK_MODEL,
     twilioSid: env.TWILIO_ACCOUNT_SID,
     twilioToken: env.TWILIO_AUTH_TOKEN,
     turnQueue,

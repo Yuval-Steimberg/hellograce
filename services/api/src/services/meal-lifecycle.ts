@@ -59,6 +59,12 @@ const PREFERENCE_RE: RegExp[] = [
   /\b(?:that|this|those|it)\s+(?:sounds?|looks?|works?|would\s+work|seems?\s+(?:good|great|nice|fine|perfect))\b/i,
   // "that works" / "that'll work"
   /\bthat(?:'?ll)?\s+works?\b/i,
+  // Picking a suggested option: "<dish> will/would work", "the oats work",
+  // "works for me / for now / great". After a food suggestion, "X will work"
+  // is a selection, not eating — production: "Overnight oats will work".
+  /\b(?:will|would|'?ll)\s+work\b/i,
+  /\bworks?\s+(?:for\s+me|for\s+now|great|well|fine|perfectly|too)\b/i,
+  /\b(?:that|this|it)(?:'?ll)?\s+(?:will\s+)?do\b/i,
   // "I like / love / prefer / fancy that/the/this"
   /\bi\s+(?:like|love|prefer|fancy|dig|am\s+into)\s+(?:that|the|this|those|it)\b/i,
   // Future intent: "I'll have / make / go with / try / get the omelet"

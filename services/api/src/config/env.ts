@@ -22,12 +22,16 @@ const EnvSchema = z.object({
 
   LLM_PROVIDER: z.enum(['gemini']).default('gemini'),
   GEMINI_API_KEY: z.string().min(1),
-  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
-  /** Used when the primary model returns 503/429 even after retries. */
-  // 2026-06-03: was 'gemini-2.0-flash' but Google deprecated that model
-  // entirely (404 on every call). Reverted to the same primary so a transient
-  // failure on primary still falls back to a known-working model. Override
-  // via env if you want a different fallback.
+  // 2026-06-17: base model moved to Gemini 3 Flash to match the competitor
+  // (Nudge) generation recipe — it runs google/gemini-3-flash-preview for every
+  // reply. Safe by construction: gemini.ts fails fast on a model-not-found 404
+  // and routes instantly to GEMINI_FALLBACK_MODEL, so if this id isn't enabled
+  // on the active key, every call degrades to gemini-2.5-flash with no latency
+  // tax. Override via the GEMINI_MODEL env/Fly secret if needed.
+  GEMINI_MODEL: z.string().default('gemini-3-flash-preview'),
+  /** Used when the primary model returns 404/503/429 even after retries. Kept
+   *  on the known-good 2.5-flash so a Gemini 3 outage — or an id not enabled on
+   *  this key — always has a working fallback. */
   GEMINI_FALLBACK_MODEL: z.string().default('gemini-2.5-flash'),
 
   RAG_ENABLED: z

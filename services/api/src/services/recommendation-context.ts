@@ -109,7 +109,7 @@ export function buildRecommendationAckAdvance(seed: string): string {
 // with the omelet"). This is NOT a log (they haven't eaten it) — it should get
 // a concise, goal-aware confirmation, not a verbose essay.
 const MEAL_SELECTION_RE =
-  /\b(sounds (?:good|great|perfect|delicious|tasty|nice|amazing)|i'?ll (?:have|make|do|go with|take|try|get|cook)|let'?s (?:do|go with|try|make)|going with|i'?m gonna (?:have|make|do|cook)|i pick|i'?ll pick|i choose|i'?ll choose|love the|like the|that one|the \w+ one)\b/i;
+  /\b(sounds (?:good|great|perfect|delicious|tasty|nice|amazing)|i'?ll (?:have|make|do|go with|take|try|get|cook)|let'?s (?:do|go with|try|make)|going with|i'?m gonna (?:have|make|do|cook)|i pick|i'?ll pick|i choose|i'?ll choose|love the|like the|that one|the \w+ one|(?:will|would|'?ll) work|works? (?:for me|for now|great|well|fine|perfectly|too)|(?:that|this|it) (?:'?ll do|will do))\b/i;
 
 export function isMealSelection(text: string): boolean {
   const t = text.trim();

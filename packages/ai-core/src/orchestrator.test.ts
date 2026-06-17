@@ -641,12 +641,54 @@ describe('trimToLastCompleteSentence — final safety net', () => {
   });
 });
 
+describe('formatFoodSuggestions — varied structure (2026-06-17)', () => {
+  const items = [
+    'Babybel cheese and a few grapes',
+    'Cottage cheese with cucumber slices',
+    'String cheese and a small apple',
+    'Greek yogurt with a drizzle of honey',
+  ];
+
+  it('keeps every option in a natural comma list with a final "or"', async () => {
+    const { formatFoodSuggestions } = await import('./orchestrator.js');
+    const out = formatFoodSuggestions(items, { seed: 'u1:snack' });
+    expect(out).toContain('Babybel cheese and a few grapes');
+    expect(out).toContain('Greek yogurt with a drizzle of honey');
+    expect(out).toMatch(/, or Greek yogurt/);
+  });
+
+  it('does NOT always use the same opener or end with "Anything sound good?"', async () => {
+    const { formatFoodSuggestions } = await import('./orchestrator.js');
+    const seeds = ['u1:s', 'u2:s', 'u3:s', 'u4:s', 'u5:s', 'u6:s', 'u7:s', 'u8:s'];
+    const outs = seeds.map((seed) => formatFoodSuggestions(items, { seed }));
+    // No output uses the old rigid template.
+    expect(outs.every((o) => !/anything sound good\?$/i.test(o))).toBe(true);
+    // The opener varies across seeds (more than one distinct opening).
+    const openers = new Set(outs.map((o) => o.slice(0, 12)));
+    expect(openers.size).toBeGreaterThan(1);
+  });
+
+  it('uses the meal guidance as the closer when provided', async () => {
+    const { formatFoodSuggestions } = await import('./orchestrator.js');
+    const out = formatFoodSuggestions(items, { seed: 'u1:snack', mealGuidance: 'Protein-forward and easy on slowed digestion.' });
+    expect(out).toMatch(/Protein-forward and easy on slowed digestion\.$/);
+  });
+
+  it('handles single / empty inputs safely', async () => {
+    const { formatFoodSuggestions } = await import('./orchestrator.js');
+    expect(formatFoodSuggestions(['Greek yogurt'], { seed: 'x' })).toBe('Greek yogurt');
+    expect(formatFoodSuggestions([], { seed: 'x' })).toBe('');
+  });
+});
+
 describe('buildDietAwareSuggestion — diet + allergy filter (2026-06-06)', () => {
   it('returns omnivore options when no restriction given', async () => {
     const { buildDietAwareSuggestion } = await import('./orchestrator.js');
     const out = buildDietAwareSuggestion('snack', null, []);
     expect(out).not.toBeNull();
-    expect(out).toContain('A few options:');
+    // Varied opener (2026-06-17) — assert it's a multi-option suggestion, not a
+    // fixed "A few options:" template.
+    expect(out).toMatch(/, or /);
     // Omnivore snacks include animal-based options.
     expect(out!.toLowerCase()).toMatch(/yogurt|tuna|egg|cheese/);
   });
@@ -720,7 +762,6 @@ describe('buildDietAwareSuggestion — diet + allergy filter (2026-06-06)', () =
     const { buildDietAwareSuggestion } = await import('./orchestrator.js');
     const out = buildDietAwareSuggestion('lunch', null, []);
     expect(out).not.toBeNull();
-    expect(out).toMatch(/^A few options: /);
     expect(out).toMatch(/, or /);
     expect(out).toMatch(/Aim for 25-35g of protein at lunch\.$/);
   });

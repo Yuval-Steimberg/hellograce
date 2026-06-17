@@ -11,6 +11,7 @@ import {
   answerGlp1Topic,
   checkContent,
   enforceFormat,
+  formatFoodSuggestions,
   endsMidWord,
   trimToLastCompleteSentence,
   detectTopicSwitch,
@@ -1817,9 +1818,9 @@ export class AIService {
     });
     if (curated && curated.length >= 3) {
       const names = curated.map((c) => c.name).slice(0, 4);
-      const last = names.pop()!;
-      const list = names.length > 0 ? `${names.join(', ')}, or ${last}` : last;
-      const reply = `A few options: ${list}. Anything sound good?`;
+      const reply = formatFoodSuggestions(names, {
+        seed: `${input.userId}:${userText}:${names.join('|')}`,
+      });
       // Run through format-enforce + content-check for consistency.
       const formatted = enforceFormat(reply, { userMessage: userText });
       const violations = checkContent(formatted.text, { userMessage: userText, ...dietCheckOpts, ...(dbRules.length > 0 ? { dbRules } : {}) });

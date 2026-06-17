@@ -419,9 +419,61 @@ export function buildDietAwareSuggestion(
   const survivors = candidates.filter((c) => !foodContainsForbidden(c, forbidden));
   if (survivors.length < 3) return null;
   const picks = survivors.slice(0, 4);
+  return formatFoodSuggestions(picks, {
+    seed: `${mealType}:${picks.join('|')}`,
+    mealGuidance: FOLLOWUP_BY_MEAL[mealType],
+  });
+}
+
+// ── Varied food-suggestion formatter (2026-06-17) ────────────────────────────
+// Production feedback: every food recommendation shipped the IDENTICAL shape —
+// "A few options: X, Y, Z, or W. Anything sound good?" — which reads like a
+// template. This rotates the opener (and, when no meal-specific guidance is
+// supplied, the closer) by a stable per-turn seed so the SAME list comes out
+// phrased differently for different users / turns, and DEFAULTS TO A STATEMENT
+// (no trailing "sound good?" question) per the friend-voice no-question rule.
+// The item list itself is unchanged. Colon openers used here are the ones the
+// format-enforcer whitelists, so they survive the outbound label-colon strip.
+const SUGGESTION_OPENERS: readonly string[] = [
+  'A few options: ',
+  'A few ideas: ',
+  'Some ideas: ',
+  '',
+  'You could do ',
+  'Could go with ',
+  'Maybe ',
+  'How about ',
+];
+const SUGGESTION_CLOSERS: readonly string[] = [
+  '',
+  '',
+  '',
+  ' Whatever sounds easiest.',
+  ' Pick whatever fits your day.',
+  ' Go with whatever feels right.',
+  ' Any of those work?',
+];
+
+export function formatFoodSuggestions(
+  names: string[],
+  opts: { seed: string; mealGuidance?: string | null },
+): string {
+  const picks = names.map((n) => n.trim()).filter(Boolean).slice(0, 4);
+  if (picks.length === 0) return '';
+  if (picks.length === 1) return picks[0]!;
   const last = picks.pop()!;
-  const list = picks.length > 0 ? `${picks.join(', ')}, or ${last}` : last;
-  return `A few options: ${list}. ${FOLLOWUP_BY_MEAL[mealType]}`;
+  const list = `${picks.join(', ')}, or ${last}`;
+  const seed = opts.seed && opts.seed.length > 0 ? opts.seed : list;
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  const opener = SUGGESTION_OPENERS[Math.abs(h) % SUGGESTION_OPENERS.length]!;
+  // When there's no opener the list starts the sentence → capitalize it.
+  let body = opener ? `${opener}${list}` : list.charAt(0).toUpperCase() + list.slice(1);
+  body = body.replace(/[\s.]+$/, '') + '.';
+  const closer = opts.mealGuidance
+    ? ` ${opts.mealGuidance}`
+    : SUGGESTION_CLOSERS[Math.abs(h >> 4) % SUGGESTION_CLOSERS.length]!;
+  return `${body}${closer}`.trim();
 }
 
 export function getToolAwareFallback(
@@ -544,10 +596,9 @@ export function getToolAwareFallback(
       .filter((n) => n.length > 0)
       .slice(0, 4);
     if (names.length >= 2) {
-      // Natural comma-list with "or" before the last item.
-      const last = names.pop()!;
-      const list = names.length > 0 ? `${names.join(', ')}, or ${last}` : last;
-      return `A few options: ${list}. Anything sound good?`;
+      return formatFoodSuggestions(names, {
+        seed: `${opts?.userMessage ?? ''}:${names.join('|')}`,
+      });
     }
     if (names.length === 1) {
       return `${names[0]} is a solid one — want more options?`;

@@ -88,7 +88,10 @@ describe('AIOrchestrator', () => {
   it('scores hedged responses as medium confidence', async () => {
     const llm = new MockLLM([
       JSON.stringify({ intent: 'chat', needsTools: false, toolCalls: [], rationale: '' }),
-      "I'm not sure, probably 50g of protein.",
+      // Hedged wording (no ungrounded number — a bare "50g" here would be
+      // correctly flagged by the stale-context-echo guard and regenerated,
+      // masking what this test verifies: hedge phrasing → medium confidence).
+      "I'm not sure, probably a moderate amount of protein.",
     ]);
     const tools = new ToolRegistry();
     const orch = new AIOrchestrator({ llm, tools });

@@ -18,6 +18,8 @@ import { UserMemoryService } from './memory/user-memory.service.js';
 import { ProductionIssuesService } from './services/production-issues.service.js';
 import { AIService } from './services/ai.service.js';
 import { TwilioSender } from './twilio/sender.js';
+import { ImessageSender } from './imessage/sender.js';
+import { ChannelRouter } from './channel-router.js';
 import { getTurnQueue, getFactExtractQueue, getMemoryMdQueue, closeQueues } from './workers/queues.js';
 import { MemoryMdService } from './memory/memory-md.service.js';
 import { startWorkers, stopWorkers } from './workers/index.js';
@@ -154,7 +156,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     );
   }
 
-  const sender = new TwilioSender(
+  const twilioSender = new TwilioSender(
     {
       accountSid: env.TWILIO_ACCOUNT_SID,
       authToken: env.TWILIO_AUTH_TOKEN,
@@ -164,6 +166,26 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     },
     logger,
   );
+
+  // iMessage is OFF until the relay credentials are all present. When set, build
+  // the ImessageSender and route by channel; WhatsApp/SMS are unaffected.
+  const imessageConfigured = !!(env.IMESSAGE_AUTH_KEY && env.IMESSAGE_SECRET_KEY && env.IMESSAGE_SENDER_NAME);
+  const imessageSender = imessageConfigured
+    ? new ImessageSender(
+        {
+          ...(env.IMESSAGE_API_URL ? { apiUrl: env.IMESSAGE_API_URL } : {}),
+          authKey: env.IMESSAGE_AUTH_KEY!,
+          secretKey: env.IMESSAGE_SECRET_KEY!,
+          senderName: env.IMESSAGE_SENDER_NAME!,
+          canonicalWebUrl: env.PUBLIC_WEB_URL,
+        },
+        logger,
+      )
+    : undefined;
+  if (imessageConfigured) logger.info('imessage.channel.enabled');
+
+  // Every outbound goes through the router; it dispatches by msg.channel.
+  const sender = new ChannelRouter({ twilio: twilioSender, imessage: imessageSender }, logger);
 
   const generator = new MessageGenerator(llm);
   // Seed the proactive generator with the same active prompt the AI service uses.

@@ -32,10 +32,20 @@ export function rewriteCanonicalLinks(text: string, webUrl?: string): string {
 
 export interface OutboundMessage {
   to: string;
-  channel: 'whatsapp' | 'sms';
+  channel: 'whatsapp' | 'sms' | 'imessage';
   body: string;
   /** Skip the AI-text sanitizer. Use for hardcoded admin/report messages. */
   raw?: boolean;
+}
+
+/**
+ * Transport-agnostic outbound sender. Both TwilioSender (WhatsApp/SMS) and
+ * ImessageSender implement it, and ChannelRouter dispatches by channel so the
+ * rest of the app (webhook replies, scheduler, admin, settings) depends only on
+ * this interface — never a concrete provider. Added 2026-06-17 (multi-channel).
+ */
+export interface MessageSender {
+  send(msg: OutboundMessage): Promise<{ sid: string }>;
 }
 
 /**
@@ -206,7 +216,7 @@ export function sanitizeOutbound(input: string, logger?: Logger): string {
   return text;
 }
 
-export class TwilioSender {
+export class TwilioSender implements MessageSender {
   private client: twilio.Twilio;
   constructor(private cfg: TwilioSenderConfig, private logger: Logger) {
     this.client = twilio(cfg.accountSid, cfg.authToken);

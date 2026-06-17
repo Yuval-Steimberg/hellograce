@@ -1,12 +1,15 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { Redis } from 'ioredis';
+import type { InboundMessage } from '@grace/shared';
 import type { Env } from '../config/env.js';
 import type { AIService } from '../services/ai.service.js';
-import type { TwilioSender } from '../twilio/sender.js';
+import type { MessageSender } from '../twilio/sender.js';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import type { MessageTemplatesService } from '../services/message-templates.service.js';
 import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
+import { normalizeImessage, isInboundMessageAlert, type RawImessagePayload } from '../imessage/normalize.js';
+import { isValidImessageSignature } from '../imessage/signature.js';
 import { UnauthorizedError, UpstreamError } from '../errors.js';
 import { classifyScope } from '../safety/scope-guard.js';
 import { classifyMessage as classifySafety, classifySymptomCategory } from '../safety/guard.js';
@@ -19,7 +22,7 @@ const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 export interface WebhookDeps {
   env: Env;
   ai: AIService;
-  sender: TwilioSender;
+  sender: MessageSender;
   users?: UserService;
   redis?: Redis;
   templates?: MessageTemplatesService;
@@ -79,7 +82,60 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
     void reply.send('<?xml version="1.0" encoding="UTF-8"?><Response/>');
 
     // Fire-and-forget AI processing.
-    void (async () => {
+      void processInboundMessage(deps, normalized, req.log);
+    });
+
+  app.post('/webhook/imessage', async (req, reply) => {
+    const raw = (req.body ?? {}) as RawImessagePayload;
+    // Verify the relay provider's webhook in production (shared-secret header
+    // or HMAC over the body). Outside production, accept so local testing works.
+    if (deps.env.NODE_ENV === 'production') {
+      const secret = deps.env.IMESSAGE_WEBHOOK_SECRET ?? '';
+      const authHeader = headerStr(req.headers['authorization'] ?? req.headers['loop-secret-key']);
+      const sigHeader = headerStr(req.headers['x-webhook-signature'] ?? req.headers['x-loop-signature']);
+      const ok = isValidImessageSignature({ secret, rawBody: JSON.stringify(raw), authHeader, signatureHeader: sigHeader });
+      if (!ok) throw new UnauthorizedError('Invalid iMessage webhook signature');
+    }
+
+    if (!isInboundMessageAlert(raw)) {
+      reply.code(200);
+      return reply.send({ ok: true, ignored: true });
+    }
+
+    const normalized = normalizeImessage(raw);
+
+    if (deps.redis && normalized.providerMessageId) {
+      const dedupKey = `imessage:seen:${normalized.providerMessageId}`;
+      const seen = await deps.redis.set(dedupKey, '1', 'EX', 7200, 'NX');
+      if (seen === null) {
+        req.log.warn({ msgId: normalized.providerMessageId, userId: normalized.userId }, 'webhook.imessage.duplicate_dropped');
+        reply.code(200);
+        return reply.send({ ok: true, duplicate: true });
+      }
+    }
+
+    if (!normalized.userId || (!normalized.text && normalized.media.length === 0)) {
+      reply.code(200);
+      return reply.send({ ok: true, empty: true });
+    }
+
+    req.log.info(
+      { userId: normalized.userId, channel: normalized.channel, type: normalized.type },
+      'webhook.imessage.received',
+    );
+
+    reply.code(200);
+    void reply.send({ ok: true });
+
+    void processInboundMessage(deps, normalized, req.log);
+  });
+}
+
+export async function processInboundMessage(
+  deps: WebhookDeps,
+  normalized: InboundMessage,
+  log: FastifyBaseLogger,
+): Promise<void> {
       // Coalesce rapid consecutive text messages (corrections, continuations)
       // BEFORE the in-flight lock. Order matters: the buffer append must come
       // first — when the lock check ran first (2026-06-04 → 2026-06-10), a
@@ -121,9 +177,9 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
       let inflightAcquired = false;
       if (deps.redis) {
         const slot = await acquireInflightSlot(deps.redis, inflightKey, (event) => {
-          if (event === 'waiting') req.log.info({ userId: normalized.userId }, 'webhook.inflight_waiting');
-          if (event === 'skip') req.log.warn({ userId: normalized.userId }, 'webhook.inflight_skip');
-          if (event === 'redis_failed') req.log.warn({ userId: normalized.userId }, 'webhook.inflight_lock_failed_proceeding');
+          if (event === 'waiting') log.info({ userId: normalized.userId }, 'webhook.inflight_waiting');
+          if (event === 'skip') log.warn({ userId: normalized.userId }, 'webhook.inflight_skip');
+          if (event === 'redis_failed') log.warn({ userId: normalized.userId }, 'webhook.inflight_lock_failed_proceeding');
         });
         if (slot === 'busy') return;
         inflightAcquired = slot === 'acquired';
@@ -134,6 +190,14 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         // Upsert the user record and update last_reply_at on every inbound message.
         if (deps.users) {
           user = await deps.users.ensureUser(normalized.userId).catch(() => null);
+
+          // Align the user's PROACTIVE channel with the transport they just used
+          // (best-effort, only on change). Replies in this turn already go back on
+          // normalized.channel; this makes scheduled check-ins follow the same
+          // channel. No-ops if the channel column isn't migrated yet.
+          if (user && (user.channel ?? 'whatsapp') !== normalized.channel) {
+            void deps.users.update(user.phone, { channel: normalized.channel }).catch(() => {});
+          }
 
           // Handle injection "done" reply — advance the state machine and
           // reply with an injection-aware acknowledgment. Without the explicit
@@ -229,7 +293,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           if (user) {
             try {
               const settingsReply = await tryHandleSettings(normalized.text, user, {
-                logger: app.log,
+                logger: log,
                 webUrl: deps.env.PUBLIC_WEB_URL,
               });
               if (settingsReply) {
@@ -258,7 +322,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
                 }
               }
             } catch (err) {
-              app.log.warn(
+              log.warn(
                 { err: err instanceof Error ? err.message : String(err), userId: normalized.userId },
                 'settings_flow.unexpected_error',
               );
@@ -291,7 +355,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
                   : '';
                 const lastHadRlhfPrompt = /👍|👎|to rate|rate this|share a thought/i.test(lastContent);
                 if (!lastHadRlhfPrompt) {
-                  app.log.info(
+                  log.info(
                     { userId: normalized.userId, text: normalized.text.slice(0, 40) },
                     'webhook.feedback_signal_rejected_no_prompt',
                   );
@@ -330,15 +394,15 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           // called at all.
           const safety = classifySafety(normalized.text);
           if (safety.class !== 'safe') {
-            req.log.warn({ phone: user?.phone, class: safety.class, matched: safety.matched }, 'webhook.safety.short_circuit');
+            log.warn({ phone: user?.phone, class: safety.class, matched: safety.matched }, 'webhook.safety.short_circuit');
             // Record emergencies into the symptom stack (so a future-fired
             // mild signal in a different category still adds context) and
             // clear the stack so we don't escalate twice in a row on the
             // same conversation. Best-effort — never blocks the safety reply.
             if (user && deps.redis && safety.class === 'emergency' && safety.symptomCategory) {
               try {
-                await recordSymptom(user.phone, safety.symptomCategory, { redis: deps.redis, logger: app.log });
-                await clearStack(user.phone, { redis: deps.redis, logger: app.log });
+                await recordSymptom(user.phone, safety.symptomCategory, { redis: deps.redis, logger: log });
+                await clearStack(user.phone, { redis: deps.redis, logger: log });
               } catch { /* non-fatal */ }
             }
             // Crisis-resource localization gate (2026-06-06). When
@@ -367,13 +431,13 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             const subCategory = classifySymptomCategory(normalized.text);
             if (subCategory) {
               try {
-                const stack = await recordSymptom(user.phone, subCategory, { redis: deps.redis, logger: app.log });
+                const stack = await recordSymptom(user.phone, subCategory, { redis: deps.redis, logger: log });
                 if (shouldEscalate(stack)) {
-                  req.log.warn(
+                  log.warn(
                     { phone: user.phone, categories: stack.categories, count: stack.count },
                     'webhook.symptom_stack.escalate',
                   );
-                  await clearStack(user.phone, { redis: deps.redis, logger: app.log });
+                  await clearStack(user.phone, { redis: deps.redis, logger: log });
                   const stackResources = getCrisisResourcesForUser(user, { reviewed: deps.env.CRISIS_RESOURCES_REVIEWED });
                   await deps.sender.send({
                     to: normalized.userId,
@@ -393,7 +457,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           if (user && deps.users && detectPauseIntent(normalized.text)) {
             const phone = user.phone;
             await deps.users.setPaused(phone, true).catch((err: unknown) => {
-              req.log.warn({ err: err instanceof Error ? err.message : String(err), phone }, 'pause.set_paused.failed');
+              log.warn({ err: err instanceof Error ? err.message : String(err), phone }, 'pause.set_paused.failed');
             });
             const reply = 'Got it, I\'ll pause the check-ins. Text me anytime you want to pick it back up 🧡';
             await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: reply });
@@ -407,9 +471,9 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           if (user?.paused && deps.users) {
             const phone = user.phone;
             await deps.users.setPaused(phone, false).catch((err: unknown) => {
-              req.log.warn({ err: err instanceof Error ? err.message : String(err), phone }, 'pause.auto_resume.failed');
+              log.warn({ err: err instanceof Error ? err.message : String(err), phone }, 'pause.auto_resume.failed');
             });
-            req.log.info({ phone }, 'pause.auto_resumed');
+            log.info({ phone }, 'pause.auto_resumed');
           }
 
           // ── In-chat upgrade / manage intent ("upgrade", "go pro", "manage
@@ -457,7 +521,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
                 )
               : `Welcome to Grace 🧡 To start your daily check-ins, sign up here: ${signupUrl}. It only takes a minute.`;
             await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
-            req.log.info({ phone: user.phone }, 'webhook.registration_required');
+            log.info({ phone: user.phone }, 'webhook.registration_required');
             return;
           }
 
@@ -490,7 +554,7 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
         if (normalized.type === 'text') {
           const scope = classifyScope(normalized.text);
           if (scope.blocked) {
-            req.log.info(
+            log.info(
               { userId: normalized.userId, category: scope.category, matched: scope.matched },
               'webhook.scope_blocked',
             );
@@ -542,18 +606,18 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
             : responseText;
           await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
         } else if (looksTruncated) {
-          app.log.warn(
+          log.warn(
             { responseText: trimmedResp.slice(-80), userId: normalized.userId },
             'webhook.truncated_response_blocked',
           );
         } else if (responseText.length > 0) {
-          app.log.warn(
+          log.warn(
             { responseText: responseText.slice(0, 80), userId: normalized.userId },
             'webhook.empty_response_blocked',
           );
         }
       } catch (err) {
-        req.log.error({ err }, 'webhook.ai.failed');
+        log.error({ err }, 'webhook.ai.failed');
         const fallbacks = [
           "I'm here — what's on your mind?",
           "Hey, what would you like to talk about?",
@@ -571,8 +635,11 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
           await deps.redis.del(inflightKey).catch(() => undefined);
         }
       }
-    })();
-  });
+}
+
+function headerStr(h: string | string[] | undefined): string | undefined {
+  if (Array.isArray(h)) return h[0];
+  return h ?? undefined;
 }
 
 const TRIAL_DAYS = 3;

@@ -1,4 +1,4 @@
-export type Channel = 'whatsapp' | 'sms';
+export type Channel = 'whatsapp' | 'sms' | 'imessage';
 
 export interface MessageMedia {
   url: string;

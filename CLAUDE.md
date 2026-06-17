@@ -6,6 +6,33 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Multi-channel: WhatsApp/SMS + iMessage (2026-06-17)
+
+Grace now delivers on **both Twilio (WhatsApp/SMS) and iMessage** simultaneously.
+Full setup: `docs/IMESSAGE.md`. The AI pipeline is transport-agnostic.
+- **Outbound**: every caller sends through a `MessageSender` (interface in `twilio/sender.ts`).
+  `ChannelRouter` (`src/channel-router.ts`) dispatches by `msg.channel`: `'imessage'` →
+  `ImessageSender` (LoopMessage relay, `src/imessage/sender.ts`, reuses `sanitizeOutbound` +
+  `rewriteCanonicalLinks`); `'whatsapp'|'sms'` → `TwilioSender`. iMessage requested but
+  unconfigured → falls back to Twilio WhatsApp (never silent).
+- **Inbound**: `webhook.ts` extracted the shared `processInboundMessage(deps, normalized, log)`;
+  `POST /webhook/twilio` and new `POST /webhook/imessage` both call it. iMessage payloads map
+  via `src/imessage/normalize.ts`; webhook verified via `src/imessage/signature.ts` (shared-secret
+  header or HMAC, enforced only in production).
+- **Per-user channel**: `users.channel` column (migration `20260617000001_user_channel.sql`,
+  default `'whatsapp'`) drives PROACTIVE sends (scheduler reads `user.channel`). Inbound replies
+  always go back on the arriving channel. An inbound iMessage auto-aligns `users.channel='imessage'`
+  so scheduled check-ins follow. Editable via `PUT /admin/users/:phone {channel}` + admin manual send.
+- **Env** (`config/env.ts`): `IMESSAGE_AUTH_KEY` / `IMESSAGE_SECRET_KEY` / `IMESSAGE_SENDER_NAME`
+  (all three required to enable) + optional `IMESSAGE_API_URL`, `IMESSAGE_WEBHOOK_SECRET`.
+  OFF until configured; WhatsApp/SMS unchanged when off. Log tag: `imessage.channel.enabled`.
+- Tests: `imessage/normalize.test.ts` (8), `imessage/signature.test.ts` (4), `imessage/sender.test.ts`
+  (6), `channel-router.test.ts` (3). 1094 api tests green, typecheck clean.
+- **Caveat**: relay APIs are against Apple ToS (accounts can be throttled) — iMessage is an
+  optional channel layered on WhatsApp/SMS, not a replacement.
+
+---
+
 ## What this project is
 
 **Grace** — a production-grade WhatsApp/SMS AI companion for people on GLP-1

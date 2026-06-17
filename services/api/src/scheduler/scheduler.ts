@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 import type { UserService, GraceUser } from '../user/user.service.js';
-import type { TwilioSender } from '../twilio/sender.js';
+import type { MessageSender } from '../twilio/sender.js';
 import type { MessageGenerator, GenerateOpts } from './message-generator.js';
 import type { PromptOptimizer } from './prompt-optimizer.js';
 import type { AnomalyDetectorService } from './anomaly-detector.service.js';
@@ -13,7 +13,7 @@ const EVENING_DAYS = new Set([2, 4, 0]); // Tue, Thu, Sun
 
 interface SchedulerDeps {
   users: UserService;
-  sender: TwilioSender;
+  sender: MessageSender;
   generator: MessageGenerator;
   logger: Logger;
   redis: Redis;
@@ -485,7 +485,7 @@ export class Scheduler {
       const body = user.rlhf_enabled && message.trim().length >= 25
         ? `${message}\n\n👍 👎 to rate · # to add a thought`
         : message;
-      await this.deps.sender.send({ to: user.phone, body, channel: 'whatsapp' });
+      await this.deps.sender.send({ to: user.phone, body, channel: user.channel ?? 'whatsapp' });
       await this.deps.users.recordCheckIn({
         userId: user.phone,
         phone: user.phone,

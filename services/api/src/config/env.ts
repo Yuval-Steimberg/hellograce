@@ -20,6 +20,25 @@ const EnvSchema = z.object({
   TWILIO_FROM_NUMBER: z.string().optional(),
   TWILIO_WHATSAPP_FROM: z.string().optional(),
 
+  // ── iMessage relay (2026-06-17, multi-channel) ──────────────────────────
+  // Apple has no official iMessage API; a relay provider (LoopMessage by
+  // default) hosts a dedicated iMessage sender + an inbound webhook. iMessage
+  // is OFF until IMESSAGE_AUTH_KEY + IMESSAGE_SECRET_KEY + IMESSAGE_SENDER_NAME
+  // are all set; WhatsApp/SMS keep working regardless. Per-user routing is via
+  // the users.channel column (default 'whatsapp').
+  /** Provider send endpoint. Defaults to LoopMessage's send URL. */
+  IMESSAGE_API_URL: z.string().url().optional(),
+  /** Authorization header value (provider auth key). */
+  IMESSAGE_AUTH_KEY: z.string().optional(),
+  /** Loop-Secret-Key header value (provider secret). */
+  IMESSAGE_SECRET_KEY: z.string().optional(),
+  /** The dedicated iMessage sender name/handle provisioned by the provider. */
+  IMESSAGE_SENDER_NAME: z.string().optional(),
+  /** Shared secret / HMAC key used to verify the inbound iMessage webhook.
+   *  When unset, the /webhook/imessage route only accepts requests outside
+   *  production (verification is enforced when NODE_ENV=production). */
+  IMESSAGE_WEBHOOK_SECRET: z.string().optional(),
+
   LLM_PROVIDER: z.enum(['gemini']).default('gemini'),
   GEMINI_API_KEY: z.string().min(1),
   // 2026-06-17: base model moved to Gemini 3 Flash to match the competitor

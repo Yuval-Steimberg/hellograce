@@ -47,7 +47,7 @@ export interface AdminDeps {
   memoryMd?: import('../memory/memory-md.service.js').MemoryMdService;
   /** Outbound sender — used by POST /admin/users/:phone/send-message to send a
    *  real WhatsApp/SMS message from the dashboard. */
-  sender?: import('../twilio/sender.js').TwilioSender;
+  sender?: import('../twilio/sender.js').MessageSender;
   /** Memory service — persists admin-sent messages into the conversation
    *  thread so they show up in the conversation viewer + the user's context. */
   memory?: import('../memory/memory.service.js').MemoryService;
@@ -753,6 +753,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     activity_level: z.string().max(40).nullable().optional(),
     height_cm: z.number().int().min(80).max(250).nullable().optional(),
     sex: z.enum(['male', 'female', 'other']).nullable().optional(),
+    channel: z.enum(['whatsapp', 'sms', 'imessage']).optional(),
     active: z.boolean().optional(),
     paused: z.boolean().optional(),
     blocked: z.boolean().optional(),
@@ -1103,14 +1104,17 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   app.post('/admin/users/:phone/send-message', async (req, reply) => {
     const { phone } = req.params as { phone: string };
     const parsed = z
-      .object({ text: z.string().trim().min(1).max(1500), channel: z.enum(['whatsapp', 'sms']).optional() })
+      .object({ text: z.string().trim().min(1).max(1500), channel: z.enum(['whatsapp', 'sms', 'imessage']).optional() })
       .safeParse(req.body);
     if (!parsed.success) throw new ValidationError('text is required (1-1500 chars)');
     if (!deps.sender) {
       reply.code(503);
       return { error: 'Sender not configured' };
     }
-    const channel = parsed.data.channel ?? 'whatsapp';
+    // Default to the user's stored channel so a manual send follows the same
+    // transport as their proactive messages; explicit channel overrides.
+    const storedChannel = (await deps.users?.getByPhone(phone).catch(() => null))?.channel ?? undefined;
+    const channel = parsed.data.channel ?? storedChannel ?? 'whatsapp';
     try {
       const result = await deps.sender.send({ to: phone, body: parsed.data.text, channel, raw: true });
       // Persist into the conversation so it appears in history + context.

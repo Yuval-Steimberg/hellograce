@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Redis } from 'ioredis';
 import { randomInt, randomBytes } from 'crypto';
 import { z } from 'zod';
-import type { TwilioSender } from '../twilio/sender.js';
+import type { MessageSender } from '../twilio/sender.js';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import { ValidationError, UnauthorizedError } from '../errors.js';
 
@@ -23,7 +23,7 @@ import { ValidationError, UnauthorizedError } from '../errors.js';
 
 export interface SettingsRouteDeps {
   redis?: Redis;
-  sender: TwilioSender;
+  sender: MessageSender;
   users: UserService;
   /** WhatsApp configured? Code is sent via WhatsApp when true, else SMS. */
   whatsappEnabled: boolean;

@@ -85,6 +85,12 @@ export interface GraceUser {
   why_started: string | null;
   support_style: string | null;
   exercise_habits: string | null;
+  /** Delivery channel for proactive/outbound messages: 'whatsapp' | 'sms' |
+   *  'imessage'. Null/absent → treated as 'whatsapp'. Inbound replies always
+   *  go back on the channel the message arrived on (carried by the webhook),
+   *  so this column only drives PROACTIVE sends (scheduler, admin manual send).
+   *  Added 2026-06-17 (migration 20260617000001_user_channel.sql). */
+  channel: 'whatsapp' | 'sms' | 'imessage' | null;
 }
 
 export class UserService {

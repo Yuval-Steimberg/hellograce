@@ -3,7 +3,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { ValidationError, UnauthorizedError } from '../errors.js';
 import type { UserService } from '../user/user.service.js';
-import type { TwilioSender } from '../twilio/sender.js';
+import type { MessageSender } from '../twilio/sender.js';
 import type { MessageGenerator } from '../scheduler/message-generator.js';
 import { calculateProteinTarget } from '../nutrition/protein-target.js';
 import { calculateCalorieTarget } from '../nutrition/calorie-target.js';
@@ -50,7 +50,7 @@ const OnboardSchema = z.object({
 export interface UserRouteDeps {
   pool: Pool;
   users: UserService;
-  sender: TwilioSender;
+  sender: MessageSender;
   generator: MessageGenerator;
 }
 

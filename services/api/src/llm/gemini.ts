@@ -193,10 +193,17 @@ export class GeminiProvider implements LLMProvider {
     }
     // thinkingConfig only works on Gemini 2.5+ models. Sending it to 2.0
     // models causes a 400 error. Check the model name before setting it.
-    // Gemini 3.x flash defaults to mandatory reasoning that burns the output
-    // budget (truncated/empty replies) — so disabling thinking is essential
-    // when we move the base model to 3.x. Covers 2.5, gemini-exp, and 3.x+.
-    if (req.disableThinking && /2\.5|gemini-exp|gemini-[3-9]/i.test(modelName)) {
+    //
+    // Gemini 3.x flash (the base model since 2026-06-17, matching the Nudge
+    // generation recipe — it runs gemini-3-flash-preview, the NON-reasoning
+    // variant) defaults to mandatory reasoning that burns the output budget
+    // → truncated/empty replies. Nudge gets fast, complete replies precisely
+    // because it never reasons. So on a 3.x base we ALWAYS disable thinking,
+    // regardless of intent — otherwise complex intents (knowledge/emotional,
+    // which keep thinking enabled via isSimpleMessage=false) would truncate.
+    // On 2.5 / gemini-exp we only disable when the caller asked (simple msgs).
+    const isGemini3Plus = /gemini-[3-9]/i.test(modelName);
+    if (isGemini3Plus || (req.disableThinking && /2\.5|gemini-exp/i.test(modelName))) {
       genConfig.thinkingConfig = { thinkingBudget: 0 };
     }
 

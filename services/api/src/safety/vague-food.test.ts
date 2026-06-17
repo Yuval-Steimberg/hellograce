@@ -388,6 +388,27 @@ describe('require-quantity gate — no assumptions on a bare food log (2026-06-1
     expect(log('2 eggs and toast').vague).toBe(false);
   });
 
+  it('asks about a vague protein even when a DIFFERENT item is quantified (2026-06-17)', () => {
+    // Production screenshot: "I had 2 eggs for breakfast. For lunch one chicken
+    // and rice" → Grace logged a guessed (wrong) number instead of asking. The
+    // counted eggs must not mask the un-portioned "one chicken".
+    const r = log('I had 2 eggs for breakfast. For lunch one chicken and rice');
+    expect(r.vague).toBe(true);
+    expect(r.matched).toBe('chicken');
+    expect(r.response).toMatch(/how much chicken|palm-sized|grilled, fried/i);
+  });
+
+  it('"one chicken" is not a real portion (one breast? a whole bird?) → asks', () => {
+    expect(log('one chicken and rice').vague).toBe(true);
+    expect(log('chicken and a cup of rice').vague).toBe(true); // rice quantified, chicken not
+  });
+
+  it('a named cut / weight / prep on the protein still logs in a multi-item meal', () => {
+    expect(log('2 eggs and a chicken breast with rice').vague).toBe(false);
+    expect(log('8 oz salmon and a cup of rice').vague).toBe(false);
+    expect(log('3 eggs and grilled chicken').vague).toBe(false);
+  });
+
   it('does NOT fire without requireQuantity — food questions / mentions never get the portion ask', () => {
     expect(detectVagueFood('is salmon healthy?').vague).toBe(false);
     expect(detectVagueFood('I had rice').vague).toBe(false);   // no requireQuantity → no portion ask

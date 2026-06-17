@@ -418,46 +418,86 @@ function detectProteinProduct(text: string): { matched: string; response: string
   };
 }
 
+// Does a SPECIFIC high-variance protein in the text carry its own portion/prep/
+// cut/count? Used by the multi-item gate so a quantity on a DIFFERENT item
+// ("2 eggs") doesn't mask a vague protein ("one chicken"). A bare count for a
+// non-countable protein ("one chicken" — one breast? a whole bird?) is NOT a
+// specifier; only foods naturally counted in units (wings/shrimp/etc.) are.
+const NATURALLY_COUNTED = /^(wings?|shrimp|prawns?|scallops?|meatballs?)$/i;
+function proteinHasSpecifier(lower: string, protein: string): boolean {
+  if (protein === 'egg' || protein === 'eggs') {
+    return /\b(\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|dozen|couple)\s+eggs?\b/i.test(lower);
+  }
+  // Named cut → specific ("chicken breast", "salmon fillet", "pork chop").
+  if (new RegExp(`\\b${protein}\\s+(breasts?|thighs?|drumsticks?|wings?|fillets?|filets?|cutlets?|tenders?|nuggets?|legs?|loins?|chops?|steaks?)\\b`, 'i').test(lower)) return true;
+  // Weight unit near the protein ("6 oz chicken", "chicken, 200g").
+  const wt = '(?:\\d+(?:\\.\\d+)?)\\s*(?:oz|ounces?|g|grams?|lb|lbs|pounds?)';
+  if (new RegExp(`${wt}(?:\\s+\\w+){0,2}\\s+${protein}\\b`, 'i').test(lower)) return true;
+  if (new RegExp(`\\b${protein}(?:\\s+\\w+){0,2}\\s+${wt}`, 'i').test(lower)) return true;
+  // Prep word adjacent to the protein ("grilled chicken", "chicken, fried").
+  const prep = 'grilled|baked|fried|deep[\\s-]?fried|pan[\\s-]?fried|air[\\s-]?fried|roasted|boiled|steamed|poached|seared|smoked|braised|breaded|battered|crispy|saut[eé]ed|stir[\\s-]?fried|raw|sashimi|mashed|shredded|pulled';
+  if (new RegExp(`\\b(?:${prep})\\s+(?:\\w+\\s+){0,1}${protein}\\b`, 'i').test(lower)) return true;
+  if (new RegExp(`\\b${protein}\\b\\s*,?\\s+(?:${prep})\\b`, 'i').test(lower)) return true;
+  // A count is only a real specifier for naturally-counted proteins.
+  if (NATURALLY_COUNTED.test(protein) &&
+      new RegExp(`\\b(\\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|dozen)\\s+${protein}\\b`, 'i').test(lower)) {
+    return true;
+  }
+  return false;
+}
+
 // "No assumptions" gate (2026-06-14): a SINGLE bare food logged with NO amount
 // or portion can't be tracked accurately, so ask instead of guessing a serving.
 // Scoped to a single food — multi-food lists go through the multi-item logger,
 // and brands/categories/prep/low-confidence are already caught upstream.
 function detectMissingQuantity(text: string): { matched: string; response: string } | null {
   const lower = text.toLowerCase();
-  // Specific enough when it carries an amount/portion, OR a prep/sauce detail
-  // (per "specific amount OR details" — "grilled chicken" / "chicken in bbq
-  // sauce" name how it was made, so we log rather than nag for a portion).
-  if (QUANTITY_PRESENT_RE.test(lower)) return null;
-  if (PREP_GIVEN_RE.test(lower) || SAUCE_GIVEN_RE.test(lower)) return null;
   const foods: string[] = [];
   for (const tok of FOOD_TOKEN_SET) {
     if (new RegExp(`\\b${tok}\\b`, 'i').test(lower)) foods.push(tok);
   }
-  if (foods.length === 0) return null; // not a recognizable food log → don't ask
-  if (foods.length === 1) {
-    const food = foods[0]!;
+  // FOOD_TOKEN_SET also contains prep/sauce modifier words ("grilled", "bbq").
+  // Drop them so the food COUNT reflects actual foods — otherwise "chicken in
+  // bbq sauce" reads as a 2-item meal and "grilled chicken" as two foods.
+  const realFoods = foods.filter((f) => !PREP_GIVEN_RE.test(f) && !SAUCE_GIVEN_RE.test(f));
+  if (realFoods.length === 0) return null; // not a recognizable food log → don't ask
+
+  if (realFoods.length === 1) {
+    const food = realFoods[0]!;
+    // Specific enough when it carries an amount/portion, OR a prep/sauce detail
+    // (per "specific amount OR details" — "grilled chicken" / "chicken in bbq
+    // sauce" name how it was made, so we log rather than nag for a portion).
+    if (QUANTITY_PRESENT_RE.test(lower)) return null;
+    if (PREP_GIVEN_RE.test(lower) || SAUCE_GIVEN_RE.test(lower)) return null;
     return {
       matched: food,
       response: `For the ${food}, roughly how much or how many? Even a rough amount (a cup, 4 oz, a handful) lets me log it accurately.`,
     };
   }
-  // Multi-food meal with no amount and no prep. Only ask when a high-variance
-  // PROTEIN is present — that's what makes the estimate uncertain (a chicken
-  // portion + cooking method swings protein/calories far more than rice
-  // quantity). "rice and chicken" → ask; "yogurt and berries" → let the
-  // multi-item estimator handle it. Ask the two highest-impact questions only.
-  const protein = foods.find((f) => HIGH_VARIANCE_PROTEINS.has(f));
-  if (!protein) return null;
+
+  // Multi-food meal. Ask when a HIGH-VARIANCE protein lacks ITS OWN portion/
+  // prep/cut/count — even if a DIFFERENT item is quantified. Production:
+  // "I had 2 eggs for breakfast. For lunch one chicken and rice" → the eggs are
+  // counted, but "one chicken" (one breast? a whole bird?) and bare "rice" are
+  // unknown, so ask about the chicken instead of logging a guessed number.
+  // "6 oz chicken and rice" / "grilled chicken and rice" / "2 eggs and toast"
+  // all have their protein specified → no ask. A high-variance protein is what
+  // makes the estimate uncertain (portion + cooking method swing it far more
+  // than a rice quantity), so "yogurt and berries" still logs.
+  const unspecified = realFoods.find(
+    (f) => HIGH_VARIANCE_PROTEINS.has(f) && !proteinHasSpecifier(lower, f),
+  );
+  if (!unspecified) return null;
   // Eggs: the count is the high-impact detail, not portion/prep.
-  if (protein === 'egg' || protein === 'eggs') {
+  if (unspecified === 'egg' || unspecified === 'eggs') {
     return {
-      matched: protein,
+      matched: unspecified,
       response: `Got it. How many eggs did you have? That changes the protein, so I'd rather count it right than guess.`,
     };
   }
   return {
-    matched: protein,
-    response: `Got it. About how much ${protein} did you have, closer to a palm-sized portion or a full plate? And was it grilled, fried, or breaded? That swings the protein and calories a lot, so I'd rather get it right than guess.`,
+    matched: unspecified,
+    response: `Got it. About how much ${unspecified} did you have, closer to a palm-sized portion or a full plate? And was it grilled, fried, or breaded? That swings the protein and calories a lot, so I'd rather get it right than guess.`,
   };
 }
 

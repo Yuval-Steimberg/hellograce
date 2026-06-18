@@ -398,6 +398,8 @@ import {
   mightBeSummaryRequest,
   gatherWeeklySummary,
   renderWeeklySummary,
+  isDoctorQuestionsOffer,
+  buildDoctorQuestions,
 } from './weekly-summary.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -622,6 +624,29 @@ export class AIService {
       if (isAffirmation) {
         const recentTurns = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
         const lastAssistant = [...recentTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+        // ── Intent lock: "Yes" to the doctor-questions offer EXECUTES it ─────
+        // When the weekly summary offered "Want me to turn this into a few
+        // questions for your doctor?" and the user affirms, generate the
+        // questions deterministically, grounded in their data. This runs BEFORE
+        // the orchestrator so the affirmation can never be reinterpreted as a
+        // request to expand on the numbers in history (production drift
+        // 2026-06-18: "Yes" → 124g protein-target math instead of the questions).
+        if (isDoctorQuestionsOffer(lastAssistant)) {
+          const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+          const data = user ? await gatherWeeklySummary(this.deps.users, user).catch(() => null) : null;
+          const reply = buildDoctorQuestions(data);
+          const totalMs = Date.now() - t0;
+          this.deps.logger.info({ userId: input.userId }, 'ai.doctor_questions.served');
+          this.persistLatency(input.userId, 'appointment_prep', totalMs, lat.snapshot(), input.text, reply);
+          return {
+            text: reply,
+            confidence: 'high',
+            intent: 'appointment_prep',
+            toolResults: [],
+            usedRetrieval: false,
+            latencyMs: totalMs,
+          };
+        }
         const lastWasOfferQuestion = /\?\s*$/.test(lastAssistant.trim()) &&
           /\b(want me to|would you (?:like|want)|should i|can i|may i|how about|do you want|interested in|let me know if you'?d like|let me know if you want|i can (?:walk you|show you|share|give|explain|break|go through|run through))\b/i.test(lastAssistant);
         // CRITICAL fix (2026-06-14 audit): an "okay" / "sounds good" / "yes"

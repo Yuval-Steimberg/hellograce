@@ -5,6 +5,8 @@ import {
   gatherWeeklySummary,
   renderWeeklySummary,
   looksEncrypted,
+  isDoctorQuestionsOffer,
+  buildDoctorQuestions,
   type WeeklySummaryDeps,
   type WeeklySummaryUser,
   type WeeklySummaryData,
@@ -177,6 +179,68 @@ describe('gatherWeeklySummary', () => {
 });
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
+
+describe('isDoctorQuestionsOffer', () => {
+  it('recognizes the summary offer (both data + no-data variants)', () => {
+    expect(isDoctorQuestionsOffer('Want me to turn this into a few questions for your doctor?')).toBe(true);
+    expect(isDoctorQuestionsOffer('Want a few solid questions to bring to your doctor in the meantime?')).toBe(true);
+  });
+  it('does not fire on unrelated prior turns', () => {
+    expect(isDoctorQuestionsOffer('You logged chicken and rice, nice work.')).toBe(false);
+    expect(isDoctorQuestionsOffer('Want me to suggest a high-protein dinner?')).toBe(false);
+    expect(isDoctorQuestionsOffer('')).toBe(false);
+    expect(isDoctorQuestionsOffer(null)).toBe(false);
+  });
+});
+
+describe('buildDoctorQuestions', () => {
+  const data: WeeklySummaryData = {
+    daysWindow: 7,
+    daysLogged: 5,
+    avgProtein: 61,
+    avgCalories: 912,
+    proteinGoal: 124,
+    weightStart: 182,
+    weightLatest: 180,
+    avgMood: 6,
+    medication: null,
+    doseMg: 0.5,
+    injectionDay: 'Wednesday',
+    sideEffect: 'nausea',
+  };
+
+  it('executes the offer with data-grounded questions (the production "Yes")', () => {
+    const out = buildDoctorQuestions(data);
+    expect(out).toContain('0.5mg dose');
+    expect(out).toContain('124g protein target');
+    expect(out).toContain('61g'); // the gap
+    expect(out).toContain('nausea');
+    // It must NOT be the drifted protein-math explanation.
+    expect(out).not.toMatch(/comes from your current weight/i);
+    expect(out).toMatch(/want me to adjust/i);
+  });
+
+  it('is enforcer-safe prose under the outbound cap', () => {
+    const out = buildDoctorQuestions(data);
+    expect(out).not.toContain('\n');
+    expect(out).not.toMatch(/^[A-Z][a-z]+:/m);
+    expect(out).not.toMatch(/[•*]\s/);
+    expect(out.length).toBeLessThanOrEqual(420);
+  });
+
+  it('degrades to solid generic questions when data is null', () => {
+    const out = buildDoctorQuestions(null);
+    expect(out).toMatch(/dose is still right/i);
+    expect(out).toMatch(/protein/i);
+    expect(out).toMatch(/labs/i);
+    expect(out.length).toBeLessThanOrEqual(420);
+  });
+
+  it('asks about keeping protein up when already at goal', () => {
+    const out = buildDoctorQuestions({ ...data, avgProtein: 130 });
+    expect(out).toMatch(/keep your protein up/i);
+  });
+});
 
 describe('looksEncrypted', () => {
   it('flags an enc:<iv>:<data>:<tag> blob', () => {

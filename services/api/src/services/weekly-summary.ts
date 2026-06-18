@@ -316,3 +316,49 @@ export function renderWeeklySummary(data: WeeklySummaryData): string {
   sentences.push(`Want me to turn this into a few questions for your doctor?`);
   return sentences.join(' ');
 }
+
+// ─── Doctor-questions follow-through (intent lock) ────────────────────────────
+
+/**
+ * True when Grace's prior message OFFERED to compile doctor questions — i.e.
+ * the weekly summary ended with "Want me to turn this into a few questions for
+ * your doctor?" (or the no-data variant "Want a few solid questions to bring to
+ * your doctor…"). Used to intent-lock the user's "Yes": when they accept, Grace
+ * must EXECUTE the offer (generate the questions), never let the orchestrator
+ * reinterpret the affirmation as a request to expand on numbers in history
+ * (production drift 2026-06-18: "Yes" → protein-target math instead of the
+ * promised questions).
+ */
+export function isDoctorQuestionsOffer(lastGraceMessage: string | null | undefined): boolean {
+  const m = (lastGraceMessage || '').toLowerCase();
+  if (!m) return false;
+  return /\bquestions?\b[^.?!]{0,40}\bdoctor\b/.test(m) || /\bdoctor\b[^.?!]{0,40}\bquestions?\b/.test(m);
+}
+
+/**
+ * Build 3 specific questions to bring to the doctor, grounded in the user's
+ * real weekly data when available (dose, protein gap, flagged side effect),
+ * degrading to solid generic GLP-1 questions when data is null. Enforcer-safe
+ * prose — one flowing sentence of comma-separated topics, no lists/colons,
+ * under the ~420-char outbound cap.
+ */
+export function buildDoctorQuestions(data: WeeklySummaryData | null): string {
+  const q1 = data?.doseMg != null
+    ? `whether your ${data.doseMg}mg dose is still right given your progress`
+    : `whether your current dose is still right given your progress`;
+
+  let q2: string;
+  if (data?.avgProtein != null && data.proteinGoal != null && data.avgProtein < data.proteinGoal) {
+    q2 = `how to realistically hit your ${data.proteinGoal}g protein target since you're averaging around ${data.avgProtein}g`;
+  } else if (data?.proteinGoal != null) {
+    q2 = `how to keep your protein up around ${data.proteinGoal}g as the weight comes off`;
+  } else {
+    q2 = `how much protein you should be getting to protect muscle`;
+  }
+
+  const q3 = data?.sideEffect
+    ? `what to do about the ${data.sideEffect} you've been having`
+    : `whether any labs are worth checking at this stage`;
+
+  return `I'd ask ${q1}, ${q2}, and ${q3}. Want me to adjust these or add anything specific?`;
+}

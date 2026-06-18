@@ -1655,6 +1655,76 @@ asserts hedged-not-definitive) + content-checker acute-exemption cases. 1069 api
 
 ---
 
+### Weekly/recent-history summary + encryption fail-safe (2026-06-18)
+
+Branch `claude/missing-evening-reminder-gcek4y` (PRs #87, #88, #89, all merged).
+Production screenshot: a user asked "give me a summary of how my last week was"
+before a doctor appointment → got "12g of protein today" (wrong window, single
+day); the follow-up "Add all the data you have to make it comprehensive" was
+misread as the user offering more info and answered with the generic `general`
+fallback ("Tell me more whenever you're ready"); when a summary finally came it
+was a list-with-headers report (the WhatsApp enforcer guts those) AND it printed
+the user's medication as raw ciphertext.
+
+**New `services/api/src/services/weekly-summary.ts`** — the missing recap
+capability (there was none; `appointment_prep` only suggests questions, every
+"today" path is single-day, an unhandled compile-data instruction fell to the
+generic fallback).
+- `detectSummaryRequest` / `mightBeSummaryRequest`: cheap regex for explicit
+  recaps ("summary of my last week", "how has my week been", "summarize my
+  progress") and standalone data-compilation language ("all the data you have",
+  "make it comprehensive"). Weak continuations ("expand on that") only fire
+  inside an active summary/appointment context. Excludes single-day food
+  questions and appointment-QUESTION requests (those keep their paths).
+- `gatherWeeklySummary`: real last-7-days data — protein/calorie history
+  (`getDailyProteinHistory`), in-window weight trend, mood from `check_ins`,
+  medication/dose, injection day, active `side_effect_flow`. Best-effort per
+  source.
+- `renderWeeklySummary`: ONE block of clean WhatsApp prose — no headers/bullets/
+  label-colons, under the ~420-char outbound cap, omits lines it has no data
+  for, honest "not much logged yet" fallback. Ends offering doctor questions.
+- Wired as an early deterministic intercept in `ai.service.handleMessage` (after
+  the reminder intercept, before the food-logging paths) so a recap is grounded
+  in real data, never logged as food, never hits a generic fallback. Cheap
+  pre-gate; only reads history to confirm weak continuations.
+
+**Encryption leak + fail-safe (the medication ciphertext).** Root cause:
+`FIELD_ENCRYPTION_KEY` is ABSENT from the prod API process, so
+`isEncryptionEnabled()` is false and `decryptUser` no-op'd, surfacing the raw
+`enc:<iv>:<data>:<tag>` blob for `medication`/`first_name` (the two encrypted
+fields). `decryptField` returns the blob unchanged (rather than throwing) ONLY
+when the key is missing — that's how we know it's absent, not merely rotated.
+- **`crypto/field-encrypt.ts`** — new canonical `isEncryptedBlob(value)`.
+- **`user.service.decryptUser`** now fails SAFE via `safeDecryptField`: key ON +
+  decrypts → plaintext; key ON + wrong key (throws) → null for a blob (used to
+  throw and fail the WHOLE user fetch); key OFF + value still a blob → null;
+  plaintext → unchanged. `null` = "unknown", which every caller already treats
+  as absent — so NO path (summary, LLM prompt, greeting, admin) ever sees
+  ciphertext or crashes. System-wide, not a summary patch.
+- **`twilio/sender.ts sanitizeOutbound`** — belt-and-suspenders: redacts any
+  `enc:` blob from every outbound BEFORE `enforceFormat` mangles the colons.
+  Logs `twilio.sanitize.encrypted_field_redacted`.
+- **`weekly-summary.gatherWeeklySummary`** also drops a `looksEncrypted`
+  medication at the source (delegates to `isEncryptedBlob`).
+- **Migration `20260618000001_null_unrecoverable_encrypted_fields.sql`** — NULLs
+  unrecoverable `enc:` blobs in `users.medication`/`first_name` at rest (anchored
+  hex match; plaintext untouched). Irreversible — the ciphertext is the only
+  copy and can't be decrypted without the original key.
+
+**Decision (this session): encryption is DROPPED** (key is lost). It's already
+effectively off in prod. With the key absent, `UserService.update` stores
+re-entered medication as PLAINTEXT, so affected users just re-enter it via
+Settings/admin and it reads back correctly. If the original key is ever found,
+re-adding `FIELD_ENCRYPTION_KEY` to grace-api restores decryption instead.
+
+Tests: `weekly-summary.test.ts` (26), `field-encrypt.test.ts` (3),
+`user-service-cache.test.ts` decryptUser fail-safe (+2), `sender.test.ts`
+redaction (+2). 1130 api tests green, typecheck clean. No env/secret changes;
+the leak fixes are pure-additive. PR #87 (summary), #88 (outbound redaction +
+source guard), #89 (decryptUser fail-safe + migration).
+
+---
+
 ## Where to start in a new session
 
 1. Read this file + `docs/STATUS.md` + `docs/OPERATIONS.md` + `docs/CACHING.md` (caching/latency reference).

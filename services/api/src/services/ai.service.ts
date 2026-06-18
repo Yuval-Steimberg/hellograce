@@ -393,6 +393,12 @@ import {
 } from './reminder-service.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
 import { detectHypoglycemiaWarning, mightBeHypoSymptom, isWhatShouldIDo } from '../safety/hypoglycemia-warning.js';
+import {
+  detectSummaryRequest,
+  mightBeSummaryRequest,
+  gatherWeeklySummary,
+  renderWeeklySummary,
+} from './weekly-summary.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
@@ -756,6 +762,55 @@ export class AIService {
             this.deps.logger.warn(
               { err: err instanceof Error ? err.message : String(err) },
               'ai.reminder_query.error',
+            );
+            // Fall through to the normal pipeline rather than drop the turn.
+          }
+        }
+      }
+
+      // ── Weekly / recent-history summary → grounded in REAL data (2026-06-18)
+      // "Give me a summary of how my last week was" / "recap my week for my
+      // doctor" / "add all the data you have to make it comprehensive" must be
+      // answered from the user's ACTUAL last-7-days logs — NOT a single-day
+      // "you've had 12g of protein today" answer, and NEVER the generic
+      // "Tell me more whenever you're ready" fallback (which misread an
+      // instruction-to-compile-data as the user offering more). Runs BEFORE the
+      // food-logging paths so the food words in a recap request can't be logged.
+      // Cheap regex pre-gate first; only reads history to confirm weak
+      // continuation phrases ("more detail", "expand on that").
+      if (mightBeSummaryRequest(input.text)) {
+        let recentContext: string | undefined;
+        // Only pay for a history read when the phrasing is a weak continuation
+        // that needs an active summary/appointment context to qualify.
+        if (!detectSummaryRequest(input.text)) {
+          const recent = await this.deps.memory.getRecentTurns(input.userId, 6).catch(() => [] as ChatTurn[]);
+          recentContext = recent.map((m) => m.content).join(' • ');
+        }
+        if (detectSummaryRequest(input.text, recentContext)) {
+          try {
+            const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+            if (user) {
+              const data = await gatherWeeklySummary(this.deps.users, user);
+              const reply = renderWeeklySummary(data);
+              const totalMs = Date.now() - t0;
+              this.deps.logger.info(
+                { userId: input.userId, daysLogged: data.daysLogged, hasWeight: data.weightLatest != null },
+                'ai.weekly_summary.served',
+              );
+              this.persistLatency(input.userId, 'weekly_summary', totalMs, lat.snapshot(), input.text, reply);
+              return {
+                text: reply,
+                confidence: 'high',
+                intent: 'weekly_summary',
+                toolResults: [],
+                usedRetrieval: false,
+                latencyMs: totalMs,
+              };
+            }
+          } catch (err) {
+            this.deps.logger.warn(
+              { err: err instanceof Error ? err.message : String(err) },
+              'ai.weekly_summary.error',
             );
             // Fall through to the normal pipeline rather than drop the turn.
           }

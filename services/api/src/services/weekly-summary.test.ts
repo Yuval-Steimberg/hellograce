@@ -6,6 +6,8 @@ import {
   renderWeeklySummary,
   looksEncrypted,
   isDoctorQuestionsOffer,
+  isDoctorQuestionsReply,
+  isDoctorQuestionsContext,
   buildDoctorQuestions,
   type WeeklySummaryDeps,
   type WeeklySummaryUser,
@@ -239,6 +241,36 @@ describe('buildDoctorQuestions', () => {
   it('asks about keeping protein up when already at goal', () => {
     const out = buildDoctorQuestions({ ...data, avgProtein: 130 });
     expect(out).toMatch(/keep your protein up/i);
+  });
+
+  it('detailed mode is more specific: ties to calories + labs + warning signs', () => {
+    const out = buildDoctorQuestions(data, { detailed: true });
+    expect(out).toContain('61g protein');
+    expect(out).toContain('124g target');
+    expect(out).toContain('912 calories');
+    expect(out).toContain('0.5mg');
+    expect(out).toContain('nausea');
+    expect(out).toMatch(/labs/i);
+    expect(out).toMatch(/warning signs/i);
+    expect(out.length).toBeLessThanOrEqual(420);
+    expect(out).not.toContain('\n');
+  });
+
+  it('every generated reply carries the refinement marker (so a follow-up continues the workflow)', () => {
+    expect(isDoctorQuestionsReply(buildDoctorQuestions(data))).toBe(true);
+    expect(isDoctorQuestionsReply(buildDoctorQuestions(data, { detailed: true }))).toBe(true);
+  });
+});
+
+describe('isDoctorQuestionsReply / isDoctorQuestionsContext', () => {
+  it('isDoctorQuestionsReply matches a generated questions turn, not the offer', () => {
+    expect(isDoctorQuestionsReply('I\'d ask whether your dose is right. Want me to adjust these or add anything specific?')).toBe(true);
+    expect(isDoctorQuestionsReply('Want me to turn this into a few questions for your doctor?')).toBe(false);
+  });
+  it('isDoctorQuestionsContext covers both the offer and the generated questions', () => {
+    expect(isDoctorQuestionsContext('Want me to turn this into a few questions for your doctor?')).toBe(true);
+    expect(isDoctorQuestionsContext('...Want me to adjust these or add anything specific?')).toBe(true);
+    expect(isDoctorQuestionsContext('You logged eggs, nice work.')).toBe(false);
   });
 });
 

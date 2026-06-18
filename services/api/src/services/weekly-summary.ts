@@ -335,14 +335,40 @@ export function isDoctorQuestionsOffer(lastGraceMessage: string | null | undefin
   return /\bquestions?\b[^.?!]{0,40}\bdoctor\b/.test(m) || /\bdoctor\b[^.?!]{0,40}\bquestions?\b/.test(m);
 }
 
+/** Stable marker every generated doctor-questions reply ends with, so a
+ *  follow-up ("make it specific", "shorter") can be recognized as refining
+ *  the questions rather than starting a new topic. */
+const DOCTOR_QUESTIONS_MARKER = 'adjust these or add anything specific';
+
+/** True when Grace's prior message WAS the generated doctor questions (not the
+ *  offer) — used so a refinement continues the workflow. */
+export function isDoctorQuestionsReply(lastGraceMessage: string | null | undefined): boolean {
+  return (lastGraceMessage || '').toLowerCase().includes(DOCTOR_QUESTIONS_MARKER);
+}
+
+/** Either side of the doctor-questions workflow: the offer OR the generated
+ *  questions. A follow-up landing here continues the workflow. */
+export function isDoctorQuestionsContext(lastGraceMessage: string | null | undefined): boolean {
+  return isDoctorQuestionsOffer(lastGraceMessage) || isDoctorQuestionsReply(lastGraceMessage);
+}
+
 /**
- * Build 3 specific questions to bring to the doctor, grounded in the user's
- * real weekly data when available (dose, protein gap, flagged side effect),
- * degrading to solid generic GLP-1 questions when data is null. Enforcer-safe
- * prose — one flowing sentence of comma-separated topics, no lists/colons,
- * under the ~420-char outbound cap.
+ * Build specific questions to bring to the doctor, grounded in the user's real
+ * weekly data when available (dose, protein gap, calories, flagged side
+ * effect), degrading to solid generic GLP-1 questions when data is null.
+ * Enforcer-safe prose — flowing comma-separated topics, no lists/colons, under
+ * the ~420-char outbound cap.
+ *
+ * `detailed` produces the fuller, more specific set (used when the user asks to
+ * "make it specific" / "more detail" / says yes to refining). It ties each
+ * question to the user's actual numbers and adds labs + warning-signs.
  */
-export function buildDoctorQuestions(data: WeeklySummaryData | null): string {
+export function buildDoctorQuestions(
+  data: WeeklySummaryData | null,
+  opts: { detailed?: boolean } = {},
+): string {
+  if (opts.detailed) return buildDetailedDoctorQuestions(data);
+
   const q1 = data?.doseMg != null
     ? `whether your ${data.doseMg}mg dose is still right given your progress`
     : `whether your current dose is still right given your progress`;
@@ -360,5 +386,33 @@ export function buildDoctorQuestions(data: WeeklySummaryData | null): string {
     ? `what to do about the ${data.sideEffect} you've been having`
     : `whether any labs are worth checking at this stage`;
 
-  return `I'd ask ${q1}, ${q2}, and ${q3}. Want me to adjust these or add anything specific?`;
+  return `I'd ask ${q1}, ${q2}, and ${q3}. Want me to ${DOCTOR_QUESTIONS_MARKER}?`;
+}
+
+function buildDetailedDoctorQuestions(data: WeeklySummaryData | null): string {
+  const parts: string[] = [];
+
+  if (data?.avgProtein != null && data.proteinGoal != null) {
+    parts.push(
+      `given you're averaging ${data.avgProtein}g protein against a ${data.proteinGoal}g target, ask whether that's enough on a GLP-1 or if your nutrition needs adjusting`,
+    );
+  } else {
+    parts.push(`ask how much protein you should be getting to protect muscle on a GLP-1`);
+  }
+
+  if (data?.avgCalories != null) {
+    parts.push(`at about ${data.avgCalories.toLocaleString('en-US')} calories a day, ask if that's too low to hold muscle`);
+  }
+
+  const doseClause = data?.doseMg != null
+    ? `ask whether ${data.doseMg}mg is still right for your progress${data.sideEffect ? ` and the ${data.sideEffect}` : ''}`
+    : `ask whether your dose is still right for your progress${data?.sideEffect ? ` and the ${data.sideEffect}` : ''}`;
+  parts.push(doseClause);
+
+  parts.push(`which labs to monitor and what warning signs to watch between visits`);
+
+  // Join as flowing prose; capitalize the first word.
+  const joined = parts.join(', ');
+  const sentence = joined.charAt(0).toUpperCase() + joined.slice(1);
+  return `${sentence}. Want me to ${DOCTOR_QUESTIONS_MARKER}?`;
 }

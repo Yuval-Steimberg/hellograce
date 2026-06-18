@@ -398,9 +398,11 @@ import {
   mightBeSummaryRequest,
   gatherWeeklySummary,
   renderWeeklySummary,
-  isDoctorQuestionsOffer,
+  isDoctorQuestionsContext,
+  isDoctorQuestionsReply,
   buildDoctorQuestions,
 } from './weekly-summary.js';
+import { detectFollowUp, wantsMoreDetail } from './follow-up.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
@@ -620,23 +622,43 @@ export class AIService {
       // turns where the message clearly isn't an affirmation). Only fetch
       // recent turns when the text shape actually matches an affirmation.
       const isAffirmation = /^(?:yes|yep|yeah|yup|sure|ok|okay|sounds good|sound good|sounds great|sounds nice|please do|please|alright|go ahead|do it|let'?s do it|yes please|absolutely|great|perfect|love it|nice)[!.?]?\s*$/i.test(input.text.trim());
+      // Universal follow-up resolution: short, context-dependent replies
+      // ("yes do it specific", "make it specific", "shorter", "no not that")
+      // are refinements/confirmations/rejections of the PRIOR turn, not new
+      // topics. Classified in isolation they landed in the generic fallback
+      // ("I'm with you. What's on your mind?"). detectFollowUp labels them so
+      // the active workflow can continue. Cheap regex — gates the recent-turns
+      // DB read just like isAffirmation does.
+      const followUp = detectFollowUp(input.text);
       let skipFastPathDueToOffer = false;
-      if (isAffirmation) {
+      if (isAffirmation || followUp) {
         const recentTurns = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
         const lastAssistant = [...recentTurns].reverse().find((t) => t.role === 'assistant')?.content ?? '';
-        // ── Intent lock: "Yes" to the doctor-questions offer EXECUTES it ─────
-        // When the weekly summary offered "Want me to turn this into a few
-        // questions for your doctor?" and the user affirms, generate the
-        // questions deterministically, grounded in their data. This runs BEFORE
-        // the orchestrator so the affirmation can never be reinterpreted as a
-        // request to expand on the numbers in history (production drift
-        // 2026-06-18: "Yes" → 124g protein-target math instead of the questions).
-        if (isDoctorQuestionsOffer(lastAssistant)) {
+        // ── Doctor-questions workflow: confirm / refine / reject ─────────────
+        // Covers BOTH sides of the flow: the offer ("Want me to turn this into
+        // questions for your doctor?") AND the already-generated questions
+        // ("…Want me to adjust these or add anything specific?"). A confirm or
+        // refinement EXECUTES/refines the questions deterministically, grounded
+        // in the user's data — so the affirmation can never be reinterpreted as
+        // a request to expand on numbers in history (production drift
+        // 2026-06-18: "Yes" → protein-target math; "Yes do it specific" →
+        // generic "What's on your mind?"). Runs before the orchestrator.
+        if (followUp && followUp.kind !== 'clarify' && isDoctorQuestionsContext(lastAssistant)) {
+          if (followUp.kind === 'reject') {
+            const reply = `No worries. Anything else you want to go over before your appointment?`;
+            const totalMs = Date.now() - t0;
+            this.persistLatency(input.userId, 'appointment_prep', totalMs, lat.snapshot(), input.text, reply);
+            return { text: reply, confidence: 'high', intent: 'appointment_prep', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+          }
+          // confirm / refine / reference → (re)build the questions. Refining an
+          // already-given set, or any "make it specific"/"more detail" request,
+          // produces the fuller, more specific version.
+          const detailed = isDoctorQuestionsReply(lastAssistant) || wantsMoreDetail(followUp);
           const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
           const data = user ? await gatherWeeklySummary(this.deps.users, user).catch(() => null) : null;
-          const reply = buildDoctorQuestions(data);
+          const reply = buildDoctorQuestions(data, { detailed });
           const totalMs = Date.now() - t0;
-          this.deps.logger.info({ userId: input.userId }, 'ai.doctor_questions.served');
+          this.deps.logger.info({ userId: input.userId, detailed, kind: followUp.kind, modifier: followUp.modifier }, 'ai.doctor_questions.served');
           this.persistLatency(input.userId, 'appointment_prep', totalMs, lat.snapshot(), input.text, reply);
           return {
             text: reply,
@@ -665,8 +687,10 @@ export class AIService {
         // Deterministic advance for an ack right after a recommendation: offer
         // the recipe or more ideas instead of the LLM's generic "Happy to help"
         // (observed in testing). Skip when the prior turn was an OFFER question
-        // (those need the promised content, handled downstream).
-        if (lastWasRecommendation && !lastWasOfferQuestion) {
+        // (those need the promised content, handled downstream). Gated on a
+        // bare affirmation — a refinement follow-up ("make it vegetarian") must
+        // reach the orchestrator to actually modify the recommendation.
+        if (isAffirmation && lastWasRecommendation && !lastWasOfferQuestion) {
           const reply = buildRecommendationAckAdvance(`${input.userId}|${input.text}`);
           const totalMs = Date.now() - t0;
           this.deps.logger.info({ userId: input.userId, text: input.text }, 'ai.recommendation_ack.served');

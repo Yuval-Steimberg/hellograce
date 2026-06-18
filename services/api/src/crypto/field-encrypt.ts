@@ -42,6 +42,18 @@ export function decryptField(stored: string): string {
   return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
 }
 
+/**
+ * True when a value is an at-rest ciphertext blob (`enc:<iv>:<data>:<tag>`)
+ * rather than readable plaintext. Used to detect a field that can't be
+ * decrypted by the running process (key missing or rotated) so it's never
+ * surfaced to a user. Case-insensitive on the prefix because downstream
+ * formatters may title-case the leading word.
+ */
+export function isEncryptedBlob(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return /^enc:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(value.trim());
+}
+
 export function hashField(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }

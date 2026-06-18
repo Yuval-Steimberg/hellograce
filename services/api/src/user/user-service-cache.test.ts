@@ -80,3 +80,28 @@ describe('UserService.getKnownFacts caching', () => {
     expect(b).toHaveLength(1);
   });
 });
+
+describe('UserService.decryptUser — never leaks ciphertext (2026-06-18)', () => {
+  const BLOB = 'enc:0b5f95fcc08abfd1d100b3bbf8:9fc0bd0f16e13c33736d4:e869b61ae8988e421a3b221721444616';
+
+  it('nullifies an undecryptable medication blob when encryption is disabled', async () => {
+    // No initFieldEncryption() called in this file → encryption disabled.
+    const pool = makePool([
+      { id: 'u1', phone: '+15551234', medication: BLOB, first_name: BLOB },
+    ]);
+    const svc = new UserService(pool);
+    const u = await svc.getByPhone('+15551234');
+    expect(u?.medication).toBeNull();
+    expect(u?.first_name).toBeNull();
+  });
+
+  it('passes through a plaintext medication untouched', async () => {
+    const pool = makePool([
+      { id: 'u2', phone: '+15559999', medication: 'Wegovy', first_name: 'Sam' },
+    ]);
+    const svc = new UserService(pool);
+    const u = await svc.getByPhone('+15559999');
+    expect(u?.medication).toBe('Wegovy');
+    expect(u?.first_name).toBe('Sam');
+  });
+});

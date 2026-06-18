@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { encryptField, decryptField, hashField, isEncryptionEnabled } from '../crypto/field-encrypt.js';
+import { encryptField, decryptField, hashField, isEncryptionEnabled, isEncryptedBlob } from '../crypto/field-encrypt.js';
 import type { TodayFoodCacheService } from '../cache/today-food-cache.js';
 import { USER_DAY_CTE, userDayExpr, isCurrentUserDay } from '../nutrition/logging-window.js';
 
@@ -202,11 +202,35 @@ export class UserService {
   }
 
   private decryptUser(row: GraceUser): GraceUser {
-    if (!isEncryptionEnabled()) return row;
     const r = { ...row };
-    if (r.first_name) r.first_name = decryptField(r.first_name);
-    if (r.medication) r.medication = decryptField(r.medication);
+    r.first_name = this.safeDecryptField(r.first_name);
+    r.medication = this.safeDecryptField(r.medication);
     return r;
+  }
+
+  /**
+   * Decrypt an at-rest field, failing SAFE in every degraded case so an
+   * encryption misconfiguration can never (a) crash a user fetch or (b) leak
+   * ciphertext into a prompt / reply / admin view:
+   *   - encryption ON, value decrypts → plaintext
+   *   - encryption ON, wrong/rotated key (decrypt throws) → null if the value
+   *     is an unrecoverable blob, else the original (it wasn't encrypted)
+   *   - encryption OFF but the stored value is still an `enc:` blob (the key
+   *     was dropped after the field was written) → null (we can't read it)
+   *   - plaintext value → returned unchanged
+   * Returning null means "unknown" — callers already treat a null
+   * first_name / medication as absent.
+   */
+  private safeDecryptField(value: string | null): string | null {
+    if (!value) return value;
+    if (isEncryptionEnabled()) {
+      try {
+        return decryptField(value);
+      } catch {
+        return isEncryptedBlob(value) ? null : value;
+      }
+    }
+    return isEncryptedBlob(value) ? null : value;
   }
 
   /** Fetch user by phone. Tries phone_hash first, falls back to plaintext. */

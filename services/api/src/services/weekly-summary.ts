@@ -1,3 +1,5 @@
+import { isEncryptedBlob } from '../crypto/field-encrypt.js';
+
 /**
  * Weekly / recent-history summary service (2026-06-18).
  *
@@ -151,11 +153,11 @@ const WEEK_MS = 7 * 24 * 3_600_000;
  * (`enc:<iv>:<data>:<tag>` from crypto/field-encrypt.ts) rather than a real
  * plaintext value. Happens when the running process can't decrypt a stored
  * field (FIELD_ENCRYPTION_KEY missing or rotated). We must NEVER surface such a
- * blob to a user — treat it as "unknown" instead.
+ * blob to a user — treat it as "unknown" instead. Delegates to the canonical
+ * detector in the crypto module so the two never drift.
  */
 export function looksEncrypted(value: string | null | undefined): boolean {
-  if (!value) return false;
-  return /^enc:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(value.trim());
+  return isEncryptedBlob(value);
 }
 
 /**

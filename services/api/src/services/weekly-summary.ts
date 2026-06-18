@@ -147,6 +147,18 @@ export interface WeeklySummaryDeps {
 const WEEK_MS = 7 * 24 * 3_600_000;
 
 /**
+ * True when a value looks like an encrypted-at-rest field blob
+ * (`enc:<iv>:<data>:<tag>` from crypto/field-encrypt.ts) rather than a real
+ * plaintext value. Happens when the running process can't decrypt a stored
+ * field (FIELD_ENCRYPTION_KEY missing or rotated). We must NEVER surface such a
+ * blob to a user — treat it as "unknown" instead.
+ */
+export function looksEncrypted(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return /^enc:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i.test(value.trim());
+}
+
+/**
  * Pull the user's real last-7-days data. Every source is best-effort: a failure
  * leaves its fields null and the renderer simply omits that line.
  */
@@ -165,7 +177,10 @@ export async function gatherWeeklySummary(
     weightStart: null,
     weightLatest: null,
     avgMood: null,
-    medication: user.medication ?? null,
+    // Guard against a non-decrypted field blob leaking into the reply: if the
+    // medication came back as ciphertext (encryption key missing/rotated in the
+    // running process), omit it rather than show "enc:..." to the user.
+    medication: looksEncrypted(user.medication) ? null : (user.medication ?? null),
     doseMg: user.dose_mg ?? null,
     injectionDay: user.injection_day ?? null,
     sideEffect: null,

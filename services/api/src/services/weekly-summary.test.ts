@@ -4,6 +4,7 @@ import {
   mightBeSummaryRequest,
   gatherWeeklySummary,
   renderWeeklySummary,
+  looksEncrypted,
   type WeeklySummaryDeps,
   type WeeklySummaryUser,
   type WeeklySummaryData,
@@ -148,6 +149,20 @@ describe('gatherWeeklySummary', () => {
     expect(data.sideEffect).toBeNull();
   });
 
+  it('never leaks an undecrypted medication blob (encryption key missing/rotated)', async () => {
+    const blob = 'enc:0b5f95fcc08abfd1d100b3bbf8:9fc0bd0f16e13c33736d4:e869b61ae8988e421a3b221721444616';
+    const data = await gatherWeeklySummary(
+      makeDeps(),
+      { ...user, medication: blob },
+      now,
+    );
+    expect(data.medication).toBeNull();
+    // The dose still renders, just without the ciphertext medication name.
+    const out = renderWeeklySummary(data);
+    expect(out).not.toContain('enc:');
+    expect(out).toContain('0.5mg');
+  });
+
   it('degrades gracefully when a source throws', async () => {
     const data = await gatherWeeklySummary(
       makeDeps({
@@ -162,6 +177,19 @@ describe('gatherWeeklySummary', () => {
 });
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
+
+describe('looksEncrypted', () => {
+  it('flags an enc:<iv>:<data>:<tag> blob', () => {
+    expect(looksEncrypted('enc:0b5f95fcc08abfd1d100b3bbf8:9fc0bd0f16:e869b61ae8988e421a3b221721444616')).toBe(true);
+    expect(looksEncrypted('ENC:0b5f95fcc08abfd1:9fc0bd0f16:e869b61a')).toBe(true);
+  });
+  it('does not flag a real medication name', () => {
+    expect(looksEncrypted('Wegovy')).toBe(false);
+    expect(looksEncrypted('semaglutide')).toBe(false);
+    expect(looksEncrypted(null)).toBe(false);
+    expect(looksEncrypted(undefined)).toBe(false);
+  });
+});
 
 describe('renderWeeklySummary', () => {
   const fullData: WeeklySummaryData = {

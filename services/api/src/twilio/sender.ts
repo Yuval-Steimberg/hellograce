@@ -71,6 +71,23 @@ export class EmptyOutboundError extends Error {
 export function sanitizeOutbound(input: string, logger?: Logger): string {
   let text = input;
 
+  // ─── Encrypted-field leak guard (2026-06-18) ──────────────────────────
+  // crypto/field-encrypt.ts stores PII as `enc:<iv>:<data>:<tag>`. If the
+  // running process can't decrypt a field (FIELD_ENCRYPTION_KEY missing or
+  // rotated), the raw ciphertext can flow into a reply (observed in prod: a
+  // weekly summary printed "enc:0b...:9fc...:..." for the user's medication).
+  // Strip any such blob from EVERY outbound, BEFORE enforceFormat mangles the
+  // colons into something the regex can't catch. Defense in depth — the
+  // summary/source paths also drop encrypted values, but this covers LLM
+  // echoes and any other source.
+  {
+    const encBlob = /\benc:[0-9a-f]{12,}:[0-9a-f]+:[0-9a-f]+/gi;
+    if (encBlob.test(text)) {
+      text = text.replace(encBlob, '').replace(/\s{2,}/g, ' ').trim();
+      logger?.warn({ original: input.slice(0, 200) }, 'twilio.sanitize.encrypted_field_redacted');
+    }
+  }
+
   // ─── Universal format-enforcer pass (2026-06-04) ──────────────────────
   // The orchestrator runs enforceFormat on LLM responses, but messages can
   // reach the sender via paths that bypass it: fast-path, food_log_fast,

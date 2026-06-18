@@ -45,6 +45,21 @@ describe('sanitizeOutbound — never truncates a trailing URL (2026-06-13)', () 
   });
 });
 
+describe('sanitizeOutbound — encrypted-field leak guard (2026-06-18)', () => {
+  it('redacts an undecrypted enc: blob (the prod medication leak)', () => {
+    const msg =
+      "You're on enc:0b5f95fcc08abfd1d100b3bbf8:9fc0bd0f16e13c33736d4:e869b61ae8988e421a3b221721444616 at 0.5mg, injection day Wed.";
+    const out = sanitizeOutbound(msg);
+    expect(out).not.toMatch(/enc:/i);
+    expect(out).toContain('0.5mg');
+    expect(out).toContain('injection day Wed');
+  });
+  it('leaves a normal message untouched', () => {
+    const msg = "You're on Wegovy at 0.5mg, injection day Sunday.";
+    expect(sanitizeOutbound(msg)).toContain('Wegovy');
+  });
+});
+
 describe('sanitizeOutbound — em-dash replacement', () => {
   it('replaces em-dashes with commas', () => {
     const out = sanitizeOutbound('Got it — moved your injection day.');

@@ -444,6 +444,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     generator,
     logger,
     redis,
+    memory,
     promptOptimizer,
     researchScrape,
     researchAutoFix,

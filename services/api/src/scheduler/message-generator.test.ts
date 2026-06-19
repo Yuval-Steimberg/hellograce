@@ -122,6 +122,19 @@ describe('MessageGenerator — context grounding + anti-repetition', () => {
     expect(prompt).toContain('NEVER invent');
   });
 
+  it('embeds the user\'s recent messages so the reminder can reference a real topic', async () => {
+    const { llm, calls } = makeStubLlm('Hope the nausea has eased — a little ginger tea can help settle things.');
+    const gen = new MessageGenerator(llm);
+    await gen.generate('morning', makeUser(), {
+      conversationContext: ['felt really nauseous after my shot yesterday', 'trying to hit my protein goal'],
+    });
+    const prompt = calls[0]!.prompt;
+    expect(prompt).toContain('RECENT CONVERSATION');
+    expect(prompt).toContain('nauseous after my shot');
+    expect(prompt).toContain('only if it genuinely fits');
+    expect(prompt).toContain('NEVER invent');
+  });
+
   it('morning with NOTHING logged yesterday → shame-free framing, no invented numbers', async () => {
     const { llm, calls } = makeStubLlm('Fresh start today — one solid protein meal early sets the tone.');
     const gen = new MessageGenerator(llm);

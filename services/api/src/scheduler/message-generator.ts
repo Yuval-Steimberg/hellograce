@@ -127,6 +127,10 @@ export interface GenerateOpts {
   /** Texts of the last few reminders sent to this user — the new message must
    *  not repeat any of them. Also used for a post-generation duplicate check. */
   recentMessages?: string[];
+  /** The user's own recent messages (most recent last) — lets the reminder
+   *  reference a topic they actually raised. Woven in only if clearly relevant;
+   *  never invented. */
+  conversationContext?: string[];
 }
 
 const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => string> = {
@@ -511,7 +515,16 @@ export class MessageGenerator {
       ? `\nRECENTLY SENT (do NOT repeat any of these — not the wording, not the structure, not a close variant):\n${recent.map((m) => `- "${m.slice(0, 160)}"`).join('\n')}\n`
       : '';
 
-    const base = `Write the next short proactive SMS from Grace to this user. Output ONLY the message text.\n${VARIATION_BLOCK}\n\n${RULES}\n${ANTI_REPEAT}\n`;
+    // Conversation relevance: surface what the user recently said so the
+    // reminder can follow up on a real topic instead of reading generic. The
+    // model MAY weave in ONE relevant thread; it must never invent or force it,
+    // and must still obey DATA ACCURACY (no fabricated numbers/symptoms).
+    const convo = (opts?.conversationContext ?? []).filter((m) => m && m.trim().length > 0).slice(-5);
+    const CONVO_CONTEXT = convo.length > 0
+      ? `\nRECENT CONVERSATION (the user's own recent messages — most recent last):\n${convo.map((m) => `- "${m.slice(0, 140)}"`).join('\n')}\nIf ONE of these is clearly worth a gentle follow-up (a symptom they mentioned, a goal, something they were working on), you MAY reference it naturally — but only if it genuinely fits, and NEVER invent details beyond what they said. Otherwise ignore it and send a normal reminder.\n`
+      : '';
+
+    const base = `Write the next short proactive SMS from Grace to this user. Output ONLY the message text.\n${VARIATION_BLOCK}\n\n${RULES}\n${ANTI_REPEAT}${CONVO_CONTEXT}\n`;
 
     // Wednesday morning: mood check overrides all goal-based routing
     if (type === 'morning' && opts?.isWednesday) {

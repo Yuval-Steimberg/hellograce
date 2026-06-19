@@ -3,6 +3,7 @@ import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import type { MessageSender } from '../twilio/sender.js';
+import type { MemoryService } from '../memory/memory.service.js';
 import type { MessageGenerator, GenerateOpts } from './message-generator.js';
 import type { PromptOptimizer } from './prompt-optimizer.js';
 import type { AnomalyDetectorService } from './anomaly-detector.service.js';
@@ -17,6 +18,10 @@ interface SchedulerDeps {
   generator: MessageGenerator;
   logger: Logger;
   redis: Redis;
+  /** Conversation history source — lets proactive reminders reference what the
+   *  user has actually been talking about (symptoms, goals, struggles). Optional
+   *  so tests can omit it; when absent, reminders fall back to food-only context. */
+  memory?: MemoryService;
   promptOptimizer?: PromptOptimizer;
   /** Phase 4: behavioral anomaly detector. Runs nightly at 4:30am UTC. */
   anomalyDetector?: AnomalyDetectorService;
@@ -537,6 +542,22 @@ export class Scheduler {
       const texts = recent.map((c) => c.message_sent).filter((m): m is string => !!m && m.length > 0);
       if (texts.length > 0) enriched.recentMessages = texts;
     } catch { /* best-effort */ }
+
+    // Conversation relevance — pull what the USER has recently said so the
+    // reminder can gently reference a topic they raised (a symptom, a goal, a
+    // struggle), not feel generic/canned. Best-effort; only the user's own
+    // turns, truncated, most-recent first. The generator is told to weave it in
+    // only if clearly relevant and never to invent.
+    if (this.deps.memory) {
+      try {
+        const turns = await this.deps.memory.getRecentTurns(user.phone, 10);
+        const userMsgs = turns
+          .filter((t) => t.role === 'user' && t.content && t.content.trim().length > 1)
+          .slice(-5)
+          .map((t) => t.content.trim().replace(/\s+/g, ' ').slice(0, 140));
+        if (userMsgs.length > 0) enriched.conversationContext = userMsgs;
+      } catch { /* best-effort */ }
+    }
 
     if (type === 'morning') {
       try {

@@ -137,17 +137,36 @@ export class GeminiProvider implements LLMProvider {
     req: LLMRequest,
   ): Promise<LLMResponse> {
     const modelName = req.model ?? this.cfg.model;
+    const fallback = this.cfg.fallbackModel;
+    const canFallback = !!fallback && fallback !== modelName;
     try {
-      return await this.tryModel(modelName, systemInstruction, contents, req, 3);
+      const resp = await this.tryModel(modelName, systemInstruction, contents, req, 3);
+      // Empty-completion fallback (2026-06-19). A model can return a 200 with
+      // NO text — most often a preview/reasoning model that spends its entire
+      // output budget on thinking. That never throws, so the error-path fallback
+      // below can't catch it, and the orchestrator degrades to its canned
+      // "I'm with you. What's on your mind?" fallback on EVERY turn. If the
+      // chosen primary comes back empty and a different known-good fallback
+      // exists, try it once before giving up — so a normal message always gets
+      // a real Gemini reply, not a template.
+      if ((!resp.text || resp.text.trim().length === 0) && canFallback && req.responseFormat !== 'json' && !req.responseSchema) {
+        this.logger.warn({ model: modelName, to: fallback }, 'gemini.empty_response.fallback');
+        try {
+          const fb = await this.tryModel(fallback!, systemInstruction, contents, req, 2);
+          if (fb.text && fb.text.trim().length > 0) return fb;
+        } catch (fbErr) {
+          this.logger.warn({ err: fbErr instanceof Error ? fbErr.message : String(fbErr) }, 'gemini.empty_response.fallback_failed');
+        }
+      }
+      return resp;
     } catch (err) {
-      const fallback = this.cfg.fallbackModel;
-      if (!isTransientGeminiError(err) || !fallback || fallback === modelName) {
+      if (!isTransientGeminiError(err) || !canFallback) {
         this.logger.error({ err }, 'gemini.generate.failed');
         throw err instanceof UpstreamError ? err : new UpstreamError('Gemini generation failed', err);
       }
       this.logger.warn({ from: modelName, to: fallback }, 'gemini.fallback_model.switch');
       try {
-        return await this.tryModel(fallback, systemInstruction, contents, req, 2);
+        return await this.tryModel(fallback!, systemInstruction, contents, req, 2);
       } catch (fallbackErr) {
         this.logger.error({ err: fallbackErr }, 'gemini.fallback_model.failed');
         throw fallbackErr instanceof UpstreamError ? fallbackErr : new UpstreamError('Gemini generation failed', fallbackErr);

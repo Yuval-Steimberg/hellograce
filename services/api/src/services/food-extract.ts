@@ -58,9 +58,10 @@ Hard rules:
 - NEVER invent items. Only foods literally named.
 - Advice/planning is NOT logging: if the user asks what they SHOULD eat, what would be good, what to have later, whether a food is ok/good, or says they are thinking/planning/might have a food, intent="none". A bare food answer after Grace asked "what kind do you have in mind?" is planning, not intake → intent="none".
 - Plain water / black coffee / plain tea / diet soda → intent="none".
-- Prefer CONFIRMED with a sensible standard-serving estimate over pending when the food is specific enough to estimate (a named dish, a cut, a common item). Only use pending_portion for a genuinely bare category/restaurant with no way to estimate one serving.
-- Standard portion references when confirming: egg≈6g/70cal, slice bread≈3g/80cal, oz cooked chicken≈7g/45cal, cup greek yogurt≈17g/130cal, scoop whey≈24g/120cal, cup milk≈8g/120cal, oz cheese≈7g/110cal, tbsp peanut butter≈4g/95cal, cup cooked rice≈4g/200cal, cup cooked pasta≈8g/220cal, banana≈1g/105cal, cup berries≈1g/70cal. Round protein to nearest 5g, calories to nearest 10.
-- Ask AT MOST ONE clarify_question total, only for a genuinely-vague item, and never re-ask a pending item that is already resolved by this message.
+- CONFIRMED requires a concrete portion: a number + unit/item ("3 eggs", "4 oz chicken", "half cup rice", "200g salmon", "two slices", "a cup of pasta"), OR an inherently single-serving item ("a banana", "an apple", "a slice of toast"). Then status="confirmed" with realistic protein_g/calories.
+- A food named WITHOUT an amount ("had pasta", "ate chicken", "had a burger", "some rice", "a bit of tofu", a bare restaurant/cuisine) → status="pending_portion", numbers null, with a SHORT friendly clarify_question that suggests an easy ballpark ("roughly how much chicken — a palm-sized piece or so?"). ALWAYS ask for the portion when the amount is missing — do NOT silently assume a serving size. This is the default for any bare food mention.
+- Standard portion references for CONFIRMED items: egg≈6g/70cal, slice bread≈3g/80cal, oz cooked chicken≈7g/45cal, cup greek yogurt≈17g/130cal, scoop whey≈24g/120cal, cup milk≈8g/120cal, oz cheese≈7g/110cal, tbsp peanut butter≈4g/95cal, cup cooked rice≈4g/200cal, cup cooked pasta≈8g/220cal, banana≈1g/105cal, cup berries≈1g/70cal. Round protein to nearest 5g, calories to nearest 10.
+- Each vague food is ONE pending item with its own clarify_question; the app combines multiple into a single friendly question. Never re-ask a pending item already resolved by this message.
 
 Output ONLY the JSON object.${pendingHint}`;
 }

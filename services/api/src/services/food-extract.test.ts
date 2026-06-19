@@ -76,4 +76,10 @@ describe('buildFoodExtractPrompt', () => {
     expect(p).not.toContain('PENDING ITEMS FROM EARLIER');
     expect(p).toContain('Advice/planning is NOT logging');
   });
+
+  it('instructs ALWAYS asking for a missing portion (no silent assumption)', () => {
+    const p = buildFoodExtractPrompt([]);
+    expect(p).toContain('ALWAYS ask for the portion when the amount is missing');
+    expect(p).toContain('CONFIRMED requires a concrete portion');
+  });
 });

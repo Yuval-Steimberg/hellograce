@@ -386,7 +386,7 @@ import {
   clearActiveMeal,
 } from './meal-recommendation-store.js';
 import { extractFood } from './food-extract.js';
-import { getPendingFood, addPendingFood, resolvePendingFood } from './food-pending-store.js';
+import { getPendingFood, addPendingFood, resolvePendingFood, clearPendingFood } from './food-pending-store.js';
 import {
   detectReminderIntent,
   buildNextReminderReply,
@@ -2428,10 +2428,6 @@ CRITICAL RULES:
           await resolvePendingFood(this.deps.redis, params.userId, extraction.edit_ref).catch(() => {});
           logNote += `\n\n[The user asked to remove "${extraction.edit_ref}" from today's log — it's done. Confirm warmly and briefly.]`;
         } else if (extraction.intent === 'log' || extraction.intent === 'edit') {
-          // A portion answer resolves the pending item it refers to.
-          if (extraction.intent === 'edit' && extraction.edit_ref) {
-            await resolvePendingFood(this.deps.redis, params.userId, extraction.edit_ref).catch(() => {});
-          }
           const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
           const newPending = extraction.items.filter((i) => i.status === 'pending_portion');
           const loggedSummaries: string[] = [];
@@ -2449,6 +2445,18 @@ CRITICAL RULES:
               loggedSummaries.push(`${it.item}${p != null ? ` (~${p}g protein${c != null ? `, ${c} cal` : ''})` : ''}`);
             }
           }
+          // Clear resolved pending items. An "edit" IS the answer to a
+          // clarification, so clear ALL pending (the portion may be phrased
+          // differently than the pending item — "spaghetti" answering pending
+          // "pasta"). A plain "log" only resolves pending items a confirmed
+          // item clearly matches, so an unrelated pending stays.
+          if (extraction.intent === 'edit') {
+            await clearPendingFood(this.deps.redis, params.userId).catch(() => {});
+          } else {
+            for (const it of confirmed) {
+              await resolvePendingFood(this.deps.redis, params.userId, it.item).catch(() => {});
+            }
+          }
           if (newPending.length > 0) {
             await addPendingFood(
               this.deps.redis,
@@ -2460,9 +2468,12 @@ CRITICAL RULES:
           if (loggedSummaries.length > 0) {
             parts.push(`You just logged: ${loggedSummaries.join('; ')}.${dailyProtein != null ? ` Their running total today is about ${dailyProtein}g protein${dailyCal != null ? ` and ${dailyCal} calories` : ''}.` : ''} Acknowledge it warmly and naturally — never a template or a bare "Logged."`);
           }
-          const clarify = newPending.find((i) => i.clarify_question)?.clarify_question;
-          if (clarify) {
-            parts.push(`One item still needs a portion before it can count. Ask EXACTLY ONE short, friendly question — this one — and nothing else: "${clarify}". Never re-ask it on a later turn.`);
+          if (newPending.length > 0) {
+            // Combine ALL vague foods into ONE friendly portion question (like the
+            // competitor: "how much chicken, and how much pasta — maybe a cup?").
+            const foods = newPending.map((i) => i.item).join(' and ');
+            const hints = newPending.map((i) => i.clarify_question).filter((q): q is string => !!q);
+            parts.push(`Before you can log ${loggedSummaries.length > 0 ? 'the rest' : 'it'}, ${foods} still ${newPending.length === 1 ? 'needs' : 'need'} a rough portion. Ask ONE short, warm question covering ${newPending.length === 1 ? 'it' : 'them all together'}, and suggest an easy ballpark so it's effortless to answer (e.g. "a cup or so", "a palm-sized piece").${hints.length > 0 ? ` For reference, the gist is: ${hints.join(' / ')}.` : ''} Do NOT log ${foods} yet, ask only this one question, and never re-ask on a later turn.`);
           }
           if (parts.length > 0) logNote += `\n\n[FOOD — ${parts.join(' ')}]`;
         } else if (params.intent === 'food_log') {

@@ -1531,6 +1531,9 @@ export class AIOrchestrator {
       intentType: classification.type,
       systemContext: baseSystem,
       toolResultsText,
+      // TRUST_GEMINI: downgrade cosmetic tone bans to log-only so Gemini's
+      // wording ships instead of regenerating into a canned fallback.
+      ...(this.deps.guards?.trustGemini === true ? { trustGemini: true } : {}),
     };
     const contentViolations: ContentViolation[] = checkContent(validated.text, contentCheckOpts);
 

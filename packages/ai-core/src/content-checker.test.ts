@@ -119,6 +119,26 @@ describe('checkBannedPhrases', () => {
     expect(checkBannedPhrases("What's on your mind?").length).toBeGreaterThan(0);
   });
 
+  // TRUST_GEMINI: cosmetic tone bans ship as log-only (Gemini's wording stands);
+  // safety / capability bans still regenerate.
+  it('downgrades a cosmetic ban to log-only under trustGemini', () => {
+    const v = checkBannedPhrases("It's completely understandable.", 'emotional', true);
+    expect(v.length).toBeGreaterThan(0);
+    expect(v[0]?.severity).toBe('log');
+  });
+
+  it('keeps a cosmetic ban at regen severity when trustGemini is off', () => {
+    const v = checkBannedPhrases("It's completely understandable.", 'emotional', false);
+    expect(v.length).toBeGreaterThan(0);
+    expect(v[0]?.severity).toBeUndefined(); // undefined => treated as regen
+  });
+
+  it('does NOT downgrade a capability/memory-exposure ban under trustGemini', () => {
+    const v = checkBannedPhrases("My memory doesn't carry over between messages.", 'general', true);
+    expect(v.length).toBeGreaterThan(0);
+    expect(v[0]?.severity).toBeUndefined(); // stays regen even in trust mode
+  });
+
   it('flags "you\'ve got this"', () => {
     const v = checkBannedPhrases("You've got this!");
     expect(v.length).toBeGreaterThan(0);

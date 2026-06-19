@@ -44,6 +44,11 @@ export interface ContentCheckOpts {
   /** Classified message intent. Used to skip the two-question check for
    *  appointment_prep (where a list of questions IS the deliverable). */
   intentType?: string;
+  /** TRUST_GEMINI mode. When true, cosmetic tone/style banned phrases are
+   *  downgraded to log-only (ship Gemini's wording instead of regenerating
+   *  into a canned fallback). Safety / dose / capability / factual bans are
+   *  unaffected. Mirrors the competitor's "ship the model's words" approach. */
+  trustGemini?: boolean;
   /** System context block (today's protein/calorie totals, user profile,
    *  weight, etc.) — used by checkStaleContextEcho to whitelist numbers
    *  that are legitimately part of the current turn's context. */
@@ -81,7 +86,7 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   if (opts.responseMode === 'image_body') {
     violations.push(...checkBodyPhotoLeak(text));
   }
-  violations.push(...checkBannedPhrases(text, opts.intentType));
+  violations.push(...checkBannedPhrases(text, opts.intentType, opts.trustGemini));
   violations.push(...checkLinkPlaceholder(text));
   violations.push(...checkPrivacyLeak(text));
   if (opts.userMessage) {
@@ -788,7 +793,12 @@ function isNegated(lowerText: string, matchStart: number): boolean {
 const ACUTE_ESCALATION_CONTEXT_RE =
   /\b(911|999|112|low blood sugar|quick sugar|fast(?:-| )acting sugar|glucose tab|juice or (?:regular )?soda|emergency|emergency room|\bER\b|urgent care|can'?t breathe|chest pain|passing out|pass out|fainting|faint|unconscious|slurred speech|injected too much|too much insulin|overdose|severe|won'?t stop|can'?t keep (?:anything|liquids?|food) down)\b/i;
 
-const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boolean; conversationalOk?: boolean }> = [
+// style: a pure tone/wording ban (sycophancy, validation cliché, filler) with
+// NO safety or capability implication. Under TRUST_GEMINI these are downgraded
+// to log-only — we ship Gemini's wording (like the competitor) instead of
+// regenerating into a canned fallback. Medical / dose / capability / privacy /
+// factual bans are NOT tagged style and always regenerate, even in trust mode.
+const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boolean; conversationalOk?: boolean; style?: boolean }> = [
   // Diagnostic overconfidence — symptoms are CLUES, not conclusions. Grace must
   // never volunteer a specific diagnosis from symptoms alone; she hedges ("one
   // possibility is…") and gathers info. Production failure 2026-06-16 (screenshot):
@@ -1271,11 +1281,24 @@ const CONVERSATIONAL_INTENTS = new Set([
   'greeting', 'general', 'emotional', 'social_situation', 'small_talk', 'chat',
 ]);
 
-export function checkBannedPhrases(text: string, intentType?: string): ContentViolation[] {
+/** A pure tone/wording ban, identified by stable keywords in its reason string.
+ *  These keywords appear ONLY in cosmetic bans (sycophancy, validation clichés,
+ *  filler, corporate/wellness jargon, deflection) — never in the medical, dose,
+ *  capability, memory-exposure, or factual bans. Under TRUST_GEMINI these are
+ *  downgraded to log-only so Gemini's own wording ships (the competitor ships
+ *  the model's words directly); the safety/capability bans still regenerate. */
+const STYLE_REASON_RE =
+  /\b(cliche|cliché|filler|sycophantic|cheerleader|depersonalizing|validation|patronizing|jargon|greeting-card|corporate|forced conversation|deflection|motivational|preachy|warning-?label|warning label|pharmaceutical warning|empty validation|generic (?:deflection|meal compliment|chatbot)|vague)\b/i;
+
+export function checkBannedPhrases(
+  text: string,
+  intentType?: string,
+  trustGemini?: boolean,
+): ContentViolation[] {
   const hits: ContentViolation[] = [];
   const acute = ACUTE_ESCALATION_CONTEXT_RE.test(text);
   const conversational = !!intentType && CONVERSATIONAL_INTENTS.has(intentType);
-  for (const { pattern, reason, acuteExempt, conversationalOk } of BANNED_PHRASES) {
+  for (const { pattern, reason, acuteExempt, conversationalOk, style } of BANNED_PHRASES) {
     // Urgent-escalation phrasing is legitimate in a genuinely acute response —
     // don't soften "call your doctor right away" when it's paired with 911 /
     // low blood sugar / fainting / a dosing error.
@@ -1285,10 +1308,15 @@ export function checkBannedPhrases(text: string, intentType?: string): ContentVi
     if (conversationalOk && conversational) continue;
     const m = pattern.exec(text);
     if (m) {
+      // TRUST_GEMINI: cosmetic bans become log-only (ship Gemini's wording)
+      // instead of forcing a regen into a canned fallback. Medical / dose /
+      // capability / memory / factual bans are NOT cosmetic and keep regen.
+      const cosmetic = style === true || conversationalOk === true || STYLE_REASON_RE.test(reason);
       hits.push({
         code: 'banned_phrase',
         message: reason,
         match: m[0],
+        ...(trustGemini && cosmetic ? { severity: 'log' as const } : {}),
       });
     }
   }

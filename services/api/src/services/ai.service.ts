@@ -2756,7 +2756,13 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     const lastGraceMessage = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
 
     lat.mark('vague_food_check');
-    if (flags.toolsEnabled) {
+    // DIRECT REPLY MODE: do NOT run the deterministic vague-food clarification
+    // loop — it was asking repeatedly ("what kind?" → "sauce?" → "how much?")
+    // and frustrating users. In direct mode the food is logged immediately via
+    // log_food (which produces a reasonable estimate) and Gemini confirms warmly,
+    // matching the competitor. Gemini can still invite a portion correction in
+    // its own words, but it never loops.
+    if (flags.toolsEnabled && !this.directReplyMode) {
       // requireQuantity only when this is actually a food LOG — so the bare-food
       // "how much?" ask never fires on a food question / casual mention.
       const vague = detectVagueFood(input.text, lastGraceMessage, {
@@ -3152,7 +3158,10 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
           (turn) => turn.role === 'assistant' && turn.content.includes('?') && FOOD_CLARIFY_RE.test(turn.content),
         ).length;
         const alreadyReasked = priorClarifyCount >= 2;
-        if (reconVague.vague && !alreadyReasked) {
+        // DIRECT REPLY MODE never re-asks — it logs the best estimate and lets
+        // Gemini confirm (no clarification loop, per the production screenshot
+        // where "cup of spaghetti" still got asked for the amount again).
+        if (reconVague.vague && !alreadyReasked && !this.directReplyMode) {
           const negPrep = /^(no|nope|none|nothing|without)\b/i.test(input.text.trim())
             || /\b(no dressing|no sauce|plain|unseasoned)\b/i.test(input.text);
           const ack = negPrep ? `Got it, ${input.text.trim().toLowerCase()}. ` : 'Got it. ';

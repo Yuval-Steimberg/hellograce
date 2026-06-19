@@ -203,6 +203,25 @@ const EnvSchema = z.object({
    *  answer. Default ON; flip to false (env, no deploy) to restore the
    *  latency-first shortcuts instantly. */
   GEMINI_FIRST: z.coerce.boolean().default(true),
+
+  /** DIRECT REPLY MODE (2026-06-19 "work exactly like the competitor") — the
+   *  full Nudge generation model. When true, the user-facing reply is produced
+   *  by a SINGLE Gemini call on [system prompt + last N history turns + user
+   *  message], temperature 0.8, ~500 tokens — NO orchestrator, NO planner, NO
+   *  per-intent directive wrapping, NO guard/regen cascade. That cascade (terse
+   *  "reply in ONE sentence" directives, tiny per-intent token budgets, relevance
+   *  / behavioral / quality regens) is what made replies feel dry and robotic.
+   *
+   *  Still preserved (NOT part of the dry-cascade): the crisis SafetyGuard
+   *  (988/911, runs before this), the personalized system prompt (today's
+   *  protein/calorie totals, medication, week number — makes replies MORE
+   *  personal, not less), deterministic food/weight logging (so totals stay
+   *  accurate), and a single dose-safety BLOCK check on the final text (the one
+   *  genuinely dangerous class for a GLP-1 product). Everything else ships as
+   *  Gemini wrote it — exactly the competitor's "ship the model's words" model.
+   *
+   *  Default ON. Instant revert (no deploy): fly secrets set DIRECT_REPLY_MODE=false. */
+  DIRECT_REPLY_MODE: z.coerce.boolean().default(true),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

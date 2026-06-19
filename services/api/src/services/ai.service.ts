@@ -2,7 +2,7 @@ import type { Logger } from 'pino';
 import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
-import type { ChatTurn, DietaryRestriction, InboundMessage, OrchestratorOutput } from '@grace/shared';
+import type { ChatTurn, DietaryRestriction, InboundMessage, OrchestratorOutput, ToolResult, DbContentRule } from '@grace/shared';
 import {
   AIOrchestrator,
   PlannerAgent,
@@ -494,6 +494,12 @@ export interface AIServiceDeps {
      *  the deterministic paths; server.ts passes env.GEMINI_FIRST (default
      *  true) for production. */
     geminiFirst?: boolean;
+    /** DIRECT REPLY MODE (2026-06-19). When true, the reply is a single Gemini
+     *  call on [system + history + user] — no orchestrator/guard cascade. The
+     *  full competitor-style generation model. Defaults false here so unit
+     *  tests keep the orchestrator path; server.ts passes env.DIRECT_REPLY_MODE
+     *  (default true) for production. */
+    directReplyMode?: boolean;
   };
   /** Production issue capture — Layer 4 of defense-in-depth. Every regen
    *  fire and safe-fallback fire is captured (fire-and-forget) so we can
@@ -547,6 +553,12 @@ export class AIService {
    *  deterministic paths; production wires env.GEMINI_FIRST (default true). */
   private get geminiFirst(): boolean {
     return this.deps.guards?.geminiFirst ?? false;
+  }
+
+  /** DIRECT REPLY MODE — single Gemini call, no orchestrator. Default false
+   *  (unit tests keep the orchestrator); production wires env.DIRECT_REPLY_MODE. */
+  private get directReplyMode(): boolean {
+    return this.deps.guards?.directReplyMode ?? false;
   }
 
   updateSystemPrompt(prompt: string | undefined): void {
@@ -2308,6 +2320,119 @@ CRITICAL RULES:
     return candidate.trim();
   }
 
+  /**
+   * DIRECT REPLY (competitor-style generation) — a SINGLE Gemini call on
+   * [system prompt + recent history + user message]. No orchestrator, planner,
+   * per-intent directive wrapping, or guard/regen cascade — that cascade is what
+   * made replies feel dry and robotic. The system prompt still carries the
+   * user's personalization (today's totals, medication, week number), so replies
+   * are warm AND personal. Food/weight still persist deterministically (totals
+   * stay accurate); the reply text is whatever Gemini writes. Only a dose-safety
+   * BLOCK check gates the final text — the one genuinely dangerous class.
+   */
+  private async runDirectReply(params: {
+    systemPrompt: string;
+    history: ChatTurn[];
+    userText: string;
+    rawUserText: string;
+    intent: string;
+    userId: string;
+    tools: ToolRegistry;
+    toolsEnabled: boolean;
+    dbRules: DbContentRule[];
+    dietaryRestriction?: DietaryRestriction;
+    medicationType?: 'unknown' | 'weekly_injection' | 'daily_pill' | 'daily_injection';
+    foodDislikes: string[];
+    logger: Logger;
+  }): Promise<OrchestratorOutput> {
+    const t0 = Date.now();
+    const toolResults: ToolResult[] = [];
+    let logNote = '';
+
+    // 1) Deterministic logging side-effect — the reply stays pure Gemini, but
+    //    the food/weight is actually persisted so totals are correct. Reuses the
+    //    real tools (LLM/USDA macro estimate + DB write).
+    if (params.toolsEnabled && params.intent === 'food_log' && params.tools.has('log_food')) {
+      const r = await params.tools.execute({ name: 'log_food', args: { food: params.rawUserText } }).catch(() => null);
+      if (r && r.ok) {
+        toolResults.push(r);
+        const out = (r.output ?? {}) as Record<string, unknown>;
+        const protein = (out.daily_protein_g ?? out.protein_g) as number | undefined;
+        const cal = (out.daily_calories ?? out.calories) as number | undefined;
+        if (protein != null) {
+          logNote = `\n\n[The user just logged food and it's been recorded. Their running total today is now about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''}. Acknowledge it warmly and naturally — do NOT show a template or a bare "Logged."]`;
+        }
+      }
+    } else if (params.toolsEnabled && params.intent === 'weight_log') {
+      const wlf = await tryWeightLogFastResponse(params.rawUserText, {
+        pool: this.deps.pool,
+        logger: params.logger,
+        userId: params.userId,
+        intentType: 'weight_log',
+      }).catch(() => null);
+      if (wlf) {
+        toolResults.push({ name: 'log_weight', args: { weight_lbs: wlf.weightLbs }, ok: true, output: { weight_lbs: wlf.weightLbs, previous_lbs: wlf.previousLbs }, latencyMs: 0 });
+        logNote = `\n\n[The user just shared their weight (${wlf.weightLbs} lbs) and it's been recorded. Acknowledge warmly, no judgment, no template.]`;
+      }
+    }
+
+    // 2) The single Gemini call — system + full history + user message. This IS
+    //    the reply. temperature 0.8 / 500 tokens mirrors the competitor recipe.
+    const messages = [
+      { role: 'system' as const, content: params.systemPrompt + logNote },
+      ...params.history.map((t) => ({ role: t.role, content: t.content })),
+      { role: 'user' as const, content: params.userText },
+    ];
+    let text = '';
+    try {
+      const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500 });
+      text = (resp.text ?? '').trim();
+    } catch (err) {
+      params.logger.error({ err: err instanceof Error ? err.message : String(err) }, 'ai.direct.generate.error');
+    }
+
+    let usedSafeFallback = false;
+    if (!text) {
+      text = 'I’m right here with you. Tell me a little more and I’ll help however I can.';
+      usedSafeFallback = true;
+    }
+
+    // 3) Dose-safety BLOCK check ONLY — the genuinely dangerous class (advising
+    //    an extra/double dose, prescribing). Everything else ships as written.
+    try {
+      const violations = checkContent(text, {
+        ...(params.dbRules.length > 0 ? { dbRules: params.dbRules } : {}),
+        ...(params.dietaryRestriction ? { dietaryRestriction: params.dietaryRestriction } : {}),
+        ...(params.foodDislikes.length > 0 ? { foodDislikes: params.foodDislikes } : {}),
+        ...(params.medicationType && params.medicationType !== 'unknown' ? { medicationType: params.medicationType } : {}),
+        userMessage: params.rawUserText,
+        intentType: params.intent,
+        trustGemini: true,
+      });
+      const block = violations.filter((v) => v.severity === 'block');
+      if (block.length > 0) {
+        params.logger.warn({ userId: params.userId, block: block.map((b) => b.message) }, 'ai.direct.block_violation');
+        text = 'That’s one to run by your prescriber — they know your dose and history and can give you the safe answer. Want help thinking through what to ask them?';
+        usedSafeFallback = true;
+      }
+    } catch { /* never block the reply on a checker error */ }
+
+    params.logger.info(
+      { userId: params.userId, intent: params.intent, latencyMs: Date.now() - t0, replyLen: text.length, logged: toolResults.length > 0 },
+      'ai.direct.reply',
+    );
+
+    return {
+      text,
+      confidence: 'high',
+      intent: params.intent,
+      toolResults,
+      usedRetrieval: false,
+      latencyMs: Date.now() - t0,
+      usedSafeFallback,
+    };
+  }
+
   // Full message processing flow: (1) parallel I/O (user profile, history, media
   // analysis, tool settings), (2) RAG retrieval + planner + user memory in parallel,
   // (3) detect dietary restrictions + side effects, (4) build personalised system
@@ -3470,23 +3595,51 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     }
 
     lat.mark('orchestrator');
-    const result = await orchestrator.run({
-      userId: input.userId,
-      text: finalText,
-      history: effectiveHistory,
-      retrieved,
-      toolsEnabled: flags.toolsEnabled,
-      systemPrompt: systemPromptWithStrategy,
-      ...(dietaryRestriction ? { dietaryRestriction } : {}),
-      ...(user?.first_name ? { userFirstName: user.first_name } : {}),
-      ...(cleanFoodDislikes.length > 0 ? { foodDislikes: cleanFoodDislikes } : {}),
-      medicationType,
-      responseMode,
-      isFirstMessage: isNew,
-      ...(dbRules.length > 0 ? { dbRules } : {}),
-      prePlannedDecision,
-      ...(userMemories.length > 0 ? { userMemories } : {}),
-    });
+    let result: OrchestratorOutput;
+    if (this.directReplyMode) {
+      // DIRECT REPLY (competitor-style): one Gemini call on [system + history +
+      // user], no orchestrator/guard cascade. Use the warm, non-terse user text
+      // (skip the FRESH-START "respond in ONE sentence" HARD-RULE wrapper, which
+      // is what made replies dry); keep the helpful first-message / image notes.
+      const directUserText = isNew
+        ? `[FIRST MESSAGE — greet the user warmly] ${augmentedText}`
+        : priorImageContext
+          ? `[IMAGE FOLLOW-UP — the user is asking about a photo you ALREADY analyzed. Your previous analysis: "${priorImageContext}". Reference what you saw; never deny image capability.] ${augmentedText}`
+          : augmentedText;
+      result = await this.runDirectReply({
+        systemPrompt: systemPromptWithStrategy,
+        history: effectiveHistory,
+        userText: directUserText,
+        rawUserText: input.text,
+        intent: intentClass.type,
+        userId: input.userId,
+        tools,
+        toolsEnabled: flags.toolsEnabled,
+        dbRules,
+        ...(dietaryRestriction ? { dietaryRestriction } : {}),
+        medicationType,
+        foodDislikes: cleanFoodDislikes,
+        logger,
+      });
+    } else {
+      result = await orchestrator.run({
+        userId: input.userId,
+        text: finalText,
+        history: effectiveHistory,
+        retrieved,
+        toolsEnabled: flags.toolsEnabled,
+        systemPrompt: systemPromptWithStrategy,
+        ...(dietaryRestriction ? { dietaryRestriction } : {}),
+        ...(user?.first_name ? { userFirstName: user.first_name } : {}),
+        ...(cleanFoodDislikes.length > 0 ? { foodDislikes: cleanFoodDislikes } : {}),
+        medicationType,
+        responseMode,
+        isFirstMessage: isNew,
+        ...(dbRules.length > 0 ? { dbRules } : {}),
+        prePlannedDecision,
+        ...(userMemories.length > 0 ? { userMemories } : {}),
+      });
+    }
 
     // ── Duplicate-response blocking (2026-06-04 production failure) ─────
     // User got the exact same "It's great/smart you're thinking about your

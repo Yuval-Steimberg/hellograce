@@ -2385,7 +2385,11 @@ CRITICAL RULES:
     ];
     let text = '';
     try {
-      const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500 });
+      // disableThinking: gemini-2.5-flash spends "thinking" tokens FROM the
+      // maxOutputTokens budget — with thinking on, a 500-token cap can come back
+      // truncated or empty. The competitor's base model doesn't reason, so we
+      // match it: thinking off → the full budget goes to the reply, fast.
+      const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500, disableThinking: true });
       text = (resp.text ?? '').trim();
     } catch (err) {
       params.logger.error({ err: err instanceof Error ? err.message : String(err) }, 'ai.direct.generate.error');

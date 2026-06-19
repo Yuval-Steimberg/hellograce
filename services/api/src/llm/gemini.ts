@@ -6,6 +6,10 @@ import { UpstreamError } from '../errors.js';
 import type { Cache } from '../cache/cache.js';
 
 const LLM_TTL_SEC = 30 * 60; // 30 min
+/** Hard ceiling for a single generate() (retries + fallback included). A
+ *  stalled Google-API connection would otherwise hang the turn indefinitely and
+ *  hold the per-user in-flight lock, making the next message look "stuck". */
+const GEN_TIMEOUT_MS = 18_000;
 
 // ── Quota circuit breaker (2026-06-11) ────────────────────────────────────────
 // Production failure: a free-tier key returned 429 with `limit: 0` on every
@@ -80,12 +84,39 @@ export class GeminiProvider implements LLMProvider {
         return cached;
       }
 
-      const response = await this.callGemini(systemInstruction, contents, req);
+      const response = await this.callGeminiBounded(systemInstruction, contents, req);
       await this.cache.set('llm', cacheKey, response, LLM_TTL_SEC).catch(() => null);
       return response;
     }
 
-    return this.callGemini(systemInstruction, contents, req);
+    return this.callGeminiBounded(systemInstruction, contents, req);
+  }
+
+  /**
+   * Hard wall-clock timeout around the whole generate (retries + fallback).
+   * Without this, a stalled HTTP connection to the Google API hangs forever —
+   * which holds the per-user in-flight lock at the webhook and makes the NEXT
+   * message look "stuck". A timeout converts a hang into a normal UpstreamError
+   * that callers catch and answer with a deterministic fallback, releasing the
+   * lock. Mirrors the competitor's AbortController timeout.
+   */
+  private async callGeminiBounded(
+    systemInstruction: string | undefined,
+    contents: Content[],
+    req: LLMRequest,
+  ): Promise<LLMResponse> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new UpstreamError(`Gemini generation timed out after ${GEN_TIMEOUT_MS}ms`)),
+        GEN_TIMEOUT_MS,
+      );
+    });
+    try {
+      return await Promise.race([this.callGemini(systemInstruction, contents, req), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private async getOrCreateCachedContent(systemInstruction: string, modelName: string): Promise<string | null> {

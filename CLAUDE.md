@@ -6,6 +6,40 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Nudge-style food handling: structured extraction + pending resolution (2026-06-19)
+
+Branch `claude/grace-competitive-eval-g52g71`. Production: "Just had pasta and
+chicken" → endless clarification loop ("what kind?" → "sauce?" → "how much?")
+that re-asked even after the user gave a quantity. Ported the competitor's food
+model (read from its source) into Grace's direct mode.
+
+- **`services/api/src/services/food-extract.ts`** — one structured LLM pass
+  (`extractFood`, temp 0.1, JSON, thinking off) → `{ intent: log|edit|delete|
+  query|none, items:[{item,protein_g,calories,status:confirmed|pending_portion,
+  clarify_question}], edit_ref }`. Prompt ported from Nudge (confirmed vs
+  pending, standard-portion table, planning/advice → `none`, water/coffee →
+  `none`). `parseFoodExtraction` validates/clamps (protein 0-300, cal 0-5000,
+  pending → null numbers) and tolerates code-fence wrapping.
+- **`services/api/src/services/food-pending-store.ts`** — Redis pending-item
+  state (`food:pending:{phone}`, 6h TTL). The NO-LOOP key: a pending item ("had
+  pizza") is stored + fed back into the next extraction, so a portion answer
+  ("2 slices") comes back as `intent:edit, edit_ref:pizza` → resolved as
+  confirmed, pending cleared — never re-asked. `addPendingFood` (dedupe),
+  `resolvePendingFood` (fuzzy match on the food word).
+- **`runDirectReply` wiring** — weight stays the fast path; food (when
+  `food_log`/`food_question` OR a pending item exists) runs `extractFood`:
+  confirmed items → `log_food` (its USDA estimator), new pending → stored +
+  ONE clarify question injected into the reply note, `delete` → `remove_food`,
+  `query`/`none` → no log. Never-drop fallback: a confident `food_log` classify
+  with an `none`/`query` extraction still logs the raw text. The reply is still
+  the single Gemini call — it phrases the confirmation + the at-most-one clarify
+  from the injected note.
+
+Tests: `food-extract.test.ts` (10) + `food-pending-store.test.ts` (6). 1167 api
+green, typecheck clean. Only active under `DIRECT_REPLY_MODE`.
+
+---
+
 ### DIRECT REPLY MODE — single Gemini call, no orchestrator (2026-06-19)
 
 Branch `claude/grace-competitive-eval-g52g71` → merged to `main`. The competitor

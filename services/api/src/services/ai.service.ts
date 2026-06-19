@@ -385,6 +385,8 @@ import {
   getActiveMeal,
   clearActiveMeal,
 } from './meal-recommendation-store.js';
+import { extractFood } from './food-extract.js';
+import { getPendingFood, addPendingFood, resolvePendingFood } from './food-pending-store.js';
 import {
   detectReminderIntent,
   buildNextReminderReply,
@@ -2389,21 +2391,13 @@ CRITICAL RULES:
     const toolResults: ToolResult[] = [];
     let logNote = '';
 
-    // 1) Deterministic logging side-effect — the reply stays pure Gemini, but
-    //    the food/weight is actually persisted so totals are correct. Reuses the
-    //    real tools (LLM/USDA macro estimate + DB write).
-    if (params.toolsEnabled && params.intent === 'food_log' && params.tools.has('log_food')) {
-      const r = await params.tools.execute({ name: 'log_food', args: { food: params.rawUserText } }).catch(() => null);
-      if (r && r.ok) {
-        toolResults.push(r);
-        const out = (r.output ?? {}) as Record<string, unknown>;
-        const protein = (out.daily_protein_g ?? out.protein_g) as number | undefined;
-        const cal = (out.daily_calories ?? out.calories) as number | undefined;
-        if (protein != null) {
-          logNote = `\n\n[The user just logged food and it's been recorded. Their running total today is now about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''}. Acknowledge it warmly and naturally — do NOT show a template or a bare "Logged."]`;
-        }
-      }
-    } else if (params.toolsEnabled && params.intent === 'weight_log') {
+    // 1) Logging side-effect — the reply stays pure Gemini, but food/weight is
+    //    persisted so totals are correct. Food uses the Nudge-style structured
+    //    extraction: it splits items, logs confirmed ones, asks AT MOST ONE
+    //    clarify for a genuinely-vague item (tracked as pending so a portion
+    //    answer RESOLVES it instead of looping), and treats planning/queries as
+    //    no-log.
+    if (params.toolsEnabled && params.intent === 'weight_log') {
       const wlf = await tryWeightLogFastResponse(params.rawUserText, {
         pool: this.deps.pool,
         logger: params.logger,
@@ -2413,6 +2407,79 @@ CRITICAL RULES:
       if (wlf) {
         toolResults.push({ name: 'log_weight', args: { weight_lbs: wlf.weightLbs }, ok: true, output: { weight_lbs: wlf.weightLbs, previous_lbs: wlf.previousLbs }, latencyMs: 0 });
         logNote = `\n\n[The user just shared their weight (${wlf.weightLbs} lbs) and it's been recorded. Acknowledge warmly, no judgment, no template.]`;
+      }
+    } else if (params.toolsEnabled && params.tools.has('log_food')) {
+      // Food path: run the structured extraction when the message is food-shaped
+      // OR there's a pending item awaiting a portion (a continuation like
+      // "cup of spaghetti" classifies as general but must resolve the pending).
+      const pending = await getPendingFood(this.deps.redis, params.userId).catch(() => []);
+      const foodish = params.intent === 'food_log' || params.intent === 'food_question' || pending.length > 0;
+      if (foodish) {
+        const extraction = await extractFood(
+          this.deps.llm,
+          params.logger,
+          params.rawUserText,
+          pending.map((p) => ({ item: p.item })),
+        );
+
+        if (extraction.intent === 'delete' && extraction.edit_ref && params.tools.has('remove_food')) {
+          const r = await params.tools.execute({ name: 'remove_food', args: { food: extraction.edit_ref } }).catch(() => null);
+          if (r?.ok) toolResults.push(r);
+          await resolvePendingFood(this.deps.redis, params.userId, extraction.edit_ref).catch(() => {});
+          logNote += `\n\n[The user asked to remove "${extraction.edit_ref}" from today's log — it's done. Confirm warmly and briefly.]`;
+        } else if (extraction.intent === 'log' || extraction.intent === 'edit') {
+          // A portion answer resolves the pending item it refers to.
+          if (extraction.intent === 'edit' && extraction.edit_ref) {
+            await resolvePendingFood(this.deps.redis, params.userId, extraction.edit_ref).catch(() => {});
+          }
+          const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
+          const newPending = extraction.items.filter((i) => i.status === 'pending_portion');
+          const loggedSummaries: string[] = [];
+          let dailyProtein: number | undefined;
+          let dailyCal: number | undefined;
+          for (const it of confirmed) {
+            const r = await params.tools.execute({ name: 'log_food', args: { food: it.item } }).catch(() => null);
+            if (r?.ok) {
+              toolResults.push(r);
+              const out = (r.output ?? {}) as Record<string, unknown>;
+              const p = out.protein_g as number | undefined;
+              const c = out.calories as number | undefined;
+              dailyProtein = (out.daily_protein_g as number | undefined) ?? dailyProtein;
+              dailyCal = (out.daily_calories as number | undefined) ?? dailyCal;
+              loggedSummaries.push(`${it.item}${p != null ? ` (~${p}g protein${c != null ? `, ${c} cal` : ''})` : ''}`);
+            }
+          }
+          if (newPending.length > 0) {
+            await addPendingFood(
+              this.deps.redis,
+              params.userId,
+              newPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question })),
+            ).catch(() => {});
+          }
+          const parts: string[] = [];
+          if (loggedSummaries.length > 0) {
+            parts.push(`You just logged: ${loggedSummaries.join('; ')}.${dailyProtein != null ? ` Their running total today is about ${dailyProtein}g protein${dailyCal != null ? ` and ${dailyCal} calories` : ''}.` : ''} Acknowledge it warmly and naturally — never a template or a bare "Logged."`);
+          }
+          const clarify = newPending.find((i) => i.clarify_question)?.clarify_question;
+          if (clarify) {
+            parts.push(`One item still needs a portion before it can count. Ask EXACTLY ONE short, friendly question — this one — and nothing else: "${clarify}". Never re-ask it on a later turn.`);
+          }
+          if (parts.length > 0) logNote += `\n\n[FOOD — ${parts.join(' ')}]`;
+        } else if (params.intent === 'food_log') {
+          // Never-drop: the classifier is confident this is a food log but the
+          // extractor returned none/query (an LLM hiccup or a misjudgment).
+          // Persist the raw text via log_food's own deterministic estimator.
+          const r = await params.tools.execute({ name: 'log_food', args: { food: params.rawUserText } }).catch(() => null);
+          if (r?.ok) {
+            toolResults.push(r);
+            const out = (r.output ?? {}) as Record<string, unknown>;
+            const protein = (out.daily_protein_g ?? out.protein_g) as number | undefined;
+            const cal = (out.daily_calories ?? out.calories) as number | undefined;
+            logNote += `\n\n[The user just logged food and it's been recorded.${protein != null ? ` Their running total today is about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''}.` : ''} Acknowledge it warmly and naturally — no template, no bare "Logged."]`;
+          }
+        }
+        // intent 'query' / 'none' (non-food-log) → no logging; the reply answers
+        // normally (the system prompt already carries today's totals).
       }
     }
 

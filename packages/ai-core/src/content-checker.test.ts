@@ -101,6 +101,24 @@ describe('checkBannedPhrases', () => {
     expect(v[0]?.code).toBe('banned_phrase');
   });
 
+  // Regression (2026-06-19): a bare "good morning" got the canned fallback
+  // because Gemini's greeting reply ("...what's on your mind?") was banned →
+  // regen → fallback, and the fallback itself contained the banned phrase. The
+  // generic-deflection phrases are legitimate for greeting / small-talk intents.
+  it('does NOT flag "what\'s on your mind" for a greeting intent', () => {
+    expect(checkBannedPhrases("Morning. What's on your mind?", 'greeting')).toHaveLength(0);
+    expect(checkBannedPhrases("I'm here for you. What's on your mind?", 'general')).toHaveLength(0);
+  });
+
+  it('STILL flags "what\'s on your mind" for a substantive (knowledge) intent', () => {
+    const v = checkBannedPhrases("What's on your mind?", 'knowledge');
+    expect(v.length).toBeGreaterThan(0);
+  });
+
+  it('STILL flags generic deflection when no intent is supplied', () => {
+    expect(checkBannedPhrases("What's on your mind?").length).toBeGreaterThan(0);
+  });
+
   it('flags "you\'ve got this"', () => {
     const v = checkBannedPhrases("You've got this!");
     expect(v.length).toBeGreaterThan(0);

@@ -62,6 +62,7 @@ export function mapLLMIntent(intent: string, flags: { food_rec?: boolean; food_l
     case 'settings': return 'scheduling';
     case 'reminder': return 'scheduling';
     case 'knowledge': return 'knowledge';
+    case 'greeting': return 'greeting';
     default:
       // Fall back to the boolean flags when the label is 'other'/unknown.
       if (flags.food_rec) return 'food_question';

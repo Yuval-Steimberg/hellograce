@@ -81,7 +81,7 @@ export function checkContent(text: string, opts: ContentCheckOpts): ContentViola
   if (opts.responseMode === 'image_body') {
     violations.push(...checkBodyPhotoLeak(text));
   }
-  violations.push(...checkBannedPhrases(text));
+  violations.push(...checkBannedPhrases(text, opts.intentType));
   violations.push(...checkLinkPlaceholder(text));
   violations.push(...checkPrivacyLeak(text));
   if (opts.userMessage) {
@@ -788,7 +788,7 @@ function isNegated(lowerText: string, matchStart: number): boolean {
 const ACUTE_ESCALATION_CONTEXT_RE =
   /\b(911|999|112|low blood sugar|quick sugar|fast(?:-| )acting sugar|glucose tab|juice or (?:regular )?soda|emergency|emergency room|\bER\b|urgent care|can'?t breathe|chest pain|passing out|pass out|fainting|faint|unconscious|slurred speech|injected too much|too much insulin|overdose|severe|won'?t stop|can'?t keep (?:anything|liquids?|food) down)\b/i;
 
-const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boolean }> = [
+const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boolean; conversationalOk?: boolean }> = [
   // Diagnostic overconfidence — symptoms are CLUES, not conclusions. Grace must
   // never volunteer a specific diagnosis from symptoms alone; she hedges ("one
   // possibility is…") and gathers info. Production failure 2026-06-16 (screenshot):
@@ -1100,13 +1100,19 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boo
   // Pattern matches two question marks anywhere in body.
   { pattern: /\?[^?\n]{0,200}\?/, reason: 'Two question marks in one response — H6 allows a single question only, at the end' },
 
-  // Generic fallback / deflections — generalized
-  { pattern: /\bi'?m here (and )?(ready )?to (help|listen|support)\b/i, reason: 'Generic "I\'m here to help" deflection — answer the actual message' },
-  { pattern: /\bwhat'?s on your mind\b/i, reason: '"What\'s on your mind" — generic deflection, address the latest message' },
-  { pattern: /\bhow can i (help|assist|support) you (today|now)?\b/i, reason: 'Corporate-support tone, banned' },
-  { pattern: /\bfeel free to (ask|share|tell)\b/i, reason: '"Feel free to..." — corporate filler, banned' },
-  { pattern: /\bis there anything (else|in particular)\b/i, reason: '"Is there anything else" — forced conversation continuation' },
-  { pattern: /\blet me know if you (have|need|want)\b/i, reason: '"Let me know if you need..." — passive deflection' },
+  // Generic fallback / deflections — generalized.
+  // conversationalOk: these phrases are legitimate when the user just said
+  // "hi"/"good morning"/small talk — there's nothing substantive to answer, so
+  // "what's on your mind?" / "I'm here for you" is a warm, correct reply. They
+  // are ONLY a deflection when the user asked something real (knowledge, food,
+  // symptom, etc.). Without this scope, a bare greeting reply gets regen'd into
+  // the canned fallback — which itself contains "what's on your mind" and loops.
+  { pattern: /\bi'?m here (and )?(ready )?to (help|listen|support)\b/i, reason: 'Generic "I\'m here to help" deflection — answer the actual message', conversationalOk: true },
+  { pattern: /\bwhat'?s on your mind\b/i, reason: '"What\'s on your mind" — generic deflection, address the latest message', conversationalOk: true },
+  { pattern: /\bhow can i (help|assist|support) you (today|now)?\b/i, reason: 'Corporate-support tone, banned', conversationalOk: true },
+  { pattern: /\bfeel free to (ask|share|tell)\b/i, reason: '"Feel free to..." — corporate filler, banned', conversationalOk: true },
+  { pattern: /\bis there anything (else|in particular)\b/i, reason: '"Is there anything else" — forced conversation continuation', conversationalOk: true },
+  { pattern: /\blet me know if you (have|need|want)\b/i, reason: '"Let me know if you need..." — passive deflection', conversationalOk: true },
 
   // Clarification questions on food logs — Grace must log first, never ask
   { pattern: /\bcould you (tell me|let me know) if that was\b/i, reason: 'Clarification question on food log — log first with best estimate, no questions' },
@@ -1258,14 +1264,25 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boo
   { pattern: /\bjust tell me the new date\b.{0,30}(treatment|start)/i, reason: 'no natural-language date-edit tool; direct user to graceglp.com/settings' },
 ];
 
-export function checkBannedPhrases(text: string): ContentViolation[] {
+/** Conversational intents where open-ended "what's on your mind?" / "I'm here
+ *  for you" phrasing is a legitimate reply (the user said hi / small talk, not
+ *  a substantive question). The generic-deflection bans are skipped for these. */
+const CONVERSATIONAL_INTENTS = new Set([
+  'greeting', 'general', 'emotional', 'social_situation', 'small_talk', 'chat',
+]);
+
+export function checkBannedPhrases(text: string, intentType?: string): ContentViolation[] {
   const hits: ContentViolation[] = [];
   const acute = ACUTE_ESCALATION_CONTEXT_RE.test(text);
-  for (const { pattern, reason, acuteExempt } of BANNED_PHRASES) {
+  const conversational = !!intentType && CONVERSATIONAL_INTENTS.has(intentType);
+  for (const { pattern, reason, acuteExempt, conversationalOk } of BANNED_PHRASES) {
     // Urgent-escalation phrasing is legitimate in a genuinely acute response —
     // don't soften "call your doctor right away" when it's paired with 911 /
     // low blood sugar / fainting / a dosing error.
     if (acuteExempt && acute) continue;
+    // Generic open-ended phrasing is fine for greetings / small talk — only a
+    // deflection when there was something substantive to answer.
+    if (conversationalOk && conversational) continue;
     const m = pattern.exec(text);
     if (m) {
       hits.push({

@@ -220,8 +220,14 @@ const EnvSchema = z.object({
    *  genuinely dangerous class for a GLP-1 product). Everything else ships as
    *  Gemini wrote it — exactly the competitor's "ship the model's words" model.
    *
-   *  Default ON. Instant revert (no deploy): fly secrets set DIRECT_REPLY_MODE=false. */
-  DIRECT_REPLY_MODE: z.coerce.boolean().default(true),
+   *  Default OFF (2026-06-20): the direct path lacked the orchestrator's guards
+   *  (format-enforcer, quality/length caps, relevance check) and regressed in
+   *  production — verbose nutrition essays, conversation-summary dumps, and
+   *  occasional stalls. The orchestrator (yesterday's stable system) is the
+   *  default again; it generates every reply via Gemini under TRUST_GEMINI +
+   *  GEMINI_FIRST but keeps the guards that prevent those regressions. Flip to
+   *  true (fly secrets set DIRECT_REPLY_MODE=true) only to A/B the lean path. */
+  DIRECT_REPLY_MODE: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

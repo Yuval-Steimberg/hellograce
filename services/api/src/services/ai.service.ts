@@ -87,6 +87,17 @@ const SYMPTOM_FALLBACK_RE =
 // deterministic floor when exceeded. Kept under the 30s webhook in-flight TTL.
 const DIRECT_REPLY_TIMEOUT_MS = 13_000;
 
+// A complete reply that happens to END on a food name or word (no trailing
+// "." — e.g. "Greek yogurt, a veggie omelet, or cottage cheese") is otherwise
+// flagged "truncated" by the webhook's sender gate and dropped. Guarantee a
+// terminal mark so a complete food answer is never mistaken for a cut-off one.
+function ensureTerminalPunctuation(text: string): string {
+  const t = text.trim();
+  if (!t) return t;
+  if (/[.!?…"')\]}]$/.test(t) || /\p{Extended_Pictographic}$/u.test(t)) return t;
+  return `${t}.`;
+}
+
 function pickKnowledgeTopicFallback(userMessage: string): string | null {
   // Comprehensive, typo-tolerant GLP-1 knowledge bank (shared with the
   // orchestrator fallback). Covers ~40 topics and normalizes misspellings, so
@@ -2000,7 +2011,7 @@ export class AIService {
       const fitViolations = checkContent(fit, { userMessage: userText, ...dietCheckOpts, ...(dbRules.length > 0 ? { dbRules } : {}) });
       if (!fitViolations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) {
         this.deps.logger.info({ userId: input.userId }, 'ai.food_fit.served');
-        return fit;
+        return ensureTerminalPunctuation(fit);
       }
     }
 
@@ -2021,7 +2032,7 @@ export class AIService {
       const violations = checkContent(formatted.text, { userMessage: userText, ...dietCheckOpts, ...(dbRules.length > 0 ? { dbRules } : {}) });
       // No severity = code-level banned phrase = regen (see runDirectPath note).
       if (violations.some((v) => !v.severity || v.severity === 'block' || v.severity === 'regen')) return null;
-      return formatted.text;
+      return ensureTerminalPunctuation(formatted.text);
     }
 
     // 2026-06-06: Build a DIETARY CONTEXT block from the user's profile so
@@ -2141,7 +2152,7 @@ CRITICAL CONTEXT RULES — apply on every turn:
         return null;
       }
     }
-    return formatted.text;
+    return ensureTerminalPunctuation(formatted.text);
   }
 
   private async runDirectPath(intent: string, userText: string, userId?: string, reconHint?: string): Promise<string | null> {

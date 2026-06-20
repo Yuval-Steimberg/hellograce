@@ -11,6 +11,7 @@ import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { normalizeImessage, isInboundMessageAlert, type RawImessagePayload } from '../imessage/normalize.js';
 import { isValidImessageSignature } from '../imessage/signature.js';
 import { UnauthorizedError, UpstreamError } from '../errors.js';
+import { trimToLastCompleteSentence } from '@grace/ai-core';
 import { classifyScope } from '../safety/scope-guard.js';
 import { classifyMessage as classifySafety, classifySymptomCategory } from '../safety/guard.js';
 import { recordSymptom, shouldEscalate, clearStack } from '../safety/symptom-stack.js';
@@ -621,20 +622,36 @@ export async function processInboundMessage(
           // empty/truncated reply (e.g. "I'm hungry" → a cut-off food list)
           // produced NO response every time, with no error to trip the catch
           // fallback (reported 2026-06-20). Send a safe fallback instead.
+          // Salvage first: if only a trailing fragment was cut, recover the last
+          // COMPLETE sentence and ship that — the user gets the real answer
+          // instead of a generic fallback. Only when nothing usable remains do
+          // we fall back. Either way: never silent.
+          let salvaged = '';
           if (looksTruncated) {
-            log.warn({ responseText: trimmedResp.slice(-80), userId: normalized.userId }, 'webhook.truncated_response_blocked');
-          } else {
-            log.warn({ responseText: responseText.slice(0, 80), userId: normalized.userId }, 'webhook.empty_response_blocked');
+            const { trimmed } = trimToLastCompleteSentence(trimmedResp);
+            if (trimmed.length >= 12 && /[A-Za-z0-9]{3,}/.test(trimmed)) salvaged = trimmed;
           }
-          const dropFallbacks = [
-            "I'm here — what are you in the mood for?",
-            "I'm listening — tell me a bit more and I'll help.",
-            "Right here with you — what would help most right now?",
-          ];
-          const dropFallback = dropFallbacks[Math.floor(Math.random() * dropFallbacks.length)]!;
-          await deps.sender
-            .send({ to: normalized.userId, channel: normalized.channel, body: dropFallback })
-            .catch(() => null);
+          if (salvaged) {
+            log.warn({ userId: normalized.userId }, 'webhook.truncated_response_salvaged');
+            await deps.sender
+              .send({ to: normalized.userId, channel: normalized.channel, body: salvaged })
+              .catch(() => null);
+          } else {
+            if (looksTruncated) {
+              log.warn({ responseText: trimmedResp.slice(-80), userId: normalized.userId }, 'webhook.truncated_response_blocked');
+            } else {
+              log.warn({ responseText: responseText.slice(0, 80), userId: normalized.userId }, 'webhook.empty_response_blocked');
+            }
+            const dropFallbacks = [
+              "I'm here — what are you in the mood for?",
+              "I'm listening — tell me a bit more and I'll help.",
+              "Right here with you — what would help most right now?",
+            ];
+            const dropFallback = dropFallbacks[Math.floor(Math.random() * dropFallbacks.length)]!;
+            await deps.sender
+              .send({ to: normalized.userId, channel: normalized.channel, body: dropFallback })
+              .catch(() => null);
+          }
         }
       } catch (err) {
         log.error({ err }, 'webhook.ai.failed');

@@ -108,6 +108,12 @@ Deno.serve(async (req) => {
       payment_behavior: "default_incomplete",
       payment_settings: {
         save_default_payment_method: "on_subscription",
+        // Apple Pay & Google Pay are wallets funded by a card — they are NOT
+        // separate payment_method_types and ride on "card". Enabling them is a
+        // dashboard + domain-verification concern (see docs/APPLE_GOOGLE_PAY.md),
+        // and the frontend surfaces them via the Express Checkout Element. The
+        // resulting payment method is a normal card, so subscription activation
+        // and the Stripe webhook behave identically for card and wallet payers.
         payment_method_types: ["card", "link"],
       },
       metadata: { grace_user_id: user.id },

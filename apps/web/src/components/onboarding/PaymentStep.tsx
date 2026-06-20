@@ -2,9 +2,30 @@ import { useState } from "react";
 import { Shield, Check, Star, CreditCard, Lock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { loadStripe } from "@stripe/stripe-js";
-import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
+import { loadStripe, type StripeError } from "@stripe/stripe-js";
+import {
+  Elements,
+  PaymentElement,
+  ExpressCheckoutElement,
+  useStripe,
+  useElements,
+} from "@stripe/react-stripe-js";
 import QuizButton from "./QuizButton";
+
+// Single redirect target after a successful setup — shared by the card form and
+// the Apple Pay / Google Pay (Express Checkout) path so the existing
+// `?checkout=success` handling in Onboarding.tsx works identically for both.
+const returnUrl = () => `${window.location.origin}/onboarding?checkout=success`;
+
+// Turn a raw Stripe error into a user-friendly message. Card/validation errors
+// carry a safe, specific message from Stripe; anything else gets a generic line
+// so we never surface internal details and never leave the user guessing.
+function friendlyStripeError(error: StripeError): string {
+  if (error.type === "card_error" || error.type === "validation_error") {
+    return error.message || "Your card couldn't be processed. Please check the details and try again.";
+  }
+  return "Payment couldn't be completed. Please try again or use a different method.";
+}
 
 // Publishable key is set via Vercel env var VITE_STRIPE_PUBLISHABLE_KEY so we
 // can swap test → live without a code change. Falls back to the test key for
@@ -125,11 +146,13 @@ const TrialTimeline = ({
 const PaymentForm = ({
   firstName,
   userId,
+  clientSecret,
   onSuccess,
   onBack,
 }: {
   firstName: string;
   userId: string;
+  clientSecret: string;
   onSuccess: () => void;
   onBack: () => void;
 }) => {
@@ -137,7 +160,12 @@ const PaymentForm = ({
   const elements = useElements();
   const [processing, setProcessing] = useState(false);
   const [email, setEmail] = useState("");
+  // Whether a device/browser wallet (Apple Pay / Google Pay) is actually
+  // available. Drives the "or pay with card" divider — when no wallet is
+  // available we render the card form alone, with nothing extra on screen.
+  const [walletAvailable, setWalletAvailable] = useState(false);
 
+  // Card path — unchanged behavior, just routed through friendlyStripeError.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!stripe || !elements) return;
@@ -154,7 +182,7 @@ const PaymentForm = ({
       const { error } = await stripe.confirmSetup({
         elements,
         confirmParams: {
-          return_url: `${window.location.origin}/onboarding?checkout=success`,
+          return_url: returnUrl(),
           payment_method_data: {
             billing_details: {
               email: email.trim().toLowerCase() || undefined,
@@ -164,12 +192,40 @@ const PaymentForm = ({
       });
 
       if (error) {
-        toast.error(error.message || "Payment setup failed. Please try again.");
+        console.warn("[payment] card confirmSetup failed", error.type, error.code);
+        toast.error(friendlyStripeError(error));
       }
       // If no error, the user is redirected to return_url
-    } catch {
+    } catch (err) {
+      console.error("[payment] card confirm exception", err);
       toast.error("Something went wrong. Please try again.");
     } finally {
+      setProcessing(false);
+    }
+  };
+
+  // Apple Pay / Google Pay path. The Express Checkout Element renders the wallet
+  // button(s) the device actually supports and fires onConfirm once the user
+  // authorizes in the native sheet. We confirm the SAME SetupIntent the card
+  // form uses, so the trial subscription + webhook activation are identical.
+  const handleWalletConfirm = async () => {
+    if (!stripe || !elements) return;
+    setProcessing(true);
+    try {
+      const { error } = await stripe.confirmSetup({
+        elements,
+        clientSecret,
+        confirmParams: { return_url: returnUrl() },
+      });
+      if (error) {
+        console.warn("[payment] wallet confirmSetup failed", error.type, error.code);
+        toast.error(friendlyStripeError(error));
+        setProcessing(false);
+      }
+      // On success Stripe redirects to return_url; nothing more to do here.
+    } catch (err) {
+      console.error("[payment] wallet confirm exception", err);
+      toast.error("That wallet payment didn't go through. You can pay by card below.");
       setProcessing(false);
     }
   };
@@ -200,6 +256,58 @@ const PaymentForm = ({
           <span className="text-foreground font-serif text-lg">$12/mo</span>
         </div>
       </div>
+
+      {/* Apple Pay / Google Pay — only rendered for devices/browsers that
+          support a wallet AND when wallets are enabled + domain-verified in
+          Stripe. The button set is auto-detected; nothing shows otherwise, so
+          unsupported users fall straight through to the card form below. */}
+      <div className="w-full">
+        <ExpressCheckoutElement
+          options={{
+            // Apple Pay & Google Pay only. Link/PayPal/Amazon Pay are left to the
+            // card Payment Element (Link is a tab there) to avoid duplicate UI.
+            paymentMethods: {
+              applePay: "auto",
+              googlePay: "auto",
+              link: "never",
+              paypal: "never",
+              amazonPay: "never",
+            },
+            emailRequired: true,
+            buttonHeight: 52,
+          }}
+          onReady={(event) => {
+            const methods = event.availablePaymentMethods;
+            if (methods) {
+              setWalletAvailable(true);
+              console.info("[payment] express checkout ready", methods);
+            } else {
+              setWalletAvailable(false);
+              console.info("[payment] no wallet available — card only");
+            }
+          }}
+          onConfirm={handleWalletConfirm}
+          onCancel={() => {
+            console.info("[payment] wallet sheet cancelled");
+            setProcessing(false);
+          }}
+          onLoadError={(event) => {
+            // Wallet failed to load — degrade silently to the card form.
+            setWalletAvailable(false);
+            console.warn("[payment] express checkout load error", event?.error?.message);
+          }}
+        />
+      </div>
+
+      {walletAvailable && (
+        <div className="flex items-center gap-3 w-full my-5">
+          <span className="h-px flex-1 bg-border/60" />
+          <span className="text-muted-foreground/70 text-xs uppercase tracking-widest">
+            or pay with card
+          </span>
+          <span className="h-px flex-1 bg-border/60" />
+        </div>
+      )}
 
       {/* Email input */}
       <form onSubmit={handleSubmit} className="w-full">
@@ -360,6 +468,7 @@ const PaymentStep = ({ userId, firstName, onNext }: PaymentStepProps) => {
       <PaymentForm
         firstName={firstName}
         userId={userId}
+        clientSecret={clientSecret}
         onSuccess={onNext}
         onBack={() => setPhase("timeline")}
       />

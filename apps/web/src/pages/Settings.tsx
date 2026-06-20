@@ -59,11 +59,20 @@ interface FormState {
   glp1_start_date: string;
 }
 
+// At-rest field encryption was dropped (the key is gone), but legacy rows may
+// still hold an unrecoverable ciphertext blob (`enc:<iv>:<data>:<tag>`) for
+// first_name / medication. Never load one into the form: it would display as
+// garbage AND fail the save (blobs exceed the 120-char limit). Treat it as
+// empty so the user can simply re-enter the value (saved as plaintext now).
+const ENC_BLOB_RE = /^enc:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i;
+const cleanField = (v: string | null | undefined): string =>
+  v && ENC_BLOB_RE.test(v.trim()) ? "" : (v ?? "");
+
 function profileToForm(p: SettingsProfile): FormState {
   const num = (n: number | null) => (n == null ? "" : String(n));
   return {
-    first_name: p.first_name ?? "",
-    medication: p.medication ?? "",
+    first_name: cleanField(p.first_name),
+    medication: cleanField(p.medication),
     medication_frequency: p.medication_frequency ?? "weekly",
     dose_mg: num(p.dose_mg),
     injection_day: p.injection_day ?? "",
@@ -255,7 +264,7 @@ const Settings = () => {
                 </div>
 
                 <Section title="About you">
-                  <Field label="First name"><input className={inputClass} value={form.first_name} onChange={(e) => setField("first_name", e.target.value)} /></Field>
+                  <Field label="First name"><input className={inputClass} value={form.first_name} onChange={(e) => setField("first_name", e.target.value)} placeholder="Your name" /></Field>
                   <Field label="Age"><input type="number" className={inputClass} value={form.age} onChange={(e) => setField("age", e.target.value)} /></Field>
                   <SelectField label="Sex" value={form.sex} onChange={(v) => setField("sex", v)} options={[["", "—"], ["female", "Female"], ["male", "Male"], ["other", "Other"]]} />
                   <Field label="Height (cm)"><input type="number" className={inputClass} value={form.height_cm} onChange={(e) => setField("height_cm", e.target.value)} /></Field>

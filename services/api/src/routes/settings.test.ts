@@ -25,12 +25,13 @@ const baseUser = {
   checkin_count_per_day: 2, checkin_days_interval: 1, glp1_start_date: null, is_paid: true, is_pro: false, trial_start: null,
 } as unknown as Awaited<ReturnType<import('../user/user.service.js').UserService['getByPhone']>>;
 
-function makeApp(opts: { userExists?: boolean } = {}) {
+function makeApp(opts: { userExists?: boolean; user?: Record<string, unknown> } = {}) {
   const redis = makeRedis();
   const sender = { send: vi.fn().mockResolvedValue({ sid: 'SM1' }) };
   const update = vi.fn().mockResolvedValue(undefined);
+  const resolvedUser = opts.userExists === false ? null : (opts.user ?? baseUser);
   const users = {
-    getByPhone: vi.fn().mockResolvedValue(opts.userExists === false ? null : baseUser),
+    getByPhone: vi.fn().mockResolvedValue(resolvedUser),
     update,
   };
   const app: FastifyInstance = Fastify();
@@ -134,5 +135,59 @@ describe('GET/PUT /settings/me (session-gated)', () => {
       payload: { protein_goal_grams: 99999 }, // exceeds max
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  it('PUT returns a friendly, human error (field names) — not the raw Zod JSON', async () => {
+    const { app, redis } = makeApp();
+    const { token } = await getToken(app, redis);
+    const res = await app.inject({
+      method: 'PUT', url: '/settings/me',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { protein_goal_grams: 99999 },
+    });
+    expect(res.statusCode).toBe(400);
+    const msg = res.json().message as string;
+    expect(msg).toContain('protein_goal_grams');
+    expect(msg).not.toContain('"code"'); // no raw Zod issue JSON
+    expect(msg).not.toContain('too_big');
+  });
+});
+
+const ENC_BLOB =
+  'enc:ef3fbb2f8ff0583ef4fb5c5ad0:b5b71824ac1e52d715a19:abcdef0123456789abcdef0123456789';
+
+describe('legacy ciphertext blobs (encryption dropped)', () => {
+  it('verify-code / GET never return an enc: blob — first_name & medication come back null', async () => {
+    const { app, redis } = makeApp({ user: { ...baseUser, first_name: ENC_BLOB, medication: ENC_BLOB } });
+    const { res } = await getToken(app, redis);
+    expect(res.json().profile.first_name).toBeNull();
+    expect(res.json().profile.medication).toBeNull();
+  });
+
+  it('PUT silently drops an echoed enc: blob and still saves the rest (no 400)', async () => {
+    const { app, redis, update } = makeApp({ user: { ...baseUser, first_name: ENC_BLOB, medication: ENC_BLOB } });
+    const { token } = await getToken(app, redis);
+    const res = await app.inject({
+      method: 'PUT', url: '/settings/me',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { first_name: ENC_BLOB, medication: ENC_BLOB, protein_goal_grams: 140 },
+    });
+    expect(res.statusCode).toBe(200);
+    const arg = update.mock.calls[0][1] as Record<string, unknown>;
+    expect(arg.protein_goal_grams).toBe(140);
+    expect(arg).not.toHaveProperty('first_name'); // ciphertext dropped, not saved
+    expect(arg).not.toHaveProperty('medication');
+  });
+
+  it('PUT still saves a real re-entered name', async () => {
+    const { app, redis, update } = makeApp({ user: { ...baseUser, first_name: ENC_BLOB } });
+    const { token } = await getToken(app, redis);
+    const res = await app.inject({
+      method: 'PUT', url: '/settings/me',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { first_name: 'Yuval' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(update).toHaveBeenCalledWith('+15551112222', expect.objectContaining({ first_name: 'Yuval' }));
   });
 });

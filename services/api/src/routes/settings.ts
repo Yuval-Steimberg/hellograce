@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { MessageSender } from '../twilio/sender.js';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import { ValidationError, UnauthorizedError } from '../errors.js';
+import { isEncryptedBlob } from '../crypto/field-encrypt.js';
 
 /**
  * Self-serve user settings API (phone + verification code).
@@ -71,12 +72,20 @@ const SettingsUpdateSchema = z.object({
   glp1_start_date: z.string().nullable().optional(),
 });
 
+/**
+ * Belt-and-suspenders: the read path (UserService.decryptUser) already nullifies
+ * an unrecoverable ciphertext blob, but guard here too so the Settings page can
+ * NEVER receive `enc:<iv>:<data>:<tag>` — it would render as garbage and a
+ * round-trip save would fail the 120-char limit.
+ */
+const plainOrNull = (v: string | null): string | null => (isEncryptedBlob(v) ? null : v);
+
 /** The profile shape returned to the Settings page — editable fields only. */
 function toProfile(u: GraceUser): Record<string, unknown> {
   return {
     phone: u.phone,
-    first_name: u.first_name,
-    medication: u.medication,
+    first_name: plainOrNull(u.first_name),
+    medication: plainOrNull(u.medication),
     medication_frequency: u.medication_frequency,
     dose_mg: u.dose_mg,
     injection_day: u.injection_day,
@@ -199,8 +208,26 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
   // 4. Update editable fields.
   app.put('/settings/me', async (req) => {
     const phone = await requireVerifiedPhone(req);
-    const parsed = SettingsUpdateSchema.safeParse(req.body);
-    if (!parsed.success) throw new ValidationError(parsed.error.message);
+    // A stale client (loaded before the ciphertext fix) can echo an `enc:` blob
+    // back for first_name/medication. Drop those so the save can't hard-fail on
+    // the 120-char limit — they're treated as "no change", not an error.
+    const body = { ...((req.body as Record<string, unknown> | null) ?? {}) };
+    for (const k of ['first_name', 'medication'] as const) {
+      if (typeof body[k] === 'string' && isEncryptedBlob(body[k] as string)) {
+        delete body[k];
+        req.log.info({ phone, field: k }, 'settings.dropped_ciphertext_on_save');
+      }
+    }
+    const parsed = SettingsUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      // Surface a human message (field names), not the raw Zod JSON blob.
+      const fields = [...new Set(parsed.error.issues.map((i) => i.path.join('.')).filter(Boolean))];
+      throw new ValidationError(
+        fields.length
+          ? `Some changes couldn't be saved — please check: ${fields.join(', ')}.`
+          : 'Some of those changes were invalid. Please review and try again.',
+      );
+    }
     const fields = parsed.data as Record<string, unknown>;
     const keys = Object.keys(fields);
     if (keys.length === 0) {

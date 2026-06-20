@@ -21,6 +21,7 @@ import {
   FOOD_HISTORY_QUESTION,
   PROTEIN_TARGET_QUESTION,
   FOOD_REMOVAL_QUESTION,
+  type MessageContext,
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
 import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
@@ -2522,7 +2523,7 @@ CRITICAL RULES:
     //    conversation or stitching past topics (reminders + appointment + every
     //    past meal) into one mega-reply — reply ONLY to the latest message.
     const focusDirective =
-      `\n\n[REPLY FOCUS — non-negotiable: Respond ONLY to the user's most recent message below. Keep it to 1–3 short sentences. Do NOT summarize the conversation, do NOT list past meals/reminders/appointments, do NOT combine multiple topics, and do NOT prepare for their doctor's appointment unless THIS message asks for it. If it's a food log, reply ONLY about that food.]`;
+      `\n\n[REPLY FOCUS — non-negotiable: Respond ONLY to the user's most recent message below. Keep it to 1–2 short sentences, plain prose — NO headers, NO "Label:" lists, NO bullet points. Do NOT summarize the conversation or list past meals/reminders/appointments. Do NOT give unsolicited nutrition facts or education (no "high in protein", "supports muscle growth", "low in calories", etc.) unless they explicitly ask. If it's a food log, ONLY warmly confirm what was logged OR ask the one portion question — nothing else.]`;
     // For a food/log turn, send NO chat history — the logNote already carries
     // exactly what to say (confirm the log, or ask the portion), and the pending
     // store carries portion-resolution context. Without this, the model reacts
@@ -2542,10 +2543,24 @@ CRITICAL RULES:
       // maxOutputTokens budget — with thinking on, a 500-token cap can come back
       // truncated or empty. The competitor's base model doesn't reason, so we
       // match it: thinking off → the full budget goes to the reply, fast.
-      const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500, disableThinking: true });
+      const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: isLogTurn ? 200 : 500, disableThinking: true });
       text = (resp.text ?? '').trim();
     } catch (err) {
       params.logger.error({ err: err instanceof Error ? err.message : String(err) }, 'ai.direct.generate.error');
+    }
+
+    // Format-enforce (as the orchestrator path does): strip headers / bullets /
+    // "Label:" lists / em-dashes and cap length per intent. Without this the
+    // direct reply ships the model's raw essay ("High in Protein: …") — the
+    // WhatsApp-unfriendly verbose format the user flagged.
+    if (text) {
+      try {
+        const formatted = enforceFormat(text, {
+          messageContext: params.intent as MessageContext,
+          userMessage: params.rawUserText,
+        });
+        if (formatted.text && formatted.text.trim().length > 0) text = formatted.text.trim();
+      } catch { /* never block the reply on a formatter error */ }
     }
 
     let usedSafeFallback = false;

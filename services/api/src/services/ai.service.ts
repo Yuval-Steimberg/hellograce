@@ -2390,6 +2390,9 @@ CRITICAL RULES:
     const t0 = Date.now();
     const toolResults: ToolResult[] = [];
     let logNote = '';
+    // Deterministic food reply used as the guaranteed floor if the reply LLM
+    // call returns empty/fails — a food message must NEVER go silent.
+    let foodFallback = '';
 
     // 1) Logging side-effect — the reply stays pure Gemini, but food/weight is
     //    persisted so totals are correct. Food uses the Nudge-style structured
@@ -2485,6 +2488,13 @@ CRITICAL RULES:
             const foods = newPending.map((i) => i.item).join(' and ');
             const hints = newPending.map((i) => i.clarify_question).filter((q): q is string => !!q);
             parts.push(`Before you can log ${loggedSummaries.length > 0 ? 'the rest' : 'it'}, ${foods} still ${newPending.length === 1 ? 'needs' : 'need'} a rough portion. Ask ONE short, warm question covering ${newPending.length === 1 ? 'it' : 'them all together'}, and suggest an easy ballpark so it's effortless to answer (e.g. "a cup or so", "a palm-sized piece").${hints.length > 0 ? ` For reference, the gist is: ${hints.join(' / ')}.` : ''} Do NOT log ${foods} yet, ask only this one question, and never re-ask on a later turn.`);
+            // Deterministic floor if the reply LLM call fails.
+            foodFallback = loggedSummaries.length > 0
+              ? `Got that down. For the ${foods}, roughly how much of each — a cup, a handful, a couple? A ballpark and I'll log it accurately.`
+              : `Got it, ${foods}. Roughly how much of each — a cup, a handful, a couple? A rough amount lets me log it accurately.`;
+          } else if (loggedSummaries.length > 0) {
+            const total = dailyProtein != null ? ` You're at about ${dailyProtein}g protein${dailyCal != null ? ` and ${dailyCal} calories` : ''} today.` : '';
+            foodFallback = `Logged ${confirmed.map((i) => i.item).join(', ')}.${total}`;
           }
           if (parts.length > 0) logNote += `\n\n[FOOD — ${parts.join(' ')}]`;
         } else if (params.intent === 'food_log') {
@@ -2498,6 +2508,7 @@ CRITICAL RULES:
             const protein = (out.daily_protein_g ?? out.protein_g) as number | undefined;
             const cal = (out.daily_calories ?? out.calories) as number | undefined;
             logNote += `\n\n[The user just logged food and it's been recorded.${protein != null ? ` Their running total today is about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''}.` : ''} Acknowledge it warmly and naturally — no template, no bare "Logged."]`;
+            foodFallback = `Logged that for you.${protein != null ? ` You're at about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''} today.` : ''}`;
           }
         }
         // intent 'query' / 'none' (non-food-log) → no logging; the reply answers
@@ -2526,7 +2537,9 @@ CRITICAL RULES:
 
     let usedSafeFallback = false;
     if (!text) {
-      text = 'I’m right here with you. Tell me a little more and I’ll help however I can.';
+      // Food messages get a food-aware deterministic floor (confirm the log or
+      // ask the portion) so they NEVER go silent, even if Gemini is down.
+      text = foodFallback || 'I’m right here with you. Tell me a little more and I’ll help however I can.';
       usedSafeFallback = true;
     }
 

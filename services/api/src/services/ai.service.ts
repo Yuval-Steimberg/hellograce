@@ -31,6 +31,7 @@ import {
   formatAggregatedInline,
   renderProteinBreakdown,
   renderCalorieBreakdown,
+  renderDailyFoodSummary,
 } from './food-summary.js';
 import { buildFoodFitAnswer } from '../tools/food-fit.js';
 import { createHash } from 'crypto';
@@ -2394,6 +2395,10 @@ CRITICAL RULES:
     // Deterministic food reply used as the guaranteed floor if the reply LLM
     // call returns empty/fails — a food message must NEVER go silent.
     let foodFallback = '';
+    // A food-diary QUERY ("what have I eaten today") is answered deterministically
+    // with the short aggregated summary (correct totals, one line) — not a
+    // free-form LLM ramble. Set here, returned before the reply call.
+    let earlyReply = '';
 
     // 1) Logging side-effect — the reply stays pure Gemini, but food/weight is
     //    persisted so totals are correct. Food uses the Nudge-style structured
@@ -2511,10 +2516,28 @@ CRITICAL RULES:
             logNote += `\n\n[The user just logged food and it's been recorded.${protein != null ? ` Their running total today is about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''}.` : ''} Acknowledge it warmly and naturally — no template, no bare "Logged."]`;
             foodFallback = `Logged that for you.${protein != null ? ` You're at about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''} today.` : ''}`;
           }
+        } else if (extraction.intent === 'query') {
+          // "What have I eaten today" / "how much protein" → short, correct,
+          // deterministic summary (the way it worked before direct mode).
+          try {
+            const summary = await this.deps.users.getTodaysFoodSummary(params.userId);
+            earlyReply = renderDailyFoodSummary(summary.items, Math.round(summary.protein_g), Math.round(summary.calories));
+          } catch { /* fall through to the normal reply */ }
         }
-        // intent 'query' / 'none' (non-food-log) → no logging; the reply answers
-        // normally (the system prompt already carries today's totals).
+        // intent 'none' (non-food-log) → no logging; the reply answers normally.
       }
+    }
+
+    // Deterministic food-query answer — short + correct, skip the LLM ramble.
+    if (earlyReply) {
+      return {
+        text: earlyReply,
+        confidence: 'high',
+        intent: 'food_query',
+        toolResults,
+        usedRetrieval: false,
+        latencyMs: Date.now() - t0,
+      };
     }
 
     // 2) The single Gemini call — system + history + user message. This IS the

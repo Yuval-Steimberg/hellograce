@@ -303,6 +303,23 @@ export function makeLogFoodTool(deps: {
       const food = typeof args['food'] === 'string' ? (args['food'] as string).trim() : '';
       if (!food) return { ok: false, error: 'no_food_provided' };
 
+      // PRE-CALCULATED path: when the caller already has macros (e.g. the
+      // Nudge-style food extraction produced protein_g/calories for a confirmed
+      // item), skip the LLM/USDA estimator entirely and persist those numbers.
+      // Cuts a whole LLM round-trip off every confirmed food log.
+      const preP = args['protein_g'];
+      const preC = args['calories'];
+      const hasPreCalc =
+        typeof preP === 'number' && Number.isFinite(preP) && preP >= 0 && preP <= 300 &&
+        typeof preC === 'number' && Number.isFinite(preC) && preC >= 0 && preC <= 5000;
+      let parsed: FoodEstimate | null = hasPreCalc
+        ? { food, protein_g: Math.round(preP as number), calories: Math.round(preC as number), confidence: 'high' }
+        : null;
+      let estimateSource: 'usda' | 'llm' | 'fast_lookup' | 'deterministic' | 'precalc' = hasPreCalc ? 'precalc' : 'llm';
+      if (hasPreCalc) {
+        deps.logger.info({ userId: deps.userId, food, protein_g: parsed!.protein_g }, 'tool.log_food.precalc');
+      }
+
       // Pre-process: strip greeting prefixes ("Hey, ...", "Good morning,
       // ...") that confuse the LLM estimator. Production failure 2026-06-01:
       // user sent "Hey\nFor breakfast i ate 2 eggs..." → 0g logged because
@@ -316,9 +333,8 @@ export function makeLogFoodTool(deps: {
       // FAST PATH (NEW 2026-06-01): exact-match the food string against
       // ~80 hand-curated USDA-anchored entries. Saves ~1-2s per log on
       // common foods. Falls through to LLM + USDA on miss.
-      let parsed: FoodEstimate | null = lookupCommonFoodMacros(foodForEstimate);
-      let estimateSource: 'usda' | 'llm' | 'fast_lookup' | 'deterministic' = 'llm';
-      if (parsed) {
+      if (!parsed) parsed = lookupCommonFoodMacros(foodForEstimate);
+      if (parsed && estimateSource !== 'precalc') {
         estimateSource = 'fast_lookup';
         deps.logger.info(
           { userId: deps.userId, food: parsed.food, originalText: food.slice(0, 80) },

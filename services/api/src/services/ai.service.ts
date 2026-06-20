@@ -385,7 +385,7 @@ import {
   getActiveMeal,
   clearActiveMeal,
 } from './meal-recommendation-store.js';
-import { extractFood } from './food-extract.js';
+import { extractFood, EMPTY_EXTRACTION, type FoodExtraction } from './food-extract.js';
 import { getPendingFood, addPendingFood, resolvePendingFood, clearPendingFood } from './food-pending-store.js';
 import {
   detectReminderIntent,
@@ -2415,12 +2415,16 @@ CRITICAL RULES:
       const pending = await getPendingFood(this.deps.redis, params.userId).catch(() => []);
       const foodish = params.intent === 'food_log' || params.intent === 'food_question' || pending.length > 0;
       if (foodish) {
-        const extraction = await extractFood(
-          this.deps.llm,
-          params.logger,
-          params.rawUserText,
-          pending.map((p) => ({ item: p.item })),
-        );
+        // Cap the extraction so a slow call can't stack onto the reply call and
+        // make the turn look "stuck". On timeout we fall through to the
+        // never-drop logger (a confident food_log still persists).
+        const extraction = await Promise.race<FoodExtraction>([
+          extractFood(this.deps.llm, params.logger, params.rawUserText, pending.map((p) => ({ item: p.item }))),
+          new Promise<FoodExtraction>((resolve) => setTimeout(() => {
+            params.logger.warn({ userId: params.userId }, 'food_extract.timeout');
+            resolve({ ...EMPTY_EXTRACTION });
+          }, 9000)),
+        ]);
 
         if (extraction.intent === 'delete' && extraction.edit_ref && params.tools.has('remove_food')) {
           const r = await params.tools.execute({ name: 'remove_food', args: { food: extraction.edit_ref } }).catch(() => null);
@@ -2434,7 +2438,14 @@ CRITICAL RULES:
           let dailyProtein: number | undefined;
           let dailyCal: number | undefined;
           for (const it of confirmed) {
-            const r = await params.tools.execute({ name: 'log_food', args: { food: it.item } }).catch(() => null);
+            // Pass the extraction's macros so log_food skips its own LLM
+            // estimate (one fewer round-trip → faster, no "stuck" stacking).
+            const logArgs: Record<string, unknown> = { food: it.item };
+            if (it.protein_g != null && it.calories != null) {
+              logArgs.protein_g = it.protein_g;
+              logArgs.calories = it.calories;
+            }
+            const r = await params.tools.execute({ name: 'log_food', args: logArgs }).catch(() => null);
             if (r?.ok) {
               toolResults.push(r);
               const out = (r.output ?? {}) as Record<string, unknown>;

@@ -2516,11 +2516,21 @@ CRITICAL RULES:
       }
     }
 
-    // 2) The single Gemini call — system + full history + user message. This IS
-    //    the reply. temperature 0.8 / 500 tokens mirrors the competitor recipe.
+    // 2) The single Gemini call — system + history + user message. This IS the
+    //    reply. temperature 0.8 / 500 tokens mirrors the competitor recipe.
+    //    FOCUS DIRECTIVE: a hard guard against the model summarizing the whole
+    //    conversation or stitching past topics (reminders + appointment + every
+    //    past meal) into one mega-reply — reply ONLY to the latest message.
+    const focusDirective =
+      `\n\n[REPLY FOCUS — non-negotiable: Respond ONLY to the user's most recent message below. Keep it to 1–3 short sentences. Do NOT summarize the conversation, do NOT list past meals/reminders/appointments, do NOT combine multiple topics, and do NOT prepare for their doctor's appointment unless THIS message asks for it. If it's a food log, reply ONLY about that food.]`;
+    // For a food/log turn, drop prior ASSISTANT turns so an earlier rambling /
+    // summary reply can't anchor this one — keep the user's turns for context
+    // (e.g. a portion follow-up still sees what they said).
+    const isLogTurn = logNote.length > 0;
+    const replyHistory = isLogTurn ? params.history.filter((t) => t.role === 'user').slice(-6) : params.history;
     const messages = [
-      { role: 'system' as const, content: params.systemPrompt + logNote },
-      ...params.history.map((t) => ({ role: t.role, content: t.content })),
+      { role: 'system' as const, content: params.systemPrompt + logNote + focusDirective },
+      ...replyHistory.map((t) => ({ role: t.role, content: t.content })),
       { role: 'user' as const, content: params.userText },
     ];
     let text = '';

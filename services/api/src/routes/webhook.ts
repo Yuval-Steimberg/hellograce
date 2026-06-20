@@ -614,16 +614,27 @@ export async function processInboundMessage(
             ? `${responseText}\n\n👍 👎 to rate · # to add a thought`
             : responseText;
           await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
-        } else if (looksTruncated) {
-          log.warn(
-            { responseText: trimmedResp.slice(-80), userId: normalized.userId },
-            'webhook.truncated_response_blocked',
-          );
-        } else if (responseText.length > 0) {
-          log.warn(
-            { responseText: responseText.slice(0, 80), userId: normalized.userId },
-            'webhook.empty_response_blocked',
-          );
+        } else {
+          // The reply was empty, junk, or truncated mid-sentence. We must NOT
+          // ship the bad text — but we must ALSO never go silent. Before this,
+          // these branches only logged and dropped, so a consistently
+          // empty/truncated reply (e.g. "I'm hungry" → a cut-off food list)
+          // produced NO response every time, with no error to trip the catch
+          // fallback (reported 2026-06-20). Send a safe fallback instead.
+          if (looksTruncated) {
+            log.warn({ responseText: trimmedResp.slice(-80), userId: normalized.userId }, 'webhook.truncated_response_blocked');
+          } else {
+            log.warn({ responseText: responseText.slice(0, 80), userId: normalized.userId }, 'webhook.empty_response_blocked');
+          }
+          const dropFallbacks = [
+            "I'm here — what are you in the mood for?",
+            "I'm listening — tell me a bit more and I'll help.",
+            "Right here with you — what would help most right now?",
+          ];
+          const dropFallback = dropFallbacks[Math.floor(Math.random() * dropFallbacks.length)]!;
+          await deps.sender
+            .send({ to: normalized.userId, channel: normalized.channel, body: dropFallback })
+            .catch(() => null);
         }
       } catch (err) {
         log.error({ err }, 'webhook.ai.failed');

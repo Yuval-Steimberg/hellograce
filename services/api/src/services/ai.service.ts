@@ -2531,12 +2531,25 @@ CRITICAL RULES:
     // of spaghetti", repeated "eggs and cottage cheese") and tries to "rephrase
     // for clarity" or summarize instead of handling the current message.
     const isLogTurn = logNote.length > 0;
-    const replyHistory = isLogTurn ? [] : params.history;
-    const messages = [
-      { role: 'system' as const, content: params.systemPrompt + logNote + focusDirective },
-      ...replyHistory.map((t) => ({ role: t.role, content: t.content })),
-      { role: 'user' as const, content: params.userText },
-    ];
+    let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    if (isLogTurn) {
+      // A log reply does NOT use the big personalized prompt — that prompt keeps
+      // steering the model into nutrition essays / lists. A tiny scoped prompt +
+      // the log note guarantees a short, warm, focused confirmation or the one
+      // portion question. Still Gemini-generated, so it's warm and varied.
+      const logSystem =
+        `You are Grace, a warm and concise GLP-1 text companion replying over WhatsApp. The user just messaged you and an action was taken — see the note.${logNote}\n\nReply in ONE short, warm sentence (two at the very most), like a quick text from a friend. HARD RULES: plain conversational text ONLY — no headers, no "Label:" lists, no bullet points, no nutrition facts or education (do NOT explain that a food is "high in protein" / "supports muscle" / "low in calories"), and no extra questions beyond the single one in the note. Just confirm warmly, or ask only that one portion question.`;
+      messages = [
+        { role: 'system', content: logSystem },
+        { role: 'user', content: params.userText },
+      ];
+    } else {
+      messages = [
+        { role: 'system', content: params.systemPrompt + focusDirective },
+        ...params.history.map((t) => ({ role: t.role, content: t.content })),
+        { role: 'user', content: params.userText },
+      ];
+    }
     let text = '';
     try {
       // disableThinking: gemini-2.5-flash spends "thinking" tokens FROM the

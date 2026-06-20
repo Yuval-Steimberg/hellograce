@@ -2523,11 +2523,14 @@ CRITICAL RULES:
     //    past meal) into one mega-reply — reply ONLY to the latest message.
     const focusDirective =
       `\n\n[REPLY FOCUS — non-negotiable: Respond ONLY to the user's most recent message below. Keep it to 1–3 short sentences. Do NOT summarize the conversation, do NOT list past meals/reminders/appointments, do NOT combine multiple topics, and do NOT prepare for their doctor's appointment unless THIS message asks for it. If it's a food log, reply ONLY about that food.]`;
-    // For a food/log turn, drop prior ASSISTANT turns so an earlier rambling /
-    // summary reply can't anchor this one — keep the user's turns for context
-    // (e.g. a portion follow-up still sees what they said).
+    // For a food/log turn, send NO chat history — the logNote already carries
+    // exactly what to say (confirm the log, or ask the portion), and the pending
+    // store carries portion-resolution context. Without this, the model reacts
+    // to the PILE of past food fragments in history ("pasta and chicken", "cup
+    // of spaghetti", repeated "eggs and cottage cheese") and tries to "rephrase
+    // for clarity" or summarize instead of handling the current message.
     const isLogTurn = logNote.length > 0;
-    const replyHistory = isLogTurn ? params.history.filter((t) => t.role === 'user').slice(-6) : params.history;
+    const replyHistory = isLogTurn ? [] : params.history;
     const messages = [
       { role: 'system' as const, content: params.systemPrompt + logNote + focusDirective },
       ...replyHistory.map((t) => ({ role: t.role, content: t.content })),

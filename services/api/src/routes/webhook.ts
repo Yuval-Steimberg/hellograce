@@ -181,8 +181,17 @@ export async function processInboundMessage(
           if (event === 'skip') log.warn({ userId: normalized.userId }, 'webhook.inflight_skip');
           if (event === 'redis_failed') log.warn({ userId: normalized.userId }, 'webhook.inflight_lock_failed_proceeding');
         });
-        if (slot === 'busy') return;
-        inflightAcquired = slot === 'acquired';
+        // 'busy' = the retry budget (~15s) expired while a prior turn still held
+        // the lock. That holder is hung (Gemini cold-start/quota/network) and
+        // almost certainly won't produce a reply — so PROCEED WITHOUT the lock
+        // rather than dropping the message and ghosting the user. A rare
+        // duplicate reply is strictly better than silence ("im hungry" → no
+        // response, reported 2026-06-20). Same failure-open stance as Redis-down.
+        if (slot === 'busy') {
+          log.warn({ userId: normalized.userId }, 'webhook.inflight_busy_proceeding');
+        } else {
+          inflightAcquired = slot === 'acquired';
+        }
       }
 
       try {

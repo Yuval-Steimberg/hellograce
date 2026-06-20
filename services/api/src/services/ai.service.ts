@@ -11,6 +11,7 @@ import {
   answerGlp1Topic,
   checkContent,
   enforceFormat,
+  checkResponseQuality,
   formatFoodSuggestions,
   endsMidWord,
   trimToLastCompleteSentence,
@@ -79,6 +80,12 @@ function buildProteinTargetWalkthrough(user: GraceUser | null): string | null {
 // guidance instead of a generic deflection when the LLM is unavailable.
 const SYMPTOM_FALLBACK_RE =
   /\b(stomach|tummy|belly|gut)\s+(h[ue]rts?|aches?|ache|cramping|cramp|upset|sore|burning|in pain)\b|\b(nause(?:a|ous)|queasy|sick to my stomach|throwing up|threw up|vomiting|vomited)\b|\b(heartburn|acid reflux|reflux|indigestion)\b|\b(headache|migraine|dizzy|lightheaded|woozy)\b|\b(constipated|constipation|diarrhea|bloated|bloating)\b|\b(fatigued?|exhausted|so tired|no energy|wiped out)\b/i;
+
+// Deterministic stall floor for the direct-reply (lean) path. The Gemini
+// provider already hard-caps a single call at 18s, but 18s of silence reads as
+// "stuck" — so the reply races this tighter deadline and falls back to the
+// deterministic floor when exceeded. Kept under the 30s webhook in-flight TTL.
+const DIRECT_REPLY_TIMEOUT_MS = 13_000;
 
 function pickKnowledgeTopicFallback(userMessage: string): string | null {
   // Comprehensive, typo-tolerant GLP-1 knowledge bank (shared with the
@@ -2671,8 +2678,21 @@ CRITICAL RULES:
       // maxOutputTokens budget — with thinking on, a 500-token cap can come back
       // truncated or empty. The competitor's base model doesn't reason, so we
       // match it: thinking off → the full budget goes to the reply, fast.
-      const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: isLogTurn ? 200 : 500, disableThinking: true });
-      text = (resp.text ?? '').trim();
+      //
+      // STALL FLOOR: the provider already hard-caps a single call at 18s, but
+      // 18s of silence FEELS stuck (the symptom that got this mode rolled back).
+      // Race the reply against a tighter deterministic deadline so the floor
+      // (foodFallback or a warm generic) fires fast instead of the user waiting
+      // out the full upstream ceiling. Fail-open: a slow-but-fine answer is
+      // traded for a fast safe one, never silence.
+      const resp = await Promise.race([
+        this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: isLogTurn ? 200 : 500, disableThinking: true }),
+        new Promise<{ text: string } | null>((resolve) => setTimeout(() => {
+          params.logger.warn({ userId: params.userId, intent: params.intent }, 'ai.direct.generate.timeout');
+          resolve(null);
+        }, DIRECT_REPLY_TIMEOUT_MS)),
+      ]);
+      text = (resp?.text ?? '').trim();
     } catch (err) {
       params.logger.error({ err: err instanceof Error ? err.message : String(err) }, 'ai.direct.generate.error');
     }
@@ -2689,6 +2709,21 @@ CRITICAL RULES:
         });
         if (formatted.text && formatted.text.trim().length > 0) text = formatted.text.trim();
       } catch { /* never block the reply on a formatter error */ }
+
+      // Quality telemetry (length / multi-question). enforceFormat already
+      // truncates + collapses questions deterministically, so this rarely needs
+      // to act — it logs any residual verbosity so the lean path can be MEASURED
+      // against the orchestrator during an A/B before it's made the default
+      // (verbose essays were a documented reason this mode was rolled back).
+      try {
+        const issue = checkResponseQuality(text, params.intent as Parameters<typeof checkResponseQuality>[1]);
+        if (issue) {
+          params.logger.warn(
+            { userId: params.userId, intent: params.intent, code: issue.code, replyLen: text.length },
+            'ai.direct.quality_issue',
+          );
+        }
+      } catch { /* telemetry only — never block the reply */ }
     }
 
     let usedSafeFallback = false;

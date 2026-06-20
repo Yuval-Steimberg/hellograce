@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseFoodExtraction, buildFoodExtractPrompt } from './food-extract.js';
+import { parseFoodExtraction, buildFoodExtractPrompt, formatFoodReply } from './food-extract.js';
 
 describe('parseFoodExtraction', () => {
   it('parses a confirmed multi-item log with numbers', () => {
@@ -60,6 +60,40 @@ describe('parseFoodExtraction', () => {
     const out = parseFoodExtraction(JSON.stringify({ intent: 'log', items: [{ protein_g: 5 }, { item: '  ' }, { item: 'eggs' }] }));
     expect(out.items).toHaveLength(1);
     expect(out.items[0]?.item).toBe('eggs');
+  });
+});
+
+describe('formatFoodReply', () => {
+  const seed = 'u|msg';
+  it('asks ONE combined portion question for vague foods (no logging yet)', () => {
+    const r = formatFoodReply({ loggedItems: [], pendingFoods: ['eggs', 'cottage cheese'], seed });
+    expect(r.toLowerCase()).toContain('eggs and cottage cheese');
+    expect(r).toMatch(/\?/);
+    expect(r.length).toBeLessThan(180);
+    expect(r).not.toMatch(/\n/); // single line, no lists
+  });
+
+  it('confirms logged items with the running total, short', () => {
+    const r = formatFoodReply({ loggedItems: ['2 eggs', 'half cup cottage cheese'], loggedProtein: 22, loggedCalories: 240, pendingFoods: [], seed });
+    expect(r).toMatch(/2 eggs/);
+    expect(r).toMatch(/22g protein/);
+    expect(r.length).toBeLessThan(180);
+  });
+
+  it('handles logged + still-pending (confirm + ask)', () => {
+    const r = formatFoodReply({ loggedItems: ['a cup of rice'], pendingFoods: ['chicken'], seed });
+    expect(r.toLowerCase()).toContain('rice');
+    expect(r.toLowerCase()).toContain('chicken');
+    expect(r).toMatch(/\?/);
+  });
+
+  it('returns empty when there is nothing to say', () => {
+    expect(formatFoodReply({ loggedItems: [], pendingFoods: [], seed })).toBe('');
+  });
+
+  it('never includes nutrition-education phrasing', () => {
+    const r = formatFoodReply({ loggedItems: ['2 eggs'], loggedProtein: 12, pendingFoods: [], seed });
+    expect(r.toLowerCase()).not.toMatch(/high in protein|supports muscle|sustained energy|excellent source/);
   });
 });
 

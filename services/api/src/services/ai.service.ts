@@ -387,7 +387,7 @@ import {
   getActiveMeal,
   clearActiveMeal,
 } from './meal-recommendation-store.js';
-import { extractFood, EMPTY_EXTRACTION, type FoodExtraction } from './food-extract.js';
+import { extractFood, formatFoodReply, EMPTY_EXTRACTION, type FoodExtraction } from './food-extract.js';
 import { getPendingFood, addPendingFood, resolvePendingFood, clearPendingFood } from './food-pending-store.js';
 import {
   detectReminderIntent,
@@ -2365,6 +2365,98 @@ CRITICAL RULES:
   }
 
   /**
+   * Nudge-style food handler for the ORCHESTRATOR path. Runs a structured
+   * extraction, logs CONFIRMED items, asks AT MOST ONE combined portion question
+   * for vague items (tracked as pending so a portion answer resolves them — no
+   * loop), and replies with a SHORT, warm, deterministic confirmation/question
+   * (never an LLM ramble). Returns null — falling through to the orchestrator —
+   * for queries, planning/advice, non-food, extractor failure, or nothing
+   * logged, so it can NEVER do worse than yesterday's path.
+   */
+  private async tryNudgeFoodHandler(
+    input: InboundMessage,
+    intent: string,
+    conversationId: string,
+    t0: number,
+  ): Promise<OrchestratorOutput | null> {
+    if (!this.deps.flags.toolsEnabled) return null;
+    const foodIntent = intent === 'food_log' || intent === 'food_question';
+    const pending = await getPendingFood(this.deps.redis, input.userId).catch(() => [] as Awaited<ReturnType<typeof getPendingFood>>);
+    if (!foodIntent && pending.length === 0) return null;
+
+    const extraction = await Promise.race<FoodExtraction>([
+      extractFood(this.deps.llm, this.deps.logger, input.text, pending.map((p) => ({ item: p.item }))),
+      new Promise<FoodExtraction>((r) => setTimeout(() => r({ ...EMPTY_EXTRACTION }), 9000)),
+    ]);
+
+    // Only HANDLE clear food actions here. Queries / planning / advice / non-food
+    // fall through to the orchestrator (get_food_summary, food ideas, etc.).
+    if (extraction.intent === 'none' || extraction.intent === 'query') return null;
+
+    const logFood = makeLogFoodTool({
+      pool: this.deps.pool,
+      llm: this.deps.llm,
+      logger: this.deps.logger,
+      userId: input.userId,
+      source: 'text',
+      ...(this.deps.usda ? { usda: this.deps.usda } : {}),
+      users: this.deps.users,
+    });
+    const toolResults: ToolResult[] = [];
+    let reply = '';
+
+    if (extraction.intent === 'delete' && extraction.edit_ref) {
+      try {
+        const rm = makeRemoveFoodTool({ pool: this.deps.pool, logger: this.deps.logger, userId: input.userId });
+        const r = await rm.execute({ food: extraction.edit_ref });
+        if (r && (r as { ok?: boolean }).ok !== false) toolResults.push({ name: 'remove_food', args: { food: extraction.edit_ref }, ok: true, output: r, latencyMs: 0 });
+      } catch { /* best-effort */ }
+      await resolvePendingFood(this.deps.redis, input.userId, extraction.edit_ref).catch(() => {});
+      reply = `Done — took ${extraction.edit_ref} off today's log.`;
+    } else {
+      const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
+      const newPending = extraction.items.filter((i) => i.status === 'pending_portion');
+      const loggedItems: string[] = [];
+      let dailyProtein: number | undefined;
+      let dailyCal: number | undefined;
+      for (const it of confirmed) {
+        const args: Record<string, unknown> = { food: it.item };
+        if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
+        const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
+        if (r && r.ok !== false) {
+          toolResults.push({ name: 'log_food', args, ok: true, output: r, latencyMs: 0 });
+          dailyProtein = (r.daily_protein_g as number | undefined) ?? dailyProtein;
+          dailyCal = (r.daily_calories as number | undefined) ?? dailyCal;
+          loggedItems.push(it.item);
+        }
+      }
+      if (extraction.intent === 'edit') {
+        await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+      } else {
+        for (const it of confirmed) await resolvePendingFood(this.deps.redis, input.userId, it.item).catch(() => {});
+      }
+      if (newPending.length > 0) {
+        await addPendingFood(this.deps.redis, input.userId, newPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question }))).catch(() => {});
+      }
+      // Nothing usable to log or ask → let the orchestrator handle it.
+      if (loggedItems.length === 0 && newPending.length === 0) return null;
+      reply = formatFoodReply({
+        loggedItems,
+        ...(dailyProtein != null ? { loggedProtein: dailyProtein } : {}),
+        ...(dailyCal != null ? { loggedCalories: dailyCal } : {}),
+        pendingFoods: newPending.map((i) => i.item),
+        seed: `${input.userId}|${input.text}`,
+      });
+    }
+
+    if (!reply) return null;
+    void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+    void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+    this.deps.logger.info({ userId: input.userId, intent: extraction.intent, logged: toolResults.length }, 'ai.nudge_food.served');
+    return { text: reply, intent: `food_${extraction.intent}`, confidence: 'high', toolResults, usedRetrieval: false, latencyMs: Date.now() - t0 };
+  }
+
+  /**
    * DIRECT REPLY (competitor-style generation) — a SINGLE Gemini call on
    * [system prompt + recent history + user message]. No orchestrator, planner,
    * per-intent directive wrapping, or guard/regen cascade — that cascade is what
@@ -2920,6 +3012,24 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     // user gives a real answer. If they reply with another vague mention
     // (e.g. "veggie KFC") we re-ask with the follow-up template variant.
     const lastGraceMessage = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+
+    // ── Nudge-style food handling (orchestrator path) ────────────────────────
+    // Structured extraction → log confirmed items, ask AT MOST ONE combined
+    // portion question for vague ones (pending-tracked so a portion answer
+    // resolves it, never loops), short warm deterministic reply. Falls through
+    // to the legacy vague-food gate + orchestrator on query/planning/non-food/
+    // extractor-failure, so it can never regress below the previous behavior.
+    if (!this.directReplyMode) {
+      lat.mark('nudge_food');
+      const nudgeFood = await this.tryNudgeFoodHandler(input, intentClass.type, conversationId, t0).catch((err) => {
+        this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.nudge_food.error');
+        return null;
+      });
+      if (nudgeFood) {
+        this.persistLatency(input.userId, nudgeFood.intent, Date.now() - t0, lat.snapshot(), input.text, nudgeFood.text);
+        return nudgeFood;
+      }
+    }
 
     lat.mark('vague_food_check');
     // DIRECT REPLY MODE: do NOT run the deterministic vague-food clarification

@@ -107,6 +107,70 @@ export function parseFoodExtraction(raw: string): FoodExtraction {
   return { intent, items, edit_ref };
 }
 
+function pickSeeded<T>(arr: readonly T[], seed: string): T {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return arr[Math.abs(h) % arr.length]!;
+}
+
+function humanList(items: string[]): string {
+  const a = items.filter(Boolean);
+  if (a.length === 0) return '';
+  if (a.length === 1) return a[0]!;
+  if (a.length === 2) return `${a[0]} and ${a[1]}`;
+  return `${a.slice(0, -1).join(', ')}, and ${a[a.length - 1]}`;
+}
+
+/**
+ * Build the warm, SHORT, deterministic food reply (confirmation and/or the one
+ * portion question). Deterministic on purpose — it can never ramble into a
+ * nutrition essay or summary dump, and never stalls. Varied by seed so it
+ * doesn't read like a fixed template.
+ */
+export function formatFoodReply(opts: {
+  loggedItems: string[];
+  loggedProtein?: number | null;
+  loggedCalories?: number | null;
+  pendingFoods: string[];
+  seed: string;
+}): string {
+  const logged = humanList(opts.loggedItems);
+  const pending = humanList(opts.pendingFoods);
+  const total =
+    opts.loggedProtein != null && opts.loggedProtein > 0
+      ? ` You're at about ${Math.round(opts.loggedProtein)}g protein${opts.loggedCalories != null && opts.loggedCalories > 0 ? ` and ${Math.round(opts.loggedCalories)} calories` : ''} today.`
+      : '';
+
+  // Portion question only (nothing concrete to log yet).
+  if (pending && !logged) {
+    const openers = ['Sounds good', 'Nice', 'Got it', 'Love that'];
+    const asks = [
+      `roughly how much ${pending}? A ballpark — a cup, a handful, a couple — is perfect.`,
+      `about how much ${pending} did you have? Even a rough amount (a cup, a palmful) lets me log it.`,
+      `how much ${pending} would you say — a cup or so, a handful?`,
+    ];
+    return `${pickSeeded(openers, opts.seed)} — ${pickSeeded(asks, opts.seed + 'a')}`;
+  }
+
+  // Confirmation only.
+  if (logged && !pending) {
+    const acks = [`Got it — logged ${logged}.`, `Logged ${logged}.`, `Done, ${logged} is in.`, `Nice — ${logged} logged.`];
+    return `${pickSeeded(acks, opts.seed)}${total}`;
+  }
+
+  // Logged some + still need a portion for the rest.
+  if (logged && pending) {
+    const acks = [`Logged ${logged}.`, `Got ${logged} down.`, `${logged} is in.`];
+    const asks = [
+      `For the ${pending}, roughly how much? A ballpark works.`,
+      `About how much ${pending} — a cup, a handful?`,
+    ];
+    return `${pickSeeded(acks, opts.seed)}${total} ${pickSeeded(asks, opts.seed + 'b')}`;
+  }
+
+  return '';
+}
+
 /** Run the extraction LLM pass. Fails closed (intent="none") on any error so a
  *  food turn never crashes the reply. */
 export async function extractFood(

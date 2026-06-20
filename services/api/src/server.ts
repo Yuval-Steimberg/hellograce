@@ -52,6 +52,26 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const cache = new Cache(redis);
 
   const llm = new GeminiProvider({ apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL }, logger, cache);
+  // Startup Gemini health check — surfaces a dead/rate-limited key or a bad
+  // model id immediately (instead of silently degrading to fallbacks on every
+  // user message). Fire-and-forget so it never blocks boot.
+  void (async () => {
+    const started = Date.now();
+    try {
+      const r = await llm.generate({ messages: [{ role: 'user', content: 'Reply with exactly: ok' }], maxOutputTokens: 5, temperature: 0 });
+      const text = (r.text ?? '').trim();
+      if (text) {
+        logger.info({ model: env.GEMINI_MODEL, ms: Date.now() - started, sample: text.slice(0, 20) }, 'startup.gemini_healthcheck.ok');
+      } else {
+        logger.error({ model: env.GEMINI_MODEL, ms: Date.now() - started }, 'startup.gemini_healthcheck.empty — model returned NO text. Set GEMINI_MODEL to gemini-2.5-flash (the lite model can return empty on big prompts).');
+      }
+    } catch (err) {
+      logger.error(
+        { model: env.GEMINI_MODEL, ms: Date.now() - started, err: err instanceof Error ? err.message : String(err) },
+        'startup.gemini_healthcheck.failed — Gemini key/model is NOT working. Check quota (free-tier 429) or the API key.',
+      );
+    }
+  })();
   const memory = new MemoryService(pool);
   const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'gemini-embedding-001', cache);
   const rag = new RagService(pool, embedder, logger);

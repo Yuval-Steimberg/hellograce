@@ -948,25 +948,26 @@ export class AIService {
             if (user) {
               const data = await gatherWeeklySummary(this.deps.users, user);
               const reply = renderWeeklySummary(data);
-              if (this.directReplyMode) {
-                directContextNote += `\n\n[WEEKLY SUMMARY DATA — the user asked for a recap of their week. Present this real last-7-days data warmly and conversationally in your own voice (one flowing message, no bullet lists or headers): ${reply}]`;
-                this.deps.logger.info({ userId: input.userId, daysLogged: data.daysLogged }, 'ai.weekly_summary.direct_context');
-              } else {
-                const totalMs = Date.now() - t0;
-                this.deps.logger.info(
-                  { userId: input.userId, daysLogged: data.daysLogged, hasWeight: data.weightLatest != null },
-                  'ai.weekly_summary.served',
-                );
-                this.persistLatency(input.userId, 'weekly_summary', totalMs, lat.snapshot(), input.text, reply);
-                return {
-                  text: reply,
-                  confidence: 'high',
-                  intent: 'weekly_summary',
-                  toolResults: [],
-                  usedRetrieval: false,
-                  latencyMs: totalMs,
-                };
-              }
+              // RETURN deterministically in BOTH modes. Previously the lean path
+              // only INJECTED this as a hint and let Gemini phrase it — but
+              // Gemini ignored the data and denied access ("I can't access your
+              // personal diary", production 2026-06-21). The summary is already
+              // warm prose; serving it directly guarantees Grace never denies
+              // having the user's own data.
+              const totalMs = Date.now() - t0;
+              this.deps.logger.info(
+                { userId: input.userId, daysLogged: data.daysLogged, hasWeight: data.weightLatest != null, direct: this.directReplyMode },
+                'ai.weekly_summary.served',
+              );
+              this.persistLatency(input.userId, 'weekly_summary', totalMs, lat.snapshot(), input.text, reply);
+              return {
+                text: reply,
+                confidence: 'high',
+                intent: 'weekly_summary',
+                toolResults: [],
+                usedRetrieval: false,
+                latencyMs: totalMs,
+              };
             }
           } catch (err) {
             this.deps.logger.warn(

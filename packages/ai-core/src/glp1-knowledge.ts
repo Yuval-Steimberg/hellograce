@@ -334,7 +334,24 @@ export function answerGlp1Topics(userMessage: string | undefined | null, max = 3
   const isMultiPart =
     /\b(and|also|plus|too)\b/i.test(userMessage) || (userMessage.match(/\?/g)?.length ?? 0) > 1;
   if (!isMultiPart) return answers[0]!;
-  return answers.join(' ');
+  // CONDENSE for multi-topic: a full join (3 × ~250 chars) overflows the
+  // outbound length cap and gets trimmed back to ONLY the first topic
+  // (production 2026-06-21: alcohol+protein+weight → weight only). Keep one
+  // tight sentence per topic so every part survives the cap.
+  return answers.map(condenseTopic).join(' ');
+}
+
+/** First sentence of a topic answer, tightened to ~140 chars at a clause break
+ *  so several topics fit under the outbound cap without mid-word truncation. */
+function condenseTopic(answer: string): string {
+  // Sentence end = . ! ? FOLLOWED by whitespace/end — so decimals like "0.5"
+  // and "1.2-1.6" (no space after the dot) don't falsely end the sentence.
+  const first = (answer.match(/^.*?[.!?](?=\s|$)/s)?.[0] ?? answer).trim();
+  if (first.length <= 140) return first;
+  const cut = first.slice(0, 140);
+  const brk = Math.max(cut.lastIndexOf(', '), cut.lastIndexOf(' — '), cut.lastIndexOf('; '));
+  const base = (brk > 80 ? cut.slice(0, brk) : cut).replace(/[\s,;—-]+$/, '');
+  return base + '.';
 }
 
 /** Exposed for tests / telemetry — which topic id matches (or null). */

@@ -2,11 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { answerGlp1Topic, answerGlp1Topics, matchGlp1Topic, normalizeKnowledgeText } from './glp1-knowledge.js';
 
 describe('answerGlp1Topics — multi-part questions answer every part', () => {
-  it('covers alcohol + protein in one reply (production 2026-06-21)', () => {
+  it('covers alcohol + protein + weight in one reply, compact enough to survive the outbound cap (production 2026-06-21)', () => {
     const out = answerGlp1Topics('Can I drink alcohol and also how much protein and why is my weight') ?? '';
     expect(out.toLowerCase()).toContain('alcohol');
     expect(out.toLowerCase()).toContain('protein');
-    expect(out.length).toBeGreaterThan(150);
+    expect(out.toLowerCase()).toMatch(/lbs|weight|pace/);
+    // Must be tight enough that the ~420-char outbound cap doesn't trim a topic.
+    expect(out.length).toBeLessThan(420);
+    // Decimals must stay intact (not split into "about 0." / "about 1.").
+    expect(out).toMatch(/0\.5-1\.5|1\.2-1\.6/);
   });
 
   it('a single-topic question returns exactly the single answer', () => {

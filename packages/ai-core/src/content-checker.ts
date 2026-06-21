@@ -829,6 +829,12 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boo
   { pattern: /\bi (?:don'?t|do not) have access to (?:your|the user'?s) (?:personal |private |health )*(?:diary|journal|data|activity|health data|logs?|records?|history|information|profile|notes?|entries)\b/i, reason: '"I don\'t have access to your data/diary" — data-access denial, banned' },
   { pattern: /\bi (?:can'?t|cannot|don'?t) (?:access|see|view|store|keep|retain) (?:your|any) (?:personal )?(?:diary|journal)\b/i, reason: 'diary-access denial — banned; Grace tracks the user\'s logs' },
 
+  // Internal-note / instruction leak — Grace speaks to the user in second person
+  // ("you"), never about "the user". An echoed logNote ("the user just logged
+  // food and it's been recorded") is an internal-instruction leak (2026-06-21).
+  { pattern: /\bthe user (?:just |has )?(?:logged|shared|said|asked|messaged|mentioned|reported|wants|is)\b/i, reason: 'internal note leak — refers to "the user" in third person; rewrite addressing her directly' },
+  { pattern: /\b(?:it'?s|it has|has) been recorded\b/i, reason: '"it\'s been recorded" — internal logNote phrasing leaked; confirm warmly instead' },
+
   // Emotional amplification — sounds like a therapy chatbot, not a calm companion
   { pattern: /\boh,?\s*i'?m so sorry\b/i, reason: '"Oh, I\'m so sorry" — emotional amplification, banned' },
   { pattern: /\boh no,?\s*i'?m sorry\b/i, reason: '"Oh no, I\'m sorry" — emotional amplification, banned' },

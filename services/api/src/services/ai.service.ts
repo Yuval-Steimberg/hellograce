@@ -98,6 +98,31 @@ function ensureTerminalPunctuation(text: string): string {
   return `${t}.`;
 }
 
+// The direct path injects internal instructions (logNote) like "[The user just
+// logged food and it's been recorded. Acknowledge it warmly…]". Gemini
+// occasionally echoes that verbatim into the user-facing reply ("Okay, the user
+// just logged food and it's been recorded." — production 2026-06-21). Grace
+// always speaks to the user in second person ("you"), never about "the user",
+// so any sentence referencing the internal note is a leak — strip it.
+const LEAKED_NOTE_RE =
+  /\b(?:the user (?:just |has )?(?:logged|shared|said|asked|messaged|mentioned|reported)|(?:it'?s|it has|has) been recorded|logged food and it|acknowledge (?:it|this|that) warmly|no template|never a (?:template|bare)|running total today is about|their running total)\b/i;
+function stripLeakedNotes(text: string): string {
+  if (!text) return text;
+  // Drop any echoed bracketed instruction outright.
+  let t = text.replace(/\[[^\]]*\]/g, ' ');
+  // Drop whole sentences that reference the internal note.
+  const parts = t.split(/(?<=[.!?])\s+/);
+  t = parts.filter((s) => !LEAKED_NOTE_RE.test(s)).join(' ');
+  return t.replace(/\s{2,}/g, ' ').trim();
+}
+
+// Emotional / reflective language — a message dominated by feelings or habits
+// ("I feel like I'm snacking all the time", "struggling with the transition")
+// is NOT a concrete food log, even if the classifier flagged food words. Used
+// to suppress the never-drop force-log so reflection is never logged as a meal.
+const REFLECTION_MARKER_RE =
+  /\b(i feel|i'?m feeling|feeling|struggl\w*|transition|realiz\w*|honestly|it'?s so much|easier not to|tend to|these days|lately|all the time|i think i|i guess|overwhelm\w*|stress\w*|anxious|lonely|bored|sad|frustrat\w*|adjust\w*|routine)\b/i;
+
 function pickKnowledgeTopicFallback(userMessage: string): string | null {
   // Comprehensive, typo-tolerant GLP-1 knowledge bank (shared with the
   // orchestrator fallback). Covers ~40 topics and normalizes misspellings, so
@@ -2617,7 +2642,19 @@ CRITICAL RULES:
           // Never-drop: the classifier is confident this is a food log but the
           // extractor returned none/query (an LLM hiccup or a misjudgment).
           // Persist the raw text via log_food's own deterministic estimator.
-          const r = await params.tools.execute({ name: 'log_food', args: { food: params.rawUserText } }).catch(() => null);
+          // BUT only for a concise, food-shaped statement — never for an
+          // emotional / reflective paragraph (production 2026-06-21: a summer-
+          // break vent about snacking habits got force-logged + leaked the
+          // internal note). When the extractor said "nothing to log" AND the
+          // message reads as reflection or is long, trust that and don't log.
+          const wordCount = params.rawUserText.trim().split(/\s+/).filter(Boolean).length;
+          const looksReflective = REFLECTION_MARKER_RE.test(params.rawUserText) || wordCount > 22;
+          const r = looksReflective
+            ? null
+            : await params.tools.execute({ name: 'log_food', args: { food: params.rawUserText } }).catch(() => null);
+          if (looksReflective) {
+            params.logger.info({ userId: params.userId }, 'ai.direct.never_drop_suppressed_reflection');
+          }
           if (r?.ok) {
             toolResults.push(r);
             const out = (r.output ?? {}) as Record<string, unknown>;
@@ -2735,6 +2772,16 @@ CRITICAL RULES:
           );
         }
       } catch { /* telemetry only — never block the reply */ }
+
+      // Deleak: strip any echoed internal note ("the user just logged food and
+      // it's been recorded", stray "[...]" instructions) before it reaches the
+      // user. Grace speaks in second person; "the user" / "been recorded" is
+      // always an internal-instruction leak (production 2026-06-21).
+      const deleaked = stripLeakedNotes(text);
+      if (deleaked !== text) {
+        params.logger.warn({ userId: params.userId, intent: params.intent }, 'ai.direct.note_leak_stripped');
+        text = deleaked;
+      }
     }
 
     let usedSafeFallback = false;

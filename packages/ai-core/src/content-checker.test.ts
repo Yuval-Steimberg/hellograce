@@ -457,6 +457,16 @@ describe('checkContent (orchestration)', () => {
     }
   });
 
+  it('flags a leaked internal note (third-person "the user" / "been recorded")', () => {
+    for (const bad of [
+      "Thanks for sharing. Okay, the user just logged food and it's been recorded.",
+      "The user shared their weight and it has been recorded.",
+    ]) {
+      const codes = checkContent(bad, {}).map((x) => x.code);
+      expect(codes).toContain('banned_phrase');
+    }
+  });
+
   it('does NOT flag a normal data-grounded answer', () => {
     const v = checkContent(
       "Over the last 7 days you averaged 95g protein and your weight is down 1.2 lbs.",

@@ -23,7 +23,7 @@ import type {
 } from '@grace/shared';
 import { checkContent, buildContentRegenInstruction, type ContentViolation } from './content-checker.js';
 import { classifyMessage, type MessageType } from './classify.js';
-import { answerGlp1Topic } from './glp1-knowledge.js';
+import { answerGlp1Topics } from './glp1-knowledge.js';
 import { LLMCritic } from './critic.js';
 import { BehavioralGuard } from './behavioral-guard.js';
 import { checkResponseQuality } from './quality-guard.js';
@@ -643,7 +643,7 @@ export function getToolAwareFallback(
     // effects, fatigue/dizziness/headache, dose logistics, mechanism,
     // interactions, pregnancy redirect, etc.). Checked before the narrower
     // inline branches below so coverage is broad and consistent.
-    const kb = answerGlp1Topic(opts.userMessage);
+    const kb = answerGlp1Topics(opts.userMessage);
     if (kb) return kb;
     // 2026-06-05 production failure: "how much water?" got the muscle-loss
     // typed fallback (first array entry) because the knowledge typed

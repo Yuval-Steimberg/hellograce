@@ -301,6 +301,42 @@ export function answerGlp1Topic(userMessage: string | undefined | null): string 
   return null;
 }
 
+/**
+ * Multi-topic answer for the degraded (Gemini-down) path. A multi-part question
+ * — "can I drink alcohol AND how much protein AND why is my weight…" — must
+ * never be reduced to a single part (production 2026-06-21: only the weight-rate
+ * topic answered, alcohol + protein silently dropped). Returns every DISTINCT
+ * matched topic's answer joined, up to `max`. For an ordinary single-topic
+ * question it returns exactly what answerGlp1Topic does, so callers can swap in
+ * place without changing single-question behavior.
+ */
+export function answerGlp1Topics(userMessage: string | undefined | null, max = 3): string | null {
+  if (!userMessage) return null;
+  const m = normalizeKnowledgeText(userMessage);
+  if (m.length === 0) return null;
+  const answers: string[] = [];
+  for (const topic of TOPICS) {
+    let matched = false;
+    try {
+      matched = topic.match(m);
+    } catch {
+      matched = false;
+    }
+    if (!matched) continue;
+    // Skip a near-duplicate from an overlapping topic on the same subject.
+    if (answers.some((prev) => prev.slice(0, 40) === topic.answer.slice(0, 40))) continue;
+    answers.push(topic.answer);
+    if (answers.length >= max) break;
+  }
+  if (answers.length === 0) return null;
+  // Only combine when the message is actually multi-part — otherwise preserve
+  // the single best answer (identical to answerGlp1Topic).
+  const isMultiPart =
+    /\b(and|also|plus|too)\b/i.test(userMessage) || (userMessage.match(/\?/g)?.length ?? 0) > 1;
+  if (!isMultiPart) return answers[0]!;
+  return answers.join(' ');
+}
+
 /** Exposed for tests / telemetry — which topic id matches (or null). */
 export function matchGlp1Topic(userMessage: string | undefined | null): string | null {
   if (!userMessage) return null;

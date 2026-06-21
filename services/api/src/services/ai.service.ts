@@ -8,7 +8,7 @@ import {
   PlannerAgent,
   ToolRegistry,
   classifyMessage as classifyIntent,
-  answerGlp1Topic,
+  answerGlp1Topics,
   checkContent,
   enforceFormat,
   checkResponseQuality,
@@ -103,7 +103,7 @@ function pickKnowledgeTopicFallback(userMessage: string): string | null {
   // orchestrator fallback). Covers ~40 topics and normalizes misspellings, so
   // this is the primary deterministic answer source. The legacy inline checks
   // below remain as a backstop for anything it doesn't cover.
-  const kb = answerGlp1Topic(userMessage);
+  const kb = answerGlp1Topics(userMessage);
   if (kb) return kb;
   const msg = userMessage.toLowerCase();
   if (/\bwater|hydration|fluid\b/.test(msg) && !/\balcohol|caffeine|coffee\b/.test(msg)) {

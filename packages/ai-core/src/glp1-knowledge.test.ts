@@ -1,5 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { answerGlp1Topic, matchGlp1Topic, normalizeKnowledgeText } from './glp1-knowledge.js';
+import { answerGlp1Topic, answerGlp1Topics, matchGlp1Topic, normalizeKnowledgeText } from './glp1-knowledge.js';
+
+describe('answerGlp1Topics — multi-part questions answer every part', () => {
+  it('covers alcohol + protein in one reply (production 2026-06-21)', () => {
+    const out = answerGlp1Topics('Can I drink alcohol and also how much protein and why is my weight') ?? '';
+    expect(out.toLowerCase()).toContain('alcohol');
+    expect(out.toLowerCase()).toContain('protein');
+    expect(out.length).toBeGreaterThan(150);
+  });
+
+  it('a single-topic question returns exactly the single answer', () => {
+    const single = answerGlp1Topic('is alcohol ok on ozempic');
+    expect(answerGlp1Topics('is alcohol ok on ozempic')).toBe(single);
+  });
+
+  it('returns null for a non-health message', () => {
+    expect(answerGlp1Topics('what is the weather and the news')).toBeNull();
+  });
+});
 
 describe('answerGlp1Topic — comprehensive coverage', () => {
   const expectations: Array<[string, string]> = [

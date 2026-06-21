@@ -50,6 +50,15 @@ describe('detectSummaryRequest', () => {
     expect(detectSummaryRequest("how much protein have I had today")).toBe(false);
   });
 
+  it('catches data-overview / "what do you have on me" requests (never deny access)', () => {
+    expect(detectSummaryRequest('What I have in my diary')).toBe(true);
+    expect(detectSummaryRequest("what's in my diary")).toBe(true);
+    expect(detectSummaryRequest('show me my log')).toBe(true);
+    expect(detectSummaryRequest('what do you know about me')).toBe(true);
+    expect(detectSummaryRequest('everything you have on me')).toBe(true);
+    expect(detectSummaryRequest('recap my notes')).toBe(true);
+  });
+
   it('does NOT fire on a plain food log', () => {
     expect(detectSummaryRequest('I had chicken and rice for lunch')).toBe(false);
   });

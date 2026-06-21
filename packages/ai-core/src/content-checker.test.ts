@@ -444,6 +444,26 @@ describe('checkContent (orchestration)', () => {
     );
     expect(v).toHaveLength(0);
   });
+
+  it('flags data-access denials — Grace must never deny access to the user\'s own data', () => {
+    for (const bad of [
+      "I'm sorry, I cannot access your personal diary.",
+      "I can't access your personal activity or health data from the past week.",
+      "I don't have access to your health data.",
+      "I cannot see your logs.",
+    ]) {
+      const codes = checkContent(bad, {}).map((x) => x.code);
+      expect(codes).toContain('banned_phrase');
+    }
+  });
+
+  it('does NOT flag a normal data-grounded answer', () => {
+    const v = checkContent(
+      "Over the last 7 days you averaged 95g protein and your weight is down 1.2 lbs.",
+      {},
+    );
+    expect(v).toHaveLength(0);
+  });
 });
 
 // ── 2026-05-30 clinical report — banned phrase + SMS format guards ──────────

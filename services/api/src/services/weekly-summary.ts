@@ -52,6 +52,14 @@ const DATA_COMPILE_RE =
 const WEAK_CONTINUATION_RE =
   /\b(more detail|more details|expand (?:on )?(?:that|it)|go deeper|add to (?:that|it)|build on (?:that|it)|flesh (?:that|it) out|in more depth)\b/i;
 
+// Data-overview requests: the user asking to SEE what Grace has on them —
+// "what I have in my diary", "what's in my log", "show me my data", "what do
+// you know about me", "everything you have on me". These were falling through
+// to Gemini, which DENIED having the data ("I cannot access your personal
+// diary") — the cardinal sin. They're answered from the same real-data summary.
+const DATA_OVERVIEW_RE =
+  /\b(?:what|what'?s|show|tell|give|see|list|recap|summar\w*)\b[^?.!]{0,30}\b(?:(?:in\s+)?my\s+(?:diary|journal|logs?|logbook|notes?|records?|history|data|profile|entries)|you\s+(?:have|know|got|remember|stored?)\b[^?.!]{0,15}\b(?:about|on|for)\s+me)\b/i;
+
 // Markers that the recent conversation is a summary / appointment-prep / data
 // recap context — used to confirm WEAK_CONTINUATION_RE.
 const SUMMARY_CONTEXT_RE =
@@ -78,7 +86,8 @@ export function detectSummaryRequest(text: string, recentContext?: string): bool
     SUMMARY_PERIOD_RE.test(t) ||
     PERIOD_FIRST_RE.test(t) ||
     SUMMARIZE_TARGET_RE.test(t) ||
-    DATA_COMPILE_RE.test(t)
+    DATA_COMPILE_RE.test(t) ||
+    DATA_OVERVIEW_RE.test(t)
   ) {
     return true;
   }
@@ -98,6 +107,7 @@ export function mightBeSummaryRequest(text: string): boolean {
     PERIOD_FIRST_RE.test(t) ||
     SUMMARIZE_TARGET_RE.test(t) ||
     DATA_COMPILE_RE.test(t) ||
+    DATA_OVERVIEW_RE.test(t) ||
     WEAK_CONTINUATION_RE.test(t)
   );
 }

@@ -820,6 +820,15 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boo
   { pattern: /\bi (can'?t|cannot) initiate (messages?|texts?|conversations?|reminders?)\b/i, reason: '"I can\'t initiate messages" — capability denial, banned' },
   { pattern: /\binitiate (a )?(messages?|texts?|conversations?) (at a future time|in the future|on my own|proactively)\b/i, reason: '"initiate messages at a future time" — exposes scheduler internals, banned' },
 
+  // Data-access denial — Grace HAS the user's logged data (food, weight, mood,
+  // medication, history). Denying access to their own diary/log/data is the
+  // cardinal sin (screenshots 2026-06-21: "I cannot access your personal diary",
+  // "I can't access your personal activity or health data"). Answer from the
+  // real data instead (handled deterministically by weekly-summary).
+  { pattern: /\bi (?:can'?t|cannot|am unable to|am not able to) (?:access|see|view|retrieve|pull up|look at|read|get) (?:your|the user'?s) (?:personal |private |health )*(?:diary|journal|data|activity|health data|health information|logs?|records?|history|information|profile|notes?|entries|details)\b/i, reason: 'data-access denial — Grace HAS the user\'s logged data; answer from it, never deny' },
+  { pattern: /\bi (?:don'?t|do not) have access to (?:your|the user'?s) (?:personal |private |health )*(?:diary|journal|data|activity|health data|logs?|records?|history|information|profile|notes?|entries)\b/i, reason: '"I don\'t have access to your data/diary" — data-access denial, banned' },
+  { pattern: /\bi (?:can'?t|cannot|don'?t) (?:access|see|view|store|keep|retain) (?:your|any) (?:personal )?(?:diary|journal)\b/i, reason: 'diary-access denial — banned; Grace tracks the user\'s logs' },
+
   // Emotional amplification — sounds like a therapy chatbot, not a calm companion
   { pattern: /\boh,?\s*i'?m so sorry\b/i, reason: '"Oh, I\'m so sorry" — emotional amplification, banned' },
   { pattern: /\boh no,?\s*i'?m sorry\b/i, reason: '"Oh no, I\'m sorry" — emotional amplification, banned' },

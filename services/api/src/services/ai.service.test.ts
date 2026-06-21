@@ -1,6 +1,24 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiMealText, reconstructFoodFromClarification } from './ai.service.js';
+import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts } from './ai.service.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+
+describe('splitQuestionParts — multi-part questions', () => {
+  it('splits a 3-part question (production: alcohol + protein + weight)', () => {
+    const parts = splitQuestionParts('Can I drink alcohol and how much protein and why is my weight');
+    expect(parts.length).toBe(3);
+    expect(parts[0]).toMatch(/alcohol/i);
+    expect(parts[1]).toMatch(/protein/i);
+    expect(parts[2]).toMatch(/weight/i);
+  });
+
+  it('does NOT fire on a single question', () => {
+    expect(splitQuestionParts('how much protein should I eat')).toEqual([]);
+  });
+
+  it('does NOT fire on an emotional statement with "and"', () => {
+    expect(splitQuestionParts('I feel tired and stressed')).toEqual([]);
+  });
+});
 
 describe('reconstructFoodFromClarification — continuation answer (2026-06-13)', () => {
   // The exact production failure: Grace asked "For the pizza, how many slices…",

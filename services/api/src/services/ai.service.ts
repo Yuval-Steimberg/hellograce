@@ -123,6 +123,28 @@ function stripLeakedNotes(text: string): string {
 const REFLECTION_MARKER_RE =
   /\b(i feel|i'?m feeling|feeling|struggl\w*|transition|realiz\w*|honestly|it'?s so much|easier not to|tend to|these days|lately|all the time|i think i|i guess|overwhelm\w*|stress\w*|anxious|lonely|bored|sad|frustrat\w*|adjust\w*|routine)\b/i;
 
+// Split a multi-part question ("can I drink alcohol AND how much protein AND why
+// is my weight") into its parts so the reply can be told to answer EVERY one.
+// Only fires on a question-shaped message with a conjunction or multiple "?",
+// so an emotional "I feel tired and stressed" is left alone. Returns [] when not
+// multi-part.
+export function splitQuestionParts(text: string): string[] {
+  const t = (text || '').trim();
+  if (!t) return [];
+  const qCount = (t.match(/\?/g) ?? []).length;
+  const isQuestionish =
+    qCount > 0 ||
+    /^(can|could|should|would|is|are|do|does|did|how|why|what|when|where|which|will)\b/i.test(t);
+  const hasConj = /\b(and also|and|also|plus)\b/i.test(t);
+  if (!(isQuestionish && (hasConj || qCount > 1))) return [];
+  const raw = t
+    .split(/\?|\b(?:and also|and|also|plus)\b/i)
+    .map((s) => s.replace(/^[,\s]+|[,\s]+$/g, ''))
+    .filter(Boolean);
+  const parts = raw.filter((p) => p.split(/\s+/).filter(Boolean).length >= 2).slice(0, 4);
+  return parts.length >= 2 ? parts : [];
+}
+
 function pickKnowledgeTopicFallback(userMessage: string): string | null {
   // Comprehensive, typo-tolerant GLP-1 knowledge bank (shared with the
   // orchestrator fallback). Covers ~40 topics and normalizes misspellings, so
@@ -2693,8 +2715,10 @@ CRITICAL RULES:
     //    FOCUS DIRECTIVE: a hard guard against the model summarizing the whole
     //    conversation or stitching past topics (reminders + appointment + every
     //    past meal) into one mega-reply — reply ONLY to the latest message.
-    const focusDirective =
-      `\n\n[REPLY FOCUS — non-negotiable: Respond ONLY to the user's most recent message below. Keep it to 1–2 short sentences, plain prose — NO headers, NO "Label:" lists, NO bullet points. Do NOT summarize the conversation or list past meals/reminders/appointments. Do NOT give unsolicited nutrition facts or education (no "high in protein", "supports muscle growth", "low in calories", etc.) unless they explicitly ask. If it's a food log, ONLY warmly confirm what was logged OR ask the one portion question — nothing else.]`;
+    const multiParts = splitQuestionParts(params.rawUserText);
+    const focusDirective = multiParts.length >= 2
+      ? `\n\n[REPLY FOCUS — the user asked SEVERAL things in ONE message. You MUST answer EVERY part, briefly, in the order asked — never stop after the first. The parts: ${multiParts.map((p, i) => `(${i + 1}) ${p}`).join(' ')}. Give a direct answer to each (one short sentence per part is fine), plain prose only — NO headers, NO bullet points, NO "Label:" lists. Cover them all even if the reply runs a few sentences.]`
+      : `\n\n[REPLY FOCUS — non-negotiable: Respond ONLY to the user's most recent message below. Keep it to 1–2 short sentences, plain prose — NO headers, NO "Label:" lists, NO bullet points. Do NOT summarize the conversation or list past meals/reminders/appointments. Do NOT give unsolicited nutrition facts or education (no "high in protein", "supports muscle growth", "low in calories", etc.) unless they explicitly ask. If it's a food log, ONLY warmly confirm what was logged OR ask the one portion question — nothing else.]`;
     // For a food/log turn, send NO chat history — the logNote already carries
     // exactly what to say (confirm the log, or ask the portion), and the pending
     // store carries portion-resolution context. Without this, the model reacts

@@ -640,6 +640,13 @@ export class AIService {
     return this.deps.guards?.directReplyMode ?? false;
   }
 
+  /** The underlying LLM provider, exposed for adjacent flows (e.g. SMS
+   *  onboarding question generation in the webhook) so they don't have to wire a
+   *  separate provider. Read-only. */
+  get llmProvider(): LLMProvider {
+    return this.deps.llm;
+  }
+
   updateSystemPrompt(prompt: string | undefined): void {
     this.systemPrompt = prompt;
     this.deps.logger.info({ hasPrompt: !!prompt }, 'system_prompt.updated');

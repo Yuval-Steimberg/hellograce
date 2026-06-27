@@ -91,6 +91,13 @@ export interface GraceUser {
    *  so this column only drives PROACTIVE sends (scheduler, admin manual send).
    *  Added 2026-06-17 (migration 20260617000001_user_channel.sql). */
   channel: 'whatsapp' | 'sms' | 'imessage' | null;
+  /** Conversational onboarding progress (migration 20260628000001_sms_onboarding.sql).
+   *  null = never started (web-onboarded or pre-feature); 'in_progress' = mid
+   *  SMS onboarding; 'complete' = finished. `onboarding_last_slot` is the field
+   *  Grace last asked for, so the next inbound reply is parsed into it. */
+  onboarding_state?: 'in_progress' | 'complete' | null;
+  onboarding_last_slot?: string | null;
+  onboarding_started_at?: Date | null;
 }
 
 export class UserService {

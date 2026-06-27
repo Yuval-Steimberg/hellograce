@@ -18,6 +18,7 @@ import { classifyMessage as classifySafety, classifySymptomCategory } from '../s
 import { recordSymptom, shouldEscalate, clearStack } from '../safety/symptom-stack.js';
 import { getCrisisResourcesForUser, buildSafetyResponse } from '../safety/crisis-resources.js';
 import { tryHandleSettings, isBareSettingsFieldReply, tryHandleSettingsFollowUp } from '../services/settings-flow.js';
+import { runOnboardingTurn } from '../onboarding/onboarding-flow.js';
 
 const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 
@@ -519,6 +520,33 @@ export async function processInboundMessage(
                 )
               : fallbackText;
             await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: reply });
+            return;
+          }
+
+          // Conversational onboarding (flag-gated). When enabled, a new number
+          // is onboarded entirely over chat — and any in-progress flow is
+          // continued — instead of being bounced to the web form. Signup mode
+          // also starts the trial on completion (Stripe still handles the paid
+          // upgrade later via the paywall below). With the flag OFF this whole
+          // block is skipped and the web-signup redirect below runs unchanged.
+          if (
+            user &&
+            deps.env.SMS_ONBOARDING_ENABLED &&
+            (needsRegistration(user) || user.onboarding_state === 'in_progress')
+          ) {
+            const mode = needsRegistration(user) ? 'signup' : 'gapfill';
+            const { reply } = await runOnboardingTurn({
+              user,
+              text: normalized.text,
+              mode,
+              users: deps.users,
+              llm: deps.ai.llmProvider,
+              logger: log,
+            });
+            if (reply) {
+              await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: reply });
+            }
+            log.info({ phone: user.phone, mode }, 'webhook.sms_onboarding');
             return;
           }
 

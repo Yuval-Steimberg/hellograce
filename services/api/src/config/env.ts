@@ -74,6 +74,16 @@ const EnvSchema = z.object({
     .optional()
     .transform((v) => v !== 'false'),
 
+  /** Conversational SMS/WhatsApp onboarding. When OFF (default), unknown numbers
+   *  are redirected to the web signup flow (unchanged behavior). When ON, a new
+   *  number is onboarded entirely over chat (LLM-phrased, varied questions) and
+   *  an in-progress flow is continued. Enable per-environment once verified:
+   *  `fly secrets set SMS_ONBOARDING_ENABLED=true`. */
+  SMS_ONBOARDING_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+
   ADMIN_TOKEN: z.string().min(16).optional(),
   /** Phone number (E.164) to receive RLHF optimizer run reports via WhatsApp. */
   ADMIN_PHONE: z.string().optional(),

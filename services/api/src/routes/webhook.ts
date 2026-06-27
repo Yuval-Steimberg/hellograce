@@ -9,6 +9,7 @@ import type { MessageTemplatesService } from '../services/message-templates.serv
 import { isValidTwilioSignature } from '../twilio/signature.js';
 import { normalizeTwilio, type RawTwilioPayload } from '../twilio/normalize.js';
 import { normalizeImessage, isInboundMessageAlert, type RawImessagePayload } from '../imessage/normalize.js';
+import { normalizeSendblue, isSendblueInbound, type RawSendbluePayload } from '../imessage/sendblue-normalize.js';
 import { isValidImessageSignature } from '../imessage/signature.js';
 import { UnauthorizedError, UpstreamError } from '../errors.js';
 import { trimToLastCompleteSentence } from '@grace/ai-core';
@@ -87,7 +88,8 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
     });
 
   app.post('/webhook/imessage', async (req, reply) => {
-    const raw = (req.body ?? {}) as RawImessagePayload;
+    const isSendblue = deps.env.IMESSAGE_PROVIDER === 'sendblue';
+    const raw = (req.body ?? {}) as RawImessagePayload & RawSendbluePayload;
     // Verify the relay provider's webhook in production (shared-secret header
     // or HMAC over the body). Outside production, accept so local testing works.
     if (deps.env.NODE_ENV === 'production') {
@@ -98,12 +100,13 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
       if (!ok) throw new UnauthorizedError('Invalid iMessage webhook signature');
     }
 
-    if (!isInboundMessageAlert(raw)) {
+    const inbound = isSendblue ? isSendblueInbound(raw) : isInboundMessageAlert(raw);
+    if (!inbound) {
       reply.code(200);
       return reply.send({ ok: true, ignored: true });
     }
 
-    const normalized = normalizeImessage(raw);
+    const normalized = isSendblue ? normalizeSendblue(raw) : normalizeImessage(raw);
 
     if (deps.redis && normalized.providerMessageId) {
       const dedupKey = `imessage:seen:${normalized.providerMessageId}`;

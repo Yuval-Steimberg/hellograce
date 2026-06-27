@@ -29,6 +29,55 @@ Key files:
 - `src/routes/webhook.ts` — `processInboundMessage()` (shared by both webhooks) + `/webhook/imessage`.
 - `users.channel` column (migration `20260617000001_user_channel.sql`) — drives proactive sends.
 
+## Providers: LoopMessage (default) or Sendblue
+
+Grace's iMessage channel can run on **either** relay; pick one with
+`IMESSAGE_PROVIDER` (`loopmessage` default, or `sendblue`). The two have
+different API contracts, so each has its own sender + inbound normalizer:
+
+| | LoopMessage (`loopmessage`) | Sendblue (`sendblue`) |
+|---|---|---|
+| Send URL | `server.loopmessage.com/api/v1/message/send/` | `api.sendblue.co/api/send-message` |
+| Auth headers | `Authorization` + `Loop-Secret-Key` | `sb-api-key-id` + `sb-api-secret-key` |
+| Send body | `{recipient, text, sender_name}` | `{number, content}` |
+| Send id field | `message_id` | `message_handle` |
+| Inbound fields | `recipient`, `text`, `attachments[]`, `alert_type` | `number`, `content`, `media_url`, `is_outbound` |
+| Sender name | required | not used (sends from a provisioned line) |
+
+`IMESSAGE_AUTH_KEY` / `IMESSAGE_SECRET_KEY` map to each provider's key pair.
+Sendblue files: `src/imessage/sendblue-sender.ts`, `src/imessage/sendblue-normalize.ts`.
+Both providers share `processInboundMessage`, the outbound sanitizer, and link rewriting.
+
+## Free Sendblue sandbox — quickest way to test ($0)
+
+Sendblue offers a **free API sandbox** (no card). Use it to validate the whole
+inbound→reply→scheduled-send loop before paying for any sender:
+
+1. Sign up at `docs.sendblue.com`, create a **sandbox API key** → note the
+   `sb-api-key-id` and `sb-api-secret-key`.
+2. Point the sandbox **inbound webhook** at `…/webhook/imessage` (your tunnel
+   URL locally, or `https://grace-api.fly.dev/webhook/imessage`).
+3. Set:
+   ```bash
+   IMESSAGE_PROVIDER=sendblue
+   IMESSAGE_AUTH_KEY=<sb-api-key-id>
+   IMESSAGE_SECRET_KEY=<sb-api-secret-key>
+   # optional sandbox override; defaults to the production Sendblue send URL:
+   # IMESSAGE_API_URL=https://api.sendblue.co/api/send-message
+   ```
+   (No `IMESSAGE_SENDER_NAME` needed for Sendblue.) Look for
+   `imessage.channel.enabled` with `provider: "sendblue"` in the logs.
+4. **Local test without an account** — inbound signature verification is only
+   enforced when `NODE_ENV=production`, so you can POST a simulated Sendblue
+   payload straight at the route:
+   ```bash
+   curl -X POST http://localhost:3001/webhook/imessage \
+     -H 'Content-Type: application/json' \
+     -d '{"number":"+15551234567","content":"had eggs for breakfast","message_handle":"sb-test-1"}'
+   ```
+   Watch Grace generate + "send" a reply end-to-end (the send hits the Sendblue
+   sandbox when keys are set, or the Twilio fallback when iMessage is off).
+
 ## Why a relay (LoopMessage / Sendblue)
 
 Apple has **no official iMessage send API**. A relay provider hosts a dedicated

@@ -26,13 +26,17 @@ const EnvSchema = z.object({
   // is OFF until IMESSAGE_AUTH_KEY + IMESSAGE_SECRET_KEY + IMESSAGE_SENDER_NAME
   // are all set; WhatsApp/SMS keep working regardless. Per-user routing is via
   // the users.channel column (default 'whatsapp').
-  /** Provider send endpoint. Defaults to LoopMessage's send URL. */
+  /** Which relay implements the iMessage contract. LoopMessage (default) uses
+   *  Authorization/Loop-Secret-Key headers + a sender name; 'sendblue' uses
+   *  sb-api-key-id/sb-api-secret-key + a provisioned line (no sender name). */
+  IMESSAGE_PROVIDER: z.enum(['loopmessage', 'sendblue']).default('loopmessage'),
+  /** Provider send endpoint. Defaults to the chosen provider's send URL. */
   IMESSAGE_API_URL: z.string().url().optional(),
-  /** Authorization header value (provider auth key). */
+  /** Auth key. LoopMessage: Authorization header. Sendblue: sb-api-key-id. */
   IMESSAGE_AUTH_KEY: z.string().optional(),
-  /** Loop-Secret-Key header value (provider secret). */
+  /** Secret key. LoopMessage: Loop-Secret-Key header. Sendblue: sb-api-secret-key. */
   IMESSAGE_SECRET_KEY: z.string().optional(),
-  /** The dedicated iMessage sender name/handle provisioned by the provider. */
+  /** The dedicated iMessage sender name/handle (LoopMessage only; unused by Sendblue). */
   IMESSAGE_SENDER_NAME: z.string().optional(),
   /** Shared secret / HMAC key used to verify the inbound iMessage webhook.
    *  When unset, the /webhook/imessage route only accepts requests outside

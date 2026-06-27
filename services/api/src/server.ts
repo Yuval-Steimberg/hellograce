@@ -19,6 +19,7 @@ import { ProductionIssuesService } from './services/production-issues.service.js
 import { AIService } from './services/ai.service.js';
 import { TwilioSender } from './twilio/sender.js';
 import { ImessageSender } from './imessage/sender.js';
+import { SendblueSender } from './imessage/sendblue-sender.js';
 import { ChannelRouter } from './channel-router.js';
 import { getTurnQueue, getFactExtractQueue, getMemoryMdQueue, closeQueues } from './workers/queues.js';
 import { MemoryMdService } from './memory/memory-md.service.js';
@@ -197,22 +198,39 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     logger,
   );
 
-  // iMessage is OFF until the relay credentials are all present. When set, build
-  // the ImessageSender and route by channel; WhatsApp/SMS are unaffected.
-  const imessageConfigured = !!(env.IMESSAGE_AUTH_KEY && env.IMESSAGE_SECRET_KEY && env.IMESSAGE_SENDER_NAME);
-  const imessageSender = imessageConfigured
-    ? new ImessageSender(
-        {
-          ...(env.IMESSAGE_API_URL ? { apiUrl: env.IMESSAGE_API_URL } : {}),
-          authKey: env.IMESSAGE_AUTH_KEY!,
-          secretKey: env.IMESSAGE_SECRET_KEY!,
-          senderName: env.IMESSAGE_SENDER_NAME!,
-          canonicalWebUrl: env.PUBLIC_WEB_URL,
-        },
-        logger,
-      )
-    : undefined;
-  if (imessageConfigured) logger.info('imessage.channel.enabled');
+  // iMessage is OFF until the relay credentials are present. LoopMessage needs
+  // auth key + secret + sender name; Sendblue needs only key-id + secret (it
+  // sends from a provisioned line, no sender name). When set, build the matching
+  // sender and route by channel; WhatsApp/SMS are unaffected.
+  const imessageConfigured =
+    env.IMESSAGE_PROVIDER === 'sendblue'
+      ? !!(env.IMESSAGE_AUTH_KEY && env.IMESSAGE_SECRET_KEY)
+      : !!(env.IMESSAGE_AUTH_KEY && env.IMESSAGE_SECRET_KEY && env.IMESSAGE_SENDER_NAME);
+  let imessageSender: ImessageSender | SendblueSender | undefined;
+  if (imessageConfigured) {
+    imessageSender =
+      env.IMESSAGE_PROVIDER === 'sendblue'
+        ? new SendblueSender(
+            {
+              ...(env.IMESSAGE_API_URL ? { apiUrl: env.IMESSAGE_API_URL } : {}),
+              apiKeyId: env.IMESSAGE_AUTH_KEY!,
+              apiSecret: env.IMESSAGE_SECRET_KEY!,
+              canonicalWebUrl: env.PUBLIC_WEB_URL,
+            },
+            logger,
+          )
+        : new ImessageSender(
+            {
+              ...(env.IMESSAGE_API_URL ? { apiUrl: env.IMESSAGE_API_URL } : {}),
+              authKey: env.IMESSAGE_AUTH_KEY!,
+              secretKey: env.IMESSAGE_SECRET_KEY!,
+              senderName: env.IMESSAGE_SENDER_NAME!,
+              canonicalWebUrl: env.PUBLIC_WEB_URL,
+            },
+            logger,
+          );
+    logger.info({ provider: env.IMESSAGE_PROVIDER }, 'imessage.channel.enabled');
+  }
 
   // Every outbound goes through the router; it dispatches by msg.channel.
   const sender = new ChannelRouter({ twilio: twilioSender, imessage: imessageSender }, logger);

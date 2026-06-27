@@ -455,6 +455,7 @@ import {
   getActiveMeal,
   clearActiveMeal,
 } from './meal-recommendation-store.js';
+import { analyzeMessage, buildMultiPartNote } from './message-understanding.js';
 import { extractFood, formatFoodReply, EMPTY_EXTRACTION, type FoodExtraction } from './food-extract.js';
 import { getPendingFood, addPendingFood, resolvePendingFood, clearPendingFood } from './food-pending-store.js';
 import {
@@ -4054,6 +4055,25 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     // / weekly summary / meal preference) — Gemini phrases the reply from these.
     if (directContextNote) {
       systemPromptWithStrategy += directContextNote;
+    }
+
+    // MULTI-PART UNDERSTANDING (2026-06-27): real messages bundle several
+    // intents — "I had chicken and rice, I feel nauseous, how much protein do I
+    // still need?" When ≥2 meaningful parts are present, inject a structured
+    // breakdown so the single Gemini call addresses EVERY part (not just the
+    // first/last), in one warm reply. Deterministic pre-pass; Gemini still
+    // writes the words. Direct-reply path only (the orchestrator path has its
+    // own MULTI-PART rule); unit tests construct AIService without guards so
+    // directReplyMode is false and this is a no-op for them.
+    if (this.directReplyMode) {
+      const understanding = analyzeMessage(input.text);
+      if (understanding.hasMultiple) {
+        systemPromptWithStrategy += buildMultiPartNote(understanding);
+        this.deps.logger.info(
+          { userId: input.userId, kinds: understanding.kinds },
+          'ai.multi_part.detected',
+        );
+      }
     }
 
     // Topic-closer detection: brief acknowledgments ("thanks", "ok", "got it")

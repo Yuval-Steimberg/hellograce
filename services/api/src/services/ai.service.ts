@@ -4065,12 +4065,19 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     // writes the words. Direct-reply path only (the orchestrator path has its
     // own MULTI-PART rule); unit tests construct AIService without guards so
     // directReplyMode is false and this is a no-op for them.
+    //
+    // Voice notes carry their content in the transcription (`description`), so
+    // analyze that for audio â€” a multi-topic voice note gets the same handling
+    // as a multi-topic text. Images are handled by the media pipeline above, so
+    // analyze only a typed caption there (never the internal nutrition blob).
     if (this.directReplyMode) {
-      const understanding = analyzeMessage(input.text);
+      const understandingText =
+        input.media[0]?.kind === 'audio' && description ? description : input.text;
+      const understanding = analyzeMessage(understandingText);
       if (understanding.hasMultiple) {
         systemPromptWithStrategy += buildMultiPartNote(understanding);
         this.deps.logger.info(
-          { userId: input.userId, kinds: understanding.kinds },
+          { userId: input.userId, kinds: understanding.kinds, source: input.media[0]?.kind ?? 'text' },
           'ai.multi_part.detected',
         );
       }

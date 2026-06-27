@@ -1,14 +1,12 @@
 import { motion } from "framer-motion";
 import { Check, MessageCircle, Settings } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { buildGraceChatHref, isSandboxMode, WHATSAPP_JOIN_CODE } from "@/lib/whatsappLink";
 
 interface ConfirmationStepProps {
   firstName: string;
   phone: string;
 }
-
-const WHATSAPP_NUMBER = (import.meta.env.VITE_WHATSAPP_NUMBER as string | undefined) ?? "";
-const WHATSAPP_JOIN_CODE = (import.meta.env.VITE_WHATSAPP_JOIN_CODE as string | undefined) ?? "";
 
 const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
   const navigate = useNavigate();
@@ -18,12 +16,10 @@ const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
     ? phone.slice(0, phone.length - 4).replace(/./g, "•") + phone.slice(-4)
     : phone;
 
-  const sandboxMode = WHATSAPP_JOIN_CODE.length > 0;
-  const whatsappHref = WHATSAPP_NUMBER
-    ? `https://wa.me/${WHATSAPP_NUMBER.replace(/\D/g, "")}${
-        sandboxMode ? `?text=${encodeURIComponent(`join ${WHATSAPP_JOIN_CODE}`)}` : ""
-      }`
-    : "";
+  const sandboxMode = isSandboxMode;
+  // Opens WhatsApp with a ready-to-send message prefilled (warm opener in prod,
+  // the required `join <code>` in sandbox) — never an empty chat.
+  const whatsappHref = buildGraceChatHref();
 
   return (
     <>
@@ -104,13 +100,15 @@ const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
               <MessageCircle className="h-4 w-4 text-primary" />
             </div>
             <span className="text-sm font-medium text-foreground">
-              {sandboxMode ? "One quick step" : "Check your WhatsApp"}
+              {whatsappHref ? "One quick step" : "Check your WhatsApp"}
             </span>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">
             {sandboxMode
               ? `Tap the button above to open WhatsApp — it'll pre-fill "join ${WHATSAPP_JOIN_CODE}". Send it and grace will reply.`
-              : "Look for a welcome message from grace. That's where she'll check in with you — no app needed."}
+              : whatsappHref
+                ? "Tap the button above — it'll open WhatsApp with a quick hello ready to send. Tap send and grace takes it from there."
+                : "Look for a welcome message from grace. That's where she'll check in with you — no app needed."}
           </p>
         </motion.div>
       </div>

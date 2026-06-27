@@ -3,9 +3,9 @@ import { Link } from "react-router-dom";
 import QuizButton from "./QuizButton";
 import PhoneInput from "./PhoneInput";
 
+import { buildGraceChatHref } from "@/lib/whatsappLink";
+
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
-const WHATSAPP_NUMBER = (import.meta.env.VITE_WHATSAPP_NUMBER as string | undefined) ?? "";
-const WHATSAPP_JOIN_CODE = (import.meta.env.VITE_WHATSAPP_JOIN_CODE as string | undefined) ?? "";
 
 interface PhoneStepProps {
   phone: string;
@@ -77,9 +77,10 @@ const PhoneStep = ({
     onNext();
   };
 
-  const whatsappHref = WHATSAPP_NUMBER
-    ? `https://wa.me/${WHATSAPP_NUMBER.replace(/\D/g, "")}${WHATSAPP_JOIN_CODE ? `?text=${encodeURIComponent(`join ${WHATSAPP_JOIN_CODE}`)}` : ""}`
-    : "https://wa.me/";
+  // Opens WhatsApp with a ready-to-send message prefilled (warm opener in prod,
+  // the required `join <code>` in sandbox). Falls back to a bare wa.me link when
+  // no number is configured, exactly as before.
+  const whatsappHref = buildGraceChatHref() || "https://wa.me/";
 
   if (alreadyRegistered) {
     return (

@@ -11,9 +11,9 @@ interface SEOHeadProps {
 }
 
 const SITE_NAME = "grace";
-const DEFAULT_TITLE = "grace — Your Daily GLP-1 Text Companion";
+const DEFAULT_TITLE = "Grace — Your Daily GLP-1 Companion on WhatsApp";
 const DEFAULT_DESCRIPTION =
-  "grace sends you warm, personalized SMS check-ins to help you stay on track with your GLP-1 weight loss journey. No app needed — just texts from a friend who gets it.";
+  "Grace is a daily GLP-1 companion for people on Ozempic, Wegovy, Mounjaro & Zepbound. Stay on track with protein, hydration, injection days, side effects and progress — all through a simple chat. No app. Not a replacement for medical care.";
 const BASE_URL = "https://graceglp.com";
 const DEFAULT_OG_IMAGE = `${BASE_URL}/og-image.png`;
 

@@ -14,7 +14,7 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ["'Cormorant Infant'", "Georgia", "serif"],
+        sans: ["'Plus Jakarta Sans'", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "Helvetica", "Arial", "sans-serif"],
         serif: ["'Playfair Display'", "Georgia", "serif"],
       },
       colors: {
@@ -65,6 +65,12 @@ export default {
         blush: "hsl(var(--blush))",
         velvet: "hsl(var(--velvet))",
         sand: "hsl(var(--sand))",
+        mint: {
+          DEFAULT: "hsl(var(--mint))",
+          deep: "hsl(var(--mint-deep))",
+          soft: "hsl(var(--mint-soft))",
+        },
+        ink: "hsl(var(--teal-ink))",
         success: {
           DEFAULT: "hsl(var(--success))",
           foreground: "hsl(var(--success-foreground))",

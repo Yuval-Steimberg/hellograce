@@ -6,90 +6,98 @@
 
 @layer base {
   :root {
-    /* Palette from design: soft rose-blush bg · dark warm brown text · terracotta accent */
-    --background: 18 42% 93%;       /* rose-blush #F0E4DC */
-    --foreground: 18 43% 12%;       /* very dark warm brown #2A1810 */
+    /* Calm Tech-Health palette · cool soft-white bg · deep ink-teal · electric mint accent */
+    --background: 168 30% 98%;      /* cool soft white #F7FAF9 */
+    --foreground: 188 52% 12%;      /* deep ink-teal text #0E2C30 */
 
-    --card: 18 35% 96%;
-    --card-foreground: 18 43% 12%;
+    --card: 0 0% 100%;              /* clean white cards */
+    --card-foreground: 188 52% 12%;
 
-    --popover: 18 35% 96%;
-    --popover-foreground: 18 43% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 188 52% 12%;
 
-    --primary: 18 43% 12%;          /* dark brown — CTA button */
-    --primary-foreground: 18 35% 97%;
+    --primary: 188 58% 12%;         /* ink-teal #0C2A2E — CTA button + headings */
+    --primary-foreground: 168 40% 98%;
 
-    --secondary: 18 28% 89%;
-    --secondary-foreground: 18 30% 22%;
+    --secondary: 168 30% 94%;       /* soft teal-tint surface */
+    --secondary-foreground: 188 45% 16%;
 
-    --muted: 18 25% 91%;
-    --muted-foreground: 18 18% 43%; /* warm medium brown — body text */
+    --muted: 170 24% 95%;
+    --muted-foreground: 192 12% 40%; /* muted teal-gray — body text */
 
-    --accent: 18 48% 57%;           /* terracotta #C97B5C */
+    --accent: 158 64% 38%;          /* accessible deep mint #1FA876 — icons + accent text */
     --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 84% 60%;
+    --destructive: 0 75% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 18 22% 87%;
-    --input: 18 22% 87%;
-    --ring: 18 43% 12%;
+    --border: 175 22% 89%;
+    --input: 175 22% 89%;
+    --ring: 158 64% 42%;
 
-    --radius: 1rem;
+    --radius: 1.1rem;
 
-    --sidebar-background: 18 35% 96%;
-    --sidebar-foreground: 18 30% 22%;
-    --sidebar-primary: 18 43% 12%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 188 45% 16%;
+    --sidebar-primary: 188 58% 12%;
     --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 18 25% 91%;
-    --sidebar-accent-foreground: 18 43% 12%;
-    --sidebar-border: 18 22% 89%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 170 24% 95%;
+    --sidebar-accent-foreground: 188 52% 12%;
+    --sidebar-border: 175 22% 89%;
+    --sidebar-ring: 158 64% 42%;
 
     /* Custom tokens */
-    --peach: 18 48% 57%;            /* terracotta accent */
-    --blush: 18 42% 93%;            /* main rose-blush background */
-    --velvet: 18 43% 12%;           /* dark brown text */
-    --sand: 18 22% 87%;
-    --success: 145 50% 38%;
+    --mint: 153 71% 55%;            /* electric mint #3DDC97 — fills + glows */
+    --mint-deep: 158 64% 36%;       /* deep mint — accent text */
+    --mint-soft: 158 55% 93%;       /* faint mint tint — surfaces */
+    --teal-ink: 188 58% 12%;        /* ink-teal */
+    --peach: 158 64% 40%;           /* legacy alias → mint */
+    --blush: 168 30% 98%;           /* legacy alias → background */
+    --velvet: 188 58% 12%;          /* legacy alias → ink */
+    --sand: 175 22% 89%;            /* legacy alias → border */
+    --success: 153 60% 38%;
     --success-foreground: 0 0% 100%;
   }
 
   .dark {
-    --background: 18 20% 10%;
-    --foreground: 18 28% 92%;
-    --card: 18 18% 13%;
-    --card-foreground: 18 28% 92%;
-    --popover: 18 18% 13%;
-    --popover-foreground: 18 28% 92%;
-    --primary: 18 28% 88%;
-    --primary-foreground: 18 43% 12%;
-    --secondary: 18 14% 16%;
-    --secondary-foreground: 18 22% 88%;
-    --muted: 18 12% 14%;
-    --muted-foreground: 18 12% 55%;
-    --accent: 18 40% 42%;
-    --accent-foreground: 18 28% 92%;
-    --destructive: 0 62.8% 30.6%;
+    --background: 190 42% 7%;
+    --foreground: 168 25% 92%;
+    --card: 190 36% 10%;
+    --card-foreground: 168 25% 92%;
+    --popover: 190 36% 10%;
+    --popover-foreground: 168 25% 92%;
+    --primary: 153 71% 55%;
+    --primary-foreground: 188 58% 10%;
+    --secondary: 190 24% 14%;
+    --secondary-foreground: 168 22% 88%;
+    --muted: 190 20% 13%;
+    --muted-foreground: 175 12% 58%;
+    --accent: 153 71% 55%;
+    --accent-foreground: 188 58% 10%;
+    --destructive: 0 62.8% 40%;
     --destructive-foreground: 0 0% 100%;
-    --border: 18 12% 18%;
-    --input: 18 12% 18%;
-    --ring: 37 28% 88%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --border: 190 18% 18%;
+    --input: 190 18% 18%;
+    --ring: 153 71% 55%;
+    --sidebar-background: 190 36% 9%;
+    --sidebar-foreground: 168 22% 90%;
+    --sidebar-primary: 153 71% 55%;
+    --sidebar-primary-foreground: 188 58% 10%;
+    --sidebar-accent: 190 24% 14%;
+    --sidebar-accent-foreground: 168 22% 90%;
+    --sidebar-border: 190 18% 18%;
+    --sidebar-ring: 153 71% 55%;
 
     /* Custom tokens */
-    --peach: 16 40% 40%;
-    --blush: 100 14% 10%;
-    --velvet: 37 28% 88%;
-    --sand: 100 10% 22%;
-    --success: 145 40% 45%;
+    --mint: 153 71% 55%;
+    --mint-deep: 153 60% 48%;
+    --mint-soft: 190 24% 16%;
+    --teal-ink: 168 25% 92%;
+    --peach: 153 71% 55%;
+    --blush: 190 42% 7%;
+    --velvet: 168 25% 92%;
+    --sand: 190 18% 20%;
+    --success: 153 60% 48%;
     --success-foreground: 0 0% 100%;
   }
 }
@@ -99,26 +107,44 @@
     @apply border-border;
   }
 
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Offset in-page anchor targets so the fixed nav doesn't cover headings */
+  section[id] {
+    scroll-margin-top: 90px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+
   body {
-    @apply text-foreground font-sans;
+    @apply text-foreground font-sans antialiased;
     font-size: 16px;
     font-weight: 400;
-    line-height: 1.65;
+    line-height: 1.6;
+    letter-spacing: -0.005em;
     background-color: hsl(var(--background));
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
   @media (min-width: 768px) {
-    body { font-size: 18px; }
+    body { font-size: 17px; }
   }
 
   .dark body {
     background-image:
-      radial-gradient(ellipse 1100px 700px at 92% -10%, hsl(16 40% 28% / 0.5) 0%, transparent 60%),
-      radial-gradient(ellipse 900px 700px at -10% 105%, hsl(220 20% 22% / 0.45) 0%, transparent 60%);
+      radial-gradient(ellipse 1100px 700px at 92% -10%, hsl(153 60% 30% / 0.22) 0%, transparent 60%),
+      radial-gradient(ellipse 900px 700px at -10% 105%, hsl(188 50% 26% / 0.35) 0%, transparent 60%);
   }
 
-  h1, h2, h3 {
-    font-family: 'Playfair Display', serif;
+  /* Headings default to the modern sans; serif italic is reserved for accents via .font-serif */
+  h1, h2, h3, h4 {
+    font-weight: 700;
+    letter-spacing: -0.02em;
   }
 }
 
@@ -142,13 +168,38 @@
   }
 
   .grace-btn {
-    @apply inline-flex items-center justify-center rounded-full bg-primary px-8 py-4 text-lg font-medium text-primary-foreground transition-all duration-200 hover:brightness-95 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed;
-    min-height: 56px;
+    @apply inline-flex items-center justify-center gap-1 rounded-full bg-primary px-8 py-4 text-base font-semibold text-primary-foreground shadow-lg shadow-primary/20 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/25 active:translate-y-0 active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed disabled:translate-y-0;
+    min-height: 54px;
+    letter-spacing: -0.01em;
+  }
+
+  /* High-energy mint variant for primary conversion CTAs */
+  .grace-btn-accent {
+    @apply inline-flex items-center justify-center gap-1 rounded-full px-8 py-4 text-base font-semibold transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99];
+    min-height: 54px;
+    letter-spacing: -0.01em;
+    background-image: linear-gradient(135deg, hsl(153 71% 52%), hsl(165 70% 44%));
+    color: hsl(var(--primary));
+    box-shadow: 0 10px 30px -8px hsl(153 71% 45% / 0.55);
+  }
+  .grace-btn-accent:hover {
+    box-shadow: 0 16px 40px -10px hsl(153 71% 45% / 0.65);
   }
 
   .grace-btn-secondary {
-    @apply inline-flex items-center justify-center rounded-full bg-secondary px-8 py-4 text-lg font-medium text-secondary-foreground transition-all duration-200 hover:brightness-95 active:scale-[0.98];
-    min-height: 56px;
+    @apply inline-flex items-center justify-center gap-1 rounded-full border border-border bg-card px-8 py-4 text-base font-semibold text-foreground transition-all duration-200 hover:border-accent/50 hover:bg-secondary active:scale-[0.99];
+    min-height: 54px;
+    letter-spacing: -0.01em;
+  }
+
+  /* Pill eyebrow / status chip used across sections */
+  .grace-chip {
+    @apply inline-flex items-center gap-2 rounded-full border border-border bg-card/80 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground backdrop-blur-sm;
+  }
+
+  /* Soft elevated surface card */
+  .grace-card {
+    @apply rounded-3xl border border-border bg-card shadow-[0_2px_40px_-12px_hsl(188_40%_20%/0.12)];
   }
 
   .safe-bottom {
@@ -176,10 +227,10 @@
   .grace-btn-glow::after {
     content: '';
     position: absolute;
-    inset: -4px;
+    inset: -5px;
     border-radius: 9999px;
-    background: linear-gradient(90deg, hsl(14 100% 72% / 0.5), hsl(265 75% 78% / 0.5), hsl(200 90% 72% / 0.5));
-    filter: blur(14px);
+    background: linear-gradient(90deg, hsl(153 71% 60% / 0.55), hsl(170 70% 55% / 0.5), hsl(188 60% 45% / 0.5));
+    filter: blur(16px);
     opacity: 0;
     z-index: -1;
     animation: pulse-glow 3.5s ease-in-out infinite;
@@ -208,13 +259,22 @@
   }
 
   .grace-shimmer {
-    background: linear-gradient(90deg, hsl(16 50% 58%) 0%, hsl(40 100% 60%) 30%, hsl(265 65% 65%) 60%, hsl(16 50% 58%) 100%);
+    background: linear-gradient(90deg, hsl(158 64% 38%) 0%, hsl(153 71% 48%) 30%, hsl(188 55% 30%) 60%, hsl(158 64% 38%) 100%);
     background-size: 200% auto;
     background-clip: text;
     -webkit-background-clip: text;
     color: transparent;
     -webkit-text-fill-color: transparent;
     animation: shimmer 6s linear infinite;
+  }
+
+  /* Mint→teal text gradient for headline accent words */
+  .grace-gradient-text {
+    background: linear-gradient(120deg, hsl(158 64% 38%), hsl(153 66% 46%) 55%, hsl(188 52% 28%));
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
   }
 
   @media (prefers-reduced-motion: reduce) {

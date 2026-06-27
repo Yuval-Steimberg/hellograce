@@ -18,7 +18,7 @@ const MedicationsBar = () => {
   return (
     <section
       aria-label="Supported GLP-1 medications"
-      className="relative border-y border-sand/30 bg-card/30 backdrop-blur-sm py-10 md:py-12 overflow-hidden"
+      className="relative border-y border-border/60 bg-card/40 backdrop-blur-sm py-9 md:py-11 overflow-hidden"
     >
       <div className="max-w-[1440px] mx-auto px-5 sm:px-8 md:px-10">
         <motion.p
@@ -53,8 +53,9 @@ const MedicationsBar = () => {
             {loop.map((m, i) => (
               <span
                 key={`${m}-${i}`}
-                className="px-4 py-1.5 md:px-5 md:py-2 rounded-full bg-card border border-sand/70 text-foreground/85 text-sm md:text-[15px] font-medium tracking-tight whitespace-nowrap hover:border-accent/60 hover:shadow-md hover:shadow-accent/10 transition-colors"
+                className="flex items-center gap-2 px-4 py-1.5 md:px-5 md:py-2 rounded-full bg-card border border-border text-foreground/85 text-sm md:text-[15px] font-semibold tracking-tight whitespace-nowrap hover:border-accent/60 hover:text-foreground hover:shadow-md hover:shadow-accent/10 transition-colors"
               >
+                <span className="h-1.5 w-1.5 rounded-full bg-accent/70" aria-hidden />
                 {m}
               </span>
             ))}

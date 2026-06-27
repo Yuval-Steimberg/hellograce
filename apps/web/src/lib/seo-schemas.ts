@@ -75,10 +75,10 @@ export const faqSchema = {
   mainEntity: [
     {
       "@type": "Question",
-      name: "Which GLP-1 medications does grace support?",
+      name: "Which GLP-1 medications does Grace support?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Wegovy and Ozempic (semaglutide), Mounjaro and Zepbound (tirzepatide), Saxenda (liraglutide), and compounded semaglutide/tirzepatide from any reputable pharmacy. grace knows the dose ladders, the typical side-effect timelines, and the protocol differences between them.",
+        text: "Wegovy and Ozempic (semaglutide), Mounjaro and Zepbound (tirzepatide), Saxenda (liraglutide), and compounded semaglutide/tirzepatide from any reputable pharmacy. Grace knows the dose ladders, the typical side-effect timelines, and the differences between them.",
       },
     },
     {
@@ -86,7 +86,15 @@ export const faqSchema = {
       name: "Do I need to download an app?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "No. grace lives in WhatsApp (or SMS where WhatsApp isn't available). It's the messaging app on the phone you already carry — no login, no password, no notifications to manage.",
+        text: "No. Grace lives in WhatsApp (or SMS where WhatsApp isn't available) — the messaging app already on your phone. No login, no password, nothing new to manage.",
+      },
+    },
+    {
+      "@type": "Question",
+      name: "How does Grace help with food and protein?",
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: "Just text what you ate, or send a photo. Grace estimates the protein and calories, logs it, and tells you what you have left for the day against your personal target — no spreadsheets, no calorie-counting app.",
       },
     },
     {
@@ -94,39 +102,39 @@ export const faqSchema = {
       name: "What happens on my injection day?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "grace texts you in the morning with a quick prep ritual (hydration target, lighter meals, ginger if nausea hit last time). She checks in after you've dosed, then again the next day to see how you're feeling. If you flag a side effect, she follows up 4 hours later.",
+        text: "Grace texts you a quick morning prep (hydration, lighter meals, ginger if nausea hit last time), checks in after you've dosed, and follows up the next day. If you flag a side effect, she circles back a few hours later.",
       },
     },
     {
       "@type": "Question",
-      name: "Can grace help with nausea, fatigue, or constipation?",
+      name: "Can Grace help with nausea, fatigue, or constipation?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Yes — and she remembers what worked last time. Plain crackers and ginger tea on day-after nausea. Magnesium citrate at night for constipation. Electrolytes when fatigue spikes. She'll never tell you to push through — only what's reasonable, and when to call your doctor.",
+        text: "Yes — and she remembers what worked for you last time. Practical, GLP-1-aware suggestions for the common side effects, plus a clear nudge to call your doctor when something needs a professional.",
       },
     },
     {
       "@type": "Question",
-      name: "Does grace remember my history, or is it generic?",
+      name: "Does Grace really remember my history?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "She remembers everything you share — your goal weight, current dose week, the foods that make you queasy, which protein sources you actually eat, your last weigh-in, and whether you flagged a side effect this week. Every reply is shaped by that context.",
+        text: "Yes. Your goals, current dose week, the foods that make you queasy, what you actually eat, your last weigh-in — every reply is shaped by that context. Generic check-ins are the one thing she won't do.",
       },
     },
     {
       "@type": "Question",
-      name: "Will grace replace my doctor?",
+      name: "Will Grace replace my doctor?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "No. grace is a wellness companion — she'll never adjust your dose, diagnose a side effect, or override your prescriber. If something sounds clinically serious, she'll tell you to call your doctor or go to urgent care.",
+        text: "No. Grace is a wellness companion for the day-to-day. She'll never adjust your dose or diagnose a problem, and if anything sounds clinically serious she'll tell you to contact your doctor or urgent care. It's support between appointments, not medical care.",
       },
     },
     {
       "@type": "Question",
-      name: "How much does grace cost?",
+      name: "How much does Grace cost?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Your first 3 days are completely free — no card required to start. After that, $12/month, less than a single GLP-1 co-pay. Cancel any time by texting STOP.",
+        text: "Your first 3 days are free — no card required to start. After that it's $12/month, less than a single GLP-1 co-pay. Cancel any time by texting STOP.",
       },
     },
     {
@@ -134,7 +142,7 @@ export const faqSchema = {
       name: "How is my information protected?",
       acceptedAnswer: {
         "@type": "Answer",
-        text: "Encrypted in transit and at rest. We never sell your data, never share it with insurers or employers, and never run ads against your messages. You can request full deletion any time by texting DELETE — your record is gone within 24 hours.",
+        text: "Encrypted in transit and at rest. We never sell your data, never share it with insurers or employers, and never run ads against your messages. You can request full deletion any time by texting DELETE.",
       },
     },
   ],

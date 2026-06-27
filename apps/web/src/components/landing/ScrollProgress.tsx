@@ -11,7 +11,7 @@ const ScrollProgress = () => {
   return (
     <motion.div
       style={{ scaleX, transformOrigin: "0% 50%" }}
-      className="fixed top-0 left-0 right-0 h-[2px] z-50 bg-gradient-to-r from-accent via-primary to-accent pointer-events-none"
+      className="fixed top-0 left-0 right-0 h-[3px] z-[60] bg-gradient-to-r from-mint via-accent to-ink pointer-events-none"
       aria-hidden="true"
     />
   );

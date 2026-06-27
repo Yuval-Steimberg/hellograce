@@ -94,7 +94,11 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
     // or HMAC over the body). Outside production, accept so local testing works.
     if (deps.env.NODE_ENV === 'production') {
       const secret = deps.env.IMESSAGE_WEBHOOK_SECRET ?? '';
-      const authHeader = headerStr(req.headers['authorization'] ?? req.headers['loop-secret-key']);
+      // Shared-secret header: LoopMessage uses authorization/loop-secret-key;
+      // Sendblue sends the global secret in `sb-signing-secret`.
+      const authHeader = headerStr(
+        req.headers['sb-signing-secret'] ?? req.headers['authorization'] ?? req.headers['loop-secret-key'],
+      );
       const sigHeader = headerStr(req.headers['x-webhook-signature'] ?? req.headers['x-loop-signature']);
       const ok = isValidImessageSignature({ secret, rawBody: JSON.stringify(raw), authHeader, signatureHeader: sigHeader });
       if (!ok) throw new UnauthorizedError('Invalid iMessage webhook signature');

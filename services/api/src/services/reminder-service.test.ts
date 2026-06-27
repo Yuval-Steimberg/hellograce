@@ -87,10 +87,12 @@ describe('computeReminderSchedule — next reminder', () => {
     expect(s.next?.timeLabel).toBe('8:30 PM'); // 22:00 - 90min
   });
 
-  it('late night → tomorrow morning', () => {
-    const s = computeReminderSchedule(baseUser, at('23:30', '2026-06-16'));
+  it('late night → tomorrow morning, with the explicit day name', () => {
+    const s = computeReminderSchedule(baseUser, at('23:30', '2026-06-16')); // Tuesday night
     expect(s.next?.kind).toBe('morning');
-    expect(s.next?.when).toBe('tomorrow morning');
+    expect(s.next?.when).toBe('tomorrow (Wednesday) morning');
+    expect(s.next?.phrase).toContain('Wednesday');
+    expect(s.next?.phrase).toContain('8:00 AM');
   });
 
   it('injection day today, before morning → injection check-in', () => {

@@ -110,6 +110,19 @@ export function formatClock(h: number, m: number): string {
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
 }
 
+/**
+ * Morning "when" phrase that always names the actual day, so a reminder answer
+ * is never ambiguous about which day it means:
+ *   offset 0 → "this morning"
+ *   offset 1 → "tomorrow (Sunday) morning"  (keeps "tomorrow" warmth + the day)
+ *   offset≥2 → "Sunday morning"
+ */
+function morningWhen(offset: number, dow: number): string {
+  if (offset === 0) return 'this morning';
+  if (offset === 1) return `tomorrow (${DAYS[dow]}) morning`;
+  return `${DAYS[dow]} morning`;
+}
+
 /** Is the given local calendar date a scheduled (non-skipped) day? */
 function dayEligible(localDate: Date, daysInterval: number): boolean {
   if (daysInterval <= 1) return true;
@@ -188,7 +201,7 @@ function computeNext(
     if (isInjDay) {
       // Morning injection message at wake time.
       if (offset > 0 || nowMin <= cfg.wakeMin + 60) {
-        const when = offset === 0 ? 'this morning' : offset === 1 ? 'tomorrow morning' : `${DAYS[dow]} morning`;
+        const when = morningWhen(offset, dow);
         return { kind: 'injection', when, timeLabel: wakeLabel, phrase: `${when} around ${wakeLabel} (your injection-day check-in)` };
       }
       // Past the morning window on injection day → the follow-up comes later today.
@@ -202,7 +215,7 @@ function computeNext(
 
     // Morning.
     if (offset > 0 || nowMin <= cfg.wakeMin + 60) {
-      const when = offset === 0 ? 'this morning' : offset === 1 ? 'tomorrow morning' : `${DAYS[dow]} morning`;
+      const when = morningWhen(offset, dow);
       return { kind: 'morning', when, timeLabel: wakeLabel, phrase: `${when} around ${wakeLabel}` };
     }
 

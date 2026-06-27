@@ -441,9 +441,12 @@ import {
   buildRecommendationAckAdvance,
   extractSelectedFood,
   proteinAddOns,
+  buildConsumptionFeedbackReply,
 } from './recommendation-context.js';
 import {
   detectMealConsumption,
+  detectConsumptionFeedback,
+  extractFoodMention,
   isBareConsumptionBackReference,
   mentionsFood,
 } from './meal-lifecycle.js';
@@ -1053,6 +1056,58 @@ export class AIService {
                 // Fall through — better to answer than to drop the turn.
               }
             }
+          }
+        }
+        // CONSUMPTION FEEDBACK (the 4th lifecycle signal): the user is reporting
+        // how a prior suggestion went ("Thanks I feel good after drinking the
+        // smoothie", "the omelet was great", "that worked", "the one you
+        // suggested"). This is a FOLLOW-UP — NOT a new recommendation request.
+        // Runs BEFORE classify/the recommendation path so Grace never restarts
+        // the flow or re-asks preferences. Acknowledge + OFFER to log (never
+        // force, never assume macros). Gated on real food context: a food named
+        // in the message OR Grace's last turn was a food recommendation — so a
+        // bare "that worked" to a non-food offer isn't hijacked. A bare
+        // consumption back-reference ("I had it") is left to the 'consumed'
+        // branch below, which logs the known stored meal.
+        if (
+          mealState !== 'consumed' &&
+          detectConsumptionFeedback(input.text) &&
+          !input.text.includes('?') &&
+          wordCount <= 18
+        ) {
+          let mealContext = mentionsFood(input.text);
+          let lastRecFood = '';
+          if (!mealContext) {
+            const recent = await this.deps.memory.getRecentTurns(input.userId, 4).catch(() => [] as ChatTurn[]);
+            const lastAsst = [...recent].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+            if (looksLikeRecommendation(lastAsst) && mentionsFood(lastAsst)) {
+              mealContext = true;
+              lastRecFood = lastAsst;
+            }
+          }
+          if (mealContext) {
+            const named =
+              extractFoodMention(input.text) ??
+              (await getActiveMeal(this.deps.redis, input.userId).catch(() => null))?.meal ??
+              (lastRecFood ? extractFoodMention(lastRecFood) : null);
+            // Keep the dish as the active meal so a later "log it" / "I had it"
+            // resolves it. extractAndStore (post-turn) remembers that it sat well.
+            if (named) void setActiveMeal(this.deps.redis, input.userId, named, this.deps.logger).catch(() => {});
+            const reply = buildConsumptionFeedbackReply(named);
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info(
+              { userId: input.userId, text: input.text.slice(0, 80), named: named ?? null },
+              'ai.consumption_feedback.served',
+            );
+            this.persistLatency(input.userId, 'consumption_feedback', totalMs, lat.snapshot(), input.text, reply);
+            return {
+              text: reply,
+              confidence: 'high',
+              intent: 'consumption_feedback',
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
           }
         }
         // Consumption confirmed. If it's a bare back-reference ("I ended up

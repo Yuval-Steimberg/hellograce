@@ -136,3 +136,15 @@ export function proteinAddOns(dietLabel: string | null | undefined): string {
   if (/vegetarian|pescatar/.test(d)) return 'a dollop of Greek yogurt, some cottage cheese, or edamame';
   return 'a boiled egg, some Greek yogurt, or a few slices of chicken';
 }
+
+/**
+ * Reply to consumption feedback after a prior suggestion — acknowledge warmly,
+ * connect to what they tried, and OFFER to log it (never force, never assume
+ * macros). Short and natural for SMS/WhatsApp; asks at most one question. When
+ * the dish is known it's echoed back ("glad the smoothie felt good").
+ */
+export function buildConsumptionFeedbackReply(food: string | null | undefined): string {
+  const dish = (food ?? '').trim();
+  const gladPart = dish ? `glad the ${dish} felt good` : 'glad that felt good';
+  return `That's great — ${gladPart}. Want me to log it? Just tell me roughly what was in it.`;
+}

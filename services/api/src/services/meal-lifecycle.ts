@@ -149,3 +149,66 @@ export function isBareConsumptionBackReference(text: string): boolean {
   if (t.split(/\s+/).filter(Boolean).length > 9) return false;
   return BARE_BACKREF_RE.test(t);
 }
+
+// ── Consumption feedback (the 4th lifecycle signal) ─────────────────────────
+// The user TRIED something — usually one of Grace's prior suggestions — and is
+// reporting how it went ("I feel good after drinking the smoothie", "that
+// worked", "I tried it", "the omelet was great", "the one you suggested"). This
+// is neither a fresh request NOR a clean food log: it's a FOLLOW-UP. Grace must
+// connect it to the prior turn — acknowledge, OFFER to log (never force, never
+// assume macros without details), and NEVER restart the recommendation flow or
+// re-ask preferences. General across topics; the caller gates on food context.
+const CONSUMPTION_FEEDBACK_RE: RegExp[] = [
+  // "after eating / drinking / having / finishing / trying / I ate / I had ..."
+  /\bafter\s+(?:eating|drinking|having|finishing|trying|that|i\s+(?:ate|had|drank|tried|made|finished))\b/i,
+  // "I tried / tested it" / "gave it a try/go/shot"
+  /\bi\s+(?:tried|tested)\b|\bgave\s+(?:it|that|the\s+\w+)\s+a\s+(?:try|go|shot)\b/i,
+  // "that / it / this worked / helped / did the trick / was helpful"
+  /\b(?:that|it|this)\s+(?:worked|helped|did\s+the\s+trick|was\s+(?:helpful|perfect|great|good|delicious|filling))\b/i,
+  // "the <food> was / tasted good / great / delicious / filling ..."
+  /\bthe\s+\w+\s+(?:was|tasted)\s+(?:good|great|nice|delicious|amazing|perfect|lovely|tasty|filling|fine|solid|wonderful|so\s+good)\b/i,
+  // "I feel good / better / great / full / less <symptom> ..." (state report)
+  /\bi\s+feel\s+(?:good|better|great|fine|full|amazing|satisfied|so\s+much\s+better|less\s+\w+)\b/i,
+  // Explicit back-reference to a prior suggestion.
+  /\b(?:the|that)\s+one\s+you\s+(?:suggested|recommended|mentioned|said|gave)\b/i,
+  /\byou\s+(?:suggested|recommended)\b/i,
+];
+
+// NEGATIVE feedback / symptoms — "I don't feel good after eating that", "the
+// smoothie didn't sit well", "feeling nauseous". These match the "after eating"
+// trigger but are the OPPOSITE of positive feedback — they belong to the
+// symptom/health paths, never the offer-to-log handler.
+const NEGATIVE_FEEDBACK_RE =
+  /\b(?:don'?t|do\s*not|doesn'?t|didn'?t|did\s*not|not|no\s+longer)\s+feel\b|\bfeel(?:ing)?\s+(?:bad|worse|sick|ill|unwell|nauseous|nauseated|queasy|terrible|awful|off|crampy|cramping|bloated|dizzy|weird|gross|heavy)\b|\b(?:didn'?t|don'?t|doesn'?t|did\s*not)\s+(?:work|help|sit\s+well|agree\s+with)\b/i;
+
+/**
+ * True when the message is POSITIVE follow-up feedback after trying something
+ * (often a prior recommendation): a tried-it report, a how-it-felt update, or a
+ * back-reference to a suggestion. Negated / negative-feeling messages void it
+ * ("I don't feel good after…", "it didn't sit well" → symptoms, handled
+ * elsewhere). The caller must additionally confirm food context (named food or
+ * a prior food recommendation) before acting, so a generic "that worked" to a
+ * non-food offer isn't hijacked.
+ */
+export function detectConsumptionFeedback(text: string): boolean {
+  const t = (text ?? '').trim();
+  if (t.length === 0) return false;
+  if (CONSUMPTION_NEGATION_RE.test(t)) return false;
+  if (NEGATIVE_FEEDBACK_RE.test(t)) return false;
+  return CONSUMPTION_FEEDBACK_RE.some((re) => re.test(t));
+}
+
+/**
+ * Pull the first concrete food/dish word the message names, for echoing back
+ * ("glad the smoothie felt good"). Returns null for generic meal words
+ * (breakfast/lunch/snack/food/meal) — those don't name a dish to reference.
+ */
+export function extractFoodMention(text: string): string | null {
+  const m = (text ?? '').match(FOOD_MENTION_RE);
+  if (!m) return null;
+  const w = m[0].toLowerCase().trim();
+  if (/^(?:food|meal|dish|plate|bowl|snack|breakfast|lunch|dinner|brunch|supper|dessert|fruit|veg(?:gie|etable)s?)$/.test(w)) {
+    return null;
+  }
+  return w;
+}

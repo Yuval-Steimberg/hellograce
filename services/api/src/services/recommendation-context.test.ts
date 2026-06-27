@@ -9,6 +9,7 @@ import {
   isMealSelection,
   extractSelectedFood,
   proteinAddOns,
+  buildConsumptionFeedbackReply,
 } from './recommendation-context.js';
 
 describe('looksLikeRecommendation', () => {
@@ -121,5 +122,23 @@ describe('meal selection (2026-06-15)', () => {
     expect(proteinAddOns('vegan')).toMatch(/edamame|tofu|soy/i);
     expect(proteinAddOns('vegetarian')).toMatch(/yogurt|cottage|edamame/i);
     expect(proteinAddOns(null)).toMatch(/egg|yogurt|chicken/i);
+  });
+});
+
+describe('buildConsumptionFeedbackReply', () => {
+  it('echoes the named dish, acknowledges, and offers to log (no force, no restart)', () => {
+    const r = buildConsumptionFeedbackReply('smoothie');
+    expect(r).toMatch(/glad the smoothie felt good/i);
+    expect(r).toMatch(/log it/i);
+    expect(r).toMatch(/what was in it/i);
+    // Short + a single question — never re-asks preferences or re-lists options.
+    expect(r.length).toBeLessThan(160);
+    expect((r.match(/\?/g) ?? []).length).toBe(1);
+    expect(r).not.toMatch(/dietary|restriction|in the mood/i);
+  });
+  it('falls back to a generic acknowledgment when no dish is named', () => {
+    const r = buildConsumptionFeedbackReply(null);
+    expect(r).toMatch(/glad that felt good/i);
+    expect(r).toMatch(/log it/i);
   });
 });

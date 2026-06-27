@@ -6,6 +6,56 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Sendblue iMessage provider + consumption-feedback follow-ups (2026-06-27)
+
+Branch `claude/system-migration-process-dtkyp3` (PRs #103–#105 merged). Two
+threads this session:
+
+**1. Sendblue as an alternative iMessage relay (live, tested in prod).** The
+iMessage channel was hard-wired to LoopMessage's contract; added an
+`IMESSAGE_PROVIDER` switch (`loopmessage` default | `sendblue`).
+- `src/imessage/sendblue-sender.ts` — POSTs `api.sendblue.co/api/send-message`
+  with `sb-api-key-id`/`sb-api-secret-key` + `{number, content, from_number}`.
+  `from_number` (the Sendblue line, env `IMESSAGE_FROM_NUMBER`) is REQUIRED on
+  multi-line/free_api accounts — without it Sendblue 400s "missing required
+  parameter from_number" (hit in prod). 20s timeout + one retry on a
+  network/timeout abort (NOT on a non-2xx — avoids duplicate sends).
+- `src/imessage/sendblue-normalize.ts` — maps `number`→userId, `content`→text,
+  `media_url`→media, skips `is_outbound` status callbacks.
+- `webhook.ts` picks the normalizer by provider + accepts Sendblue's
+  `sb-signing-secret` header for signature verification. `server.ts` builds the
+  sender by provider (Sendblue needs only key-id+secret, no sender name).
+- Prod setup: `IMESSAGE_PROVIDER=sendblue`, `IMESSAGE_AUTH_KEY`(=key-id),
+  `IMESSAGE_SECRET_KEY`(=secret), `IMESSAGE_FROM_NUMBER`(=line), and the
+  Sendblue Inbound webhook → `…/webhook/imessage` with the Global Secret =
+  `IMESSAGE_WEBHOOK_SECRET`. `free_api` only sends to verified contacts.
+
+**2. Consumption-feedback follow-ups (the 4th meal-lifecycle signal).**
+Production: after Grace recommended breakfast incl. a smoothie, "Thanks I feel
+good after drinking smoothie" RESTARTED the recommendation flow ("what kind of
+breakfast? any dietary restrictions?") — it was feedback after trying a
+suggestion, not a new request. Root cause: `detectMealConsumption` returned
+`'neither'` (the "after drinking X" / "I feel good" phrasing is neither
+consumption nor preference) → fell to `classifyIntent` → recommendation path.
+- `meal-lifecycle.ts` — new `detectConsumptionFeedback(text)` (tried-it /
+  how-it-felt / back-reference to a suggestion; voided by negation +
+  `NEGATIVE_FEEDBACK_RE` so "I don't feel good after eating that" stays a
+  symptom) + `extractFoodMention(text)`.
+- `ai.service.ts` — new feedback branch in the meal block (BEFORE classify /
+  the recommendation path), gated on food context (named food OR last turn was
+  a food rec). Returns `buildConsumptionFeedbackReply` (`recommendation-
+  context.ts`): warm ack + OFFER to log (never force, never assume macros) +
+  one short question, echoing the dish. Stores the dish as the active meal;
+  post-turn `extractAndStore` remembers it sat well. Bare back-refs ("I had it")
+  still log the known stored meal via `tryLogStoredMeal`.
+- `prompts.ts` — general "WHEN SHE GIVES FEEDBACK AFTER TRYING SOMETHING" rule
+  (any topic): connect to the prior turn, don't restart/re-list/re-ask
+  preferences already in profile, ack + offer to log, keep it short.
+- Tests: +21 (meal-lifecycle feedback matrix + extractFoodMention + reply
+  builder). 1224 api + 645 ai-core green.
+
+---
+
 ### Nudge-style food handling: structured extraction + pending resolution (2026-06-19)
 
 Branch `claude/grace-competitive-eval-g52g71`. Production: "Just had pasta and

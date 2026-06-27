@@ -1,11 +1,57 @@
 import { describe, it, expect } from 'vitest';
 import {
   detectMealConsumption,
+  detectConsumptionFeedback,
+  extractFoodMention,
   isConsumptionConfirmed,
   isPreferenceLanguage,
   isBareConsumptionBackReference,
   mentionsFood,
 } from './meal-lifecycle.js';
+
+describe('detectConsumptionFeedback — follow-up after trying a suggestion', () => {
+  // The exact production failure + the spec's example set. General across
+  // phrasing, not hardcoded to "smoothie".
+  const YES = [
+    'Thanks I feel good after drinking smoothie',
+    'Thanks, I tried it',
+    'I feel better after eating that',
+    'The smoothie was good',
+    'That worked',
+    'I drank the one you suggested',
+    'I feel good after that',
+    'It helped',
+    'the oatmeal was great',
+    'I tried the omelet you recommended',
+    'feeling full after the wrap, that worked well',
+  ];
+  for (const m of YES) {
+    it(`"${m}" → consumption feedback`, () => expect(detectConsumptionFeedback(m)).toBe(true));
+  }
+
+  const NO = [
+    'What should I have for breakfast?', // new request
+    'Can you give me dinner ideas', // new request
+    "I don't feel good after eating that", // negated → symptom, not positive feedback
+    "I haven't tried it yet", // negated
+    'I ate two eggs and toast', // plain food log, no feedback phrasing
+    'what kind of smoothie is best', // question / new request
+  ];
+  for (const m of NO) {
+    it(`"${m}" → NOT consumption feedback`, () => expect(detectConsumptionFeedback(m)).toBe(false));
+  }
+});
+
+describe('extractFoodMention', () => {
+  it('pulls the named dish for echo-back', () => {
+    expect(extractFoodMention('I feel good after drinking smoothie')).toBe('smoothie');
+    expect(extractFoodMention('the omelet was great')).toBe('omelet');
+  });
+  it('returns null for generic meal words (no concrete dish)', () => {
+    expect(extractFoodMention('that breakfast was great')).toBeNull();
+    expect(extractFoodMention('it worked')).toBeNull();
+  });
+});
 
 describe('mentionsFood — food-context gate', () => {
   it('detects named foods / dishes', () => {

@@ -1071,3 +1071,32 @@ describe('Scheduler — OPTIMIZERS_ENABLED kill switch (2026-06-14)', () => {
     scheduler.stop();
   });
 });
+
+describe('Scheduler — proactive reminders route on the user channel (iMessage-first)', () => {
+  async function sendDirect(h: Harness, type: string): Promise<void> {
+    // @ts-expect-error — accessing private for test
+    await h.scheduler.sendAndRecord(h.user, type);
+  }
+
+  it('an iMessage user gets the reminder on the imessage channel', async () => {
+    setUtc(2026, 5, 20, 16, 0); // Wednesday noon NY
+    const h = buildHarness(makeUser({ channel: 'imessage' }));
+    await sendDirect(h, 'morning');
+    expect(h.sends).toHaveLength(1);
+    expect(h.sends[0]!.channel).toBe('imessage');
+  });
+
+  it('a null channel defaults to imessage (system-wide iMessage-first)', async () => {
+    setUtc(2026, 5, 20, 16, 0);
+    const h = buildHarness(makeUser({ channel: null }));
+    await sendDirect(h, 'morning');
+    expect(h.sends[0]!.channel).toBe('imessage');
+  });
+
+  it('a WhatsApp user (re-aligned non-Apple) still gets the reminder on whatsapp', async () => {
+    setUtc(2026, 5, 20, 16, 0);
+    const h = buildHarness(makeUser({ channel: 'whatsapp' }));
+    await sendDirect(h, 'morning');
+    expect(h.sends[0]!.channel).toBe('whatsapp');
+  });
+});

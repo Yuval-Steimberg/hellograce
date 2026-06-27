@@ -490,7 +490,10 @@ export class Scheduler {
       const body = user.rlhf_enabled && message.trim().length >= 25
         ? `${message}\n\n👍 👎 to rate · # to add a thought`
         : message;
-      await this.deps.sender.send({ to: user.phone, body, channel: user.channel ?? 'whatsapp' });
+      // iMessage-first: send proactive reminders on the user's channel (default
+      // 'imessage' post-migration). The ChannelRouter falls back to WhatsApp/SMS
+      // if the recipient isn't reachable on iMessage, so no reminder is dropped.
+      await this.deps.sender.send({ to: user.phone, body, channel: user.channel ?? 'imessage' });
       await this.deps.users.recordCheckIn({
         userId: user.phone,
         phone: user.phone,

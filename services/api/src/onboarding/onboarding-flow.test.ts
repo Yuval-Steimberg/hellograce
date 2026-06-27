@@ -5,9 +5,52 @@ import {
   nextGapfillSlot,
   parseSlotAnswer,
   runOnboardingTurn,
+  generateOpener,
+  buildOnboardingNudge,
 } from './onboarding-flow.js';
 
 const logger = { info: vi.fn(), warn: vi.fn() } as any;
+
+describe('generateOpener — magnetic first message', () => {
+  it('without an LLM, returns a warm intro that introduces Grace AND asks the name', async () => {
+    const opener = await generateOpener(undefined, { logger });
+    expect(opener).toMatch(/grace/i);
+    expect(opener).toContain('?'); // it asks something (the name)
+    expect(opener.toLowerCase()).toMatch(/name|call you/);
+    expect(opener).not.toMatch(/\d[\d,]*\s*(people|users|members)/i); // no fabricated stats
+  });
+
+  it('uses the LLM opener when it ends with a question', async () => {
+    const llm = { generate: vi.fn(async () => ({ text: "Hi, I'm Grace — your GLP-1 corner. What should I call you?" })) } as any;
+    const opener = await generateOpener(llm, { logger });
+    expect(opener).toMatch(/what should I call you/i);
+  });
+
+  it('falls back when the LLM reply is not a question', async () => {
+    const llm = { generate: vi.fn(async () => ({ text: 'I am Grace and I help people.' })) } as any;
+    const opener = await generateOpener(llm, { logger });
+    expect(opener).toContain('?');
+  });
+});
+
+describe('buildOnboardingNudge — abandoned-signup re-engagement', () => {
+  it('re-asks the pending slot warmly, no guilt', async () => {
+    const nudge = await buildOnboardingNudge(
+      { first_name: 'Sam', onboarding_last_slot: 'medication' } as any,
+      undefined,
+      { logger },
+    );
+    expect(nudge).toBeTruthy();
+    expect(nudge!).toMatch(/Sam/);
+    expect(nudge!.toLowerCase()).toMatch(/no rush|whenever/);
+    expect(nudge!.toLowerCase()).toMatch(/glp-1|medication|ozempic|wegovy/); // re-asks the med slot
+  });
+
+  it('returns null when there is no pending slot', async () => {
+    const nudge = await buildOnboardingNudge({ first_name: 'Sam', onboarding_last_slot: null } as any, undefined, { logger });
+    expect(nudge).toBeNull();
+  });
+});
 
 function makeWriter() {
   const calls: Array<Partial<Record<string, unknown>>> = [];

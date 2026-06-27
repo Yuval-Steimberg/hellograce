@@ -646,4 +646,15 @@ export class UserService {
     );
     return rows.map((r) => this.decryptUser(r));
   }
+
+  /** Users who STARTED conversational onboarding but haven't finished — used by
+   *  the scheduler to nudge abandoned signups. They may not be `active` yet (no
+   *  trial until completion), so this is a separate query from listActiveUsers.
+   *  Uses the partial index users_onboarding_in_progress_idx. */
+  async listOnboardingInProgress(): Promise<GraceUser[]> {
+    const { rows } = await this.pool.query<GraceUser>(
+      `SELECT * FROM users WHERE onboarding_state = 'in_progress' AND blocked = FALSE`,
+    );
+    return rows.map((r) => this.decryptUser(r));
+  }
 }

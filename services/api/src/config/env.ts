@@ -143,6 +143,11 @@ const EnvSchema = z.object({
    *  not a notification system. Set to 0 to disable. */
   ENGAGEMENT_COOLDOWN_HOURS: z.coerce.number().min(0).max(48).default(2),
 
+  /** Hours of silence before nudging a user who started conversational
+   *  onboarding (SMS_ONBOARDING_ENABLED) but didn't finish. Default 4. The
+   *  scheduler sends at most 2 nudges, ≥20h apart, in the user's daytime. */
+  ONBOARDING_NUDGE_AFTER_HOURS: z.coerce.number().min(1).max(72).default(4),
+
   /** How many recent conversation turns to feed the orchestrator/Gemini so a
    *  message is never interpreted in isolation (short replies, multi-turn
    *  continuity). Default 12 (was 6 — doubled now that the anchoring guards

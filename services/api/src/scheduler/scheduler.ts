@@ -7,6 +7,7 @@ import type { MemoryService } from '../memory/memory.service.js';
 import type { MessageGenerator, GenerateOpts } from './message-generator.js';
 import type { PromptOptimizer } from './prompt-optimizer.js';
 import type { AnomalyDetectorService } from './anomaly-detector.service.js';
+import { buildOnboardingNudge } from '../onboarding/onboarding-flow.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const MIDDAY_DAYS = new Set([1, 3, 5]); // Mon, Wed, Fri
@@ -40,6 +41,9 @@ interface SchedulerDeps {
    *  them are scheduled. Does NOT affect the per-minute proactive tick or the
    *  daily personalization engine. Default true. Set via OPTIMIZERS_ENABLED. */
   optimizersEnabled?: boolean;
+  /** Hours of silence before nudging a user who started conversational
+   *  onboarding but didn't finish. Default 4. Set via ONBOARDING_NUDGE_AFTER_HOURS. */
+  onboardingNudgeAfterHours?: number;
 }
 
 export class Scheduler {
@@ -135,6 +139,54 @@ export class Scheduler {
       });
     } catch (err) {
       this.deps.logger.error({ err }, 'scheduler.tick.error');
+    }
+    // Separate pass: nudge users who started conversational onboarding but went
+    // quiet (they aren't in listActiveUsers — no trial until they finish).
+    await this.nudgeAbandonedOnboarding();
+  }
+
+  /** Re-engage users who started SMS onboarding but stopped before finishing.
+   *  Warmly re-asks the pending question. Quiet-hours aware, Redis-gated to at
+   *  most 2 nudges, ≥20h apart. Best-effort; a missing query (older UserService)
+   *  or no Redis simply no-ops, so existing tests are unaffected. */
+  private async nudgeAbandonedOnboarding(): Promise<void> {
+    if (typeof this.deps.users.listOnboardingInProgress !== 'function') return;
+    let users: GraceUser[] = [];
+    try {
+      users = await this.deps.users.listOnboardingInProgress();
+    } catch (err) {
+      this.deps.logger.warn({ err: (err as Error).message }, 'scheduler.onboarding_nudge.list_failed');
+      return;
+    }
+    const afterHours = this.deps.onboardingNudgeAfterHours ?? 4;
+    const MAX_NUDGES = 2;
+    for (const user of users) {
+      try {
+        if (!user.onboarding_last_slot) continue;
+        // Quiet hours (per the user's timezone).
+        const localHour = localNow(user.timezone || 'America/New_York').getHours();
+        if (localHour >= 21 || localHour < 7) continue;
+        // Silent long enough since their last reply?
+        const lastReplyMs = user.last_reply_at ? new Date(user.last_reply_at).getTime() : 0;
+        const hoursSilent = lastReplyMs ? (Date.now() - lastReplyMs) / 3_600_000 : Infinity;
+        if (hoursSilent < afterHours) continue;
+
+        const countKey = `onboard:nudge:count:${user.phone}`;
+        const lastKey = `onboard:nudge:last:${user.phone}`;
+        const count = parseInt((await this.deps.redis.get(countKey).catch(() => '0')) ?? '0', 10);
+        if (count >= MAX_NUDGES) continue;
+        const lastNudgeMs = parseInt((await this.deps.redis.get(lastKey).catch(() => '0')) ?? '0', 10);
+        if (lastNudgeMs && Date.now() - lastNudgeMs < 20 * 3_600_000) continue; // ≥20h apart
+
+        const body = await buildOnboardingNudge(user, undefined, { logger: this.deps.logger });
+        if (!body) continue;
+        await this.deps.sender.send({ to: user.phone, body, channel: user.channel ?? 'imessage' });
+        await this.deps.redis.set(countKey, String(count + 1), 'EX', 7 * 86_400).catch(() => {});
+        await this.deps.redis.set(lastKey, String(Date.now()), 'EX', 7 * 86_400).catch(() => {});
+        this.deps.logger.info({ phone: user.phone, nudge: count + 1 }, 'scheduler.onboarding_nudge.sent');
+      } catch (err) {
+        this.deps.logger.warn({ err: (err as Error).message, phone: user.phone }, 'scheduler.onboarding_nudge.error');
+      }
     }
   }
 

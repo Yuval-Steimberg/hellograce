@@ -278,6 +278,67 @@ Rules: warm and natural, vary the wording, contractions ok, ${user.first_name ? 
   return fallbackQuestion(slot, user.first_name ?? null, reask);
 }
 
+// A magnetic first message: introduce Grace compellingly AND ask the first
+// question (their name) in one breath, so a new user wants to keep going instead
+// of stalling after "hi". Confident + warm + value-forward, like a friend who's
+// genuinely in your corner. NO fabricated stats / user counts (we don't claim
+// numbers we can't back up).
+const OPENER_FALLBACKS = [
+  "Hey, I'm Grace 🧡 Think of me as the one in your corner on your GLP-1 journey — I'll help you hit your protein, ride out the rough days, and actually follow through. First things first: what should I call you?",
+  "Hi 🧡 I'm Grace. I'm here to make GLP-1 a whole lot easier — daily check-ins, food and protein help, side-effect support, and someone who actually remembers your journey. To start us off — what's your name?",
+  "Hey 🧡 I'm Grace, your companion for the GLP-1 ride. I'll keep you on track with protein and hydration, help on the tough days, and celebrate the wins with you. What should I call you?",
+];
+
+/**
+ * The opening message for SMS signup — a warm, confident intro that ends by
+ * asking the user's name. LLM-generated for variety with a strong rotating
+ * fallback. This is the single most important message in the flow: it has to
+ * make the user want to reply.
+ */
+export async function generateOpener(
+  llm: LLMProvider | undefined,
+  opts: { logger?: Logger } = {},
+): Promise<string> {
+  const fallback = OPENER_FALLBACKS[Math.floor(Math.random() * OPENER_FALLBACKS.length)]!;
+  if (!llm) return fallback;
+  try {
+    const system = `You are Grace, a warm, upbeat GLP-1 text companion greeting a brand-new user for the very first time over iMessage.
+Write a SHORT opening message (2–3 sentences, max ~280 chars) that:
+- introduces you as Grace and makes the user genuinely WANT to keep texting,
+- conveys you're "in their corner" — you help them follow through on their GLP-1 journey (protein, hydration, injection days, side effects, encouragement, and you remember them),
+- ENDS by asking their first name.
+Rules: warm and human like a friend, confident not salesy, at most ONE emoji, no lists, no markdown, plain text only. NEVER invent statistics or user counts. Output just the message.`;
+    const resp = await Promise.race([
+      llm.generate({ messages: [{ role: 'system', content: system }, { role: 'user', content: '(write the opener)' }], temperature: 0.9, maxOutputTokens: 140, disableThinking: true }),
+      new Promise<{ text: string }>((r) => setTimeout(() => r({ text: '' }), 4000)),
+    ]);
+    const text = (resp.text ?? '').trim().replace(/^["']|["']$/g, '');
+    // Must actually ask something (end with a question) or we use the fallback.
+    if (text && /[A-Za-z]{3,}/.test(text) && text.includes('?')) return text.slice(0, 320);
+  } catch (err) {
+    opts.logger?.warn({ err: err instanceof Error ? err.message : String(err) }, 'onboarding.opener.llm_failed');
+  }
+  return fallback;
+}
+
+/**
+ * Re-engagement nudge for a user who STARTED signup but went quiet before
+ * finishing. Warmly re-asks the slot we're waiting on so they can pick up where
+ * they left off — no pressure, never a guilt trip. Returns null if there's no
+ * pending slot to re-ask.
+ */
+export async function buildOnboardingNudge(
+  user: Pick<FlowUser, 'first_name' | 'onboarding_last_slot'>,
+  llm: LLMProvider | undefined,
+  opts: { logger?: Logger } = {},
+): Promise<string | null> {
+  const slot = (user.onboarding_last_slot as SlotId | null) ?? null;
+  if (!slot) return null;
+  const q = await generateQuestion(slot, user, llm, { logger: opts.logger });
+  const name = user.first_name ? `${user.first_name}, ` : '';
+  return `Hey ${name}🧡 we were right in the middle of getting you set up — no rush at all. Whenever you've got a sec: ${q}`;
+}
+
 // ── Turn orchestration ───────────────────────────────────────────────────────
 
 export interface OnboardingTurnResult {
@@ -326,7 +387,11 @@ export async function runOnboardingTurn(params: {
         onboarding_last_slot: firstSlot,
         onboarding_started_at: now,
       } as Partial<GraceUser>);
-      const q = await generateQuestion(firstSlot, u, llm, { logger });
+      // Signup's first slot is the name — open with the magnetic intro+ask so the
+      // user wants to keep going. Gap-fill (returning user) stays low-key.
+      const q = mode === 'signup' && firstSlot === 'first_name'
+        ? await generateOpener(llm, { logger })
+        : await generateQuestion(firstSlot, u, llm, { logger });
       return { reply: q, completed: false };
     }
 

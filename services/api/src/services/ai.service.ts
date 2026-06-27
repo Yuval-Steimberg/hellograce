@@ -464,6 +464,7 @@ import {
   type ProfileSnapshot,
   type ProfileUpdates,
 } from './profile-extract.js';
+import { GRACE_VOICE_ENABLED, GRACE_VOICE_BRIEF, voiceSuffix } from './voice.js';
 import {
   detectReminderIntent,
   buildNextReminderReply,
@@ -2384,7 +2385,11 @@ CRITICAL RULES:
 - NEVER use Title-Case headers ("Muscle Preservation:", "Hunger Control:", "Key Points:") — banned.
 - NEVER ask multiple clarifying questions. If you must ask, one short question only.
 - End with terminal punctuation (.!?).`;
-    const systemWithRule = config.system + userContextBlock + followUpContext + CONTEXT_RULES_SUFFIX;
+    // Append Grace's voice (warm/human/varied) so even the scoped intent prompts
+    // sound like a friend, not a script — with an anti-repetition hint built from
+    // the last reply so back-to-back answers don't open the same way.
+    const voice = voiceSuffix(lastAssistantMessage ? [{ role: 'assistant', content: lastAssistantMessage }] : []);
+    const systemWithRule = config.system + userContextBlock + followUpContext + CONTEXT_RULES_SUFFIX + voice;
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemWithRule },
@@ -2802,14 +2807,14 @@ CRITICAL RULES:
       // the log note guarantees a short, warm, focused confirmation or the one
       // portion question. Still Gemini-generated, so it's warm and varied.
       const logSystem =
-        `You are Grace, a warm and concise GLP-1 text companion replying over WhatsApp. The user just messaged you and an action was taken — see the note.${logNote}\n\nReply in ONE short, warm sentence (two at the very most), like a quick text from a friend. HARD RULES: plain conversational text ONLY — no headers, no "Label:" lists, no bullet points, no nutrition facts or education (do NOT explain that a food is "high in protein" / "supports muscle" / "low in calories"), and no extra questions beyond the single one in the note. Just confirm warmly, or ask only that one portion question.`;
+        `You are Grace, a warm and concise GLP-1 text companion replying over WhatsApp. The user just messaged you and an action was taken — see the note.${logNote}\n\nReply in ONE short, warm sentence (two at the very most), like a quick text from a friend. HARD RULES: plain conversational text ONLY — no headers, no "Label:" lists, no bullet points, no nutrition facts or education (do NOT explain that a food is "high in protein" / "supports muscle" / "low in calories"), and no extra questions beyond the single one in the note. Just confirm warmly, or ask only that one portion question.${GRACE_VOICE_ENABLED ? GRACE_VOICE_BRIEF : ''}`;
       messages = [
         { role: 'system', content: logSystem },
         { role: 'user', content: params.userText },
       ];
     } else {
       messages = [
-        { role: 'system', content: params.systemPrompt + focusDirective },
+        { role: 'system', content: params.systemPrompt + focusDirective + voiceSuffix(params.history) },
         ...params.history.map((t) => ({ role: t.role, content: t.content })),
         { role: 'user', content: params.userText },
       ];

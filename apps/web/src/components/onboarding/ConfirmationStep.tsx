@@ -1,7 +1,13 @@
 import { motion } from "framer-motion";
 import { Check, MessageCircle, Settings } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { buildGraceChatHref, isSandboxMode, WHATSAPP_JOIN_CODE } from "@/lib/whatsappLink";
+import {
+  buildGraceChatHref,
+  buildGraceImessageHref,
+  imessageDisplayNumber,
+  isSandboxMode,
+  WHATSAPP_JOIN_CODE,
+} from "@/lib/chatLinks";
 
 interface ConfirmationStepProps {
   firstName: string;
@@ -17,8 +23,9 @@ const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
     : phone;
 
   const sandboxMode = isSandboxMode;
-  // Opens WhatsApp with a ready-to-send message prefilled (warm opener in prod,
-  // the required `join <code>` in sandbox) — never an empty chat.
+  // iMessage-first: primary CTA opens Messages to the grace line with a warm
+  // opener prefilled. WhatsApp stays as a fallback link for non-Apple users.
+  const imessageHref = buildGraceImessageHref();
   const whatsappHref = buildGraceChatHref();
 
   return (
@@ -72,20 +79,45 @@ const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
           </motion.div>
         )}
 
-        {/* WhatsApp CTA — primary action */}
-        {whatsappHref && (
+        {/* iMessage CTA — primary action (iMessage-first) */}
+        {imessageHref && (
           <motion.a
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.55 }}
-            href={whatsappHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="grace-btn w-full flex items-center justify-center gap-2 text-base py-3 mb-4"
+            href={imessageHref}
+            className="grace-btn w-full flex items-center justify-center gap-2 text-base py-3 mb-2"
           >
             <MessageCircle className="h-5 w-5" />
-            Start chatting with grace on WhatsApp
+            Message grace on iMessage
           </motion.a>
+        )}
+
+        {/* WhatsApp CTA — primary when no iMessage line, else a small fallback link */}
+        {whatsappHref && (
+          imessageHref ? (
+            <a
+              href={whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 mb-4"
+            >
+              Prefer WhatsApp? Open it here
+            </a>
+          ) : (
+            <motion.a
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.55 }}
+              href={whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="grace-btn w-full flex items-center justify-center gap-2 text-base py-3 mb-4"
+            >
+              <MessageCircle className="h-5 w-5" />
+              Start chatting with grace on WhatsApp
+            </motion.a>
+          )
         )}
 
         {/* What to expect card */}
@@ -93,22 +125,24 @@ const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.6 }}
-          className="w-full rounded-2xl bg-secondary p-6 text-center"
+          className="w-full rounded-2xl bg-secondary p-6 text-center mt-2"
         >
           <div className="flex items-center justify-center gap-2 mb-3">
             <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
               <MessageCircle className="h-4 w-4 text-primary" />
             </div>
             <span className="text-sm font-medium text-foreground">
-              {whatsappHref ? "One quick step" : "Check your WhatsApp"}
+              {imessageHref || whatsappHref ? "One quick step" : "Check your messages"}
             </span>
           </div>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            {sandboxMode
-              ? `Tap the button above to open WhatsApp — it'll pre-fill "join ${WHATSAPP_JOIN_CODE}". Send it and grace will reply.`
-              : whatsappHref
-                ? "Tap the button above — it'll open WhatsApp with a quick hello ready to send. Tap send and grace takes it from there."
-                : "Look for a welcome message from grace. That's where she'll check in with you — no app needed."}
+            {imessageHref
+              ? `Tap the button above to open Messages with a quick hello ready to send — or just text grace at ${imessageDisplayNumber}. Tap send and she takes it from there.`
+              : sandboxMode
+                ? `Tap the button above to open WhatsApp — it'll pre-fill "join ${WHATSAPP_JOIN_CODE}". Send it and grace will reply.`
+                : whatsappHref
+                  ? "Tap the button above — it'll open WhatsApp with a quick hello ready to send. Tap send and grace takes it from there."
+                  : "Look for a welcome message from grace. That's where she'll check in with you — no app needed."}
           </p>
         </motion.div>
       </div>

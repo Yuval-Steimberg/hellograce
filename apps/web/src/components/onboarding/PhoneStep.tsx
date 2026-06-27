@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import QuizButton from "./QuizButton";
 import PhoneInput from "./PhoneInput";
 
-import { buildGraceChatHref } from "@/lib/whatsappLink";
+import { buildGraceChatHref, buildGraceImessageHref } from "@/lib/chatLinks";
 
 const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
 
@@ -77,9 +77,10 @@ const PhoneStep = ({
     onNext();
   };
 
-  // Opens WhatsApp with a ready-to-send message prefilled (warm opener in prod,
-  // the required `join <code>` in sandbox). Falls back to a bare wa.me link when
-  // no number is configured, exactly as before.
+  // iMessage-first: open Messages to the grace line with a warm opener prefilled.
+  // WhatsApp stays as a fallback link. Falls back to a bare wa.me link when no
+  // number is configured, exactly as before.
+  const imessageHref = buildGraceImessageHref();
   const whatsappHref = buildGraceChatHref() || "https://wa.me/";
 
   if (alreadyRegistered) {
@@ -98,7 +99,7 @@ const PhoneStep = ({
             You're already set up
           </h2>
           <p className="text-muted-foreground text-base leading-relaxed mb-3 max-w-sm">
-            This phone number already has a Grace account. Jump back into WhatsApp to continue your journey.
+            This phone number already has a Grace account. Jump back into Messages to continue your journey.
           </p>
           <p className="text-muted-foreground/60 text-sm mb-10">
             Using a different number?{" "}
@@ -112,14 +113,33 @@ const PhoneStep = ({
           </p>
         </div>
         <div className="mt-auto pt-6 flex flex-col gap-3">
-          <a
-            href={whatsappHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block w-full rounded-2xl bg-[#25D366] text-white text-center font-semibold text-lg py-4 shadow-sm hover:bg-[#1ebe5d] transition-colors"
-          >
-            Open WhatsApp
-          </a>
+          {imessageHref ? (
+            <a
+              href={imessageHref}
+              className="block w-full rounded-2xl bg-[#0b93f6] text-white text-center font-semibold text-lg py-4 shadow-sm hover:bg-[#0a84e0] transition-colors"
+            >
+              Open iMessage
+            </a>
+          ) : (
+            <a
+              href={whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full rounded-2xl bg-[#25D366] text-white text-center font-semibold text-lg py-4 shadow-sm hover:bg-[#1ebe5d] transition-colors"
+            >
+              Open WhatsApp
+            </a>
+          )}
+          {imessageHref && (
+            <a
+              href={whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-center text-sm text-muted-foreground hover:text-foreground underline underline-offset-2"
+            >
+              Prefer WhatsApp? Open it here
+            </a>
+          )}
           <button
             type="button"
             onClick={() => { setAlreadyRegistered(false); onChangePhone(""); }}

@@ -5,6 +5,16 @@ pipeline is transport-agnostic; a per-user `channel` decides how proactive
 messages go out, and inbound replies always go back on the channel the message
 arrived on.
 
+> **iMessage is the system default (2026-06-27).** New signups default to
+> `channel='imessage'` and existing users were migrated (`20260627000001`).
+> Delivery is **iMessage-first with WhatsApp/SMS fallback**: `ChannelRouter`
+> falls back to Twilio WhatsApp when iMessage is unconfigured OR a send fails
+> (Android recipient / not a verified relay contact / relay error), so no one is
+> left unreachable. The webhook still re-aligns `users.channel` to whatever
+> transport a user actually messages from. Web onboarding CTAs open Messages to
+> the iMessage line (`VITE_IMESSAGE_NUMBER`) with a prefilled opener, WhatsApp
+> shown as a fallback link.
+
 ## Architecture
 
 ```

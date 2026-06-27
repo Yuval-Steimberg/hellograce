@@ -118,6 +118,16 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     // user out after they completed signup (production bug 2026-06-13).
     await users.update(phone, { active: true, trial_start: new Date() });
 
+    // iMessage-first: new signups default to the iMessage channel for proactive
+    // sends (the router falls back to WhatsApp/SMS if they're not reachable on
+    // iMessage). Best-effort + separate from the register-first write so a
+    // missing channel column can't roll back trial_start and lock the user out.
+    try {
+      await users.update(phone, { channel: 'imessage' } as Partial<Parameters<typeof users.update>[1]>);
+    } catch {
+      req.log.warn({ phone }, 'onboard.channel.skipped (likely missing migration 20260617000001)');
+    }
+
     // Full profile. Best-effort: a missing newer column here must NOT block
     // onboarding or un-register the user (trial_start is already set above).
     try {
@@ -259,7 +269,9 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     // sanitizer's 420-char cap so the full message (incl. the footer) ships.
     try {
       const welcomeFull = await generator.generate('welcome', user);
-      await sender.send({ to: phone, body: welcomeFull, channel: 'whatsapp', raw: true });
+      // iMessage-first: send the welcome on the user's channel (now iMessage);
+      // the router falls back to WhatsApp if they're not reachable on iMessage.
+      await sender.send({ to: phone, body: welcomeFull, channel: user.channel ?? 'imessage', raw: true });
       await users.recordCheckIn({ userId: user.id, phone, type: 'welcome', messageSent: welcomeFull });
     } catch (err) {
       req.log.warn({ err, phone }, 'onboard.welcome_send.failed');

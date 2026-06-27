@@ -45,4 +45,18 @@ describe('ChannelRouter', () => {
     expect(twilio.calls).toHaveLength(1);
     expect(twilio.calls[0]!.channel).toBe('whatsapp'); // rewritten so Twilio accepts it
   });
+
+  it('falls back to Twilio WhatsApp when the iMessage send FAILS (unreachable recipient)', async () => {
+    const twilio = fakeSender('tw');
+    const imessage: MessageSender = {
+      async send() {
+        throw new Error('iMessage send failed (400)');
+      },
+    };
+    const router = new ChannelRouter({ twilio, imessage }, logger);
+    const res = await router.send({ to: '+1', channel: 'imessage', body: 'e' });
+    expect(res.sid).toBe('tw-sid');
+    expect(twilio.calls).toHaveLength(1);
+    expect(twilio.calls[0]!.channel).toBe('whatsapp');
+  });
 });

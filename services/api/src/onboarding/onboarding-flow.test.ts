@@ -7,7 +7,23 @@ import {
   runOnboardingTurn,
   generateOpener,
   buildOnboardingNudge,
+  buildSignupCompleteReply,
 } from './onboarding-flow.js';
+
+describe('buildSignupCompleteReply — Tomo-style trial offer at completion', () => {
+  it('with a checkout link: names the free trial + drops the link', () => {
+    const r = buildSignupCompleteReply('Sam', 'https://x/upgrade?phone=1');
+    expect(r).toMatch(/Sam/);
+    expect(r.toLowerCase()).toMatch(/3-day free trial|free trial/);
+    expect(r).toContain('https://x/upgrade?phone=1');
+    expect(r.toLowerCase()).toMatch(/remind you before/); // reminder promise
+  });
+  it('without a link: plain confirmation, no payment ask', () => {
+    const r = buildSignupCompleteReply('Sam');
+    expect(r).toMatch(/all set/i);
+    expect(r).not.toMatch(/trial|upgrade|http/i);
+  });
+});
 
 const logger = { info: vi.fn(), warn: vi.fn() } as any;
 

@@ -511,7 +511,7 @@ export async function processInboundMessage(
               : buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL);
             const fallbackText = isPaidUser
               ? `You can manage your subscription anytime at ${destinationUrl} 🧡`
-              : `You can upgrade your plan anytime at ${destinationUrl} 🧡`;
+              : buildUpgradePitch(user.first_name ?? null, destinationUrl);
             const reply = deps.templates
               ? await deps.templates.render(
                   isPaidUser ? 'manage_subscription' : 'upgrade_nudge',
@@ -542,6 +542,8 @@ export async function processInboundMessage(
               users: deps.users,
               llm: deps.ai.llmProvider,
               logger: log,
+              // Tomo-style: surface the free-trial checkout link when signup completes.
+              upgradeUrl: buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL),
             });
             if (reply) {
               await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: reply });
@@ -1098,6 +1100,21 @@ export function detectUpgradeIntent(text: string): boolean {
   // conversational, not subscription requests.
   if (trimmed.split(/\s+/).length > 8) return false;
   return UPGRADE_PHRASES.some((re) => re.test(trimmed));
+}
+
+/** Grace's headline monthly price, stated conversationally in the pitch. */
+export const GRACE_MONTHLY_PRICE = '$12/mo';
+
+/**
+ * Tomo-style in-chat payment pitch: when an unpaid user asks about cost / wants
+ * to subscribe, Grace states the price + what they get + the 3-day free trial
+ * (card required, reminder before it ends) and drops the checkout link — warm
+ * and transparent, woven into the conversation rather than a bare URL. Uses the
+ * existing Stripe checkout (which already starts a 3-day trial).
+ */
+export function buildUpgradePitch(firstName: string | null, upgradeUrl: string): string {
+  const lead = firstName ? `${firstName}, here's the deal` : "Here's the deal";
+  return `${lead} 🧡 It's ${GRACE_MONTHLY_PRICE} for the full experience — daily check-ins, food & protein tracking, side-effect support, and I actually remember your journey. There's a 3-day free trial to test it out (needs a card, and I'll remind you before it ends): ${upgradeUrl}`;
 }
 
 // ── Pause intent (Phase 1 coverage expansion) ───────────────────────────────

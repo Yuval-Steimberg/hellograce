@@ -339,6 +339,20 @@ export async function buildOnboardingNudge(
   return `Hey ${name}🧡 we were right in the middle of getting you set up — no rush at all. Whenever you've got a sec: ${q}`;
 }
 
+/**
+ * The signup-complete message. Tomo-style: rather than just "you're all set," it
+ * names the free trial that's now running and drops the checkout link so the
+ * user can lock in their subscription — woven into the flow, never a hard wall.
+ * Falls back to the plain confirmation when no checkout link is provided.
+ */
+export function buildSignupCompleteReply(firstName: string | null, upgradeUrl?: string): string {
+  const greet = firstName ? `, ${firstName}` : '';
+  if (upgradeUrl) {
+    return `You're all set${greet} 🧡 Your 3-day free trial is on — daily check-ins, food & protein help, side-effect support, and someone who actually remembers your journey. To keep going after, lock it in here (I'll remind you before the trial ends): ${upgradeUrl}. For now just text me — log a meal, ask anything, or check in.`;
+  }
+  return `You're all set${greet} 🧡 I'm here whenever you need me — log a meal, ask a question, or just check in. Talk soon.`;
+}
+
 // ── Turn orchestration ───────────────────────────────────────────────────────
 
 export interface OnboardingTurnResult {
@@ -360,6 +374,10 @@ export async function runOnboardingTurn(params: {
   llm?: LLMProvider;
   logger: Logger;
   now?: Date;
+  /** Checkout link surfaced in the signup-complete message (Tomo-style: the
+   *  free-trial offer is woven into the flow). When omitted, the plain "you're
+   *  all set" message is used (keeps existing tests/back-compat). */
+  upgradeUrl?: string;
 }): Promise<OnboardingTurnResult> {
   const { user, text, mode, users, llm, logger } = params;
   const now = params.now ?? new Date();
@@ -425,9 +443,8 @@ export async function runOnboardingTurn(params: {
         if (!u.trial_start) finish.trial_start = now; // start the trial via SMS signup
         await users.update(u.phone, finish);
         logger.info({ phone: u.phone, mode }, 'onboarding.completed');
-        const name = u.first_name ? `${u.first_name}, ` : '';
         return {
-          reply: `You're all set ${name}🧡 I'm here whenever you need me — log a meal, ask a question, or just check in. Talk soon.`,
+          reply: buildSignupCompleteReply(u.first_name ?? null, params.upgradeUrl),
           completed: true,
         };
       }

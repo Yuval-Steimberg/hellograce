@@ -11,7 +11,26 @@ import {
   shouldSkipCoalesce,
   acquireInflightSlot,
   pickInjectionDoneAck,
+  buildUpgradePitch,
+  GRACE_MONTHLY_PRICE,
 } from './webhook.js';
+
+describe('buildUpgradePitch — Tomo-style in-chat payment pitch', () => {
+  it('states the price, the 3-day trial (card + reminder), and the checkout link', () => {
+    const p = buildUpgradePitch('Sam', 'https://x/upgrade?phone=1');
+    expect(p).toMatch(/Sam/);
+    expect(p).toContain(GRACE_MONTHLY_PRICE);
+    expect(p.toLowerCase()).toMatch(/3-day free trial/);
+    expect(p.toLowerCase()).toMatch(/card/);
+    expect(p.toLowerCase()).toMatch(/remind you before/);
+    expect(p).toContain('https://x/upgrade?phone=1');
+  });
+  it('works without a name', () => {
+    const p = buildUpgradePitch(null, 'https://x/u');
+    expect(p).toMatch(/here's the deal/i);
+    expect(p).toContain('https://x/u');
+  });
+});
 
 // Minimal in-memory Redis mock for coalesceMessages tests.
 function makeMockRedis() {

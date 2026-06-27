@@ -215,6 +215,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
               ...(env.IMESSAGE_API_URL ? { apiUrl: env.IMESSAGE_API_URL } : {}),
               apiKeyId: env.IMESSAGE_AUTH_KEY!,
               apiSecret: env.IMESSAGE_SECRET_KEY!,
+              ...(env.IMESSAGE_FROM_NUMBER ? { fromNumber: env.IMESSAGE_FROM_NUMBER } : {}),
               canonicalWebUrl: env.PUBLIC_WEB_URL,
             },
             logger,

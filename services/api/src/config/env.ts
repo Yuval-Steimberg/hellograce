@@ -38,6 +38,10 @@ const EnvSchema = z.object({
   IMESSAGE_SECRET_KEY: z.string().optional(),
   /** The dedicated iMessage sender name/handle (LoopMessage only; unused by Sendblue). */
   IMESSAGE_SENDER_NAME: z.string().optional(),
+  /** Sendblue line to send FROM (E.164, e.g. +13054098546). Required when the
+   *  Sendblue account has more than one line — without it Sendblue 400s with
+   *  "missing required parameter from_number". LoopMessage ignores this. */
+  IMESSAGE_FROM_NUMBER: z.string().optional(),
   /** Shared secret / HMAC key used to verify the inbound iMessage webhook.
    *  When unset, the /webhook/imessage route only accepts requests outside
    *  production (verification is enforced when NODE_ENV=production). */

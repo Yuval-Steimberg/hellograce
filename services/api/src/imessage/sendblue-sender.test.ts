@@ -63,6 +63,37 @@ describe('SendblueSender', () => {
     expect(payload.number).toBe('+15550001111');
   });
 
+  it('includes from_number when configured (Sendblue multi-line requirement)', async () => {
+    const s = new SendblueSender({ apiKeyId: 'k', apiSecret: 's', fromNumber: '+13054098546' }, logger);
+    await s.send({ to: '+972547722420', channel: 'imessage', body: 'hi' });
+    const payload = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    expect(payload.from_number).toBe('+13054098546');
+  });
+
+  it('omits from_number when not configured', async () => {
+    const s = makeSender();
+    await s.send({ to: '+1', channel: 'imessage', body: 'hi' });
+    const payload = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    expect(payload.from_number).toBeUndefined();
+  });
+
+  it('retries once on a network/timeout abort, then succeeds', async () => {
+    fetchMock
+      .mockRejectedValueOnce(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ message_handle: 'h-2' }), text: async () => '' });
+    const s = makeSender();
+    const res = await s.send({ to: '+1', channel: 'imessage', body: 'hi' });
+    expect(res.sid).toBe('h-2');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry a 400 (already reached Sendblue — avoids duplicate send)', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 400, json: async () => ({}), text: async () => 'missing from_number' });
+    const s = makeSender();
+    await expect(s.send({ to: '+1', channel: 'imessage', body: 'hi' })).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('uses a custom apiUrl when configured', async () => {
     const s = new SendblueSender(
       { apiKeyId: 'k', apiSecret: 's', apiUrl: 'https://sandbox.sendblue.co/api/send-message' },

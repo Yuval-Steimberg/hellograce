@@ -33,6 +33,10 @@ export interface SendblueSenderConfig {
   apiKeyId: string;
   /** sb-api-secret-key header value. */
   apiSecret: string;
+  /** The Sendblue line to send FROM (E.164). Required when the account has more
+   *  than one line — free_api 400s with "missing required parameter from_number"
+   *  without it. Omitted from the request body when unset. */
+  fromNumber?: string;
   /** PUBLIC_WEB_URL — rewrites graceglp.com links to the live host. */
   canonicalWebUrl?: string;
   /** Request timeout (ms). Default 12s. */
@@ -68,35 +72,56 @@ export class SendblueSender implements MessageSender {
     // iMessage recipients are phone numbers (E.164) or Apple-ID emails. Strip a
     // stray "imessage:"/"whatsapp:" prefix if one leaked from an inbound id.
     const number = msg.to.replace(/^(?:imessage|whatsapp|sms):/i, '').trim();
+    const timeoutMs = this.cfg.timeoutMs ?? 20_000;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.cfg.timeoutMs ?? 12_000);
-    try {
-      const resp = await fetch(url, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'sb-api-key-id': this.cfg.apiKeyId,
-          'sb-api-secret-key': this.cfg.apiSecret,
-        },
-        body: JSON.stringify({ number, content: body }),
-      });
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => '');
-        this.logger.error({ status: resp.status, body: errText.slice(0, 300) }, 'sendblue.send.failed');
-        throw new UpstreamError(`iMessage send failed (${resp.status})`);
+    // Sendblue's free_api can be slow to respond (and Fly cold-starts add
+    // latency), so a single 12s attempt was dropping replies on a timeout.
+    // Retry once on a network/timeout abort — NOT on a definitive non-2xx
+    // (that already reached Sendblue, so retrying risks a duplicate send).
+    const maxAttempts = 2;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'sb-api-key-id': this.cfg.apiKeyId,
+            'sb-api-secret-key': this.cfg.apiSecret,
+          },
+          body: JSON.stringify({
+          number,
+          content: body,
+          ...(this.cfg.fromNumber ? { from_number: this.cfg.fromNumber } : {}),
+        }),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          this.logger.error({ status: resp.status, body: errText.slice(0, 300) }, 'sendblue.send.failed');
+          throw new UpstreamError(`iMessage send failed (${resp.status})`);
+        }
+        const data = (await resp.json().catch(() => ({}))) as { message_handle?: string; status?: string };
+        const sid = data.message_handle ?? `imsg_${Date.now()}`;
+        this.logger.info({ sid, channel: 'imessage', provider: 'sendblue', attempt }, 'sendblue.send.ok');
+        return { sid };
+      } catch (err) {
+        lastErr = err;
+        // A non-2xx (UpstreamError) is definitive — don't retry it.
+        if (!(err instanceof UpstreamError) && attempt < maxAttempts) {
+          this.logger.warn({ attempt, err: err instanceof Error ? err.message : String(err) }, 'sendblue.send.retry');
+          continue;
+        }
+        if (err instanceof UpstreamError) throw err;
+        this.logger.error({ err }, 'sendblue.send.failed');
+        throw new UpstreamError('Failed to send iMessage', err);
+      } finally {
+        clearTimeout(timeout);
       }
-      const data = (await resp.json().catch(() => ({}))) as { message_handle?: string; status?: string };
-      const sid = data.message_handle ?? `imsg_${Date.now()}`;
-      this.logger.info({ sid, channel: 'imessage', provider: 'sendblue' }, 'sendblue.send.ok');
-      return { sid };
-    } catch (err) {
-      if (err instanceof UpstreamError) throw err;
-      this.logger.error({ err }, 'sendblue.send.failed');
-      throw new UpstreamError('Failed to send iMessage', err);
-    } finally {
-      clearTimeout(timeout);
     }
+    // Unreachable (the loop returns or throws), but satisfies the type checker.
+    throw new UpstreamError('Failed to send iMessage', lastErr);
   }
 }

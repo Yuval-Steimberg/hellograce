@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect, lazy, Suspense } from "react";
+import { startWithGrace } from "@/lib/chatLinks";
 import { ChevronRight } from "lucide-react";
 import Logo from "@/components/Logo";
 import HeroSection from "@/components/landing/HeroSection";
@@ -76,7 +77,7 @@ const Landing = () => {
               Log in
             </button>
             <button
-              onClick={() => navigate("/onboarding")}
+              onClick={() => startWithGrace(() => navigate("/onboarding"))}
               aria-label="Start with Grace"
               className="grace-btn-accent text-sm px-6 py-2.5"
               style={{ minHeight: "auto" }}
@@ -92,7 +93,7 @@ const Landing = () => {
       <div className="lg:hidden px-5 sm:px-8 py-4 flex items-center justify-between" role="banner">
         <Logo size="default" />
         <button
-          onClick={() => navigate("/onboarding")}
+          onClick={() => startWithGrace(() => navigate("/onboarding"))}
           className="grace-btn-accent text-sm px-5 py-2.5"
           style={{ minHeight: "auto" }}
         >

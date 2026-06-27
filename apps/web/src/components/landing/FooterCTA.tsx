@@ -1,5 +1,6 @@
 import { useNavigate, Link } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
+import { startWithGrace } from "@/lib/chatLinks";
 import Logo from "@/components/Logo";
 
 const FooterCTA = () => {
@@ -31,7 +32,7 @@ const FooterCTA = () => {
               just text STOP — no card, no catch.
             </p>
             <button
-              onClick={() => navigate("/onboarding")}
+              onClick={() => startWithGrace(() => navigate("/onboarding"))}
               className="grace-btn-accent text-base md:text-lg px-10 py-5 w-full sm:w-auto"
             >
               Start with Grace

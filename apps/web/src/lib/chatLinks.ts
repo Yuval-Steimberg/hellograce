@@ -53,6 +53,26 @@ export function buildGraceImessageHref(message: string = GRACE_GETTING_STARTED_M
 }
 
 /**
+ * "Start with grace" — the single entry-point action for every Get Started CTA.
+ * When an iMessage line is configured, it opens Messages straight to grace (with
+ * the opener prefilled) so the user is onboarded over chat — NO web survey.
+ * When no line is configured yet, it gracefully falls back to the web onboarding
+ * form so nothing breaks before VITE_IMESSAGE_NUMBER is set.
+ *
+ * Note: the survey is only fully skipped when the backend conversational-
+ * onboarding flag (SMS_ONBOARDING_ENABLED) is ON; otherwise a new number that
+ * texts in is redirected back to the web form.
+ */
+export function startWithGrace(navigateToOnboarding: () => void): void {
+  const href = buildGraceImessageHref();
+  if (href) {
+    window.location.href = href;
+  } else {
+    navigateToOnboarding();
+  }
+}
+
+/**
  * Build the WhatsApp wa.me deeplink with a ready-to-send message prefilled
  * (warm opener in production, the required `join <code>` in sandbox). Returns ""
  * when no WhatsApp number is configured. Kept as the fallback channel.

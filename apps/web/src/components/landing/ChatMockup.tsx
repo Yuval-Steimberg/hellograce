@@ -146,7 +146,7 @@ const ChatMockup = () => {
 
       <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-card border border-border rounded-full px-4 py-2 shadow-lg shadow-primary/10 flex items-center gap-2">
         <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px]">✦</span>
-        <span className="text-xs font-semibold text-foreground whitespace-nowrap">Right inside WhatsApp</span>
+        <span className="text-xs font-semibold text-foreground whitespace-nowrap">Right inside iMessage</span>
       </div>
     </div>
   );

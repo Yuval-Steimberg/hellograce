@@ -12,7 +12,7 @@ const FAQS = [
   },
   {
     q: "Do I need to download an app?",
-    a: "No. Grace lives in WhatsApp (or SMS where WhatsApp isn't available) — the messaging app already on your phone. No login, no password, nothing new to manage.",
+    a: "No. Grace lives in iMessage (or WhatsApp/SMS if you're not on an iPhone) — the messaging app already on your phone. No login, no password, nothing new to manage.",
   },
   {
     q: "How does Grace help with food and protein?",

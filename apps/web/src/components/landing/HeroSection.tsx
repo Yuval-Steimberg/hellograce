@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { ChevronRight, ShieldCheck, MessageCircle, Sparkles, Check } from "lucide-react";
+import { startWithGrace } from "@/lib/chatLinks";
 import { motion } from "framer-motion";
 import ChatMockup from "./ChatMockup";
 import MagneticButton from "./MagneticButton";
@@ -86,7 +87,7 @@ const HeroSection = () => {
           >
             Grace helps you stay on track with protein, hydration, injection days,
             side effects and progress — through a simple daily chat that actually
-            remembers you. Right inside WhatsApp. No app to download.
+            remembers you. Right inside iMessage. No app to download.
           </motion.p>
 
           {/* Trust ticks */}
@@ -116,7 +117,7 @@ const HeroSection = () => {
           >
             <div className="grace-btn-glow">
               <MagneticButton
-                onClick={() => navigate("/onboarding")}
+                onClick={() => startWithGrace(() => navigate("/onboarding"))}
                 aria-label="Start with Grace"
                 className="grace-btn-accent text-base px-9 py-5 w-full sm:w-auto"
               >
@@ -125,7 +126,7 @@ const HeroSection = () => {
               </MagneticButton>
             </div>
             <button
-              onClick={() => navigate("/onboarding")}
+              onClick={() => startWithGrace(() => navigate("/onboarding"))}
               className="inline-flex items-center justify-center gap-2 text-base font-semibold text-foreground/80 hover:text-foreground px-4 py-3 transition-colors"
             >
               <MessageCircle className="h-4 w-4 text-accent" />

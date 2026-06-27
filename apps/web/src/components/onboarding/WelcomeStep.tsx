@@ -20,7 +20,7 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
           A new chapter begins.
         </h1>
         <p className="text-lg text-muted-foreground leading-relaxed">
-          Your daily SMS companion for GLP-1 — no app to open, no dashboard to remember. Just a warm, helpful friend who checks in by text.
+          Your daily iMessage companion for GLP-1 — no app to open, no dashboard to remember. Just a warm, helpful friend who checks in by text.
         </p>
 
         {/* Social Proof */}

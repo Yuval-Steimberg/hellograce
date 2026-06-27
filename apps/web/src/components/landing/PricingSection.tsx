@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
+import { startWithGrace } from "@/lib/chatLinks";
 import { Check, ChevronRight } from "lucide-react";
 
 const INCLUDED = [
@@ -62,7 +63,7 @@ const PricingSection = () => {
             </ul>
 
             <button
-              onClick={() => navigate("/onboarding")}
+              onClick={() => startWithGrace(() => navigate("/onboarding"))}
               className="grace-btn-accent w-full text-base"
             >
               Start your free trial

@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
+import { startWithGrace } from "@/lib/chatLinks";
 import { ChevronRight } from "lucide-react";
 
 const STEPS = [
@@ -62,7 +63,7 @@ const HowItWorks = () => {
 
       <div className="mt-14 md:mt-16 flex justify-center">
         <button
-          onClick={() => navigate("/onboarding")}
+          onClick={() => startWithGrace(() => navigate("/onboarding"))}
           className="grace-btn-accent text-base px-9"
         >
           Start with Grace

@@ -937,7 +937,14 @@ export class AIService {
                 ? buildReminderExplainReply(user ?? {}, settingsUrl)
                 : buildNextReminderReply(user ?? {}, settingsUrl);
             }
-            if (this.directReplyMode) {
+            // The "next reminder" answer is a precise schedule FACT (a specific
+            // day/time computed deterministically). Letting Gemini rephrase it
+            // risks it mangling the day — observed in prod: a Saturday-night
+            // "tomorrow morning" was reworded to "this coming Wednesday". So we
+            // ALWAYS return the exact computed answer for 'next', even in
+            // directReplyMode. 'explain'/'change' are general/redirect copy and
+            // can still be warmly phrased by Gemini.
+            if (this.directReplyMode && reminderIntent !== 'next') {
               // Hand the real reminder facts to Gemini; it phrases the reply.
               directContextNote += `\n\n[REMINDER FACTS — the user is asking about their reminders. Answer their question in your own warm voice using ONLY these facts; do NOT invent times, and NEVER say you can't send reminders (you do send them): ${reply}]`;
               this.deps.logger.info({ userId: input.userId, reminderIntent }, 'ai.reminder_query.direct_context');

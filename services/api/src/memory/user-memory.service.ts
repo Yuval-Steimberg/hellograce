@@ -138,6 +138,65 @@ export class UserMemoryService {
     }
   }
 
+  /**
+   * Supersede long-term memories that named the OLD value of a profile fact the
+   * user just changed (e.g. a medication switch), so the stale fact can never
+   * resurface via semantic retrieval and contradict the fresh profile.
+   *
+   * Strategy (deliberately conservative + reversible):
+   *   - DOWN-WEIGHT rather than delete: set confidence below the 0.5 retrieval
+   *     threshold on memories whose content mentions the old value. The row
+   *     survives for audit and can be restored; it just stops being retrieved.
+   *   - RECORD a fresh, high-confidence corrective memory so recency + similarity
+   *     favor the new fact going forward.
+   *
+   * `oldTerms` are the distinctive old-value tokens to retire (e.g. the prior
+   * medication name). Returns the number of memories retired. Never throws.
+   */
+  async supersedeChangedFact(
+    userId: string,
+    oldTerms: string[],
+    correction: string,
+  ): Promise<number> {
+    try {
+      const terms = oldTerms
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length >= 3); // avoid retiring on tiny/ambiguous tokens
+      let retired = 0;
+      for (const term of terms) {
+        const res = await this.pool.query(
+          `UPDATE user_memories
+             SET confidence = 0.0
+           WHERE user_id = $1 AND confidence >= 0.5 AND position($2 in lower(content)) > 0`,
+          [userId, term],
+        );
+        retired += res.rowCount ?? 0;
+      }
+
+      // Record the correction as a fresh high-confidence memory so the new fact
+      // outranks anything stale that slipped through.
+      if (correction.trim()) {
+        try {
+          const content = correction.trim().slice(0, 180);
+          const embedding = await this.embedder.embed(content);
+          await this.pool.query(
+            `INSERT INTO user_memories (user_id, content, embedding, kind, confidence)
+             VALUES ($1, $2, $3::vector, 'medical', 0.97)`,
+            [userId, content, `[${embedding.join(',')}]`],
+          );
+        } catch (err) {
+          this.logger.warn({ err, userId }, 'user_memory.supersede.insert_failed');
+        }
+      }
+
+      this.logger.info({ userId, retired, terms }, 'user_memory.supersede');
+      return retired;
+    } catch (err) {
+      this.logger.warn({ err, userId }, 'user_memory.supersede.failed');
+      return 0;
+    }
+  }
+
   private async exactDuplicateExists(userId: string, content: string): Promise<boolean> {
     const result = await this.pool.query<{ exists: boolean }>(
       `SELECT EXISTS(SELECT 1 FROM user_memories WHERE user_id = $1 AND content = $2) AS exists`,

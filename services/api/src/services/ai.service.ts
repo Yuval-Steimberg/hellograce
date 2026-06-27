@@ -458,6 +458,13 @@ import {
 import { extractFood, formatFoodReply, EMPTY_EXTRACTION, type FoodExtraction } from './food-extract.js';
 import { getPendingFood, addPendingFood, resolvePendingFood, clearPendingFood } from './food-pending-store.js';
 import {
+  PROFILE_LEARNING_ENABLED,
+  mightStateProfileChange,
+  extractProfileUpdates,
+  type ProfileSnapshot,
+  type ProfileUpdates,
+} from './profile-extract.js';
+import {
   detectReminderIntent,
   buildNextReminderReply,
   buildReminderExplainReply,
@@ -2957,7 +2964,7 @@ CRITICAL RULES:
       ? this.deps.memoryMd.get(input.userId).catch(() => null)
       : Promise.resolve(null);
 
-    const [user, conversationId, isNew, history, toolSettings, description, todaysFood, checkinsToday, knownFacts, phase4, memoryMd] = await Promise.all([
+    const [userLoaded, conversationId, isNew, history, toolSettings, description, todaysFood, checkinsToday, knownFacts, phase4, memoryMd] = await Promise.all([
       users.getById(input.userId).catch(() => null),
       conversationPromise,
       users.isNewUser(input.userId).catch(() => false),
@@ -2972,6 +2979,14 @@ CRITICAL RULES:
     ]);
     const conversationSummary = phase4.summary;
     const activeTopic = phase4.topic;
+
+    // Learn durable profile changes the user just stated ("switched to Mounjaro",
+    // "my goal is 160 now", "I inject on Fridays"). Returns the same object when
+    // nothing was learned; otherwise a merged copy so THIS turn's prompt — and,
+    // via the persisted column, every future turn — uses the fresh value. The
+    // structured profile is the highest-precedence context layer, so this is how
+    // a recent correction wins over stale onboarding/memory.
+    const user = await this.tryLearnProfile(input, userLoaded, logger);
 
     // Fold media description into the prompt (only after Promise.all resolves).
     let augmentedText = input.text;
@@ -4893,6 +4908,73 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     } catch {
       return {}; // If table doesn't exist yet, all tools enabled
     }
+  }
+
+  /**
+   * Learn durable profile changes the user volunteers in chat and persist them.
+   *
+   * Runs ONLY when a cheap deterministic pre-filter says the message plausibly
+   * states a self-change, so the common turn never pays for the extra LLM call.
+   * Validation/normalization is fully deterministic in profile-extract, so a
+   * malformed/hallucinated value can never reach the users table. The persist is
+   * fire-and-forget (closes the race for the NEXT turn); the returned merged
+   * object makes THIS turn's reply reflect the change immediately.
+   *
+   * Returns the input user unchanged when learning is disabled, the message
+   * isn't profile-shaped, or nothing valid/new was found. Never throws.
+   */
+  private async tryLearnProfile(
+    input: InboundMessage,
+    user: GraceUser | null,
+    logger: Logger,
+  ): Promise<GraceUser | null> {
+    if (!PROFILE_LEARNING_ENABLED || !user?.phone) return user;
+    if (!mightStateProfileChange(input.text)) return user;
+
+    const current: ProfileSnapshot = {
+      medication: user.medication ?? null,
+      medication_frequency: user.medication_frequency ?? null,
+      injection_day: user.injection_day ?? null,
+      medication_time: user.medication_time ?? null,
+      dose_mg: user.dose_mg ?? null,
+      goal_weight: user.goal_weight ?? null,
+      timezone: user.timezone ?? null,
+      wake_time: user.wake_time ?? null,
+      sleep_time: user.sleep_time ?? null,
+      food_dislikes: user.food_dislikes ?? [],
+    };
+
+    // Cap the extra call so a slow extraction can't stall the reply; on timeout
+    // we simply learn nothing this turn.
+    const updates = await Promise.race<ProfileUpdates>([
+      extractProfileUpdates(this.deps.llm, logger, input.text, current),
+      new Promise<ProfileUpdates>((resolve) => setTimeout(() => resolve({}), 6000)),
+    ]).catch(() => ({} as ProfileUpdates));
+
+    const fields = Object.keys(updates);
+    if (fields.length === 0) return user;
+
+    void this.deps.users
+      .update(user.phone, updates as Partial<GraceUser>)
+      .then(() => logger.info({ phone: user.phone, fields }, 'ai.profile_learn.applied'))
+      .catch((err) => logger.warn({ err, phone: user.phone }, 'ai.profile_learn.persist.failed'));
+
+    // Supersede contradicting long-term memories so a stale fact can't resurface
+    // and contradict the fresh profile. Currently scoped to a medication switch
+    // (the case that actually lands in semantic memory as "medical" context, e.g.
+    // "On Ozempic"). Fire-and-forget — never blocks or fails the reply.
+    if (updates.medication && current.medication && this.deps.userMemory) {
+      void this.deps.userMemory
+        .supersedeChangedFact(
+          input.userId,
+          [current.medication],
+          `Switched medication to ${updates.medication} (previously ${current.medication})`,
+        )
+        .catch((err) => logger.warn({ err, userId: input.userId }, 'ai.profile_learn.supersede.failed'));
+    }
+
+    // Merge for the current turn (a fresh copy — never mutate the cached object).
+    return { ...user, ...updates } as GraceUser;
   }
 
   private async detectAndSetSideEffectFlow(phone: string, text: string, currentFlow: string | null): Promise<void> {

@@ -3020,8 +3020,15 @@ CRITICAL RULES:
       ? ` CONVERSATION GAP: ${Math.floor(hoursSinceLastReply / 24)} day(s) since last message â€” do NOT reference any previous conversation topics from history.`
       : '';
 
+    // analyzeMedia resolves the TRUE media type (it sniffs the bytes); an image
+    // analysis always carries an "IMAGE_TYPE:" marker. The inbound media kind can
+    // be 'other' when the iMessage relay gives an extensionless URL, so trust the
+    // analysis marker over the URL-derived kind for ALL image routing + guards.
+    const analyzedAsImage = !!description && /IMAGE_TYPE:/i.test(description);
+    const hasImageMedia = input.media.some((m) => m.kind === 'image') || analyzedAsImage;
+
     if (description) {
-      const kind = input.media[0]?.kind;
+      const kind = analyzedAsImage ? 'image' : input.media[0]?.kind;
       if (kind === 'audio' && !input.text) {
         augmentedText = `[Voice note â€” auto-transcribed, may have filler words or fragments. Respond naturally.${staleHistoryNote}]\n${description}`;
       } else if (kind === 'image') {
@@ -3921,7 +3928,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     let responseMode: 'text' | 'image_food' | 'image_body' | 'voice' = 'text';
     if (input.media.some((m) => m.kind === 'audio')) {
       responseMode = 'voice';
-    } else if (input.media.some((m) => m.kind === 'image')) {
+    } else if (hasImageMedia) {
       if (description?.includes('IMAGE_TYPE: body')) responseMode = 'image_body';
       else if (description?.includes('IMAGE_TYPE: food')) responseMode = 'image_food';
     }
@@ -3968,7 +3975,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     // Track which modality drove this request so log_food rows are tagged
     // correctly (text vs image vs voice) â€” used by analytics + dedup.
     const logFoodSource: 'text' | 'image' | 'voice' =
-      input.media.some((m) => m.kind === 'image') ? 'image'
+      hasImageMedia ? 'image'
       : input.media.some((m) => m.kind === 'audio') ? 'voice'
       : 'text';
 
@@ -4124,7 +4131,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo â€
     // in a follow-up turn AND the current turn has no new image, scan recent
     // history for the most recent food/body image Grace analyzed and inject the
     // visual context so the LLM doesn't deny having seen the image.
-    const hasNewImage = input.media.some((m) => m.kind === 'image');
+    const hasNewImage = hasImageMedia;
     const isImageFollowup = !hasNewImage && /\b(picture|image|photo|pic|the meal|that meal|that dish|that food|in it|see in|in the bowl|in the plate)\b/i.test(input.text);
     let priorImageContext = '';
     if (isImageFollowup && history.length > 0) {

@@ -47,14 +47,36 @@ export async function analyzeMedia(
   const models = { primary: opts.model, fallback: opts.fallbackModel };
 
   try {
-    const buf = await fetchMedia(first.url, opts.twilio);
+    const fetched = await fetchMedia(first.url, opts.twilio);
+    const buf = fetched.buf;
     const client = new GoogleGenerativeAI(opts.apiKey);
-    // Strip codec/charset parameters from MIME type (e.g. "image/jpeg; name=foo" → "image/jpeg")
-    // Gemini inline data only accepts the base MIME type without parameters.
-    const cleanMime = first.contentType.split(';')[0]!.trim();
-    const inlineData = { data: buf.toString('base64'), mimeType: cleanMime };
+    // Resolve the effective MIME type. Strip codec/charset params (e.g.
+    // "image/jpeg; name=foo" → "image/jpeg"). Prefer the webhook-declared type,
+    // then the HTTP response's content-type header, then a magic-byte sniff —
+    // so iMessage media with NO declared content-type still gets a valid MIME
+    // (Gemini rejects empty/octet-stream inline data, which dark-failed photos).
+    const baseMime = (m: string): string => m.split(';')[0]!.trim().toLowerCase();
+    const declared = baseMime(first.contentType);
+    const httpMime = baseMime(fetched.contentType);
+    const sniffed = sniffMimeFromBytes(buf);
+    const usable = (m: string): boolean => m.length > 0 && m !== 'application/octet-stream' && m !== 'binary/octet-stream';
+    const cleanMime = [declared, httpMime, sniffed].find(usable) ?? sniffed ?? '';
 
-    if (first.kind === 'image') {
+    // Resolve the effective kind. The normalizer guesses kind from the URL
+    // extension; a signed/extensionless iMessage URL yields 'other', which would
+    // skip analysis entirely. The resolved MIME (declared/header/sniffed) is
+    // authoritative — trust it over the extension guess so the media is analyzed
+    // as what it actually IS (image vs audio), not what the URL implied.
+    let kind = first.kind;
+    if (cleanMime.startsWith('image/')) kind = 'image';
+    else if (cleanMime.startsWith('audio/')) kind = 'audio';
+
+    // Final MIME fallback by kind when sniffing failed (e.g. an image we know is
+    // an image but couldn't fingerprint) — JPEG is the safe default Gemini takes.
+    const effectiveMime = cleanMime || (kind === 'image' ? 'image/jpeg' : kind === 'audio' ? 'audio/mpeg' : '');
+    const inlineData = { data: buf.toString('base64'), mimeType: effectiveMime };
+
+    if (kind === 'image') {
       // Pass 1: classify the image and — for food — produce a detailed visual
       // identification of items + quantities (NO macro calculation yet).
       // Body and Other analyses are fully resolved in this single pass.
@@ -85,8 +107,8 @@ export async function analyzeMedia(
       return pass1;
     }
 
-    if (first.kind === 'audio') {
-      return await transcribeAudioViaFileApi(buf, first.contentType, opts.apiKey, models, opts.logger);
+    if (kind === 'audio') {
+      return await transcribeAudioViaFileApi(buf, effectiveMime, opts.apiKey, models, opts.logger);
     }
 
     return null;
@@ -338,9 +360,56 @@ CALCULATION_NOTES: [USDA matches used and any assumptions, e.g. "Chicken matched
 Output NOTHING else. No markdown, no preamble, no explanation outside the format above.`;
 }
 
-async function fetchMedia(url: string, twilio?: { sid: string; token: string }): Promise<Buffer> {
+/** Only Twilio media URLs need the account SID:token Basic auth. Other channels
+ *  (iMessage via Sendblue/LoopMessage → Apple/Google CDN signed URLs) are public
+ *  and REJECT a stray Authorization header — sending Twilio creds there breaks
+ *  the fetch, which is why iMessage photos used to fail. Match Twilio hosts only. */
+export function isTwilioMediaUrl(url: string): boolean {
+  try {
+    const host = new URL(url).host.toLowerCase();
+    return host === 'api.twilio.com' || host.endsWith('.twilio.com') || host.endsWith('.twiliocdn.com');
+  } catch {
+    return false;
+  }
+}
+
+/** Sniff a media MIME type from the buffer's magic bytes. Lets us analyze a
+ *  photo/voice note whose URL has no extension and whose webhook gave no
+ *  content-type (e.g. Sendblue inbound media) — without this the MIME is empty
+ *  and Gemini rejects the inline data. Returns '' when unrecognized. */
+export function sniffMimeFromBytes(buf: Buffer): string {
+  if (buf.length < 12) return '';
+  const b = buf;
+  // Images
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'image/gif';
+  if (b[0] === 0x42 && b[1] === 0x4d) return 'image/bmp';
+  const ascii = (start: number, len: number): string => b.subarray(start, start + len).toString('latin1');
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WEBP') return 'image/webp';
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 4) === 'WAVE') return 'audio/wav';
+  // ISO-BMFF (ftyp at bytes 4-7): HEIC/HEIF images and M4A/MP4 audio share the box.
+  if (ascii(4, 4) === 'ftyp') {
+    const brand = ascii(8, 4);
+    if (/heic|heif|heix|hevc|mif1|msf1/i.test(brand)) return 'image/heic';
+    if (/m4a|mp4|isom|m4b/i.test(brand)) return 'audio/mp4';
+    return 'image/heic';
+  }
+  // Audio
+  if (ascii(0, 3) === 'ID3') return 'audio/mpeg';
+  if (b[0] === 0xff && (b[1]! & 0xe0) === 0xe0) return 'audio/mpeg';
+  if (ascii(0, 4) === 'OggS') return 'audio/ogg';
+  if (ascii(0, 5) === '#!AMR') return 'audio/amr';
+  if (ascii(0, 4) === 'caff') return 'audio/x-caf';
+  return '';
+}
+
+async function fetchMedia(
+  url: string,
+  twilio?: { sid: string; token: string },
+): Promise<{ buf: Buffer; contentType: string }> {
   const headers: Record<string, string> = {};
-  if (twilio) {
+  if (twilio && isTwilioMediaUrl(url)) {
     headers.Authorization = `Basic ${Buffer.from(`${twilio.sid}:${twilio.token}`).toString('base64')}`;
   }
   const ac = new AbortController();
@@ -348,7 +417,10 @@ async function fetchMedia(url: string, twilio?: { sid: string; token: string }):
   try {
     const resp = await fetch(url, { headers, signal: ac.signal });
     if (!resp.ok) throw new Error(`media fetch ${resp.status} for ${url}`);
-    return Buffer.from(await resp.arrayBuffer());
+    return {
+      buf: Buffer.from(await resp.arrayBuffer()),
+      contentType: resp.headers.get('content-type') ?? '',
+    };
   } finally {
     clearTimeout(timer);
   }

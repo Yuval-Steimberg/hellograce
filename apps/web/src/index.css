@@ -6,35 +6,35 @@
 
 @layer base {
   :root {
-    /* Warm "calm companion" palette · cream paper bg · deep ink · soft mint accent
-       (Tomo-inspired warmth — friendly, airy, chat-first) */
-    --background: 44 33% 95%;       /* warm cream paper #F5F2EA */
-    --foreground: 192 40% 12%;      /* deep ink #0E262A */
+    /* Editorial "warm minimal" palette · ivory paper · charcoal ink · one muted
+       clay accent. No green, no gradients — a designed, restrained look. */
+    --background: 40 33% 95%;       /* warm ivory paper #F5F1E9 */
+    --foreground: 30 9% 13%;        /* warm charcoal ink #241F1B */
 
-    --card: 44 44% 98%;            /* soft warm white cards #FCFBF6 */
-    --card-foreground: 192 40% 12%;
+    --card: 40 44% 98%;            /* soft ivory cards #FCFAF5 */
+    --card-foreground: 30 9% 13%;
 
-    --popover: 44 44% 98%;
-    --popover-foreground: 192 40% 12%;
+    --popover: 40 44% 98%;
+    --popover-foreground: 30 9% 13%;
 
-    --primary: 192 44% 13%;         /* deep ink #122E33 — CTA pill + headings */
-    --primary-foreground: 44 40% 97%;
+    --primary: 30 9% 14%;           /* charcoal ink — CTA + headings */
+    --primary-foreground: 40 40% 97%;
 
-    --secondary: 42 26% 91%;        /* warm sand surface */
-    --secondary-foreground: 192 38% 16%;
+    --secondary: 38 22% 91%;        /* warm sand surface */
+    --secondary-foreground: 30 9% 18%;
 
-    --muted: 42 22% 92%;
-    --muted-foreground: 195 10% 38%; /* warm gray — body text */
+    --muted: 38 20% 92%;
+    --muted-foreground: 30 6% 40%;  /* warm gray — body text */
 
-    --accent: 158 58% 36%;          /* deep mint #1C9F6E — icons + accent text */
+    --accent: 14 44% 48%;           /* muted clay/terracotta #B05A41 — sparingly */
     --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 75% 55%;
+    --destructive: 0 70% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 42 20% 86%;
-    --input: 42 20% 86%;
-    --ring: 158 60% 40%;
+    --border: 36 18% 86%;
+    --input: 36 18% 86%;
+    --ring: 14 44% 50%;
 
     --radius: 1.1rem;
 
@@ -47,16 +47,17 @@
     --sidebar-border: 175 22% 89%;
     --sidebar-ring: 158 64% 42%;
 
-    /* Custom tokens */
-    --mint: 153 71% 55%;            /* electric mint #3DDC97 — fills + glows */
-    --mint-deep: 158 64% 36%;       /* deep mint — accent text */
-    --mint-soft: 158 55% 93%;       /* faint mint tint — surfaces */
-    --teal-ink: 188 58% 12%;        /* ink-teal */
-    --peach: 158 64% 40%;           /* legacy alias → mint */
-    --blush: 168 30% 98%;           /* legacy alias → background */
-    --velvet: 188 58% 12%;          /* legacy alias → ink */
-    --sand: 175 22% 89%;            /* legacy alias → border */
-    --success: 153 60% 38%;
+    /* Custom tokens — all repurposed to the clay/charcoal system (no green) so
+       any component still referencing mint/peach renders on-palette. */
+    --mint: 14 44% 48%;             /* → clay accent */
+    --mint-deep: 14 46% 40%;        /* → deep clay */
+    --mint-soft: 28 38% 92%;        /* → faint clay tint surface */
+    --teal-ink: 30 9% 14%;          /* → charcoal ink */
+    --peach: 14 44% 48%;            /* → clay */
+    --blush: 40 33% 96%;            /* → ivory background */
+    --velvet: 30 9% 14%;            /* → charcoal ink */
+    --sand: 36 18% 86%;             /* → border */
+    --success: 150 30% 36%;
     --success-foreground: 0 0% 100%;
   }
 
@@ -174,17 +175,17 @@
     letter-spacing: -0.01em;
   }
 
-  /* High-energy mint variant for primary conversion CTAs */
+  /* Primary conversion CTA — solid charcoal ink (refined, no gradient/glow) */
   .grace-btn-accent {
     @apply inline-flex items-center justify-center gap-1 rounded-full px-8 py-4 text-base font-semibold transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99];
     min-height: 54px;
     letter-spacing: -0.01em;
-    background-image: linear-gradient(135deg, hsl(153 71% 52%), hsl(165 70% 44%));
-    color: hsl(var(--primary));
-    box-shadow: 0 10px 30px -8px hsl(153 71% 45% / 0.55);
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    box-shadow: 0 6px 18px -8px hsl(30 9% 14% / 0.4);
   }
   .grace-btn-accent:hover {
-    box-shadow: 0 16px 40px -10px hsl(153 71% 45% / 0.65);
+    box-shadow: 0 10px 26px -10px hsl(30 9% 14% / 0.5);
   }
 
   .grace-btn-secondary {
@@ -225,21 +226,10 @@
   .grace-btn-glow {
     position: relative;
   }
+  /* Glow removed — a pulsing colored halo read as "AI/vibe". Kept as a no-op
+     so existing .grace-btn-glow wrappers stay valid. */
   .grace-btn-glow::after {
-    content: '';
-    position: absolute;
-    inset: -5px;
-    border-radius: 9999px;
-    background: linear-gradient(90deg, hsl(153 71% 60% / 0.55), hsl(170 70% 55% / 0.5), hsl(188 60% 45% / 0.5));
-    filter: blur(16px);
-    opacity: 0;
-    z-index: -1;
-    animation: pulse-glow 3.5s ease-in-out infinite;
-  }
-
-  @keyframes pulse-glow {
-    0%, 100% { opacity: 0.25; }
-    50%      { opacity: 0.7; }
+    content: none;
   }
 
   /* Slow float for the chat mockup card */
@@ -270,12 +260,9 @@
   }
 
   /* Mint→teal text gradient for headline accent words */
+  /* Editorial accent — a single solid muted clay (no gradient). */
   .grace-gradient-text {
-    background: linear-gradient(120deg, hsl(158 64% 38%), hsl(153 66% 46%) 55%, hsl(188 52% 28%));
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
+    color: hsl(var(--accent));
   }
 
   @media (prefers-reduced-motion: reduce) {

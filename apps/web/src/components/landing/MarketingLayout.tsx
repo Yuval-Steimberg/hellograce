@@ -21,7 +21,14 @@ export const NAV_LINKS = [
  * mobile header/menu, the page's content, and the footer. The nav links route
  * between discrete pages (React Router) rather than scrolling one long page.
  */
-const MarketingLayout = ({ children }: { children: React.ReactNode }) => {
+const MarketingLayout = ({
+  children,
+  hideFooter = false,
+}: {
+  children: React.ReactNode;
+  /** Home uses this for a strict single-screen (no footer, no scroll). */
+  hideFooter?: boolean;
+}) => {
   const navigate = useNavigate();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -38,7 +45,12 @@ const MarketingLayout = ({ children }: { children: React.ReactNode }) => {
     }`;
 
   return (
-    <div className="relative isolate min-h-screen flex flex-col text-foreground font-sans" style={{ overflowX: "clip" }}>
+    <div
+      className={`relative isolate flex flex-col text-foreground font-sans ${
+        hideFooter ? "h-[100svh] overflow-hidden" : "min-h-screen"
+      }`}
+      style={{ overflowX: "clip" }}
+    >
       <AnimatedBackground />
 
       {/* Sticky Nav — desktop */}
@@ -97,7 +109,7 @@ const MarketingLayout = ({ children }: { children: React.ReactNode }) => {
 
       <main className="flex-1">{children}</main>
 
-      <SiteFooter />
+      {!hideFooter && <SiteFooter />}
     </div>
   );
 };

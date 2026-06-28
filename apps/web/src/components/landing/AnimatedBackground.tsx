@@ -17,9 +17,8 @@ const AnimatedBackground = () => (
         position: "absolute",
         inset: 0,
         background: [
-          "radial-gradient(ellipse 1200px 620px at 50% -16%, hsl(28 78% 80% / 0.30) 0%, transparent 64%)",
-          "radial-gradient(ellipse 900px 560px at 92% 2%, hsl(346 70% 84% / 0.16) 0%, transparent 60%)",
-          "radial-gradient(ellipse 1100px 760px at 50% 116%, hsl(158 50% 66% / 0.16) 0%, transparent 64%)",
+          "radial-gradient(ellipse 1200px 620px at 50% -16%, hsl(30 40% 86% / 0.45) 0%, transparent 66%)",
+          "radial-gradient(ellipse 1000px 700px at 50% 118%, hsl(36 28% 82% / 0.4) 0%, transparent 66%)",
         ].join(", "),
       }}
     />

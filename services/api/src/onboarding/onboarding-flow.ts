@@ -105,15 +105,13 @@ function scheduleSlot(user: Pick<FlowUser, 'medication_frequency'>): SlotId {
 export function signupSequence(user: Pick<FlowUser, 'medication_frequency'>): SlotId[] {
   // 'timezone' comes right after the schedule slot so reminders + daily resets
   // run on the user's REAL local time from the first scheduled message.
-  // 'wake_sleep' is in the SHORT core (before consent) so morning/evening
-  // reminders fire at the right local hours from day one. goal weight + diet +
-  // dislikes are collected in-chat too (they shape every food suggestion) — all
-  // skippable, and a chatty user who answers several at once skips ahead via the
-  // multi-field extractor. Body metrics (sex/height/age/activity) stay along-the-way.
-  return [
-    'first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'timezone',
-    'goals', 'goal_weight', 'dietary', 'dislikes', 'wake_sleep', 'consent',
-  ];
+  // FAST CORE ONLY — the minimum to start a useful trial so the user can begin
+  // texting in under a minute: who they are, what they're on, how/when they dose,
+  // and the opt-in. 'timezone' auto-fills from the phone (rarely asked).
+  // EVERYTHING else — goals, goal weight, diet, dislikes, wake/sleep, body
+  // metrics — is gathered conversationally AFTER onboarding by the progressive
+  // profiler (progressive-profile.ts), so the first experience stays quick.
+  return ['first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'timezone', 'consent'];
 }
 
 /** Next signup slot after `lastSlot` (null → the first slot). Returns null when
@@ -602,6 +600,49 @@ export function buildSignupCompleteReply(firstName: string | null, upgradeUrl?: 
   return `You're all set${greet} 🧡 I'm here whenever you need me — log a meal, ask a question, or just check in. Talk soon.`;
 }
 
+/**
+ * LLM understanding fallback — fires ONLY when the deterministic parser can't
+ * read the answer (a typo, abbreviation, slang, or roundabout phrasing the regex
+ * missed). The LLM NORMALIZES the messy reply to a single clean value for the
+ * slot; that value then goes back through parseSlotAnswer, so the deterministic
+ * validators still gate what's stored (a hallucinated/garbage value is rejected).
+ * Returns null when the LLM is absent, times out, or the answer truly isn't one.
+ *
+ * Examples it recovers: "1x a wk" → weekly · "evry day" → daily · "ozemic" →
+ * Ozempic · "munjaro" → Mounjaro · "bout 120 kilos" → 120 · "im sara" → Sara.
+ */
+export async function understandSlotWithLlm(
+  slot: SlotId,
+  text: string,
+  llm: LLMProvider | undefined,
+  opts: { logger?: Logger } = {},
+): Promise<ParsedAnswer | null> {
+  if (!llm) return null;
+  const system = `You normalize a new user's onboarding reply. They were asked for ${SLOT_BRIEF[slot]}.
+Read their reply — it may have typos, abbreviations, slang, emojis, or extra words — and output ONLY the single normalized value as plain text, nothing else.
+Rules: fix obvious typos and expand abbreviations. For how-often answers output exactly "weekly" or "daily". For a medication output the proper brand or ingredient name. For a weight or age output just the number. For a name output just the first name. If they don't know, decline, or it's unrelated/unclear, output exactly "NONE".`;
+  try {
+    const resp = await Promise.race([
+      llm.generate({
+        messages: [{ role: 'system', content: system }, { role: 'user', content: text }],
+        temperature: 0,
+        maxOutputTokens: 24,
+        disableThinking: true,
+      }),
+      new Promise<{ text: string }>((r) => setTimeout(() => r({ text: '' }), 3500)),
+    ]);
+    const value = (resp.text ?? '').trim().replace(/^["']|["']$/g, '');
+    if (!value || /^none\b/i.test(value)) return null;
+    // Re-validate the LLM's normalized value through the deterministic parser —
+    // never trust the LLM's output into storage without the same checks.
+    const parsed = parseSlotAnswer(slot, value);
+    return parsed.ok ? parsed : null;
+  } catch (err) {
+    opts.logger?.warn({ err: err instanceof Error ? err.message : String(err), slot }, 'onboarding.llm_understand.failed');
+    return null;
+  }
+}
+
 // ── Turn orchestration ───────────────────────────────────────────────────────
 
 export interface OnboardingTurnResult {
@@ -685,7 +726,17 @@ export async function runOnboardingTurn(params: {
     // "I'm on ozempic once a week and want to get to 120kg" fills several slots
     // and skips ahead — never a robotic one-field-at-a-time march.
     const multi = extractAllFields(text);
-    const parsed = parseSlotAnswer(slot, text);
+    let parsed = parseSlotAnswer(slot, text);
+
+    // Typo / slang / abbreviation tolerance: if neither the deterministic parser
+    // NOR the multi-field scan understood the answer, let the LLM normalize it
+    // (validated back through the parser) before giving up. Only on this miss
+    // path — the clean common case never pays for an extra call, so onboarding
+    // stays fast.
+    if (!parsed.ok && Object.keys(multi).length === 0) {
+      const recovered = await understandSlotWithLlm(slot, text, llm, { logger });
+      if (recovered) parsed = recovered;
+    }
 
     // Nothing understood for the slot we asked AND nothing else volunteered →
     // one friendly clarification (re-ask the same slot). A skip counts as

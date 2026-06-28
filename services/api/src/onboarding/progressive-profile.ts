@@ -36,13 +36,15 @@ export interface RedisLike {
  *  activity are the Mifflin-St Jeor inputs (accurate targets); diet powers food
  *  recs; goal_weight is last (nice-to-have for progress framing). */
 export const PROGRESSIVE_SLOTS = [
-  'sex', 'current_weight', 'height', 'age', 'activity', 'dietary', 'goal_weight',
+  'dietary', 'dislikes', 'goals', 'goal_weight', 'current_weight',
+  'sex', 'height', 'age', 'activity', 'wake_sleep',
 ] as const;
 export type ProgressiveSlot = (typeof PROGRESSIVE_SLOTS)[number];
 
 type ProfileShape = Pick<
   GraceUser,
-  'sex' | 'current_weight' | 'height_cm' | 'age' | 'activity_level' | 'dietary_restriction' | 'dietary_pattern' | 'goal_weight'
+  'sex' | 'current_weight' | 'height_cm' | 'age' | 'activity_level' | 'dietary_restriction' | 'dietary_pattern'
+  | 'goal_weight' | 'food_dislikes' | 'goals' | 'wake_time'
 >;
 
 export function isProfileSlotFilled(user: ProfileShape, slot: ProgressiveSlot): boolean {
@@ -54,6 +56,9 @@ export function isProfileSlotFilled(user: ProfileShape, slot: ProgressiveSlot): 
     case 'activity': return !!user.activity_level;
     case 'dietary': return !!user.dietary_restriction || !!user.dietary_pattern;
     case 'goal_weight': return user.goal_weight != null;
+    case 'dislikes': return Array.isArray(user.food_dislikes) && user.food_dislikes.length > 0;
+    case 'goals': return Array.isArray(user.goals) && user.goals.length > 0;
+    case 'wake_sleep': return !!user.wake_time;
   }
 }
 
@@ -72,7 +77,7 @@ const TARGET_INPUTS: ProgressiveSlot[] = ['sex', 'current_weight', 'height', 'ag
 const TARGET_QUESTION_RE =
   /\b(protein|calorie|calories|macro|macros|how much (should|do|can) i (eat|need|have)|my (daily )?(target|goal)|am i (eating|getting) enough|how many calories)\b/i;
 const FOOD_IDEA_RE =
-  /\b(what (should|can|could) i (eat|have|make)|meal idea|dinner idea|lunch idea|breakfast idea|snack idea|recipe|food idea|suggest|recommend|any ideas|what's for)\b/i;
+  /\b(what (should|can|could) i (eat|have|make)|(?:meal|dinner|lunch|breakfast|snack|food)\s+ideas?|recipe|suggest|recommend|any ideas?|what's for)\b/i;
 
 /**
  * If the user's message is one a missing field would make more accurate, return
@@ -86,7 +91,10 @@ export function relevantProfileSlot(user: ProfileShape, text: string): Progressi
       if (!isProfileSlotFilled(user, slot)) return slot;
     }
   }
-  if (FOOD_IDEA_RE.test(t) && !isProfileSlotFilled(user, 'dietary')) return 'dietary';
+  if (FOOD_IDEA_RE.test(t)) {
+    if (!isProfileSlotFilled(user, 'dietary')) return 'dietary';
+    if (!isProfileSlotFilled(user, 'dislikes')) return 'dislikes';
+  }
   return null;
 }
 
@@ -98,6 +106,9 @@ const GATHER_REASON: Record<ProgressiveSlot, { ask: string; why: string }> = {
   activity: { ask: 'how active they are day to day (mostly sitting, lightly active, or on the move)', why: 'so your calorie needs are right' },
   dietary: { ask: 'whether they follow any diet or have foods they avoid or are allergic to', why: "so I never suggest something you can't or won't eat" },
   goal_weight: { ask: 'their goal weight, if they have one in mind', why: 'so I can help you track toward it' },
+  dislikes: { ask: 'any foods they really dislike or want to avoid', why: "so I never suggest something you can't stand" },
+  goals: { ask: "what they most want help with on this journey (protein, hydration, side effects, staying on track)", why: 'so I can focus on what matters most to you' },
+  wake_sleep: { ask: 'what time they usually wake up and go to bed', why: 'so my check-ins land at the right times for you' },
 };
 
 /**
@@ -172,9 +183,11 @@ export interface ProfileAnswer {
 export function parseProfileReply(slot: ProgressiveSlot, text: string): ProfileAnswer {
   const t = (text ?? '').trim();
   if (!t) return { fields: null };
-  // Only treat a SHORT reply as a direct answer (see note above). Diet can be a
-  // touch longer ("vegetarian, no nuts"), so allow a higher cap there.
-  const wordCap = slot === 'dietary' ? 12 : MAX_ANSWER_WORDS;
+  // Only treat a SHORT reply as a direct answer (see note above). List-style
+  // answers (diet, dislikes, goals) can be a touch longer ("vegetarian, no
+  // nuts" / "chicken, eggs and tuna"), so allow a higher cap there.
+  const LONGER = new Set<ProgressiveSlot>(['dietary', 'dislikes', 'goals']);
+  const wordCap = LONGER.has(slot) ? 12 : MAX_ANSWER_WORDS;
   if (t.split(/\s+/).length > wordCap) return { fields: null };
   const parsed = parseSlotAnswer(slot as SlotId, t);
   if (parsed.skipped) return { fields: null };

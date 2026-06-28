@@ -17,17 +17,23 @@ import {
 const empty = {
   sex: null, current_weight: null, height_cm: null, age: null,
   activity_level: null, dietary_restriction: null, dietary_pattern: null, goal_weight: null,
+  food_dislikes: [], goals: [], wake_time: null,
 } as Parameters<typeof nextMissingProfileSlot>[0];
 
 describe('nextMissingProfileSlot — priority order', () => {
-  it('walks sex → weight → height → age → activity → dietary → goal_weight', () => {
+  it('walks dietary → dislikes → goals → goal_weight → … in priority order', () => {
     let u = { ...empty };
-    expect(nextMissingProfileSlot(u)).toBe('sex');
-    u = { ...u, sex: 'male' };
-    expect(nextMissingProfileSlot(u)).toBe('current_weight');
-    u = { ...u, current_weight: 180 };
-    expect(nextMissingProfileSlot(u)).toBe('height');
-    u = { ...u, height_cm: 180, age: 40, activity_level: 'light', dietary_restriction: 'vegan', goal_weight: 160 };
+    expect(nextMissingProfileSlot(u)).toBe('dietary');
+    u = { ...u, dietary_pattern: 'vegan' };
+    expect(nextMissingProfileSlot(u)).toBe('dislikes');
+    u = { ...u, food_dislikes: ['eggs'] };
+    expect(nextMissingProfileSlot(u)).toBe('goals');
+    u = { ...u, goals: ['lose weight'] };
+    expect(nextMissingProfileSlot(u)).toBe('goal_weight');
+    u = {
+      ...u, goal_weight: 160, current_weight: 180, sex: 'male', height_cm: 180,
+      age: 40, activity_level: 'light', wake_time: '07:00',
+    };
     expect(nextMissingProfileSlot(u)).toBeNull();
   });
 
@@ -43,10 +49,12 @@ describe('relevantProfileSlot — ask the field that makes THIS answer accurate'
     expect(relevantProfileSlot(empty, 'how much protein should I eat?')).toBe('sex');
     expect(relevantProfileSlot({ ...empty, sex: 'male' }, 'how many calories do I need?')).toBe('current_weight');
   });
-  it('a food-idea question pulls dietary when unknown', () => {
+  it('a food-idea question pulls dietary, then dislikes, then nothing', () => {
     expect(relevantProfileSlot(empty, 'what should I eat for dinner?')).toBe('dietary');
-    // already knows diet → not relevant
-    expect(relevantProfileSlot({ ...empty, dietary_pattern: 'vegan' }, 'any dinner ideas?')).toBeNull();
+    // diet known but dislikes unknown → ask dislikes
+    expect(relevantProfileSlot({ ...empty, dietary_pattern: 'vegan' }, 'any dinner ideas?')).toBe('dislikes');
+    // both known → not relevant
+    expect(relevantProfileSlot({ ...empty, dietary_pattern: 'vegan', food_dislikes: ['eggs'] }, 'any dinner ideas?')).toBeNull();
   });
   it('an unrelated message triggers nothing', () => {
     expect(relevantProfileSlot(empty, 'good morning!')).toBeNull();
@@ -124,7 +132,10 @@ describe('pending-ask Redis store', () => {
 });
 
 describe('PROGRESSIVE_SLOTS', () => {
-  it('covers exactly the accurate-target + food-rec fields', () => {
-    expect([...PROGRESSIVE_SLOTS]).toEqual(['sex', 'current_weight', 'height', 'age', 'activity', 'dietary', 'goal_weight']);
+  it('covers the food-rec + goals + accurate-target fields (priority order)', () => {
+    expect([...PROGRESSIVE_SLOTS]).toEqual([
+      'dietary', 'dislikes', 'goals', 'goal_weight', 'current_weight',
+      'sex', 'height', 'age', 'activity', 'wake_sleep',
+    ]);
   });
 });

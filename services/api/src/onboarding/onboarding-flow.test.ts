@@ -10,6 +10,7 @@ import {
   buildSignupCompleteReply,
   extractAllFields,
   parseDislikes,
+  understandSlotWithLlm,
 } from './onboarding-flow.js';
 
 describe('buildSignupCompleteReply — Tomo-style trial offer at completion', () => {
@@ -109,17 +110,17 @@ describe('slot sequencing', () => {
     expect(nextSignupSlot(w, 'medication')).toBe('medication_frequency');
     expect(nextSignupSlot(w, 'medication_frequency')).toBe('injection_day');
     expect(nextSignupSlot(w, 'injection_day')).toBe('timezone');
-    expect(nextSignupSlot(w, 'timezone')).toBe('goals');
-    expect(nextSignupSlot(w, 'goals')).toBe('goal_weight');
-    expect(nextSignupSlot(w, 'goal_weight')).toBe('dietary');
-    expect(nextSignupSlot(w, 'dietary')).toBe('dislikes');
-    expect(nextSignupSlot(w, 'dislikes')).toBe('wake_sleep');
-    expect(nextSignupSlot(w, 'wake_sleep')).toBe('consent');
+    expect(nextSignupSlot(w, 'timezone')).toBe('consent');
     expect(nextSignupSlot(w, 'consent')).toBeNull();
   });
 
-  it('wake_sleep is in the short core (reminders fire at the right local hours day one)', () => {
-    expect(signupSequence({ medication_frequency: 'weekly' })).toContain('wake_sleep');
+  it('the core is FAST — only the essentials; everything else is along-the-way', () => {
+    const seq = signupSequence({ medication_frequency: 'weekly' });
+    expect(seq).toEqual(['first_name', 'medication', 'medication_frequency', 'injection_day', 'timezone', 'consent']);
+    // moved out of the upfront flow → gathered progressively after onboarding
+    for (const s of ['goals', 'goal_weight', 'dietary', 'dislikes', 'wake_sleep']) {
+      expect(seq).not.toContain(s);
+    }
   });
 
   it('the signup sequence collects timezone (so reminders use local time)', () => {
@@ -263,7 +264,7 @@ describe('runOnboardingTurn (signup)', () => {
     expect(res.completed).toBe(false);
     expect(calls).toContainEqual({ timezone: 'Asia/Jerusalem' }); // persisted automatically
     expect(res.reply.toLowerCase()).not.toMatch(/timezone|what timezone/); // not asked
-    expect(calls).toContainEqual({ onboarding_last_slot: 'goals' });        // advanced past timezone
+    expect(calls).toContainEqual({ onboarding_last_slot: 'consent' });      // advanced past timezone → consent (fast core)
   });
 
   it('asks for timezone when the phone is ambiguous (unknown area code)', async () => {
@@ -372,5 +373,36 @@ describe('onboarding saves the answer (no Settings redirect during onboarding)',
     const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'dislikes' });
     await runOnboardingTurn({ user: u, text: 'I hate chicken and eggs', mode: 'signup', users, logger });
     expect(calls.some((c) => Array.isArray((c as Record<string, unknown>).food_dislikes))).toBe(true);
+  });
+});
+
+describe('understandSlotWithLlm — typo / slang / abbreviation tolerance', () => {
+  const stub = (reply: string) => ({ generate: vi.fn(async () => ({ text: reply })) } as any);
+
+  it('recovers a typo medication via the LLM, re-validated through the parser', async () => {
+    const r = await understandSlotWithLlm('medication', 'im on ozemic', stub('Ozempic'), { logger });
+    expect(r).toEqual({ ok: true, fields: { medication: 'Ozempic' } });
+  });
+  it('recovers an abbreviated frequency ("1x a wk" → weekly)', async () => {
+    const r = await understandSlotWithLlm('medication_frequency', '1x a wk', stub('weekly'), { logger });
+    expect(r).toEqual({ ok: true, fields: { medication_frequency: 'weekly' } });
+  });
+  it('rejects a hallucinated value the deterministic parser would not accept', async () => {
+    // LLM returns junk for a medication → parseSlotAnswer('medication', 'banana') fails → null
+    expect(await understandSlotWithLlm('medication', '???', stub('banana'), { logger })).toBeNull();
+  });
+  it('returns null on "NONE" (user does not know / unrelated) and with no LLM', async () => {
+    expect(await understandSlotWithLlm('medication', 'no clue', stub('NONE'), { logger })).toBeNull();
+    expect(await understandSlotWithLlm('medication', 'ozemic', undefined, { logger })).toBeNull();
+  });
+
+  it('runOnboardingTurn falls back to the LLM when the parser misses a typo answer', async () => {
+    const { users, calls } = makeWriter();
+    const llm = { generate: vi.fn(async () => ({ text: 'Mounjaro' })) } as any;
+    const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'medication' });
+    // "munjaroo" isn't a known brand to the strict regex → LLM normalizes it.
+    const res = await runOnboardingTurn({ user: u, text: 'munjaroo', mode: 'signup', users, llm, logger });
+    expect(res.completed).toBe(false);
+    expect(calls).toContainEqual({ medication: 'Mounjaro' });
   });
 });

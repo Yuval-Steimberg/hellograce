@@ -8,7 +8,7 @@
   :root {
     /* Editorial "warm minimal" palette · ivory paper · charcoal ink · one muted
        clay accent. No green, no gradients — a designed, restrained look. */
-    --background: 40 33% 95%;       /* warm ivory paper #F5F1E9 */
+    --background: 0 0% 100%;        /* plain white — no background color */
     --foreground: 30 9% 13%;        /* warm charcoal ink #241F1B */
 
     --card: 40 44% 98%;            /* soft ivory cards #FCFAF5 */

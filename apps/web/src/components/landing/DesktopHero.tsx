@@ -81,17 +81,7 @@ const DesktopHero = () => {
   const start = () => startWithGrace(() => navigate("/onboarding"));
 
   return (
-    <section className="relative hidden lg:flex min-h-[calc(100svh-72px)] items-center overflow-hidden">
-      {/* soft warm backdrop — restrained, gives the scene some life */}
-      <div
-        className="absolute inset-0 -z-10"
-        aria-hidden
-        style={{
-          background:
-            "radial-gradient(ellipse 760px 520px at 78% 30%, hsl(28 60% 88% / 0.55) 0%, transparent 62%), radial-gradient(ellipse 640px 520px at 16% 88%, hsl(14 44% 86% / 0.4) 0%, transparent 60%)",
-        }}
-      />
-
+    <section className="relative hidden lg:flex min-h-[calc(100svh-72px)] items-center overflow-hidden bg-white">
       <div className="mx-auto grid w-full max-w-[1240px] grid-cols-2 items-center gap-16 px-12">
         {/* Copy */}
         <div>

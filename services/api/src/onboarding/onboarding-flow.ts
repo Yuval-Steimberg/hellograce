@@ -52,13 +52,14 @@ export type SlotId =
   | 'consent'
   | 'goal_weight'
   | 'current_weight'
+  | 'dietary'
+  | 'dislikes'
   // Progressive (gathered along the way after the short signup core) — power
   // accurate protein/calorie targets + food recommendations.
   | 'sex'
   | 'height'
   | 'age'
-  | 'activity'
-  | 'dietary';
+  | 'activity';
 
 /** Minimal user shape the flow reads/writes — keeps it decoupled + testable. */
 type FlowUser = Pick<
@@ -74,6 +75,7 @@ type FlowUser = Pick<
   | 'sms_consent'
   | 'goal_weight'
   | 'current_weight'
+  | 'food_dislikes'
   | 'wake_time'
   | 'sleep_time'
   | 'sex'
@@ -104,9 +106,14 @@ export function signupSequence(user: Pick<FlowUser, 'medication_frequency'>): Sl
   // 'timezone' comes right after the schedule slot so reminders + daily resets
   // run on the user's REAL local time from the first scheduled message.
   // 'wake_sleep' is in the SHORT core (before consent) so morning/evening
-  // reminders fire at the right local hours from day one. Everything else
-  // (weight, height, sex, age, activity, diet) is gathered along the way.
-  return ['first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'timezone', 'goals', 'wake_sleep', 'consent'];
+  // reminders fire at the right local hours from day one. goal weight + diet +
+  // dislikes are collected in-chat too (they shape every food suggestion) — all
+  // skippable, and a chatty user who answers several at once skips ahead via the
+  // multi-field extractor. Body metrics (sex/height/age/activity) stay along-the-way.
+  return [
+    'first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'timezone',
+    'goals', 'goal_weight', 'dietary', 'dislikes', 'wake_sleep', 'consent',
+  ];
 }
 
 /** Next signup slot after `lastSlot` (null → the first slot). Returns null when
@@ -131,6 +138,31 @@ export function nextGapfillSlot(user: Pick<FlowUser, 'goal_weight' | 'current_we
   return null;
 }
 
+/** Whether a slot's value is already on the user — so onboarding can SKIP it
+ *  (e.g. a multi-field answer filled it out of order). `consent` is never
+ *  "answered" passively: the yes/no opt-in is always asked explicitly. */
+export function isSlotAnswered(u: FlowUser, slot: SlotId): boolean {
+  switch (slot) {
+    case 'first_name': return !!u.first_name;
+    case 'medication': return !!u.medication;
+    case 'medication_frequency': return !!u.medication_frequency;
+    case 'injection_day': return !!u.injection_day;
+    case 'medication_time': return !!u.medication_time;
+    case 'timezone': return !!u.timezone;
+    case 'goals': return Array.isArray(u.goals) && u.goals.length > 0;
+    case 'goal_weight': return u.goal_weight != null;
+    case 'current_weight': return u.current_weight != null;
+    case 'dietary': return !!u.dietary_restriction || !!u.dietary_pattern;
+    case 'dislikes': return Array.isArray(u.food_dislikes) && u.food_dislikes.length > 0;
+    case 'wake_sleep': return !!u.wake_time;
+    case 'sex': return !!u.sex;
+    case 'height': return u.height_cm != null;
+    case 'age': return u.age != null;
+    case 'activity': return !!u.activity_level;
+    case 'consent': return false;
+  }
+}
+
 // ── Answer parsing ───────────────────────────────────────────────────────────
 
 const SKIP_RE = /\b(skip|later|not now|prefer not|rather not|pass|dunno|don'?t know|no idea|maybe later)\b/i;
@@ -139,9 +171,10 @@ const SKIP_RE = /\b(skip|later|not now|prefer not|rather not|pass|dunno|don'?t k
  *  falls back to the temporary default and can be set later in Settings. */
 const SKIPPABLE: ReadonlySet<SlotId> = new Set([
   'first_name', 'timezone', 'goals', 'wake_sleep', 'goal_weight', 'current_weight',
+  'dietary', 'dislikes',
   // Progressive fields are always optional — a user can skip any of them and
   // Grace falls back to safe defaults (e.g. an 80g protein target).
-  'sex', 'height', 'age', 'activity', 'dietary',
+  'sex', 'height', 'age', 'activity',
 ]);
 
 const YES_RE = /\b(yes|yeah|yep|yup|sure|ok|okay|fine|sounds good|go ahead|please do|absolutely|of course|y)\b/i;
@@ -267,6 +300,24 @@ function parseActivity(text: string): string | null {
   return null;
 }
 
+/** Disliked / avoided foods → a clean string[]. Strips lead-ins ("I hate", "I
+ *  don't like", "avoid", "no") and splits on commas / "and" / "or" / slashes.
+ *  "none/nothing" → empty list (nothing to avoid). */
+export function parseDislikes(text: string): string[] | null {
+  const t = text.trim().toLowerCase();
+  if (/^(no|none|nope|nah|not really|n\/a|nothing|i (eat|like) everything|no (foods?|preferences?))\b/.test(t)) {
+    return [];
+  }
+  const cleaned = text
+    .replace(/\b(i\s+(really\s+)?(hate|don'?t\s+(like|eat)|do\s+not\s+(like|eat)|can'?t\s+stand|dislike|avoid|am\s+allergic\s+to|allergic\s+to)|no\s+|avoid\s+|not\s+a\s+fan\s+of)\b/gi, ' ')
+    .replace(/\b(and|or|plus)\b/gi, ',');
+  const items = cleaned
+    .split(/[,\/&\n]+/)
+    .map((p) => p.trim().replace(/[.!?]+$/, '').toLowerCase())
+    .filter((p) => p.length >= 2 && p.length <= 40 && /[a-z]/i.test(p));
+  return items.length > 0 ? Array.from(new Set(items)).slice(0, 20) : null;
+}
+
 /** Diet/allergies → dietary_restriction (free text) + dietary_pattern enum when
  *  it's one of the supported plant-based patterns. "no/none" → cleared/skipped. */
 function parseDiet(text: string): Partial<GraceUser> | null {
@@ -285,6 +336,33 @@ export interface ParsedAnswer {
   skipped?: boolean;
   /** Validated fields to persist (real `users` columns). */
   fields?: Partial<GraceUser>;
+}
+
+/**
+ * Multi-field extraction: pull EVERY profile fact the message mentions, not just
+ * the slot we asked — so a chatty answer ("I'm on ozempic once a week and want
+ * to get to 120kg") fills several slots at once and onboarding skips ahead.
+ * Only the UNAMBIGUOUS, keyword-anchored fields are scanned here (a bare number
+ * is never a goal weight unless framed as one), and every value goes through the
+ * same strict validators as parseSlotAnswer — so nothing malformed is stored.
+ */
+export function extractAllFields(text: string): Partial<GraceUser> {
+  const fields: Partial<GraceUser> = {};
+  const med = parseMedicationStrict(text);
+  if (med) fields.medication = med;
+  const freq = normalizeFrequency(text);
+  if (freq) fields.medication_frequency = freq;
+  // Goal weight only when framed as a goal/target (never a bare number).
+  if (/\b(goal|target|aim(ing)?|reach|get (down |up |back )?to|want to (be|hit|get to|reach|weigh)|lose (down )?to|down to)\b/i.test(text)) {
+    const w = parseWeight(text);
+    if (w) fields.goal_weight = w;
+  }
+  // Diet only with an explicit diet keyword.
+  if (/\b(vegan|vegetarian|pescatarian|keto|paleo|kosher|halal|gluten[\s-]?free|dairy[\s-]?free|lactose|low[\s-]?carb|plant[\s-]?based)\b/i.test(text)) {
+    const d = parseDiet(text);
+    if (d) Object.assign(fields, d);
+  }
+  return fields;
 }
 
 /**
@@ -362,6 +440,10 @@ export function parseSlotAnswer(slot: SlotId, text: string): ParsedAnswer {
       const fields = parseDiet(t);
       return fields ? { ok: true, fields } : { ok: false };
     }
+    case 'dislikes': {
+      const dislikes = parseDislikes(t);
+      return dislikes ? { ok: true, fields: { food_dislikes: dislikes } } : { ok: false };
+    }
     default:
       return { ok: false };
   }
@@ -386,6 +468,7 @@ const SLOT_BRIEF: Record<SlotId, string> = {
   age: 'their age — to make daily targets accurate',
   activity: 'how active they are day to day (mostly sitting, lightly active, or on the move)',
   dietary: 'whether they follow any diet or have foods they avoid or are allergic to',
+  dislikes: 'foods they really dislike or want to avoid, so Grace never suggests them',
 };
 
 function fallbackQuestion(slot: SlotId, name: string | null, reask: boolean): string {
@@ -407,6 +490,7 @@ function fallbackQuestion(slot: SlotId, name: string | null, reask: boolean): st
     age: [`How old are you? It helps me get your daily targets right.`, `Mind sharing your age? It makes your targets more accurate.`],
     activity: [`How active are you day to day — mostly sitting, lightly active, or on the move?`, `Would you say you're mostly at a desk, or pretty active during the day?`],
     dietary: [`Do you follow any particular diet, or have foods you avoid or are allergic to?`, `Any diet you stick to, or foods I should keep out of suggestions?`],
+    dislikes: [`Any foods you really don't like or want me to keep out of suggestions?`, `Last one — anything you can't stand or want me to avoid suggesting?`],
   };
   const opts = variants[slot];
   const base = opts[reask ? Math.min(1, opts.length - 1) : Math.floor(Math.random() * opts.length)]!;
@@ -549,8 +633,19 @@ export async function runOnboardingTurn(params: {
   // Local working copy so next-slot computation sees just-persisted values.
   let u: FlowUser = { ...user };
 
-  const pickNext = (): SlotId | null =>
-    mode === 'signup' ? nextSignupSlot(u, u.onboarding_last_slot ?? null) : nextGapfillSlot(u);
+  // Next required slot AFTER the last one asked, skipping any already answered
+  // (a multi-field reply can fill several at once). Walks the live sequence.
+  const pickNext = (): SlotId | null => {
+    const seq = mode === 'signup' ? signupSequence(u) : GAPFILL_SLOTS;
+    const last = (u.onboarding_last_slot as SlotId | null);
+    const startIdx = last ? seq.indexOf(last) + 1 : 0;
+    for (let i = Math.max(0, startIdx); i < seq.length; i++) {
+      const s = seq[i]!;
+      if (s === 'consent') return s;       // always ask the opt-in explicitly
+      if (!isSlotAnswered(u, s)) return s;  // skip slots already filled
+    }
+    return null;
+  };
 
   try {
     const starting = u.onboarding_state !== 'in_progress';
@@ -585,16 +680,27 @@ export async function runOnboardingTurn(params: {
       return { reply: '', completed: true };
     }
 
+    // Understand the reply: the current slot's answer (primary) PLUS any other
+    // profile facts the message volunteered (multi-field, validated). A chatty
+    // "I'm on ozempic once a week and want to get to 120kg" fills several slots
+    // and skips ahead — never a robotic one-field-at-a-time march.
+    const multi = extractAllFields(text);
     const parsed = parseSlotAnswer(slot, text);
-    if (!parsed.ok) {
-      // Unclear → re-ask the SAME slot (no advance, nothing persisted).
+
+    // Nothing understood for the slot we asked AND nothing else volunteered →
+    // one friendly clarification (re-ask the same slot). A skip counts as
+    // handled and advances.
+    const understoodCurrent = parsed.ok || Object.keys(multi).length > 0;
+    if (!understoodCurrent) {
       const q = await generateQuestion(slot, u, llm, { reask: true, logger });
       return { reply: q, completed: false };
     }
 
-    if (parsed.fields && !parsed.skipped) {
-      await users.update(u.phone, parsed.fields);
-      u = { ...u, ...parsed.fields } as FlowUser;
+    const updates: Partial<GraceUser> = { ...multi };
+    if (parsed.ok && parsed.fields && !parsed.skipped) Object.assign(updates, parsed.fields);
+    if (Object.keys(updates).length > 0) {
+      await users.update(u.phone, updates);
+      u = { ...u, ...updates } as FlowUser;
     }
 
     // Advance.

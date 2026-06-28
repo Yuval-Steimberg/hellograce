@@ -8,6 +8,8 @@ import {
   generateOpener,
   buildOnboardingNudge,
   buildSignupCompleteReply,
+  extractAllFields,
+  parseDislikes,
 } from './onboarding-flow.js';
 
 describe('buildSignupCompleteReply — Tomo-style trial offer at completion', () => {
@@ -108,7 +110,10 @@ describe('slot sequencing', () => {
     expect(nextSignupSlot(w, 'medication_frequency')).toBe('injection_day');
     expect(nextSignupSlot(w, 'injection_day')).toBe('timezone');
     expect(nextSignupSlot(w, 'timezone')).toBe('goals');
-    expect(nextSignupSlot(w, 'goals')).toBe('wake_sleep');
+    expect(nextSignupSlot(w, 'goals')).toBe('goal_weight');
+    expect(nextSignupSlot(w, 'goal_weight')).toBe('dietary');
+    expect(nextSignupSlot(w, 'dietary')).toBe('dislikes');
+    expect(nextSignupSlot(w, 'dislikes')).toBe('wake_sleep');
     expect(nextSignupSlot(w, 'wake_sleep')).toBe('consent');
     expect(nextSignupSlot(w, 'consent')).toBeNull();
   });
@@ -235,7 +240,9 @@ describe('runOnboardingTurn (signup)', () => {
     const res = await runOnboardingTurn({ user: u, text: 'Mounjaro', mode: 'signup', users, logger });
     expect(res.completed).toBe(false);
     expect(calls).toContainEqual({ medication: 'Mounjaro' });
-    expect(calls).toContainEqual({ onboarding_last_slot: 'medication_frequency' });
+    // medication_frequency is already 'weekly' on this user → skip-answered jumps
+    // past it to the next unfilled slot (injection_day).
+    expect(calls).toContainEqual({ onboarding_last_slot: 'injection_day' });
   });
 
   it('re-asks the same slot on an unclear answer without persisting it', async () => {
@@ -310,5 +317,60 @@ describe('runOnboardingTurn (gapfill)', () => {
     const res = await runOnboardingTurn({ user: u, text: 'hi', mode: 'gapfill', users, logger });
     expect(res).toEqual({ reply: '', completed: true });
     expect(calls[0]).toMatchObject({ onboarding_state: 'complete' });
+  });
+});
+
+describe('extractAllFields — multi-field, keyword-anchored, validated', () => {
+  it('pulls medication + frequency + goal weight from one messy sentence', () => {
+    const f = extractAllFields("I'm on ozempic once a week and I want to get to 120kg");
+    expect(f.medication).toBe('Ozempic');
+    expect(f.medication_frequency).toBe('weekly');
+    expect(f.goal_weight).toBe(120);
+  });
+  it('does NOT treat a bare number as a goal weight', () => {
+    expect(extractAllFields('120').goal_weight).toBeUndefined();
+    expect(extractAllFields('I had 120g of chicken').goal_weight).toBeUndefined();
+  });
+  it('extracts a diet only with an explicit diet keyword', () => {
+    expect(extractAllFields("I'm vegan").dietary_pattern).toBe('vegan');
+    expect(extractAllFields('I want to eat better').dietary_restriction).toBeUndefined();
+  });
+  it('returns empty for a plain answer with no profile facts', () => {
+    expect(extractAllFields('Sunday')).toEqual({});
+  });
+});
+
+describe('parseDislikes', () => {
+  it('parses a hate/avoid list into clean items', () => {
+    expect(parseDislikes('I hate chicken and eggs')).toEqual(['chicken', 'eggs']);
+    expect(parseDislikes('eggs, tuna')).toEqual(['eggs', 'tuna']);
+    expect(parseDislikes("I don't like mushrooms or olives")).toEqual(['mushrooms', 'olives']);
+  });
+  it('"none" → empty list (nothing to avoid)', () => {
+    expect(parseDislikes('none')).toEqual([]);
+    expect(parseDislikes('I eat everything')).toEqual([]);
+  });
+});
+
+describe('onboarding saves the answer (no Settings redirect during onboarding)', () => {
+  it('saves goal weight from "My goal is 120 kg" and advances — the production bug', async () => {
+    const { users, calls } = makeWriter();
+    const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'goal_weight' });
+    const res = await runOnboardingTurn({ user: u, text: 'My goal is 120 kg', mode: 'signup', users, logger });
+    expect(res.completed).toBe(false);
+    expect(calls).toContainEqual({ goal_weight: 120 });
+    expect(res.reply.toLowerCase()).not.toMatch(/settings|can only be updated/);
+  });
+  it('saves dietary preference from "I\'m vegan" and advances', async () => {
+    const { users, calls } = makeWriter();
+    const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'dietary' });
+    await runOnboardingTurn({ user: u, text: "I'm vegan", mode: 'signup', users, logger });
+    expect(calls.some((c) => (c as Record<string, unknown>).dietary_pattern === 'vegan')).toBe(true);
+  });
+  it('saves disliked foods from "I hate chicken and eggs"', async () => {
+    const { users, calls } = makeWriter();
+    const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'dislikes' });
+    await runOnboardingTurn({ user: u, text: 'I hate chicken and eggs', mode: 'signup', users, logger });
+    expect(calls.some((c) => Array.isArray((c as Record<string, unknown>).food_dislikes))).toBe(true);
   });
 });

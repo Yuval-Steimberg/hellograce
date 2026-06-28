@@ -237,10 +237,25 @@ export async function processInboundMessage(
             }
           }
 
+          // ── ONBOARDING OWNS THE TURN (2026-06-28 production fix) ──────────
+          // While the user is being onboarded over chat, GRACE is the one asking
+          // the profile questions — so the answers ("My goal is 120 kg", "vegan",
+          // "Ozempic") must be collected by the onboarding handler, NOT bounced
+          // to the Settings page. Compute it once and skip every settings /
+          // cadence / opt-out / pause / upgrade redirect below when onboarding is
+          // active; those intercepts only apply AFTER onboarding completes.
+          // (Crisis SafetyGuard + the symptom-stack accumulator still run — those
+          // are never suppressed.) The onboarding handler itself is below.
+          const onboardingActive = !!(
+            user &&
+            deps.env.SMS_ONBOARDING_ENABLED &&
+            (needsRegistration(user) || user.onboarding_state === 'in_progress')
+          );
+
           // ── Natural-language opt-out (master prompt — OPT-OUT HANDLING).
           // Literal STOP/UNSUBSCRIBE are handled by Twilio at the carrier level;
           // these phrases still need an in-conversation response.
-          if (user) {
+          if (user && !onboardingActive) {
             const optOutReply = detectNaturalOptOut(normalized.text, deps.env.PUBLIC_WEB_URL);
             if (optOutReply) {
               await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: optOutReply });
@@ -252,7 +267,7 @@ export async function processInboundMessage(
           // Reminder preferences are owned by the Settings page (single source
           // of truth). Grace must NOT change the cadence from chat — detect the
           // request and redirect. Never write checkin_count_per_day here.
-          if (user && isFrequencyChangeRequest(normalized.text)) {
+          if (user && !onboardingActive && isFrequencyChangeRequest(normalized.text)) {
             await deps.sender.send({
               to: normalized.userId,
               channel: normalized.channel,
@@ -263,7 +278,7 @@ export async function processInboundMessage(
 
           // ── In-chat injection day change.
           // Handles typo-tolerant phrasings like "change my injuction day to Sunday".
-          if (user) {
+          if (user && !onboardingActive) {
             const injDay = detectInjectionDayChange(normalized.text);
             if (injDay) {
               // Reset injection flow stage so the new injection day starts
@@ -290,7 +305,7 @@ export async function processInboundMessage(
           // Advertised in the welcome message, so it must actually work. Uses
           // this deployment's PUBLIC_WEB_URL (settings-flow's link is hardcoded
           // to graceglp.com) so the link is correct for the running environment.
-          if (user && isSettingsKeyword(normalized.text)) {
+          if (user && !onboardingActive && isSettingsKeyword(normalized.text)) {
             const settingsUrl = buildSettingsUrl(user.phone, deps.env.PUBLIC_WEB_URL);
             await deps.sender.send({
               to: normalized.userId,
@@ -308,7 +323,7 @@ export async function processInboundMessage(
           // user's "yes" applies it, "no" cancels it. Runs AFTER the
           // existing short-circuits above so their immediate-update UX
           // for injection day / frequency / opt-out stays unchanged.
-          if (user) {
+          if (user && !onboardingActive) {
             try {
               const settingsReply = await tryHandleSettings(normalized.text, user, {
                 logger: log,
@@ -472,7 +487,7 @@ export async function processInboundMessage(
           // "pause", "stop sending messages", "I need a break". Flips
           // users.paused = TRUE; scheduler's listActiveUsers() already
           // excludes paused users so proactive messages stop immediately.
-          if (user && deps.users && detectPauseIntent(normalized.text)) {
+          if (user && !onboardingActive && deps.users && detectPauseIntent(normalized.text)) {
             const phone = user.phone;
             await deps.users.setPaused(phone, true).catch((err: unknown) => {
               log.warn({ err: err instanceof Error ? err.message : String(err), phone }, 'pause.set_paused.failed');
@@ -504,7 +519,7 @@ export async function processInboundMessage(
           // paid user to "upgrade" sends them through checkout again, which
           // was the production bug here. Telling a trial user to "manage"
           // doesn't fit either.
-          if (user && detectUpgradeIntent(normalized.text)) {
+          if (user && !onboardingActive && detectUpgradeIntent(normalized.text)) {
             const isPaidUser = user.is_paid || user.is_pro;
             const destinationUrl = isPaidUser
               ? buildSettingsUrl(user.phone, deps.env.PUBLIC_WEB_URL)

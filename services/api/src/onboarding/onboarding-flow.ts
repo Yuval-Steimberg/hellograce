@@ -469,14 +469,15 @@ const SLOT_BRIEF: Record<SlotId, string> = {
   dislikes: 'foods they really dislike or want to avoid, so Grace never suggests them',
 };
 
-function fallbackQuestion(slot: SlotId, name: string | null, reask: boolean): string {
-  const hi = name ? `${name}, ` : '';
+function fallbackQuestion(slot: SlotId, _name: string | null, reask: boolean): string {
+  // No name/greeting prefix on follow-up questions: the opener already greeted
+  // them, so leading every question with "Hey <name>," reads robotic + repetitive.
   const variants: Record<SlotId, string[]> = {
     first_name: ["Hey, I'm Grace 🧡 What should I call you?", "Hi, I'm Grace! What's your name?"],
-    medication: [`${hi}which GLP-1 are you on — Ozempic, Wegovy, Mounjaro, Zepbound, something else?`, `${hi}what medication are you taking?`],
-    medication_frequency: [`Got it. Do you take it weekly or daily?`, `And is that a weekly shot or a daily dose?`],
-    injection_day: [`Which day do you usually do your shot?`, `What day of the week is your injection?`],
-    medication_time: [`What time of day do you usually take it?`, `When do you take your daily dose — morning, evening?`],
+    medication: [`Which GLP-1 are you on — Ozempic, Wegovy, Mounjaro, Zepbound, something else?`, `What medication are you taking?`, `Nice to meet you! So, which GLP-1 are you on?`],
+    medication_frequency: [`Got it. Do you take it weekly or daily?`, `Is that a weekly shot or a daily dose?`, `Perfect — weekly or daily?`],
+    injection_day: [`Which day do you usually do your shot?`, `What day's your injection?`, `And what day do you take it?`],
+    medication_time: [`What time of day do you usually take it?`, `When do you take your daily dose — morning or evening?`, `Morning or evening for your dose?`],
     timezone: [`What timezone are you in? Just your city or region — it keeps your check-ins and daily totals on your local time.`, `Where are you based? (city or region) That way I send check-ins at the right time for you.`],
     goals: [`What would you most like my help with — protein, hydration, side effects, staying on track?`, `What matters most to you right now on this journey?`],
     consent: [`Is it ok if I check in with you by text now and then? (yes/no)`, `Want me to text you little check-ins? Just reply yes or no.`],
@@ -706,11 +707,13 @@ export async function runOnboardingTurn(params: {
         onboarding_last_slot: firstSlot,
         onboarding_started_at: now,
       } as Partial<GraceUser>);
-      // Signup's first slot is the name — open with the magnetic intro+ask so the
-      // user wants to keep going. Gap-fill (returning user) stays low-key.
+      // Signup's first slot is the name — open with the magnetic intro+ask
+      // (the ONE message worth an LLM call). Every other question is a fast,
+      // deterministic, warm one-liner — no per-turn LLM call, so onboarding
+      // feels instant and never repeats "Hey <name>," on each step.
       const q = mode === 'signup' && firstSlot === 'first_name'
         ? await generateOpener(llm, { logger })
-        : await generateQuestion(firstSlot, u, llm, { logger });
+        : fallbackQuestion(firstSlot, null, false);
       return { reply: q, completed: false };
     }
 
@@ -743,7 +746,7 @@ export async function runOnboardingTurn(params: {
     // handled and advances.
     const understoodCurrent = parsed.ok || Object.keys(multi).length > 0;
     if (!understoodCurrent) {
-      const q = await generateQuestion(slot, u, llm, { reask: true, logger });
+      const q = fallbackQuestion(slot, null, true);
       return { reply: q, completed: false };
     }
 
@@ -788,7 +791,7 @@ export async function runOnboardingTurn(params: {
     }
 
     await users.update(u.phone, { onboarding_last_slot: next } as Partial<GraceUser>);
-    const q = await generateQuestion(next, u, llm, { logger });
+    const q = fallbackQuestion(next, null, false);
     return { reply: q, completed: false };
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : String(err), phone: user.phone }, 'onboarding.turn.error');

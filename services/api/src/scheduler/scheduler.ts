@@ -200,6 +200,13 @@ export class Scheduler {
     // ── Quiet hours: never send proactive messages between 21:00 and 07:00 local
     if (hour >= 21 || hour < 7) return;
 
+    // ── Never interrupt onboarding. A user still in the chat signup flow
+    // (onboarding_state === 'in_progress') must NOT get a scheduled message
+    // mid-conversation — e.g. an injection-day reminder firing right after they
+    // just told us their shot day. Proactive sends resume once onboarding
+    // completes. (2026-06-28 production fix: "messages out of nowhere".)
+    if (user.onboarding_state === 'in_progress') return;
+
     // Guard: skip users missing schedule config — avoids null.split() crash.
     // Defensive defaults so existing users without onboarding data still work.
     const wake_time = user.wake_time || '08:00';

@@ -1139,3 +1139,18 @@ describe('pickMorningVariant — stickiness router', () => {
     expect(pickMorningVariant({ trial_start: at(2 * DAY), last_reply_at: null }, now).type).toBe('journey');
   });
 });
+
+describe('onboarding guard — no scheduled messages mid-signup', () => {
+  it('does NOT send any proactive message while onboarding_state is in_progress', async () => {
+    // Israel injection day = today, deep in the morning window — would normally fire.
+    const u = makeUser({
+      wake_time: '08:00', timezone: 'America/New_York',
+      onboarding_state: 'in_progress', injection_day: 'Monday',
+    });
+    const h = buildHarness(u);
+    setUtc(2026, 5, 19, 13, 0); // 09:00 NY — inside the morning window
+    await tick(h.scheduler);
+    expect(h.sends.length).toBe(0);
+    expect(h.generateCalls.length).toBe(0);
+  });
+});

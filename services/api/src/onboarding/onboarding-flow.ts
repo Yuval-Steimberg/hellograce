@@ -603,7 +603,7 @@ export async function buildOnboardingNudge(
  */
 export function buildSignupCompleteReply(firstName: string | null, upgradeUrl?: string): string {
   const greet = firstName ? `, ${firstName}` : '';
-  const intro = `Perfect, you're all set${greet} 🎉 I'm Grace, your GLP-1 companion — text me anytime about meals, protein, side effects, cravings, injection days, or just staying on track. I'll use what you shared to keep it personal. Try texting "What should I eat today?" to start.`;
+  const intro = `Perfect, you're all set${greet} 🎉 Text me anytime about meals, protein, side effects, cravings, injection days, or just staying on track — I'll use what you shared to keep it personal. Try texting "What should I eat today?" to start.`;
   if (upgradeUrl) {
     return `${intro} Your 3-day free trial's on — to keep going after, it's here (I'll remind you before it ends): ${upgradeUrl}`;
   }
@@ -816,7 +816,7 @@ export async function runOnboardingTurn(params: {
       await users.update(u.phone, { onboarding_state: 'complete', onboarding_last_slot: null } as Partial<GraceUser>);
       logger.info({ phone: u.phone, mode }, 'onboarding.completed');
       return {
-        reply: `All set 🧡 I'm Grace, your GLP-1 companion — text me anytime about meals, protein, side effects, or just to check in. Try "What should I eat today?" to start.`,
+        reply: `All set 🧡 Text me anytime about meals, protein, side effects, or just to check in — I'll use what you shared to keep it personal. Try "What should I eat today?" to start.`,
         completed: true,
       };
     }

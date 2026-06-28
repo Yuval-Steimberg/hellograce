@@ -448,12 +448,14 @@ describe('CRITICAL onboarding fixes — skip understanding, side-questions, welc
     expect(calls.some((c) => 'onboarding_last_slot' in c)).toBe(false);
   });
 
-  // Test 5 + #8: the final welcome explains who Grace is + invites the user.
-  it('the signup-complete message is a strong, inviting Grace welcome', () => {
+  // Test 5 + #8: the final welcome invites the user with a concrete starter —
+  // but does NOT re-introduce "I'm Grace" (she already said that in the opener;
+  // repeating it at completion felt redundant in production).
+  it('the signup-complete message is a strong, inviting welcome (no repeated self-intro)', () => {
     const r = buildSignupCompleteReply('Yuval', 'https://x/upgrade?phone=1');
-    expect(r).toMatch(/Grace/);
-    expect(r.toLowerCase()).toMatch(/glp-1 companion/);
+    expect(r.toLowerCase()).toMatch(/all set/);
     expect(r.toLowerCase()).toMatch(/what should i eat/); // a concrete starter prompt
     expect(r).toContain('https://x/upgrade?phone=1');
+    expect(r).not.toMatch(/I'?m Grace/i); // no redundant re-introduction
   });
 });

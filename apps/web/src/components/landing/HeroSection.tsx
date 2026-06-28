@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Check, ShieldCheck } from "lucide-react";
 import { startWithGrace } from "@/lib/chatLinks";
 import { motion, useReducedMotion } from "framer-motion";
+import DesktopHeroScene from "./DesktopHeroScene";
 
 /**
  * Chat-led hero — the conversation IS the hero. Grace introduces herself in a
@@ -58,7 +59,12 @@ const HeroSection = () => {
   const t = (n: number) => (prefersReduced ? 0 : n);
 
   return (
-    <section className="relative px-5 sm:px-8 pt-4 pb-14 lg:pt-8 lg:pb-20">
+    <>
+      {/* Desktop: dreamy sky scene with floating capability cards */}
+      <DesktopHeroScene />
+
+      {/* Mobile: clean chat-led hero */}
+      <section className="relative lg:hidden px-5 sm:px-8 pt-4 pb-14">
       <div className="mx-auto w-full max-w-[620px]">
         {/* Eyebrow */}
         <motion.div
@@ -210,6 +216,7 @@ const HeroSection = () => {
         </motion.p>
       </div>
     </section>
+    </>
   );
 };
 

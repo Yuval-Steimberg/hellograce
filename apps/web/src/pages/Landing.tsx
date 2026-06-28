@@ -105,8 +105,8 @@ const Landing = () => {
 
       <MobileMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
 
-      {/* Spacer for fixed nav — desktop only */}
-      <div className="hidden lg:block h-[80px]" aria-hidden="true" />
+      {/* No desktop spacer — the hero sky scene sits full-bleed behind the
+          transparent fixed nav. */}
 
       <main>
         <HeroSection />

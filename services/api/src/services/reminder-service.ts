@@ -279,7 +279,11 @@ export function buildNextReminderReply(user: ReminderUser, settingsUrl: string, 
   if (sched.isInjectionDayToday && sched.next.kind === 'injection') {
     return `Your next reminder is ${sched.next.phrase}. Today's an injection day, so it replaces the usual check-ins. You can adjust your reminder times in Settings: ${settingsUrl}`;
   }
-  return `Your next reminder is ${sched.next.phrase}, based on your wake-up time in Settings. Want different timing? You can update it there: ${settingsUrl}`;
+  // Phrase the basis correctly: morning reminders follow wake time, evening
+  // ones follow sleep time. (Prod bug: always said "based on your wake-up time"
+  // even for an evening reminder.)
+  const basis = sched.next.kind === 'evening' ? 'your bedtime' : sched.next.kind === 'morning' ? 'your wake-up time' : 'your settings';
+  return `Your next reminder is ${sched.next.phrase}, based on ${basis}. Want a different time? Tell me when you usually wake up and head to bed, or set it in Settings: ${settingsUrl}`;
 }
 
 /** Answer "how do reminders work?" / "how often do you text?" */

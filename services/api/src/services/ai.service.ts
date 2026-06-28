@@ -99,6 +99,20 @@ function ensureTerminalPunctuation(text: string): string {
   return `${t}.`;
 }
 
+// A reply that ends on a dangling connector/preposition (or no terminal
+// punctuation after a long clause) was almost certainly cut off — e.g.
+// "…Greek yogurt topped with." Shipping that is never acceptable.
+const DANGLING_TAIL_RE =
+  /\b(with|and|or|to|of|for|the|a|an|plus|like|such as|including|topped|served|paired|alongside|some)\s*[.,…]*\s*$/i;
+function endsMidSentence(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (DANGLING_TAIL_RE.test(t)) return true;
+  // No sentence-ending punctuation at all on a long reply → likely truncated.
+  if (t.length > 40 && !/[.!?…]["')\]]?$/.test(t) && !/\p{Extended_Pictographic}$/u.test(t)) return true;
+  return false;
+}
+
 // The direct path injects internal instructions (logNote) like "[The user just
 // logged food and it's been recorded. Acknowledge it warmly…]". Gemini
 // occasionally echoes that verbatim into the user-facing reply ("Okay, the user
@@ -2310,7 +2324,12 @@ CRITICAL CONTEXT RULES — apply on every turn:
       resp = await this.deps.llm.generate({
         messages,
         temperature: 0.4,
-        maxOutputTokens: 300,
+        // disableThinking: gemini-2.5-flash spends "thinking" tokens FROM the
+        // output budget, which truncated food replies mid-sentence in prod
+        // ("…Greek yogurt topped with."). Off here + a roomier budget so the
+        // full 3–5 food answer always lands complete.
+        maxOutputTokens: 500,
+        disableThinking: true,
         useGoogleSearch: false,
       });
     } catch (err) {
@@ -2320,8 +2339,17 @@ CRITICAL CONTEXT RULES — apply on every turn:
       );
       return null;
     }
-    const raw = resp.text?.trim() ?? '';
+    let raw = resp.text?.trim() ?? '';
     if (raw.length === 0) return null;
+    // Never ship a mid-sentence reply. If the model was cut off (finishReason
+    // 'length') or the text ends on a dangling connector, trim back to the last
+    // COMPLETE sentence; bail to the fallback if nothing complete remains.
+    if (resp.finishReason === 'length' || endsMidSentence(raw)) {
+      const { trimmed } = trimToLastCompleteSentence(raw);
+      if (!trimmed || trimmed.length < 24) return null; // too little left — let the fallback answer
+      this.deps.logger.info({ userId: input.userId }, 'food_question_direct.truncation_trimmed');
+      raw = trimmed;
+    }
 
     // Pass lastAssistantMessage so the format-enforcer can strip any
     // verbatim-repeat prefix from previous responses.

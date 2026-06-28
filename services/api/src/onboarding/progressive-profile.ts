@@ -78,6 +78,10 @@ const TARGET_QUESTION_RE =
   /\b(protein|calorie|calories|macro|macros|how much (should|do|can) i (eat|need|have)|my (daily )?(target|goal)|am i (eating|getting) enough|how many calories)\b/i;
 const FOOD_IDEA_RE =
   /\b(what (should|can|could) i (eat|have|make)|(?:meal|dinner|lunch|breakfast|snack|food)\s+ideas?|recipe|suggest|recommend|any ideas?|what's for)\b/i;
+// A reminder/check-in timing question is only accurate once Grace knows the
+// user's wake + sleep times — so gather those first when they're missing.
+const REMINDER_TIMING_RE =
+  /\b(reminder|remind me|check[\s-]?in|when.*(you|grace).*(text|message|remind|check)|what time.*(text|remind|check))\b/i;
 
 /**
  * If the user's message is one a missing field would make more accurate, return
@@ -95,6 +99,7 @@ export function relevantProfileSlot(user: ProfileShape, text: string): Progressi
     if (!isProfileSlotFilled(user, 'dietary')) return 'dietary';
     if (!isProfileSlotFilled(user, 'dislikes')) return 'dislikes';
   }
+  if (REMINDER_TIMING_RE.test(t) && !isProfileSlotFilled(user, 'wake_sleep')) return 'wake_sleep';
   return null;
 }
 

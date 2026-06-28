@@ -63,6 +63,12 @@ describe('relevantProfileSlot — ask the field that makes THIS answer accurate'
     // both known → not relevant
     expect(relevantProfileSlot({ ...empty, dietary_pattern: 'vegan', food_dislikes: ['eggs'] }, 'any dinner ideas?')).toBeNull();
   });
+  it('a reminder-timing question pulls wake_sleep when unknown', () => {
+    expect(relevantProfileSlot(empty, 'when is my next reminder?')).toBe('wake_sleep');
+    expect(relevantProfileSlot(empty, 'what time do you text me?')).toBe('wake_sleep');
+    // once wake/sleep known → not relevant (the reminder handler answers it)
+    expect(relevantProfileSlot({ ...empty, wake_time: '07:00' }, 'when is my next reminder?')).toBeNull();
+  });
   it('an unrelated message triggers nothing', () => {
     expect(relevantProfileSlot(empty, 'good morning!')).toBeNull();
   });

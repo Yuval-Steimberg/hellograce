@@ -7,7 +7,7 @@
  */
 const AnimatedBackground = () => (
   <div
-    className="fixed inset-0 pointer-events-none"
+    className="fixed inset-0 pointer-events-none hidden lg:block"
     style={{ zIndex: -1 }}
     aria-hidden="true"
   >

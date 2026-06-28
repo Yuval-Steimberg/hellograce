@@ -106,13 +106,14 @@ function scheduleSlot(user: Pick<FlowUser, 'medication_frequency'>): SlotId {
 export function signupSequence(user: Pick<FlowUser, 'medication_frequency'>): SlotId[] {
   // 'timezone' comes right after the schedule slot so reminders + daily resets
   // run on the user's REAL local time from the first scheduled message.
-  // FAST CORE ONLY — the minimum to start a useful trial so the user can begin
-  // texting in under a minute: who they are, what they're on, how/when they dose,
-  // and the opt-in. 'timezone' auto-fills from the phone (rarely asked).
-  // EVERYTHING else — goals, goal weight, diet, dislikes, wake/sleep, body
-  // metrics — is gathered conversationally AFTER onboarding by the progressive
-  // profiler (progressive-profile.ts), so the first experience stays quick.
-  return ['first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'timezone', 'consent'];
+  // CORE — kept short so the user can start texting in ~a minute, but it now
+  // includes the two fields the product can't work without:
+  //   • wake_sleep — the reminder schedule is per-user and meaningless without it
+  //   • dietary    — food recommendations are generic/unsafe without it
+  // Collecting them here (deterministically) is far more reliable than gathering
+  // them conversationally afterward. The remaining personalization (goals, goal
+  // weight, dislikes, body metrics) is still learned over time.
+  return ['first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'timezone', 'wake_sleep', 'dietary', 'consent'];
 }
 
 /** Next signup slot after `lastSlot` (null → the first slot). Returns null when

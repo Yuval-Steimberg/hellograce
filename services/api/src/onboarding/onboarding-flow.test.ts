@@ -110,15 +110,20 @@ describe('slot sequencing', () => {
     expect(nextSignupSlot(w, 'medication')).toBe('medication_frequency');
     expect(nextSignupSlot(w, 'medication_frequency')).toBe('injection_day');
     expect(nextSignupSlot(w, 'injection_day')).toBe('timezone');
-    expect(nextSignupSlot(w, 'timezone')).toBe('consent');
+    expect(nextSignupSlot(w, 'timezone')).toBe('wake_sleep');
+    expect(nextSignupSlot(w, 'wake_sleep')).toBe('dietary');
+    expect(nextSignupSlot(w, 'dietary')).toBe('consent');
     expect(nextSignupSlot(w, 'consent')).toBeNull();
   });
 
-  it('the core is FAST — only the essentials; everything else is along-the-way', () => {
+  it('the core collects the must-haves incl. wake/sleep + diet; defers the rest', () => {
     const seq = signupSequence({ medication_frequency: 'weekly' });
-    expect(seq).toEqual(['first_name', 'medication', 'medication_frequency', 'injection_day', 'timezone', 'consent']);
-    // moved out of the upfront flow → gathered progressively after onboarding
-    for (const s of ['goals', 'goal_weight', 'dietary', 'dislikes', 'wake_sleep']) {
+    expect(seq).toEqual(['first_name', 'medication', 'medication_frequency', 'injection_day', 'timezone', 'wake_sleep', 'dietary', 'consent']);
+    // reminders need wake/sleep; food needs diet — both collected upfront now
+    expect(seq).toContain('wake_sleep');
+    expect(seq).toContain('dietary');
+    // still deferred to progressive gathering
+    for (const s of ['goals', 'goal_weight', 'dislikes', 'current_weight', 'height', 'age']) {
       expect(seq).not.toContain(s);
     }
   });
@@ -270,7 +275,8 @@ describe('runOnboardingTurn (signup)', () => {
     expect(res.completed).toBe(false);
     expect(calls).toContainEqual({ timezone: 'Asia/Jerusalem' }); // persisted automatically
     expect(res.reply.toLowerCase()).not.toMatch(/timezone|what timezone/); // not asked
-    expect(calls).toContainEqual({ onboarding_last_slot: 'consent' });      // advanced past timezone → consent (fast core)
+    expect(calls).toContainEqual({ onboarding_last_slot: 'wake_sleep' });   // advanced past timezone → wake/sleep
+    expect(res.reply.toLowerCase()).toMatch(/wake|bed/);                    // asks wake/bed time
   });
 
   it('asks for timezone when the phone is ambiguous (unknown area code)', async () => {

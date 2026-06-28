@@ -133,6 +133,83 @@ export interface GenerateOpts {
   conversationContext?: string[];
 }
 
+// ─── Morning "yesterday bridge" ──────────────────────────────────────────────
+// A morning reminder feels personal when it gently continues yesterday's thread
+// instead of reading like a generic daily notification. We derive a single
+// SUGGESTED ANGLE deterministically from data the scheduler already gathered
+// (yesterday's food totals + the user's own recent messages + an active
+// side-effect flow) — no extra DB calls, no raw-history dump. The generator
+// weaves it in naturally (and only if it fits); it never recites or invents.
+
+const SYMPTOM_RE =
+  /\b(nause\w*|sick to my stomach|throw\s?up|threw up|vomit\w*|constipat\w*|can'?t poop|diarrh\w*|reflux|heartburn|headache|migraine|dizz\w*|fatigue|exhaust\w*|so tired|no energy|bloat\w*|cramp\w*|stomach (?:hurt|ache|pain|issues)|gassy)\b/i;
+
+const NEGATIVE_EMOTION_RE =
+  /\b(frustrat\w*|struggl\w*|hard time|so hard|overwhelm\w*|defeat\w*|giving up|give up|discourag\w*|hate this|stress\w*|anxious|anxiety|\bsad\b|feeling down|\bdown\b|cried|crying|rough day|tough day|not working|hopeless)\b/i;
+
+const POSITIVE_EMOTION_RE =
+  /\b(great day|good day|feel\w* (?:good|great|amazing|better)|proud|happy|excited|went well|on track|crushed it|so good|going well)\b/i;
+
+/** First symptom phrase found in the user's recent messages, normalized for the
+ *  prompt ("nausea", "a rough stomach", …). Returns null when none. */
+function findSymptomMention(messages: string[]): string | null {
+  for (const m of messages) {
+    const hit = m.match(SYMPTOM_RE);
+    if (hit) return hit[0].toLowerCase();
+  }
+  return null;
+}
+
+export interface MorningBridge {
+  /** The prompt block to append, or '' when nothing from yesterday fits. */
+  block: string;
+  /** True when a single gentle question fits this morning (e.g. checking on a
+   *  symptom). Lets the morning instruction relax its default "no questions". */
+  allowQuestion: boolean;
+}
+
+/**
+ * Build the morning "yesterday bridge" directive. Priority (most human-first):
+ * lingering symptom → emotional struggle → missed protein → good day → quiet
+ * day. Safety: a symptom angle always carries a soft "check with your doctor if
+ * it's still rough" so a real issue is never brushed off. Pure + deterministic.
+ */
+export function deriveMorningBridge(
+  user: Pick<GraceUser, 'side_effect_flow'>,
+  opts?: Pick<GenerateOpts, 'yesterdayFood' | 'conversationContext'>,
+): MorningBridge {
+  const convo = (opts?.conversationContext ?? []).filter((m) => m && m.trim().length > 0);
+  const symptom = findSymptomMention(convo) ?? (user.side_effect_flow ? user.side_effect_flow.replace(/_/g, ' ') : null);
+  const emotionalRough = convo.some((m) => NEGATIVE_EMOTION_RE.test(m)) && !convo.some((m) => POSITIVE_EMOTION_RE.test(m));
+  const emotionalPositive = convo.some((m) => POSITIVE_EMOTION_RE.test(m));
+  const y = opts?.yesterdayFood;
+
+  let angle = '';
+  let allowQuestion = false;
+  const extra: string[] = [];
+
+  if (symptom) {
+    angle = `Yesterday they had a rough time with ${symptom}. Open by gently checking how that's feeling this morning, and keep today's food simple and easy on the stomach. If it sounds like it's still lingering or getting worse, softly suggest they check with their doctor.`;
+    allowQuestion = true;
+  } else if (emotionalRough) {
+    angle = `Yesterday felt heavy or frustrating for them. Lead with a clean-slate, no-pressure reset — today's a fresh start, no need to be perfect, just here when they need you.`;
+  } else if (y && y.itemCount > 0 && y.proteinGoal && y.protein_g < y.proteinGoal) {
+    angle = `Yesterday came up a little short on protein. Nudge ONE easy protein-first meal to make today smoother — encouraging, never scolding, and don't quote the numbers.`;
+  } else if (emotionalPositive || (y && y.proteinGoal && y.protein_g >= y.proteinGoal && y.itemCount > 0)) {
+    angle = `Yesterday looked solid for them. Acknowledge it warmly and invite building on it today — keep it light and simple.`;
+  } else if (y && y.itemCount === 0) {
+    angle = `Yesterday was quiet — nothing logged. Warm fresh-start hello, zero pressure, and an easy open door to share what they eat today.`;
+  }
+
+  if (!angle) return { block: '', allowQuestion: false };
+
+  let block = `\nYESTERDAY BRIDGE — make this morning feel like a natural continuation of yesterday, the way a real friend would pick the thread back up (NOT a report, NOT a recap):\n- ${angle}`;
+  if (extra.length > 0) block += `\n- ${extra.join('\n- ')}`;
+  block += `\n- Weave it in naturally and ONLY if it fits. NEVER say "based on our conversation yesterday" / "yesterday you logged" / recite totals. Don't force it — if it feels off, just send a warm, plain good-morning. Vary the shape from previous mornings. Keep it to one short, warm message.`;
+
+  return { block, allowQuestion };
+}
+
 const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => string> = {
   morning: (u, opts) => {
     if (opts?.isWednesday) {
@@ -560,7 +637,15 @@ export class MessageGenerator {
             dataBlock = `\nREAL DATA — yesterday: ${goalPart}. ${y.itemCount} food${y.itemCount === 1 ? '' : 's'} logged. Use this naturally if helpful; don't recite all the numbers.`;
           }
         }
-        return `${base}Context: gentle morning hello. Today's focus: ${modeHint}${dataBlock} No questions.`;
+        // Yesterday bridge: gently continue yesterday's thread into today so the
+        // reminder feels personal, not automated. When it produces an angle, it
+        // takes the lead over the generic goal template and may allow ONE soft
+        // question (e.g. checking on a symptom).
+        const bridge = deriveMorningBridge(user, opts);
+        const closer = bridge.allowQuestion
+          ? 'At most ONE short, gentle question is fine today; never stack questions.'
+          : 'No questions.';
+        return `${base}Context: gentle morning hello. Today's focus: ${modeHint}${dataBlock}${bridge.block} ${closer}`;
       })(),
       bonus: (() => {
         const catIdx = (seed + dayOfYear(new Date())) % BONUS_CATEGORIES.length;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { MessageGenerator, isNearDuplicate, __testing } from './message-generator.js';
+import { MessageGenerator, isNearDuplicate, deriveMorningBridge, __testing } from './message-generator.js';
 import type { GraceUser } from '../user/user.service.js';
 import type { LLMProvider } from '@grace/shared';
 
@@ -177,5 +177,66 @@ describe('MessageGenerator — context grounding + anti-repetition', () => {
     // The LLM returned a trivial emoji-variant of the previous reminder →
     // deterministic backstop ships the (daily-rotating) fallback instead.
     expect(isNearDuplicate(out, previous)).toBe(false);
+  });
+});
+
+describe('deriveMorningBridge — connect the morning reminder to yesterday', () => {
+  const base = { side_effect_flow: null } as Pick<GraceUser, 'side_effect_flow'>;
+
+  it('1. symptom yesterday → gentle check-in + simple food + safety, allows a question', () => {
+    const b = deriveMorningBridge(base, { conversationContext: ['ugh so nauseous after my shot today'] });
+    expect(b.block).toMatch(/YESTERDAY BRIDGE/);
+    expect(b.block.toLowerCase()).toContain('nause');
+    expect(b.block.toLowerCase()).toMatch(/simple|easy/);
+    expect(b.block.toLowerCase()).toMatch(/doctor/); // safety
+    expect(b.allowQuestion).toBe(true);
+  });
+
+  it('symptom can also come from an active side_effect_flow', () => {
+    const b = deriveMorningBridge({ side_effect_flow: 'constipation' }, {});
+    expect(b.block.toLowerCase()).toContain('constipation');
+    expect(b.allowQuestion).toBe(true);
+  });
+
+  it('2. missed protein yesterday → nudge one protein-first meal, no numbers, no question', () => {
+    const b = deriveMorningBridge(base, { yesterdayFood: { protein_g: 42, calories: 900, itemCount: 3, proteinGoal: 90 } });
+    expect(b.block.toLowerCase()).toMatch(/protein-first|protein/);
+    expect(b.block.toLowerCase()).toMatch(/don't quote the numbers|never scolding/);
+    expect(b.allowQuestion).toBe(false);
+  });
+
+  it('3. hit protein yesterday → acknowledge + build on it', () => {
+    const b = deriveMorningBridge(base, { yesterdayFood: { protein_g: 95, calories: 1500, itemCount: 4, proteinGoal: 90 } });
+    expect(b.block.toLowerCase()).toMatch(/solid|build on it|acknowledge/);
+  });
+
+  it('5. emotional / frustrated yesterday → clean-slate reset, no scolding', () => {
+    const b = deriveMorningBridge(base, { conversationContext: ['honestly this is so frustrating, nothing is working'] });
+    expect(b.block.toLowerCase()).toMatch(/fresh start|clean-slate|no pressure|no need to be perfect/);
+    expect(b.allowQuestion).toBe(false);
+  });
+
+  it('symptom takes priority over a missed-protein angle', () => {
+    const b = deriveMorningBridge(base, {
+      conversationContext: ['felt really nauseous all evening'],
+      yesterdayFood: { protein_g: 20, calories: 400, itemCount: 1, proteinGoal: 90 },
+    });
+    expect(b.block.toLowerCase()).toContain('nause');
+  });
+
+  it('7. no activity / quiet yesterday → warm fresh-start hello', () => {
+    const b = deriveMorningBridge(base, { yesterdayFood: { protein_g: 0, calories: 0, itemCount: 0, proteinGoal: 90 } });
+    expect(b.block.toLowerCase()).toMatch(/fresh-start|fresh start|quiet|zero pressure/);
+  });
+
+  it('no context at all → empty block, falls back to the generic warm morning', () => {
+    const b = deriveMorningBridge(base, {});
+    expect(b.block).toBe('');
+    expect(b.allowQuestion).toBe(false);
+  });
+
+  it('never tells the model to recite yesterday verbatim', () => {
+    const b = deriveMorningBridge(base, { yesterdayFood: { protein_g: 42, calories: 900, itemCount: 3, proteinGoal: 90 } });
+    expect(b.block).toMatch(/NEVER say "based on our conversation yesterday"/);
   });
 });

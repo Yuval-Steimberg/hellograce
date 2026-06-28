@@ -24,10 +24,14 @@ export const NAV_LINKS = [
 const MarketingLayout = ({
   children,
   hideFooter = false,
+  hideDesktopNav = false,
 }: {
   children: React.ReactNode;
   /** Home uses this for a strict single-screen (no footer, no scroll). */
   hideFooter?: boolean;
+  /** When the page provides its own desktop chrome (the landing deck), hide the
+   *  shared desktop nav so they don't double up. Mobile header is unaffected. */
+  hideDesktopNav?: boolean;
 }) => {
   const navigate = useNavigate();
   const [scrolled, setScrolled] = useState(false);
@@ -53,9 +57,9 @@ const MarketingLayout = ({
     >
       <AnimatedBackground />
 
-      {/* Sticky Nav — desktop */}
+      {/* Sticky Nav — desktop (hidden when the page owns its desktop chrome) */}
       <header
-        className={`hidden lg:block fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+        className={`${hideDesktopNav ? "hidden" : "hidden lg:block"} fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
           scrolled ? "bg-background/85 backdrop-blur-md shadow-[0_1px_0_hsl(var(--border))] py-3.5" : "bg-transparent py-6"
         }`}
         role="banner"

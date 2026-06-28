@@ -13,10 +13,10 @@ import { startWithGrace } from "@/lib/chatLinks";
  */
 
 const NAV_LINKS = [
-  { label: "Features", href: "#features" },
-  { label: "How it works", href: "#how-it-works" },
-  { label: "Pricing", href: "#pricing" },
-  { label: "FAQ", href: "#faq" },
+  { label: "Features", to: "/features" },
+  { label: "How it works", to: "/how-it-works" },
+  { label: "Pricing", to: "/pricing" },
+  { label: "FAQ", to: "/faq" },
 ];
 
 const LEGAL = [
@@ -121,17 +121,17 @@ const MobileMenu = ({ open, onClose }: { open: boolean; onClose: () => void }) =
               </button>
             </div>
 
-            {/* Section links */}
-            <nav className="mt-10 flex flex-col gap-5" aria-label="Sections">
+            {/* Page links */}
+            <nav className="mt-10 flex flex-col gap-5" aria-label="Pages">
               {NAV_LINKS.map((l) => (
-                <a
-                  key={l.href}
-                  href={l.href}
+                <Link
+                  key={l.to}
+                  to={l.to}
                   onClick={onClose}
                   className="text-lg font-semibold text-foreground/80 transition-colors hover:text-foreground"
                 >
                   {l.label}
-                </a>
+                </Link>
               ))}
             </nav>
 

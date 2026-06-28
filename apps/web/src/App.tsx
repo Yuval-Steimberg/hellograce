@@ -9,6 +9,10 @@ import { AdminAuthProvider } from "@/components/admin/AdminAuth";
 import Index from "./pages/Index.tsx";
 
 // Lazy-loaded routes for smaller initial bundle
+const Features = lazy(() => import("./pages/Features.tsx"));
+const HowItWorks = lazy(() => import("./pages/HowItWorks.tsx"));
+const Pricing = lazy(() => import("./pages/Pricing.tsx"));
+const Faq = lazy(() => import("./pages/Faq.tsx"));
 const Onboarding = lazy(() => import("./pages/Onboarding.tsx"));
 const Settings = lazy(() => import("./pages/Settings.tsx"));
 const Privacy = lazy(() => import("./pages/Privacy.tsx"));
@@ -53,6 +57,10 @@ const App = () => (
             <Routes>
               {/* Public marketing + end-user routes */}
               <Route path="/" element={<Index />} />
+              <Route path="/features" element={<Features />} />
+              <Route path="/how-it-works" element={<HowItWorks />} />
+              <Route path="/pricing" element={<Pricing />} />
+              <Route path="/faq" element={<Faq />} />
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/privacy" element={<Privacy />} />

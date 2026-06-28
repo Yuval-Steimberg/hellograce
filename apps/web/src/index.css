@@ -6,34 +6,35 @@
 
 @layer base {
   :root {
-    /* Calm Tech-Health palette · cool soft-white bg · deep ink-teal · electric mint accent */
-    --background: 168 30% 98%;      /* cool soft white #F7FAF9 */
-    --foreground: 188 52% 12%;      /* deep ink-teal text #0E2C30 */
+    /* Warm "calm companion" palette · cream paper bg · deep ink · soft mint accent
+       (Tomo-inspired warmth — friendly, airy, chat-first) */
+    --background: 44 33% 95%;       /* warm cream paper #F5F2EA */
+    --foreground: 192 40% 12%;      /* deep ink #0E262A */
 
-    --card: 0 0% 100%;              /* clean white cards */
-    --card-foreground: 188 52% 12%;
+    --card: 44 44% 98%;            /* soft warm white cards #FCFBF6 */
+    --card-foreground: 192 40% 12%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 188 52% 12%;
+    --popover: 44 44% 98%;
+    --popover-foreground: 192 40% 12%;
 
-    --primary: 188 58% 12%;         /* ink-teal #0C2A2E — CTA button + headings */
-    --primary-foreground: 168 40% 98%;
+    --primary: 192 44% 13%;         /* deep ink #122E33 — CTA pill + headings */
+    --primary-foreground: 44 40% 97%;
 
-    --secondary: 168 30% 94%;       /* soft teal-tint surface */
-    --secondary-foreground: 188 45% 16%;
+    --secondary: 42 26% 91%;        /* warm sand surface */
+    --secondary-foreground: 192 38% 16%;
 
-    --muted: 170 24% 95%;
-    --muted-foreground: 192 12% 40%; /* muted teal-gray — body text */
+    --muted: 42 22% 92%;
+    --muted-foreground: 195 10% 38%; /* warm gray — body text */
 
-    --accent: 158 64% 38%;          /* accessible deep mint #1FA876 — icons + accent text */
+    --accent: 158 58% 36%;          /* deep mint #1C9F6E — icons + accent text */
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 75% 55%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 175 22% 89%;
-    --input: 175 22% 89%;
-    --ring: 158 64% 42%;
+    --border: 42 20% 86%;
+    --input: 42 20% 86%;
+    --ring: 158 60% 40%;
 
     --radius: 1.1rem;
 

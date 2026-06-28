@@ -1,8 +1,9 @@
 /**
- * Calm tech-health backdrop — a soft mint/teal radial mesh on cool white,
- * plus a faint dotted grid for a subtle "product" texture. Static (no
- * animation, no will-change) so it stays cheap on mobile. Scoped via the
- * `isolate` wrapper on the Landing page.
+ * Calm "dawn over cream paper" backdrop — a soft warm gradient (faint peach/gold
+ * at the top fading into the cream page, a whisper of mint near the base). Echoes
+ * the serene, atmospheric feel of a friendly companion app without any loud
+ * color blobs. Static (no animation, no will-change) so it stays cheap on
+ * mobile. Scoped via the `isolate` wrapper on the Landing page.
  */
 const AnimatedBackground = () => (
   <div
@@ -10,30 +11,30 @@ const AnimatedBackground = () => (
     style={{ zIndex: -1 }}
     aria-hidden="true"
   >
-    {/* Color mesh */}
+    {/* Warm dawn wash */}
     <div
       style={{
         position: "absolute",
         inset: 0,
         background: [
-          "radial-gradient(ellipse 900px 720px at 88% -10%, hsl(153 71% 70% / 0.20) 0%, transparent 62%)",
-          "radial-gradient(ellipse 820px 700px at -6% 8%, hsl(188 55% 55% / 0.14) 0%, transparent 60%)",
-          "radial-gradient(ellipse 1000px 800px at 50% 118%, hsl(158 64% 60% / 0.16) 0%, transparent 64%)",
+          "radial-gradient(ellipse 1200px 620px at 50% -16%, hsl(28 78% 80% / 0.30) 0%, transparent 64%)",
+          "radial-gradient(ellipse 900px 560px at 92% 2%, hsl(346 70% 84% / 0.16) 0%, transparent 60%)",
+          "radial-gradient(ellipse 1100px 760px at 50% 116%, hsl(158 50% 66% / 0.16) 0%, transparent 64%)",
         ].join(", "),
       }}
     />
-    {/* Faint dotted grid */}
+    {/* Faint dotted paper grain near the top */}
     <div
       style={{
         position: "absolute",
         inset: 0,
         backgroundImage:
-          "radial-gradient(hsl(188 30% 40% / 0.06) 1px, transparent 1px)",
+          "radial-gradient(hsl(30 30% 40% / 0.045) 1px, transparent 1px)",
         backgroundSize: "26px 26px",
         maskImage:
-          "radial-gradient(ellipse 100% 70% at 50% 0%, #000 0%, transparent 75%)",
+          "radial-gradient(ellipse 100% 60% at 50% 0%, #000 0%, transparent 72%)",
         WebkitMaskImage:
-          "radial-gradient(ellipse 100% 70% at 50% 0%, #000 0%, transparent 75%)",
+          "radial-gradient(ellipse 100% 60% at 50% 0%, #000 0%, transparent 72%)",
       }}
     />
   </div>

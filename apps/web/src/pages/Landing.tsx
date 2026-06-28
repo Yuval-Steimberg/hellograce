@@ -1,8 +1,9 @@
 import { useNavigate } from "react-router-dom";
 import { useState, useEffect, lazy, Suspense } from "react";
 import { startWithGrace } from "@/lib/chatLinks";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Menu } from "lucide-react";
 import Logo from "@/components/Logo";
+import MobileMenu from "@/components/landing/MobileMenu";
 import HeroSection from "@/components/landing/HeroSection";
 import MedicationsBar from "@/components/landing/MedicationsBar";
 import ProblemSection from "@/components/landing/ProblemSection";
@@ -33,6 +34,7 @@ const NAV_LINKS = [
 const Landing = () => {
   const navigate = useNavigate();
   const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     const onScroll = () => {
@@ -89,17 +91,19 @@ const Landing = () => {
         </div>
       </header>
 
-      {/* Mobile header — static */}
+      {/* Mobile header — static (logo + hamburger; full nav lives in MobileMenu) */}
       <div className="lg:hidden px-5 sm:px-8 py-4 flex items-center justify-between" role="banner">
         <Logo size="default" />
         <button
-          onClick={() => startWithGrace(() => navigate("/onboarding"))}
-          className="grace-btn-accent text-sm px-5 py-2.5"
-          style={{ minHeight: "auto" }}
+          onClick={() => setMenuOpen(true)}
+          aria-label="Open menu"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-foreground/8 text-foreground transition-colors hover:bg-foreground/12"
         >
-          Start free
+          <Menu className="h-5 w-5" />
         </button>
       </div>
+
+      <MobileMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
 
       {/* Spacer for fixed nav — desktop only */}
       <div className="hidden lg:block h-[80px]" aria-hidden="true" />

@@ -80,6 +80,21 @@ const SettingsUpdateSchema = z.object({
  */
 const plainOrNull = (v: string | null): string | null => (isEncryptedBlob(v) ? null : v);
 
+/**
+ * Pick the delivery channel for an outbound (verification code / settings
+ * notice). Honor the user's stored channel so iMessage users get it over
+ * iMessage; the ChannelRouter falls back to WhatsApp if the relay send fails.
+ * A user with no channel set falls back to WhatsApp (when configured) or SMS —
+ * the prior behavior for legacy WhatsApp-only users.
+ */
+function resolveChannel(
+  user: GraceUser,
+  deps: Pick<SettingsRouteDeps, 'whatsappEnabled'>,
+): 'whatsapp' | 'sms' | 'imessage' {
+  if (user.channel) return user.channel;
+  return deps.whatsappEnabled ? 'whatsapp' : 'sms';
+}
+
 /** The profile shape returned to the Settings page — editable fields only. */
 function toProfile(u: GraceUser): Record<string, unknown> {
   return {
@@ -149,10 +164,16 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
       const code = String(randomInt(100000, 1000000));
       await deps.redis.set(codeKey(phone), code, 'EX', CODE_TTL_SEC);
       await deps.redis.set(attemptsKey(phone), '0', 'EX', CODE_TTL_SEC);
+      // Deliver the code on the channel the user actually lives on. iMessage is
+      // the primary channel now, so an iMessage user gets the code over iMessage
+      // (via Sendblue); the ChannelRouter falls back to WhatsApp if the relay
+      // send fails. WhatsApp/SMS users are unchanged. A user with no channel set
+      // defaults to iMessage when configured, else WhatsApp/SMS.
+      const channel = resolveChannel(user, deps);
       try {
         await deps.sender.send({
           to: phone,
-          channel: deps.whatsappEnabled ? 'whatsapp' : 'sms',
+          channel,
           body: `Your Grace settings code is ${code}. It expires in 10 minutes. If you didn't request this, ignore this message.`,
           raw: true,
         });

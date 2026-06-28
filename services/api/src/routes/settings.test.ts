@@ -69,6 +69,25 @@ describe('POST /settings/request-code', () => {
     expect(res.statusCode).toBe(200);
     expect(sender.send).not.toHaveBeenCalled();
   });
+
+  it('sends the code over iMessage for an iMessage user (honors users.channel)', async () => {
+    const { app, sender } = makeApp({ user: { ...baseUser, channel: 'imessage' } });
+    const res = await app.inject({ method: 'POST', url: '/settings/request-code', payload: { phone: '+15551112222' } });
+    expect(res.statusCode).toBe(200);
+    expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ to: '+15551112222', channel: 'imessage', raw: true }));
+  });
+
+  it('sends over SMS for an SMS user', async () => {
+    const { app, sender } = makeApp({ user: { ...baseUser, channel: 'sms' } });
+    await app.inject({ method: 'POST', url: '/settings/request-code', payload: { phone: '+15551112222' } });
+    expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ channel: 'sms' }));
+  });
+
+  it('falls back to WhatsApp when the user has no channel set (legacy)', async () => {
+    const { app, sender } = makeApp({ user: { ...baseUser, channel: null } });
+    await app.inject({ method: 'POST', url: '/settings/request-code', payload: { phone: '+15551112222' } });
+    expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ channel: 'whatsapp' }));
+  });
 });
 
 describe('POST /settings/verify-code', () => {

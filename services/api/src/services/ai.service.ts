@@ -980,7 +980,12 @@ export class AIService {
       //     REPLAY the original question (now personalized) through the pipeline.
       // Relevance-only + throttled, so it never feels like a survey. Skipped
       // entirely during onboarding (the onboarding flow owns data collection).
-      if (this.progressiveProfile && this.directReplyMode) {
+      // NOTE: intentionally NOT gated on directReplyMode — the gate is reply-path
+      // agnostic (ask-first returns a deterministic question; replay just
+      // reassigns input.text), so it must work whether prod runs the direct or
+      // the orchestrator path. (directReplyMode defaults false, which previously
+      // disabled gathering in prod.)
+      if (this.progressiveProfile) {
         const gate = await this.progressiveGatherGate(input).catch(() => ({} as { reply?: string; text?: string }));
         if (gate.reply) {
           const totalMs = Date.now() - t0;

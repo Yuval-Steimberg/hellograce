@@ -488,6 +488,9 @@ import {
   setReplayQuery,
   getReplayQuery,
   clearReplayQuery,
+  isGatherDecline,
+  markSlotAsked,
+  wasSlotAskedRecently,
 } from '../onboarding/progressive-profile.js';
 import { detectHypoglycemiaWarning, mightBeHypoSymptom, isWhatShouldIDo } from '../safety/hypoglycemia-warning.js';
 import {
@@ -3052,39 +3055,52 @@ CRITICAL RULES:
     const phone = input.userId;
     const nowMs = Date.now();
 
-    // 1. Did they just answer a gather question? Persist it, then replay the
-    //    original question so the answer is personalized.
-    const pending = await getPendingProfileAsk(redis, phone);
-    if (pending) {
-      const { fields } = parseProfileReply(pending, input.text);
-      if (fields && Object.keys(fields).length > 0) {
-        await this.deps.users.update(phone, fields).catch(() => {});
-        this.deps.logger.info({ userId: phone, slot: pending, captured: Object.keys(fields) }, 'progressive_profile.captured');
-      }
-      await clearPendingProfileAsk(redis, phone);
-      const replay = await getReplayQuery(redis, phone);
-      await clearReplayQuery(redis, phone);
-      // Replay only when we actually captured something (else the reply wasn't an
-      // answer — let it be handled as a fresh message).
-      if (replay && fields && Object.keys(fields).length > 0) {
-        this.deps.logger.info({ userId: phone, slot: pending }, 'progressive_profile.replay');
-        return { text: replay };
-      }
-      return {};
-    }
-
-    // 2. Does THIS question need a missing detail to be specific? Ask first.
     if (input.media.length > 0 || !input.text.trim()) return {};
-    // Don't interrupt twice in a row — respect the throttle on the proactive feel.
-    if (await askedProfileRecently(redis, phone, PROFILE_GATHER_COOLDOWN_HOURS, nowMs)) return {};
     const user = await this.deps.users.getById(phone).catch(() => null);
     if (!user) return {};
     // The onboarding flow owns data collection — never ask-first mid-signup.
     if (user.onboarding_state === 'in_progress') return {};
+
+    // 1. Pending answer from a gather question we asked last turn?
+    const pending = await getPendingProfileAsk(redis, phone);
+    if (pending) {
+      const { fields } = parseProfileReply(pending, input.text);
+      const captured = !!fields && Object.keys(fields).length > 0;
+      if (captured) {
+        await this.deps.users.update(phone, fields!).catch(() => {});
+        this.deps.logger.info({ userId: phone, slot: pending, captured: Object.keys(fields!) }, 'progressive_profile.captured');
+      }
+      const declined = !captured && isGatherDecline(input.text);
+      if (captured || declined) {
+        // Either way the question is resolved — clear it and REPLAY the original
+        // question so we answer it now (personalized if we captured a value;
+        // generally if they declined). Never re-ask: the slot marker is already set.
+        await clearPendingProfileAsk(redis, phone);
+        const replay = await getReplayQuery(redis, phone);
+        await clearReplayQuery(redis, phone);
+        if (declined) this.deps.logger.info({ userId: phone, slot: pending }, 'progressive_profile.declined');
+        if (replay) {
+          this.deps.logger.info({ userId: phone, slot: pending, captured }, 'progressive_profile.replay');
+          return { text: replay };
+        }
+        return {};
+      }
+      // The reply was neither an answer nor a skip — the user moved on. Drop the
+      // stale pending and treat THIS message as fresh (fall through to step 2).
+      await clearPendingProfileAsk(redis, phone);
+      await clearReplayQuery(redis, phone);
+    }
+
+    // 2. Relevance-first: this question needs a missing field to be specific —
+    //    ask for it first. NOT gated on the global throttle (a directly-relevant
+    //    ask should always fire); a per-slot marker just prevents nagging the
+    //    SAME slot twice within the window.
     const slot = relevantProfileSlot(user, input.text);
     if (!slot) return {};
+    if (await wasSlotAskedRecently(redis, phone, slot)) return {};
     await setPendingProfileAsk(redis, phone, slot, nowMs);
     await setReplayQuery(redis, phone, input.text);
+    await markSlotAsked(redis, phone, slot);
     this.deps.logger.info({ userId: phone, slot }, 'progressive_profile.gather_first');
     return { reply: buildGatherClarify(slot) };
   }

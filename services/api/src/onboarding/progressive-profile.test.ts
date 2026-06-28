@@ -14,6 +14,9 @@ import {
   getReplayQuery,
   clearReplayQuery,
   buildGatherClarify,
+  isGatherDecline,
+  markSlotAsked,
+  wasSlotAskedRecently,
   type RedisLike,
 } from './progressive-profile.js';
 
@@ -154,6 +157,34 @@ describe('replay-query store + buildGatherClarify', () => {
       expect(q.length).toBeGreaterThan(10);
       expect(q.length).toBeLessThan(220);
     }
+  });
+});
+
+describe('per-slot asked marker + decline detection', () => {
+  it('marks a slot asked, then reports it as recently asked (per slot)', async () => {
+    const r = makeRedis();
+    const phone = '+15551110000';
+    expect(await wasSlotAskedRecently(r, phone, 'dietary')).toBe(false);
+    await markSlotAsked(r, phone, 'dietary');
+    expect(await wasSlotAskedRecently(r, phone, 'dietary')).toBe(true);
+    expect(await wasSlotAskedRecently(r, phone, 'dislikes')).toBe(false); // independent per slot
+  });
+  it('no-ops safely without Redis', async () => {
+    await markSlotAsked(undefined, '+1', 'dietary');
+    expect(await wasSlotAskedRecently(undefined, '+1', 'dietary')).toBe(false);
+  });
+  it('detects decline / skip replies but not real answers', () => {
+    for (const t of ['no', 'none', 'no preference', 'skip', 'idk', "i don't care", 'whatever', 'doesn’t matter'])
+      expect(isGatherDecline(t)).toBe(true);
+    for (const t of ['vegan', 'no nuts or shellfish', 'female', '180cm', 'chicken and rice'])
+      expect(isGatherDecline(t)).toBe(false);
+  });
+  it('uses versioned keys so stale profile:ask state is ignored', () => {
+    // a leftover legacy key must NOT be read by the new helpers
+    const r = makeRedis();
+    r.store.set('profile:ask:+1', 'dietary');
+    // getPendingProfileAsk reads pgather:pending:* now, so the legacy key is invisible
+    return getPendingProfileAsk(r, '+1').then((v) => expect(v).toBeNull());
   });
 });
 

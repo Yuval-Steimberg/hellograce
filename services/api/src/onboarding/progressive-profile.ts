@@ -123,10 +123,39 @@ export function buildProfileGatherNote(slot: ProgressiveSlot): string {
 
 // ── Pending-answer state (Redis) ──────────────────────────────────────────────
 
-const PENDING_KEY = (phone: string): string => `profile:ask:${phone}`;
-const LASTASK_KEY = (phone: string): string => `profile:lastask:${phone}`;
+// Keys are versioned (`pgather:*`) so any stale state written by earlier
+// progressive-profiling code (the old `profile:ask` / `profile:lastask` keys) is
+// ignored — a clean slate on deploy, which fixes "the gate never fires because a
+// leftover pending/throttle key is poisoning it".
+const PENDING_KEY = (phone: string): string => `pgather:pending:${phone}`;
+const LASTASK_KEY = (phone: string): string => `pgather:lastask:${phone}`;
 const PENDING_TTL_SEC = 3 * 24 * 3600; // 3 days to answer before we move on
 const LASTASK_TTL_SEC = 14 * 24 * 3600;
+
+// Per-slot "already asked" marker so a directly-relevant ask (food→diet) fires
+// reliably without a global throttle, yet we never nag the SAME slot twice in
+// the window (covers the case where the user skipped it).
+const ASKED_SLOT_KEY = (phone: string, slot: string): string => `pgather:asked:${phone}:${slot}`;
+const ASKED_SLOT_TTL_SEC = 20 * 3600;
+
+export async function markSlotAsked(redis: RedisLike | undefined, phone: string, slot: ProgressiveSlot): Promise<void> {
+  if (!redis) return;
+  try { await redis.set(ASKED_SLOT_KEY(phone, slot), '1', 'EX', ASKED_SLOT_TTL_SEC); } catch { /* best-effort */ }
+}
+export async function wasSlotAskedRecently(redis: RedisLike | undefined, phone: string, slot: ProgressiveSlot): Promise<boolean> {
+  if (!redis) return false;
+  try { return (await redis.get(ASKED_SLOT_KEY(phone, slot))) != null; } catch { return false; }
+}
+
+// A "no thanks / skip" reply to a gather question — we then answer the original
+// question generally and don't re-ask that slot (the marker handles the window).
+// Anchored to the WHOLE short message so a real answer that merely starts with
+// "no" — e.g. "no nuts or shellfish" (a dislikes answer) — is NOT a decline.
+const GATHER_DECLINE_RE =
+  /^\s*(no|nope|nah|none|skip( it)?|pass|no preference|no pref|prefer not( to)?|rather not|i['’]?d rather not|idk|i don['’]?t (know|care)|don['’]?t (know|care)|not sure|n\/a|whatever|doesn['’]?t matter|any|anything)\s*[.!]?\s*$/i;
+export function isGatherDecline(text: string): boolean {
+  return GATHER_DECLINE_RE.test((text ?? '').trim());
+}
 
 /** Record that we just asked for `slot` (sets the pending field + a throttle
  *  timestamp). Best-effort — never throws if Redis is down. */
@@ -154,7 +183,7 @@ export async function clearPendingProfileAsk(redis: RedisLike | undefined, phone
 // When Grace asks for a missing detail BEFORE answering a question, we stash the
 // original question here so the next turn (once they've answered) replays it and
 // gives the now-personalized answer — "ask, then answer" with no lost intent.
-const REPLAY_KEY = (phone: string): string => `profile:replay:${phone}`;
+const REPLAY_KEY = (phone: string): string => `pgather:replay:${phone}`;
 const REPLAY_TTL_SEC = 3600;
 
 export async function setReplayQuery(redis: RedisLike | undefined, phone: string, text: string): Promise<void> {

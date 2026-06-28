@@ -326,7 +326,12 @@ export function parseDislikes(text: string): string[] | null {
  *  it's one of the supported plant-based patterns. "no/none" → cleared/skipped. */
 function parseDiet(text: string): Partial<GraceUser> | null {
   const t = text.toLowerCase().trim();
-  if (/^(no|none|nope|nah|not really|n\/a|nothing)\b/.test(t)) return { dietary_restriction: null };
+  // "no / none / I eat everything / no restrictions / not picky" → record an
+  // explicit "none" (a FILLED value) so the dietary slot reads as answered and
+  // is never re-asked. (Returning null left it empty → endless re-asking.)
+  if (/^(no|none|nope|nah|not really|n\/a|nothing|any(thing)?|every ?thing|all (good|foods)|i eat (everything|anything|it all)|no (restrictions?|preferences?|diet)|not picky|not fussy)\b/.test(t)) {
+    return { dietary_restriction: 'none' };
+  }
   const fields: Partial<GraceUser> = {};
   if (/\bvegan\b/.test(t)) fields.dietary_pattern = 'vegan';
   else if (/\bvegetarian\b/.test(t)) fields.dietary_pattern = 'vegetarian';

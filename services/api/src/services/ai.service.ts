@@ -104,6 +104,18 @@ function ensureTerminalPunctuation(text: string): string {
 // "…Greek yogurt topped with." Shipping that is never acceptable.
 const DANGLING_TAIL_RE =
   /\b(with|and|or|to|of|for|the|a|an|plus|like|such as|including|topped|served|paired|alongside|some)\s*[.,…]*\s*$/i;
+// When a user declines a gather question ("no preference / none / skip"), fill
+// the field with a benign sentinel so it reads as answered and is never asked
+// again. Only the food slots have a sensible "none" — others just won't re-ask
+// immediately (relevance gate only fires on that question type).
+function declineSentinel(slot: string): Record<string, unknown> | null {
+  switch (slot) {
+    case 'dietary': return { dietary_restriction: 'none' };
+    case 'dislikes': return { food_dislikes: ['none'] };
+    default: return null;
+  }
+}
+
 function endsMidSentence(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
@@ -503,8 +515,6 @@ import {
   getReplayQuery,
   clearReplayQuery,
   isGatherDecline,
-  markSlotAsked,
-  wasSlotAskedRecently,
 } from '../onboarding/progressive-profile.js';
 import { detectHypoglycemiaWarning, mightBeHypoSymptom, isWhatShouldIDo } from '../safety/hypoglycemia-warning.js';
 import {
@@ -3100,13 +3110,17 @@ CRITICAL RULES:
       }
       const declined = !captured && isGatherDecline(input.text);
       if (captured || declined) {
-        // Either way the question is resolved — clear it and REPLAY the original
-        // question so we answer it now (personalized if we captured a value;
-        // generally if they declined). Never re-ask: the slot marker is already set.
+        // On decline, persist a "no restriction" sentinel so the field reads as
+        // FILLED and we never re-ask it (no sticky timer needed — the data is
+        // the source of truth). Then REPLAY the original question.
+        if (declined) {
+          const sentinel = declineSentinel(pending);
+          if (sentinel) await this.deps.users.update(phone, sentinel).catch(() => {});
+          this.deps.logger.info({ userId: phone, slot: pending }, 'progressive_profile.declined');
+        }
         await clearPendingProfileAsk(redis, phone);
         const replay = await getReplayQuery(redis, phone);
         await clearReplayQuery(redis, phone);
-        if (declined) this.deps.logger.info({ userId: phone, slot: pending }, 'progressive_profile.declined');
         if (replay) {
           this.deps.logger.info({ userId: phone, slot: pending, captured }, 'progressive_profile.replay');
           return { text: replay };
@@ -3120,15 +3134,14 @@ CRITICAL RULES:
     }
 
     // 2. Relevance-first: this question needs a missing field to be specific —
-    //    ask for it first. NOT gated on the global throttle (a directly-relevant
-    //    ask should always fire); a per-slot marker just prevents nagging the
-    //    SAME slot twice within the window.
+    //    ask for it first. The ONLY guard is whether the field is actually
+    //    filled (handled by relevantProfileSlot) — no time-based marker, which
+    //    previously got stuck in Redis across re-onboards and silently
+    //    suppressed every clarification (prod 2026-06-28).
     const slot = relevantProfileSlot(user, input.text);
     if (!slot) return {};
-    if (await wasSlotAskedRecently(redis, phone, slot)) return {};
     await setPendingProfileAsk(redis, phone, slot, nowMs);
     await setReplayQuery(redis, phone, input.text);
-    await markSlotAsked(redis, phone, slot);
     this.deps.logger.info({ userId: phone, slot }, 'progressive_profile.gather_first');
     return { reply: buildGatherClarify(slot) };
   }

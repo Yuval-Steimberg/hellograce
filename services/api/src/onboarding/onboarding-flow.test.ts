@@ -221,10 +221,13 @@ describe('parseSlotAnswer', () => {
     const vegan = parseSlotAnswer('dietary', 'vegan');
     expect(vegan.fields?.dietary_pattern).toBe('vegan');
     expect(vegan.fields?.dietary_restriction).toBe('vegan');
-    // bare "no" → skipped (whole-message decline), functionally "no restriction"
+    // bare "no" → skipped (whole-message decline; the gate then fills a "none" sentinel)
     expect(parseSlotAnswer('dietary', 'no')).toEqual({ ok: true, skipped: true });
-    // an explicit "none" of a diet also clears it via parseDiet when not a bare skip
-    expect(parseSlotAnswer('dietary', 'no specific diet').fields).toEqual({ dietary_restriction: null });
+    // "I eat everything" / "no restrictions" / "anything" → explicit 'none' = FILLED,
+    // so the dietary slot is never re-asked (prod: these left it empty → endless asks)
+    expect(parseSlotAnswer('dietary', 'I eat everything').fields).toEqual({ dietary_restriction: 'none' });
+    expect(parseSlotAnswer('dietary', 'no restrictions').fields).toEqual({ dietary_restriction: 'none' });
+    expect(parseSlotAnswer('dietary', 'anything').fields).toEqual({ dietary_restriction: 'none' });
     expect(parseSlotAnswer('dietary', 'allergic to peanuts').fields?.dietary_restriction).toContain('peanut');
   });
 });

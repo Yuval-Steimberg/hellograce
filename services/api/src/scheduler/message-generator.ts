@@ -491,17 +491,16 @@ export class MessageGenerator {
 - Banned first word today: "${bannedOpener1}", "${bannedOpener2}", "${bannedOpener3}" — your message MUST NOT start with any of these.
 - Every message must feel written for today, not copy-pasted from yesterday. If the same user got a message yesterday, this one must read differently — different structure, different opening word, different rhythm.`;
 
-    const RULES = `RULES — non-negotiable for proactive (scheduled) messages:
-- These are REMINDERS, not conversation starters. They deliver value standalone.
-- DEFAULT: end with a STATEMENT, not a question. NO question mark unless absolutely needed.
-- 1 sentence is best. 2 max. NEVER more.
-- Tone is a kind friend dropping a quick note, NOT a coach quizzing. No "how's X? how's Y? what did you...?" stacking.
-- Don't ask for numerical reports ("rate 1-10", "how many oz").
-- Reminder style (✓): "Protein first today. Front-load it before appetite fades." / "Hydration reminder — start with a full glass before coffee." / "Muscle protection reminder: protein + movement today."
-- Question style (✗): "How's your eating going today?" / "What's your first protein hit today?" / "Any cravings hitting today?"
-- Warm, calm, brief. No motivational speeches. No exclamation marks unless absolutely warranted.
+    const RULES = `RULES — proactive (scheduled) messages, written like a friend who actually knows them:
+- This should feel like a warm, personal check-in from someone in their corner — NOT a system notification, a coach, or a generic health app. Casual, human, specific to them.
+- It still has to stand on its own and land a little warmth or value (a gentle nudge, a kind observation, one small idea). They didn't ask for it, so make it feel like a thoughtful text, not a task.
+- Keep it short: 1 sentence is best, 2 max. Easy to read at a glance. Contractions always.
+- Mostly land on a warm statement. A single soft, low-pressure question is fine when it genuinely reads like a friend checking in ("did you have anything else you want me to add?") — but NEVER stack questions, quiz them ("how's X? how's Y?"), or ask for numbers ("rate 1-10", "how many oz").
+- Warm, calm, real. No motivational speeches, no hype, no exclamation-point energy unless it truly fits.
+- Make it personal: lean on what's actually true for them today (the REAL DATA + recent conversation below) so it never reads like a template. If there's no data, a simple warm note is perfect — NEVER invent food logs, protein numbers, symptoms, goals, or injection details.
+- The vibe (✓): "morning — even one protein-first meal early can make the whole day feel easier." / "quick thought: a few sips of water now help more than it sounds, especially if your appetite's been weird lately." / "hope you're noticing the little wins today — more energy, clothes fitting better. the scale's never the whole story." / "thinking of you tonight — no pressure, just glad you're in this."
+- NOT this (✗): "Prioritizing protein can help maintain steady energy." (corporate) / "Reminder: please log your meals." (robotic) / "How's your eating? Any cravings? What did you have?" (a quiz, not a friend).
 - WRITE AS IF TEXTING THEM DIRECTLY. NEVER address the user by name. NEVER open with "For <name>," / "Dear <name>" / "To <name>" / "Hi <name>" / "Dear user" / "As your assistant" — those read like a mail-merge template, not a text from a friend.
-- DATA ACCURACY: use ONLY the REAL DATA lines provided in this prompt. If no data line is given, send a simple general reminder — NEVER invent food logs, protein numbers, symptoms, goals, or injection details.
 - ZERO TOLERANCE — NEVER start the message with a label or category prefix. ALL of the following are strictly forbidden as openers:
   ✗ "Midday reminder:" / "Morning reminder:" / "Evening reminder:"
   ✗ "Daily check-in:" / "Check-in:" / "Reminder:" / "Note:"

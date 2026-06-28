@@ -38,6 +38,7 @@ import {
   normalizeDay,
   normalizeTime,
 } from '../services/profile-extract.js';
+import { parseTimezone } from '../services/timezone-parse.js';
 
 export type SlotId =
   | 'first_name'
@@ -45,6 +46,7 @@ export type SlotId =
   | 'medication_frequency'
   | 'injection_day'
   | 'medication_time'
+  | 'timezone'
   | 'goals'
   | 'consent'
   | 'goal_weight'
@@ -59,6 +61,7 @@ type FlowUser = Pick<
   | 'medication_frequency'
   | 'injection_day'
   | 'medication_time'
+  | 'timezone'
   | 'goals'
   | 'sms_consent'
   | 'goal_weight'
@@ -82,7 +85,9 @@ function scheduleSlot(user: Pick<FlowUser, 'medication_frequency'>): SlotId {
  *  resolves once frequency is answered). Short on purpose — the minimum to start
  *  a useful trial; the rest is learned over time. */
 export function signupSequence(user: Pick<FlowUser, 'medication_frequency'>): SlotId[] {
-  return ['first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'goals', 'consent'];
+  // 'timezone' comes right after the schedule slot so reminders + daily resets
+  // run on the user's REAL local time from the first scheduled message.
+  return ['first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'timezone', 'goals', 'consent'];
 }
 
 /** Next signup slot after `lastSlot` (null → the first slot). Returns null when
@@ -110,8 +115,10 @@ export function nextGapfillSlot(user: Pick<FlowUser, 'goal_weight' | 'current_we
 // ── Answer parsing ───────────────────────────────────────────────────────────
 
 const SKIP_RE = /\b(skip|later|not now|prefer not|rather not|pass|dunno|don'?t know|no idea|maybe later)\b/i;
-/** Optional slots the user may skip; required signup slots must be answered. */
-const SKIPPABLE: ReadonlySet<SlotId> = new Set(['first_name', 'goals', 'goal_weight', 'current_weight']);
+/** Optional slots the user may skip; required signup slots must be answered.
+ *  timezone is skippable so a hard-to-parse answer never traps onboarding — it
+ *  falls back to the temporary default and can be set later in Settings. */
+const SKIPPABLE: ReadonlySet<SlotId> = new Set(['first_name', 'timezone', 'goals', 'goal_weight', 'current_weight']);
 
 const YES_RE = /\b(yes|yeah|yep|yup|sure|ok|okay|fine|sounds good|go ahead|please do|absolutely|of course|y)\b/i;
 const NO_RE = /\b(no|nope|nah|don'?t|do not|stop|rather not|n)\b/i;
@@ -196,6 +203,10 @@ export function parseSlotAnswer(slot: SlotId, text: string): ParsedAnswer {
       const time = normalizeTime(t);
       return time ? { ok: true, fields: { medication_time: time } } : { ok: false };
     }
+    case 'timezone': {
+      const tz = parseTimezone(t);
+      return tz ? { ok: true, fields: { timezone: tz } } : { ok: false };
+    }
     case 'goals': {
       const goals = parseGoals(t);
       return goals ? { ok: true, fields: { goals } } : { ok: false };
@@ -225,6 +236,7 @@ const SLOT_BRIEF: Record<SlotId, string> = {
   medication_frequency: 'how often they take it — weekly or daily',
   injection_day: 'which day of the week they take their weekly shot',
   medication_time: 'what time of day they take their daily dose',
+  timezone: 'their timezone — ask for their city or region, so check-ins and daily totals use their local time',
   goals: 'what they most want help with on GLP-1 (protein, hydration, side effects, weight, habits)',
   consent: 'a yes/no OK to text them daily check-ins',
   goal_weight: 'their goal weight, if they have one in mind (it is optional)',
@@ -239,6 +251,7 @@ function fallbackQuestion(slot: SlotId, name: string | null, reask: boolean): st
     medication_frequency: [`Got it. Do you take it weekly or daily?`, `And is that a weekly shot or a daily dose?`],
     injection_day: [`Which day do you usually do your shot?`, `What day of the week is your injection?`],
     medication_time: [`What time of day do you usually take it?`, `When do you take your daily dose — morning, evening?`],
+    timezone: [`What timezone are you in? Just your city or region — it keeps your check-ins and daily totals on your local time.`, `Where are you based? (city or region) That way I send check-ins at the right time for you.`],
     goals: [`What would you most like my help with — protein, hydration, side effects, staying on track?`, `What matters most to you right now on this journey?`],
     consent: [`Is it ok if I check in with you by text now and then? (yes/no)`, `Want me to text you little check-ins? Just reply yes or no.`],
     goal_weight: [`Do you have a goal weight in mind? (totally optional)`, `Any goal weight you're working toward? You can skip this.`],

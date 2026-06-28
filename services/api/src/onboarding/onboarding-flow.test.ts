@@ -106,9 +106,14 @@ describe('slot sequencing', () => {
     expect(nextSignupSlot(w, 'first_name')).toBe('medication');
     expect(nextSignupSlot(w, 'medication')).toBe('medication_frequency');
     expect(nextSignupSlot(w, 'medication_frequency')).toBe('injection_day');
-    expect(nextSignupSlot(w, 'injection_day')).toBe('goals');
+    expect(nextSignupSlot(w, 'injection_day')).toBe('timezone');
+    expect(nextSignupSlot(w, 'timezone')).toBe('goals');
     expect(nextSignupSlot(w, 'goals')).toBe('consent');
     expect(nextSignupSlot(w, 'consent')).toBeNull();
+  });
+
+  it('the signup sequence collects timezone (so reminders use local time)', () => {
+    expect(signupSequence({ medication_frequency: 'weekly' })).toContain('timezone');
   });
 
   it('an unknown/stale last slot restarts safely at the first slot', () => {
@@ -131,6 +136,13 @@ describe('parseSlotAnswer', () => {
     expect(parseSlotAnswer('medication_frequency', 'just once a week')).toEqual({ ok: true, fields: { medication_frequency: 'weekly' } });
     expect(parseSlotAnswer('injection_day', 'fridays')).toEqual({ ok: true, fields: { injection_day: 'Friday' } });
     expect(parseSlotAnswer('medication_time', '8am')).toEqual({ ok: true, fields: { medication_time: '08:00' } });
+  });
+  it('parses a timezone from a city/region (→ IANA)', () => {
+    expect(parseSlotAnswer('timezone', "I'm in Israel")).toEqual({ ok: true, fields: { timezone: 'Asia/Jerusalem' } });
+    expect(parseSlotAnswer('timezone', 'New York')).toEqual({ ok: true, fields: { timezone: 'America/New_York' } });
+    expect(parseSlotAnswer('timezone', 'gibberish').ok).toBe(false);
+    // skippable — a hard answer never traps onboarding
+    expect(parseSlotAnswer('timezone', 'skip')).toEqual({ ok: true, skipped: true });
   });
   it('parses goals into a list', () => {
     const r = parseSlotAnswer('goals', 'protein and staying hydrated');

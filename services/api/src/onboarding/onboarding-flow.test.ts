@@ -363,6 +363,23 @@ describe('parseDislikes', () => {
     expect(parseDislikes('none')).toEqual([]);
     expect(parseDislikes('I eat everything')).toEqual([]);
   });
+  it('a QUESTION is NOT captured as a dislike (prod replay bug)', () => {
+    // user asks something else instead of answering → must NOT be stored as food
+    expect(parseDislikes('When is my next reminder?')).toBeNull();
+    expect(parseDislikes('what should I eat today?')).toBeNull();
+    expect(parseDislikes('how much protein do I need')).toBeNull();
+  });
+});
+
+describe('parseDiet guards (greedy-capture fix)', () => {
+  it('captures real diets + avoidance, but NOT arbitrary text / questions', () => {
+    expect(parseSlotAnswer('dietary', 'vegan').fields?.dietary_pattern).toBe('vegan');
+    expect(parseSlotAnswer('dietary', 'no shellfish').fields?.dietary_restriction).toMatch(/shellfish/i);
+    expect(parseSlotAnswer('dietary', 'allergic to peanuts').fields?.dietary_restriction).toMatch(/peanut/i);
+    // a different question must NOT be stored as the diet
+    expect(parseSlotAnswer('dietary', 'When is my next reminder?')).toEqual({ ok: false });
+    expect(parseSlotAnswer('dietary', 'Hi grace')).toEqual({ ok: false });
+  });
 });
 
 describe('onboarding saves the answer (no Settings redirect during onboarding)', () => {

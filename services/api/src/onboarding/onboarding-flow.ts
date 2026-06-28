@@ -310,8 +310,14 @@ function parseActivity(text: string): string | null {
  *  "none/nothing" → empty list (nothing to avoid). */
 export function parseDislikes(text: string): string[] | null {
   const t = text.trim().toLowerCase();
-  if (/^(no|none|nope|nah|not really|n\/a|nothing|i (eat|like) everything|no (foods?|preferences?))\b/.test(t)) {
+  if (/^(no|none|nope|nah|not really|n\/a|nothing|i (eat|like) everything|no (foods?|preferences?)|anything|everything)\b/.test(t)) {
     return [];
+  }
+  // A QUESTION or a different request is never a dislikes answer — don't capture
+  // it as a "food" (prod bug: "When is my next reminder?" was stored as a dislike
+  // and replayed the prior food question).
+  if (/\?\s*$/.test(text.trim()) || /^(when|what|where|why|how|who|which|is|are|can|could|would|should|do|does|did|will|remind|when'?s)\b/i.test(t)) {
+    return null;
   }
   const cleaned = text
     .replace(/\b(i\s+(really\s+)?(hate|don'?t\s+(like|eat)|do\s+not\s+(like|eat)|can'?t\s+stand|dislike|avoid|am\s+allergic\s+to|allergic\s+to)|no\s+|avoid\s+|not\s+a\s+fan\s+of)\b/gi, ' ')
@@ -330,13 +336,23 @@ function parseDiet(text: string): Partial<GraceUser> | null {
   // "no / none / I eat everything / no restrictions / not picky" → record an
   // explicit "none" (a FILLED value) so the dietary slot reads as answered and
   // is never re-asked. (Returning null left it empty → endless re-asking.)
-  if (/^(no|none|nope|nah|not really|n\/a|nothing|any(thing)?|every ?thing|all (good|foods)|i eat (everything|anything|it all)|no (restrictions?|preferences?|diet)|not picky|not fussy)\b/.test(t)) {
+  // Anchored to the WHOLE message so "no shellfish" (an avoidance) is NOT read
+  // as a bare "no" decline.
+  if (/^(no|none|nope|nah|not really|n\/a|nothing|any|anything|every ?thing|all (good|foods)|i eat (everything|anything|it all)|no (restrictions?|preferences?|diet)|not picky|not fussy)\s*[.!]?\s*$/.test(t)) {
     return { dietary_restriction: 'none' };
   }
+  // Only treat the message as a DIET answer when it actually looks like one — a
+  // named diet, or avoidance/allergy phrasing. Otherwise return null so an
+  // unrelated message (a question, a greeting) is NOT wrongly recorded as the
+  // user's diet (prod bug: "When is my next reminder?" got stored as the diet
+  // and replayed the old food question).
+  const DIET_KEYWORD_RE = /\b(vegan|vegetarian|pescatarian|pescetarian|keto(genic)?|paleo|kosher|halal|gluten[\s-]?free|dairy[\s-]?free|lactose|low[\s-]?carb|plant[\s-]?based|carnivore|whole ?30|mediterranean|diabetic|low[\s-]?fat|low[\s-]?sodium|low[\s-]?fodmap|raw)\b/;
+  const AVOID_RE = /\b(allerg\w*|intoleran\w*|sensitiv\w*|avoid|avoiding|can'?t (?:eat|have|do)|don'?t eat|do not eat|cut out|cutting out|stay away from|steer clear|no (?:dairy|gluten|meat|pork|beef|nuts?|peanuts?|shellfish|fish|eggs?|soy|wheat|sugar|carbs?|red meat))\b/;
+  if (!DIET_KEYWORD_RE.test(t) && !AVOID_RE.test(t)) return null;
   const fields: Partial<GraceUser> = {};
   if (/\bvegan\b/.test(t)) fields.dietary_pattern = 'vegan';
   else if (/\bvegetarian\b/.test(t)) fields.dietary_pattern = 'vegetarian';
-  else if (/\bpescatarian\b/.test(t)) fields.dietary_pattern = 'pescatarian';
+  else if (/\bpesc[ae]tarian\b/.test(t)) fields.dietary_pattern = 'pescatarian';
   fields.dietary_restriction = text.trim().slice(0, 120);
   return fields;
 }

@@ -67,6 +67,7 @@ let msgSeq = 0;
 
 export async function buildHarness(opts: { delays?: StubDelays } = {}): Promise<Harness> {
   const env = loadEnv({
+    ...process.env, // let HARNESS runs toggle feature flags (SMS_ONBOARDING_ENABLED, etc.)
     NODE_ENV: 'development',
     LOG_LEVEL: process.env.HARNESS_LOG_LEVEL ?? 'warn',
     PUBLIC_BASE_URL: 'http://localhost:3001',
@@ -135,6 +136,9 @@ export async function buildHarness(opts: { delays?: StubDelays } = {}): Promise<
       behavioralEnabled: env.BEHAVIORAL_GUARD_ENABLED,
       relevanceEnabled: env.RELEVANCE_CHECK_ENABLED,
       qualityStrict: env.QUALITY_GUARD_STRICT,
+      // Match production (server.ts) so the harness exercises the same paths.
+      directReplyMode: env.DIRECT_REPLY_MODE,
+      progressiveProfile: env.PROGRESSIVE_PROFILE_ENABLED,
     },
   });
 

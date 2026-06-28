@@ -549,7 +549,12 @@ export async function processInboundMessage(
             deps.env.SMS_ONBOARDING_ENABLED &&
             (needsRegistration(user) || user.onboarding_state === 'in_progress')
           ) {
-            const mode = needsRegistration(user) ? 'signup' : 'gapfill';
+            // Stay in SIGNUP for the whole initial flow. Keying off
+            // needsRegistration was a bug: it flips false the moment medication
+            // is saved mid-signup, dropping the user into gapfill (wrong slots,
+            // goal-weight loop). trial_start is only set when signup COMPLETES,
+            // so "no trial yet" reliably means we're still in initial signup.
+            const mode = user.trial_start ? 'gapfill' : 'signup';
             const { reply } = await runOnboardingTurn({
               user,
               text: normalized.text,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { MessageGenerator, isNearDuplicate, deriveMorningBridge, __testing } from './message-generator.js';
+import { MessageGenerator, isNearDuplicate, deriveMorningBridge, anticipationDirective, __testing } from './message-generator.js';
 import type { GraceUser } from '../user/user.service.js';
 import type { LLMProvider } from '@grace/shared';
 
@@ -238,5 +238,47 @@ describe('deriveMorningBridge — connect the morning reminder to yesterday', ()
   it('never tells the model to recite yesterday verbatim', () => {
     const b = deriveMorningBridge(base, { yesterdayFood: { protein_g: 42, calories: 900, itemCount: 3, proteinGoal: 90 } });
     expect(b.block).toMatch(/NEVER say "based on our conversation yesterday"/);
+  });
+});
+
+describe('anticipationDirective — occasional forward teaser', () => {
+  it('fires on ~1 in 3 days (seed % 3 === 0), empty otherwise', () => {
+    expect(anticipationDirective(0)).toMatch(/ANTICIPATION/);
+    expect(anticipationDirective(3)).toMatch(/look forward to/i);
+    expect(anticipationDirective(1)).toBe('');
+    expect(anticipationDirective(2)).toBe('');
+  });
+  it('never promises anything medical', () => {
+    expect(anticipationDirective(0)).toMatch(/never promise anything medical/i);
+  });
+});
+
+describe('stickiness message types', () => {
+  it('journey: generates a day-specific first-week message', async () => {
+    const { llm, calls } = makeStubLlm("Day one! Just text me your next meal and I'll log it 🧡");
+    const gen = new MessageGenerator(llm);
+    const out = await gen.generate('journey', makeUser(), { journeyDay: 1 });
+    expect(out.length).toBeGreaterThan(0);
+    expect(calls[0]!.prompt).toMatch(/first-week journey/i);
+    expect(calls[0]!.prompt).toMatch(/FIRST full day|log their first meal/i);
+  });
+
+  it('winback: references the stage and may use recent conversation', async () => {
+    const { llm, calls } = makeStubLlm("Thinking of you — door's always open whenever you're ready 🧡");
+    const gen = new MessageGenerator(llm);
+    const out = await gen.generate('winback', makeUser(), { winbackStage: 3, conversationContext: ['I was trying to hit my protein goal'] });
+    expect(out.length).toBeGreaterThan(0);
+    expect(calls[0]!.prompt).toMatch(/win-back/i);
+    expect(calls[0]!.prompt).toMatch(/NEVER guilt|we miss you/i);
+    expect(calls[0]!.prompt).toContain('protein goal'); // recent convo woven in
+  });
+
+  it('journey/winback fall back to a warm canned message when the LLM is empty', async () => {
+    const { llm } = makeStubLlm(''); // empty → fallback
+    const gen = new MessageGenerator(llm);
+    const j = await gen.generate('journey', makeUser(), { journeyDay: 2 });
+    const w = await gen.generate('winback', makeUser(), { winbackStage: 1 });
+    expect(j.length).toBeGreaterThan(10);
+    expect(w.length).toBeGreaterThan(10);
   });
 });

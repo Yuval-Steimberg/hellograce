@@ -284,7 +284,17 @@ export class Scheduler {
           return;
         }
       }
-      await this.sendAndRecord(user, 'morning', { isWednesday: dayOfWeek === 3 });
+      // Stickiness router: a new user gets the first-week journey, a quiet user
+      // gets the win-back ladder, everyone else the normal morning check-in.
+      // Same once-a-day cadence — just smarter content for the moment they're in.
+      const variant = pickMorningVariant(user, Date.now());
+      if (variant.type === 'journey') {
+        await this.sendAndRecord(user, 'journey', { journeyDay: variant.journeyDay });
+      } else if (variant.type === 'winback') {
+        await this.sendAndRecord(user, 'winback', { winbackStage: variant.winbackStage });
+      } else {
+        await this.sendAndRecord(user, 'morning', { isWednesday: dayOfWeek === 3 });
+      }
       await this.deps.users.update(user.phone, { last_morning_sent_at: new Date() });
       return;
     }
@@ -588,7 +598,7 @@ export class Scheduler {
     type: Parameters<MessageGenerator['generate']>[0],
     opts?: GenerateOpts,
   ): Promise<GenerateOpts | undefined> {
-    const GENERATIVE_TYPES = new Set(['morning', 'midday', 'evening', 'bonus', 'injection_dayafter']);
+    const GENERATIVE_TYPES = new Set(['morning', 'midday', 'evening', 'bonus', 'injection_dayafter', 'journey', 'winback']);
     if (!GENERATIVE_TYPES.has(type)) return opts;
     const enriched: GenerateOpts = { ...(opts ?? {}) };
 
@@ -728,6 +738,46 @@ function userEngagedToday(user: GraceUser): boolean {
 function userSilentDays(user: GraceUser): number {
   if (!user.last_reply_at) return Infinity;
   return (Date.now() - new Date(user.last_reply_at).getTime()) / (24 * 3_600_000);
+}
+
+export interface MorningVariant {
+  type: 'morning' | 'journey' | 'winback';
+  journeyDay?: number;
+  winbackStage?: number;
+}
+
+/**
+ * Decide what the daily morning anchor should be — the stickiness router. Same
+ * cadence as before (one morning send/day), just smarter content:
+ *   - JOURNEY: a new user in their first 3 days gets the guided first-week
+ *     experience (priority — the highest-churn window).
+ *   - WINBACK: a user who's gone quiet gets an escalating, warm re-engagement
+ *     (stage 1 ≈ 1 day, 2 ≈ 3 days, 3 ≈ 7+ days).
+ *   - MORNING: everyone else gets the normal (yesterday-bridge) check-in.
+ * Pure + deterministic for unit testing.
+ */
+export function pickMorningVariant(
+  user: Pick<GraceUser, 'trial_start' | 'last_reply_at'>,
+  nowMs: number,
+): MorningVariant {
+  if (user.trial_start) {
+    const daysSinceSignup = (nowMs - new Date(user.trial_start).getTime()) / (24 * 3_600_000);
+    if (daysSinceSignup >= 1 && daysSinceSignup < 4) {
+      return { type: 'journey', journeyDay: Math.min(3, Math.max(1, Math.floor(daysSinceSignup))) };
+    }
+  }
+  // A user who's gone quiet → escalating win-back. "Quiet" means they have a
+  // real last_reply that's now stale, OR they registered (trial_start) but never
+  // replied. A user with neither signal is a normal/degenerate case → plain
+  // morning (so we never "win back" someone who was never engaged to begin with).
+  const silentDays = user.last_reply_at
+    ? (nowMs - new Date(user.last_reply_at).getTime()) / (24 * 3_600_000)
+    : (user.trial_start ? Infinity : 0);
+  if (silentDays >= 1) {
+    const stage = silentDays >= 7 ? 3 : silentDays >= 3 ? 2 : 1;
+    return { type: 'winback', winbackStage: stage };
+  }
+  return { type: 'morning' };
 }
 
 function analyzeUserBehavior(checkins: Array<{ type: string; user_reply: string | null; mood_score: number | null }>) {

@@ -114,7 +114,10 @@ const OPENER_POOL = [
 
 type MsgType = 'morning' | 'midday' | 'evening' | 'bonus' | 'injection_morning' | 'injection_followup' |
   'injection_dayafter' | 'side_effect_nausea' | 'side_effect_fatigue' | 'side_effect_constipation' |
-  'welcome' | 'trial_expiry_reminder';
+  'welcome' | 'trial_expiry_reminder' |
+  // Stickiness (2026-06-28): a guided first-week journey (day 1–3 after signup)
+  // and an escalating win-back ladder for users who've gone quiet.
+  'journey' | 'winback';
 
 export interface GenerateOpts {
   extra?: string;
@@ -131,6 +134,10 @@ export interface GenerateOpts {
    *  reference a topic they actually raised. Woven in only if clearly relevant;
    *  never invented. */
   conversationContext?: string[];
+  /** First-week guided journey: which day (1, 2, or 3) after signup this is. */
+  journeyDay?: number;
+  /** Win-back ladder stage: 1 (≈1 day quiet), 2 (≈3 days), 3 (≈7+ days). */
+  winbackStage?: number;
 }
 
 // ─── Morning "yesterday bridge" ──────────────────────────────────────────────
@@ -208,6 +215,17 @@ export function deriveMorningBridge(
   block += `\n- Weave it in naturally and ONLY if it fits. NEVER say "based on our conversation yesterday" / "yesterday you logged" / recite totals. Don't force it — if it feels off, just send a warm, plain good-morning. Vary the shape from previous mornings. Keep it to one short, warm message.`;
 
   return { block, allowQuestion };
+}
+
+/**
+ * Anticipation hook — on roughly 1 in 3 days (deterministic by the daily seed),
+ * tell the generator to end with a small forward teaser so the NEXT proactive
+ * message has a reason to be opened. Empty string on the other days so it never
+ * feels formulaic. Never promises anything medical.
+ */
+export function anticipationDirective(seed: number): string {
+  if (seed % 3 !== 0) return '';
+  return ` ANTICIPATION: end with ONE short, warm teaser that gives them something to look forward to next time (e.g. "tomorrow I'll show you a little trick for X" or "remind me to tell you about Y"). Make it specific and genuine, never clickbait, and never promise anything medical or guaranteed.`;
 }
 
 const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => string> = {
@@ -365,6 +383,43 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
   trial_expiry_reminder: (u) => {
     const upgradeUrl = buildUpgradeUrl(u.phone);
     return `Your Grace trial ends tomorrow 🧡 Head to ${upgradeUrl} anytime to keep your check-ins going — no pressure, whenever you're ready.`;
+  },
+  journey: (u, opts) => {
+    const day = opts?.journeyDay ?? 1;
+    const byDay: Record<number, string[]> = {
+      1: [
+        `Morning! Day one together 🧡 Easiest place to start: next time you eat, just text me what it was and I'll handle the protein math for you.`,
+        `Hey! So glad you're here. Let's keep day one simple — text me your next meal (or snap a pic) and I'll log it for you.`,
+      ],
+      2: [
+        `Day two 🧡 Little trick most people don't know: eating your protein FIRST in a meal keeps you full longer. Try it today and tell me how it goes.`,
+        `Morning! Quick one for today — front-load your protein at your first meal and see if the afternoon feels easier. I'm curious how it lands.`,
+      ],
+      3: [
+        `Day three! You can send me photos too — snap your plate and I'll break down the protein for you. Way easier than guessing 🧡`,
+        `Morning 🧡 Try this today: next time you're not sure about a meal, just send me a pic. I'll do the rest.`,
+      ],
+    };
+    return pick(byDay[Math.min(3, Math.max(1, day))] ?? byDay[1]!, dailySeed(u.phone));
+  },
+  winback: (u, opts) => {
+    const stage = opts?.winbackStage ?? 1;
+    const name = u.first_name ? `${u.first_name}, ` : '';
+    const byStage: Record<number, string[]> = {
+      1: [
+        `Hey ${name}thinking of you today 🧡 No pressure at all — just text me what you ate whenever and I'll pick it right back up.`,
+        `Morning! Door's always open here. Whenever you're ready, tell me how it's going and we'll roll from there 🧡`,
+      ],
+      2: [
+        `Hey ${name}it's been a few days and I still got you 🧡 We can start fresh anytime — even one quick meal text gets us going again.`,
+        `No guilt, promise — life gets busy. I'm right here whenever you want to jump back in, even just to say hi 🧡`,
+      ],
+      3: [
+        `Hey ${name}I've missed our check-ins 🧡 Whenever you're ready to pick things back up, I'm here — no catching up required, we just start from today.`,
+        `Still in your corner, whenever you want me. One text and we're back at it, no pressure at all 🧡`,
+      ],
+    };
+    return pick(byStage[Math.min(3, Math.max(1, stage))] ?? byStage[1]!, dailySeed(u.phone));
   },
   bonus: (u) => {
     const seed = dailySeed(u.phone);
@@ -562,6 +617,8 @@ export class MessageGenerator {
     const bannedOpener1 = pick(OPENER_POOL, seed, 0);
     const bannedOpener2 = pick(OPENER_POOL, seed, 3);
     const bannedOpener3 = pick(OPENER_POOL, seed, 7);
+    // Anticipation hook — occasionally end with a forward teaser (see helper).
+    const hook = anticipationDirective(seed);
 
     const VARIATION_BLOCK = `TODAY'S VARIATION DIRECTIVE (changes daily — follow exactly):
 - Angle: ${todayAngle}
@@ -645,7 +702,7 @@ export class MessageGenerator {
         const closer = bridge.allowQuestion
           ? 'At most ONE short, gentle question is fine today; never stack questions.'
           : 'No questions.';
-        return `${base}Context: gentle morning hello. Today's focus: ${modeHint}${dataBlock}${bridge.block} ${closer}`;
+        return `${base}Context: gentle morning hello. Today's focus: ${modeHint}${dataBlock}${bridge.block} ${closer}${hook}`;
       })(),
       bonus: (() => {
         const catIdx = (seed + dayOfYear(new Date())) % BONUS_CATEGORIES.length;
@@ -690,7 +747,7 @@ export class MessageGenerator {
             dataBlock = `\nREAL DATA — today: ${goalPart}. ${t.itemCount} food${t.itemCount === 1 ? '' : 's'} logged so far.`;
           }
         }
-        return `${base}Context: evening wind-down — a daily check-in that wraps the day, NOT a repeat of this morning's message. ${weightCtx} ${moodCtx}${dataBlock} ${dislikes} If suggesting evening food, filter by dislikes.`;
+        return `${base}Context: evening wind-down — a daily check-in that wraps the day, NOT a repeat of this morning's message. ${weightCtx} ${moodCtx}${dataBlock} ${dislikes} If suggesting evening food, filter by dislikes.${hook}`;
       })(),
       injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}. Tell them to reply "done" when injected. No questions about feelings — that comes later.`,
       injection_followup: `${base}Context: ~3 hours after their shot. Just check in softly — no interrogation. One brief opening for them to share if they want.`,
@@ -711,6 +768,24 @@ Do NOT ask a question. Do NOT send a second follow-up.`,
       trial_expiry_reminder: (() => {
         const upgradeUrl = buildUpgradeUrl(user.phone, this.webUrl);
         return `${base}Context: this is Day 2 of the user's 3-day free trial — their trial ends tomorrow. Send a warm, pressure-free reminder that their trial ends tomorrow and they can subscribe at ${upgradeUrl}. ALWAYS include the literal URL ${upgradeUrl} — never write a placeholder. NEVER use their name. NEVER use "upgrade" language — say "continue" or "keep going." NEVER exclamation marks. NEVER salesy tone. ONE or TWO short sentences max. Example: "Your Grace trial ends tomorrow 🧡 Head to ${upgradeUrl} anytime to keep your check-ins going."`;
+      })(),
+      journey: (() => {
+        const day = opts?.journeyDay ?? 1;
+        const goalByDay: Record<number, string> = {
+          1: "This is their FIRST full day with you. Goal: get them to log their first meal. Warmly invite them to just text you their next meal (or snap a photo) and you'll handle the protein. Make it feel easy and genuinely exciting — the start of something good.",
+          2: 'Day 2. Teach ONE small, useful GLP-1 trick (e.g. protein-first at a meal keeps you fuller) and invite them to try it today. Curious and friendly, ONE idea only.',
+          3: "Day 3. Show off something that delights: they can send a PHOTO of any meal and you'll break down the protein for them. Invite them to try it. Light and fun.",
+        };
+        return `${base}Context: guided first-week journey. ${goalByDay[Math.min(3, Math.max(1, day))]} Warm, a little excited, ONE clear easy action. A single friendly invite/question is welcome here.`;
+      })(),
+      winback: (() => {
+        const stage = opts?.winbackStage ?? 1;
+        const toneByStage: Record<number, string> = {
+          1: 'They\'ve been quiet about a day. Light, warm "thinking of you", zero guilt. Leave an easy open door to jump back in.',
+          2: "They've been quiet a few days. Warm and reassuring — no guilt, life gets busy. Make restarting feel effortless (even one quick text).",
+          3: "They've been quiet about a week. Genuinely warm \"I'm still here\", no catching-up required — you just start from today. Never guilt-trip, never desperate.",
+        };
+        return `${base}Context: win-back — gently re-engage a user who's gone quiet. ${toneByStage[Math.min(3, Math.max(1, stage))]} If the RECENT CONVERSATION below shows something they were working on or mentioned, you MAY reference it warmly to reconnect — never invent. A single soft invite is fine. NEVER guilt, NEVER a corporate "we miss you" tone.`;
       })(),
     };
 

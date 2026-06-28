@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Logger } from 'pino';
-import { Scheduler } from './scheduler.js';
+import { Scheduler, pickMorningVariant } from './scheduler.js';
 import type { GraceUser, UserService } from '../user/user.service.js';
 import type { TwilioSender } from '../twilio/sender.js';
 import type { MessageGenerator } from './message-generator.js';
@@ -631,7 +631,9 @@ describe('Scheduler — trial Day 2 reminder', () => {
     setUtc(2026, 5, 19, 13, 0);
     await tick(h.scheduler);
     expect(h.generateCalls.filter((c) => c.type === 'trial_expiry_reminder').length).toBe(0);
-    expect(h.generateCalls.filter((c) => c.type === 'morning').length).toBe(1);
+    // The daily morning anchor still fires — for a day-1 paid user that's the
+    // guided journey, not the generic morning (same once-a-day cadence).
+    expect(h.generateCalls.filter((c) => ['morning', 'journey', 'winback'].includes(c.type)).length).toBe(1);
   });
 });
 
@@ -1098,5 +1100,42 @@ describe('Scheduler — proactive reminders route on the user channel (iMessage-
     const h = buildHarness(makeUser({ channel: 'whatsapp' }));
     await sendDirect(h, 'morning');
     expect(h.sends[0]!.channel).toBe('whatsapp');
+  });
+});
+
+describe('pickMorningVariant — stickiness router', () => {
+  const DAY = 24 * 3_600_000;
+  const now = 1_800_000_000_000;
+  const at = (msAgo: number) => new Date(now - msAgo);
+
+  it('a new user in their first 3 days gets the guided journey (day 1/2/3)', () => {
+    expect(pickMorningVariant({ trial_start: at(1.2 * DAY), last_reply_at: at(0.1 * DAY) }, now))
+      .toEqual({ type: 'journey', journeyDay: 1 });
+    expect(pickMorningVariant({ trial_start: at(2.5 * DAY), last_reply_at: null }, now))
+      .toEqual({ type: 'journey', journeyDay: 2 });
+    expect(pickMorningVariant({ trial_start: at(3.1 * DAY), last_reply_at: at(3 * DAY) }, now))
+      .toEqual({ type: 'journey', journeyDay: 3 });
+  });
+
+  it('journey only covers days 1–3 (day 0 and day 4+ are not journey)', () => {
+    expect(pickMorningVariant({ trial_start: at(0.4 * DAY), last_reply_at: at(0.1 * DAY) }, now).type).toBe('morning');
+    expect(pickMorningVariant({ trial_start: at(10 * DAY), last_reply_at: at(0.1 * DAY) }, now).type).toBe('morning');
+  });
+
+  it('a quiet user gets an escalating win-back (1d→stage1, 3d→stage2, 7d→stage3)', () => {
+    const old = at(30 * DAY); // past the journey window
+    expect(pickMorningVariant({ trial_start: old, last_reply_at: at(1.5 * DAY) }, now)).toEqual({ type: 'winback', winbackStage: 1 });
+    expect(pickMorningVariant({ trial_start: old, last_reply_at: at(4 * DAY) }, now)).toEqual({ type: 'winback', winbackStage: 2 });
+    expect(pickMorningVariant({ trial_start: old, last_reply_at: at(9 * DAY) }, now)).toEqual({ type: 'winback', winbackStage: 3 });
+    // never-replied dormant user → longest stage
+    expect(pickMorningVariant({ trial_start: old, last_reply_at: null }, now)).toEqual({ type: 'winback', winbackStage: 3 });
+  });
+
+  it('an engaged, established user gets the normal morning', () => {
+    expect(pickMorningVariant({ trial_start: at(30 * DAY), last_reply_at: at(0.2 * DAY) }, now)).toEqual({ type: 'morning' });
+  });
+
+  it('journey takes priority over win-back for a new user who has not replied', () => {
+    expect(pickMorningVariant({ trial_start: at(2 * DAY), last_reply_at: null }, now).type).toBe('journey');
   });
 });

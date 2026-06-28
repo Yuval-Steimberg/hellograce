@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { parseTimezone, isValidIanaTimezone } from './timezone-parse.js';
+import { parseTimezone, isValidIanaTimezone, timezoneFromPhone } from './timezone-parse.js';
+
+describe('timezoneFromPhone — auto-detect without asking', () => {
+  it('single-timezone country codes resolve reliably', () => {
+    expect(timezoneFromPhone('+972547722420')).toBe('Asia/Jerusalem'); // Israel
+    expect(timezoneFromPhone('+447911123456')).toBe('Europe/London');   // UK
+    expect(timezoneFromPhone('+33123456789')).toBe('Europe/Paris');     // France
+    expect(timezoneFromPhone('+919812345678')).toBe('Asia/Kolkata');    // India
+  });
+  it('US/Canada narrowed by area code', () => {
+    expect(timezoneFromPhone('+12125551234')).toBe('America/New_York');    // 212 NYC
+    expect(timezoneFromPhone('+13105551234')).toBe('America/Los_Angeles'); // 310 LA
+    expect(timezoneFromPhone('+13125551234')).toBe('America/Chicago');     // 312 Chicago
+    expect(timezoneFromPhone('+18085551234')).toBe('Pacific/Honolulu');    // 808 Hawaii
+    expect(timezoneFromPhone('2125551234')).toBe('America/New_York');      // bare 10-digit
+  });
+  it('returns null when it cannot tell (unknown area / multi-tz country / junk)', () => {
+    expect(timezoneFromPhone('+15555551234')).toBeNull(); // unknown area code → ask
+    expect(timezoneFromPhone('+61412345678')).toBeNull(); // Australia (multi-tz) → ask
+    expect(timezoneFromPhone('')).toBeNull();
+    expect(timezoneFromPhone(null)).toBeNull();
+  });
+});
 
 describe('parseTimezone', () => {
   // The spec's required test locations.

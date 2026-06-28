@@ -194,6 +194,25 @@ describe('runOnboardingTurn (signup)', () => {
     expect(calls.some((c) => 'onboarding_last_slot' in c)).toBe(false);
   });
 
+  it('auto-detects timezone from the phone and SKIPS asking (Israel number)', async () => {
+    const { users, calls } = makeWriter();
+    // Weekly user on an Israel number answers their injection day; the next slot
+    // would be timezone, but +972 resolves to Asia/Jerusalem → skipped.
+    const u = user({ phone: '+972547722420', onboarding_state: 'in_progress', onboarding_last_slot: 'injection_day' });
+    const res = await runOnboardingTurn({ user: u, text: 'Sunday', mode: 'signup', users, logger });
+    expect(res.completed).toBe(false);
+    expect(calls).toContainEqual({ timezone: 'Asia/Jerusalem' }); // persisted automatically
+    expect(res.reply.toLowerCase()).not.toMatch(/timezone|what timezone/); // not asked
+    expect(calls).toContainEqual({ onboarding_last_slot: 'goals' });        // advanced past timezone
+  });
+
+  it('asks for timezone when the phone is ambiguous (unknown area code)', async () => {
+    const { users } = makeWriter();
+    const u = user({ phone: '+15555550000', onboarding_state: 'in_progress', onboarding_last_slot: 'injection_day' });
+    const res = await runOnboardingTurn({ user: u, text: 'Sunday', mode: 'signup', users, logger });
+    expect(res.reply.toLowerCase()).toMatch(/timezone|city or region|where are you/);
+  });
+
   it('completes after the last slot and starts the trial', async () => {
     const { users, calls } = makeWriter();
     const now = new Date('2026-06-28T12:00:00Z');

@@ -38,7 +38,7 @@ import {
   normalizeDay,
   normalizeTime,
 } from '../services/profile-extract.js';
-import { parseTimezone } from '../services/timezone-parse.js';
+import { parseTimezone, timezoneFromPhone } from '../services/timezone-parse.js';
 
 export type SlotId =
   | 'first_name'
@@ -447,7 +447,19 @@ export async function runOnboardingTurn(params: {
 
     // Advance.
     u = { ...u, onboarding_last_slot: slot };
-    const next = pickNext();
+    let next = pickNext();
+
+    // Auto-fill the timezone slot from the phone's country/area code so most
+    // users are never asked (e.g. +972 → Asia/Jerusalem, +44 → Europe/London).
+    // Only when we genuinely can't tell does the timezone question get asked.
+    while (next === 'timezone') {
+      const tz = timezoneFromPhone(u.phone);
+      if (!tz) break;
+      await users.update(u.phone, { timezone: tz } as Partial<GraceUser>);
+      u = { ...u, timezone: tz, onboarding_last_slot: 'timezone' };
+      logger.info({ phone: u.phone, tz }, 'onboarding.timezone.auto_from_phone');
+      next = pickNext();
+    }
 
     if (!next) {
       // Complete.

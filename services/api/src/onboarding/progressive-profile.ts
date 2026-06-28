@@ -151,6 +151,47 @@ export async function clearPendingProfileAsk(redis: RedisLike | undefined, phone
   try { await redis.del(PENDING_KEY(phone)); } catch { /* best-effort */ }
 }
 
+// When Grace asks for a missing detail BEFORE answering a question, we stash the
+// original question here so the next turn (once they've answered) replays it and
+// gives the now-personalized answer — "ask, then answer" with no lost intent.
+const REPLAY_KEY = (phone: string): string => `profile:replay:${phone}`;
+const REPLAY_TTL_SEC = 3600;
+
+export async function setReplayQuery(redis: RedisLike | undefined, phone: string, text: string): Promise<void> {
+  if (!redis) return;
+  try { await redis.set(REPLAY_KEY(phone), text.slice(0, 500), 'EX', REPLAY_TTL_SEC); } catch { /* best-effort */ }
+}
+export async function getReplayQuery(redis: RedisLike | undefined, phone: string): Promise<string | null> {
+  if (!redis) return null;
+  try { return await redis.get(REPLAY_KEY(phone)); } catch { return null; }
+}
+export async function clearReplayQuery(redis: RedisLike | undefined, phone: string): Promise<void> {
+  if (!redis) return;
+  try { await redis.del(REPLAY_KEY(phone)); } catch { /* best-effort */ }
+}
+
+/**
+ * The warm "let me get one detail so I can tailor this" question Grace asks
+ * BEFORE answering, when a missing field would make the answer specific. SMS
+ * short, friendly, never a survey. The user's answer is parsed next turn and the
+ * original question is replayed (personalized).
+ */
+const CLARIFY: Record<ProgressiveSlot, string> = {
+  dietary: "Happy to help — quick q first so I can actually tailor this to you: do you follow any particular diet, and any foods you avoid or can't stand?",
+  dislikes: "Want to get this right for you — any foods you really don't like or want me to skip?",
+  goals: "Quick q so I focus on what matters to you — what are you most hoping for right now (weight, energy, fewer side effects, staying on track)?",
+  goal_weight: "Do you have a goal weight in mind? Helps me tailor things — totally fine to skip.",
+  current_weight: "To make this specific to you — roughly what's your current weight? (fine to skip)",
+  sex: "Quick one so I can get this right for you — what's your biological sex (male, female, or other)?",
+  height: "One detail so I can tailor your numbers — how tall are you?",
+  age: "Quick q so your targets are accurate — how old are you?",
+  activity: "So I can make this fit you — are you mostly sitting day to day, lightly active, or on the move?",
+  wake_sleep: "Quick one so I check in at the right times — when do you usually wake up and head to bed?",
+};
+export function buildGatherClarify(slot: ProgressiveSlot): string {
+  return CLARIFY[slot];
+}
+
 /** True if we asked a profile question within `cooldownHours` — used to throttle
  *  the non-relevance (proactive) gathering so it never feels like a survey. */
 export async function askedProfileRecently(redis: RedisLike | undefined, phone: string, cooldownHours: number, nowMs: number): Promise<boolean> {

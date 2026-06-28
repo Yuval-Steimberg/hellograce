@@ -479,11 +479,15 @@ import {
   relevantProfileSlot,
   nextMissingProfileSlot,
   buildProfileGatherNote,
+  buildGatherClarify,
   parseProfileReply,
   getPendingProfileAsk,
   setPendingProfileAsk,
   clearPendingProfileAsk,
   askedProfileRecently,
+  setReplayQuery,
+  getReplayQuery,
+  clearReplayQuery,
 } from '../onboarding/progressive-profile.js';
 import { detectHypoglycemiaWarning, mightBeHypoSymptom, isWhatShouldIDo } from '../safety/hypoglycemia-warning.js';
 import {
@@ -964,6 +968,29 @@ export class AIService {
         this.deps.logger.info({ userId: input.userId }, 'ai.capability_question.served');
         this.persistLatency(input.userId, 'capability', totalMs, lat.snapshot(), input.text, reply);
         return { text: reply, confidence: 'high', intent: 'capability', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      }
+
+      // ── Personalization gather gate (2026-06-28) ─────────────────────────
+      // Before any substantive answer (food, knowledge, emotional, general…),
+      // make sure Grace has the data she needs to be SPECIFIC to THIS user — so
+      // every reply feels like she knows them. Two outcomes:
+      //   • {reply}: this question needs a missing detail → ask for it first
+      //     (one warm question), stash the original question, short-circuit.
+      //   • {text}: the user just answered a gather question → persist it and
+      //     REPLAY the original question (now personalized) through the pipeline.
+      // Relevance-only + throttled, so it never feels like a survey. Skipped
+      // entirely during onboarding (the onboarding flow owns data collection).
+      if (this.progressiveProfile && this.directReplyMode) {
+        const gate = await this.progressiveGatherGate(input).catch(() => ({} as { reply?: string; text?: string }));
+        if (gate.reply) {
+          const totalMs = Date.now() - t0;
+          this.deps.logger.info({ userId: input.userId }, 'ai.progressive_gather.ask_first');
+          this.persistLatency(input.userId, 'profile_gather', totalMs, lat.snapshot(), input.text, gate.reply);
+          return { text: gate.reply, confidence: 'high', intent: 'profile_gather', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+        }
+        if (gate.text) {
+          input = { ...input, text: gate.text };
+        }
       }
 
       // ── Reminder questions → deterministic answer (2026-06-15) ───────────
@@ -2998,19 +3025,30 @@ CRITICAL RULES:
   }
 
   /**
-   * Progressive profiling (see onboarding/progressive-profile.ts). Two steps:
-   *   1. If we asked a profile question last turn, parse this reply and persist
-   *      the value (then clear the pending ask either way — never trap the user).
-   *   2. Maybe weave ONE gentle question into THIS reply — relevance-first
-   *      (the user asked something a missing field makes accurate), else a
-   *      throttled proactive ask on a neutral turn. Returns the (possibly
-   *      augmented) directContextNote so the single Gemini call phrases it.
+   * Personalization gather GATE — runs EARLY, before every answer path (food,
+   * knowledge, emotional, general…), so Grace gathers the data she needs to be
+   * specific to THIS user, on any kind of question — "knows them well".
+   *
+   * Two outcomes:
+   *   - { reply }: this question needs a missing detail to be specific, so ask
+   *     for it first (warm, one question) and stash the original question. We
+   *     short-circuit and send `reply`.
+   *   - { text }: the user just answered a gather question — we persist it and
+   *     REPLAY the original question (returned as `text`) so the rest of the
+   *     pipeline answers it, now personalized.
+   *   - {}: nothing to do — answer the message normally.
+   *
+   * Relevance-only (it never interrupts a non-personalization message), and the
+   * 20h throttle on the *next* ask keeps it from feeling like a survey. Flag-
+   * gated (progressiveProfile) + best-effort (never blocks the reply).
    */
-  private async applyProgressiveProfiling(input: InboundMessage, directContextNote: string): Promise<string> {
+  private async progressiveGatherGate(input: InboundMessage): Promise<{ reply?: string; text?: string }> {
     const redis = this.deps.redis;
     const phone = input.userId;
+    const nowMs = Date.now();
 
-    // 1) Resolve a pending answer from a question we asked last turn.
+    // 1. Did they just answer a gather question? Persist it, then replay the
+    //    original question so the answer is personalized.
     const pending = await getPendingProfileAsk(redis, phone);
     if (pending) {
       const { fields } = parseProfileReply(pending, input.text);
@@ -3019,29 +3057,55 @@ CRITICAL RULES:
         this.deps.logger.info({ userId: phone, slot: pending, captured: Object.keys(fields) }, 'progressive_profile.captured');
       }
       await clearPendingProfileAsk(redis, phone);
+      const replay = await getReplayQuery(redis, phone);
+      await clearReplayQuery(redis, phone);
+      // Replay only when we actually captured something (else the reply wasn't an
+      // answer — let it be handled as a fresh message).
+      if (replay && fields && Object.keys(fields).length > 0) {
+        this.deps.logger.info({ userId: phone, slot: pending }, 'progressive_profile.replay');
+        return { text: replay };
+      }
+      return {};
     }
 
-    // Don't stack a profile question onto another intercept's note, a media
-    // turn, or an empty message.
-    if (directContextNote || input.media.length > 0 || !input.text.trim()) return directContextNote;
-
+    // 2. Does THIS question need a missing detail to be specific? Ask first.
+    if (input.media.length > 0 || !input.text.trim()) return {};
+    // Don't interrupt twice in a row — respect the throttle on the proactive feel.
+    if (await askedProfileRecently(redis, phone, PROFILE_GATHER_COOLDOWN_HOURS, nowMs)) return {};
     const user = await this.deps.users.getById(phone).catch(() => null);
-    if (!user) return directContextNote;
+    if (!user) return {};
+    // The onboarding flow owns data collection — never ask-first mid-signup.
+    if (user.onboarding_state === 'in_progress') return {};
+    const slot = relevantProfileSlot(user, input.text);
+    if (!slot) return {};
+    await setPendingProfileAsk(redis, phone, slot, nowMs);
+    await setReplayQuery(redis, phone, input.text);
+    this.deps.logger.info({ userId: phone, slot }, 'progressive_profile.gather_first');
+    return { reply: buildGatherClarify(slot) };
+  }
+
+  /**
+   * Progressive profiling — the PROACTIVE half (the gather GATE above handles
+   * relevance + pending answers). On an ordinary neutral turn, maybe weave ONE
+   * gentle question into the reply to fill the next missing field, throttled so
+   * it never feels like a survey. Returns the (possibly augmented) directContextNote.
+   */
+  private async applyProgressiveProfiling(input: InboundMessage, directContextNote: string): Promise<string> {
+    const redis = this.deps.redis;
+    const phone = input.userId;
+
+    // Pending answers + relevance-first gathering are handled EARLIER by
+    // progressiveGatherGate (so they apply to every answer path). Here we only
+    // do the throttled PROACTIVE ask: on a neutral turn, weave ONE gentle
+    // question to fill the next missing field. Never stacks onto another
+    // intercept's note, a media turn, or an empty message.
+    if (directContextNote || input.media.length > 0 || !input.text.trim()) return directContextNote;
+    if (!gatherSafeTurn(input.text)) return directContextNote;
 
     const nowMs = Date.now();
-
-    // 2a) Relevance-first: the user asked something a missing field makes
-    //     accurate — ask for THAT field in context so the answer is right.
-    const relevant = relevantProfileSlot(user, input.text);
-    if (relevant) {
-      await setPendingProfileAsk(redis, phone, relevant, nowMs);
-      this.deps.logger.info({ userId: phone, slot: relevant, trigger: 'relevance' }, 'progressive_profile.ask');
-      return directContextNote + buildProfileGatherNote(relevant);
-    }
-
-    // 2b) Throttled proactive: only on a neutral turn, and not asked recently.
-    if (!gatherSafeTurn(input.text)) return directContextNote;
     if (await askedProfileRecently(redis, phone, PROFILE_GATHER_COOLDOWN_HOURS, nowMs)) return directContextNote;
+    const user = await this.deps.users.getById(phone).catch(() => null);
+    if (!user) return directContextNote;
     const next = nextMissingProfileSlot(user);
     if (!next) return directContextNote;
     await setPendingProfileAsk(redis, phone, next, nowMs);

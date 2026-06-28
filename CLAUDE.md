@@ -6,6 +6,47 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Personalization gather gate — ask-then-answer for EVERY response (2026-06-28)
+
+Branch `claude/system-migration-process-dtkyp3`. Driven by: "grace should gather
+all the missing data before giving responses to make the responses very specific
+for the user … it should gather any missing data for every response, not just
+food … grace needs to sound very accurate for each user separately to give them
+the feeling she knows them very well." Production: "What should I eat today?" from
+a profile-thin user → generic ideas (no diet, no dislikes).
+
+Root cause: progressive profiling (`applyProgressiveProfiling`) only ran on the
+ORCHESTRATOR path (ai.service ~1768), but `handleFoodQuestionDirect` (and the
+knowledge/emotional direct paths) short-circuit BEFORE it — so a food/knowledge
+question never gathered first. Its "relevance" ask also only injected a
+directContextNote (a hint) rather than truly asking first.
+
+**New unified early gate — `progressiveGatherGate(input)` in `ai.service.ts`**
+(runs right after the capability intercept, before ALL substantive paths; gated
+on `progressiveProfile && directReplyMode`):
+- **Ask-first**: if THIS message needs a missing field to be specific
+  (`relevantProfileSlot` — food-idea→dietary then dislikes; protein→Mifflin
+  inputs), Grace asks ONE warm question (`buildGatherClarify(slot)`), stashes the
+  original question (`setReplayQuery`, Redis `profile:replay:{phone}`, 1h TTL),
+  and short-circuits with `intent:'profile_gather'`.
+- **Replay**: next turn, the user's answer resolves the pending slot
+  (`parseProfileReply` → persist via `users.update`), then the stashed question is
+  REPLAYED (`input = {...input, text: replay}`) so the rest of the pipeline answers
+  it — now personalized. Replay only fires when we actually captured a value.
+- Throttled by the existing 20h `askedProfileRecently` so it never feels like a
+  survey; skipped entirely while `onboarding_state === 'in_progress'` (onboarding
+  owns collection); media/empty turns skip.
+- `progressive-profile.ts` gained `setReplayQuery`/`getReplayQuery`/
+  `clearReplayQuery` + `CLARIFY` table + `buildGatherClarify(slot)`.
+- `applyProgressiveProfiling` slimmed to the PROACTIVE half only (the pending +
+  relevance branches moved into the gate); the throttled neutral-turn ask stays.
+
+Tests: +3 in `progressive-profile.test.ts` (replay round-trip, redis-absent
+no-op, clarify-per-slot). 1421 api + 645 ai-core green; typecheck clean across
+all packages. Flag: `PROGRESSIVE_PROFILE_ENABLED` (default true).
+
+---
+
 ### Sendblue iMessage provider + consumption-feedback follow-ups (2026-06-27)
 
 Branch `claude/system-migration-process-dtkyp3` (PRs #103–#105 merged). Two

@@ -10,6 +10,10 @@ import {
   setPendingProfileAsk,
   clearPendingProfileAsk,
   askedProfileRecently,
+  setReplayQuery,
+  getReplayQuery,
+  clearReplayQuery,
+  buildGatherClarify,
   type RedisLike,
 } from './progressive-profile.js';
 
@@ -128,6 +132,28 @@ describe('pending-ask Redis store', () => {
     const r = makeRedis();
     r.store.set('profile:ask:+1', 'not_a_slot');
     expect(await getPendingProfileAsk(r, '+1')).toBeNull();
+  });
+});
+
+describe('replay-query store + buildGatherClarify', () => {
+  it('round-trips the stashed original question and clears it', async () => {
+    const r = makeRedis();
+    const phone = '+15551112222';
+    await setReplayQuery(r, phone, 'what should I eat today?');
+    expect(await getReplayQuery(r, phone)).toBe('what should I eat today?');
+    await clearReplayQuery(r, phone);
+    expect(await getReplayQuery(r, phone)).toBeNull();
+  });
+  it('no-ops safely when Redis is absent', async () => {
+    await setReplayQuery(undefined, '+1', 'q');
+    expect(await getReplayQuery(undefined, '+1')).toBeNull();
+  });
+  it('has a warm, SMS-short clarify question for every progressive slot', () => {
+    for (const slot of PROGRESSIVE_SLOTS) {
+      const q = buildGatherClarify(slot);
+      expect(q.length).toBeGreaterThan(10);
+      expect(q.length).toBeLessThan(220);
+    }
   });
 });
 

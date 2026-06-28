@@ -1,13 +1,16 @@
 import MarketingLayout from "@/components/landing/MarketingLayout";
-import HeroSection from "@/components/landing/HeroSection";
+import MobileHero from "@/components/landing/MobileHero";
+import DesktopDeck from "@/components/landing/DesktopDeck";
 
 /**
- * Home — a single screen, no scroll: just the editorial hero. Everything else
- * lives on its own routed page (Features / How it works / Pricing / FAQ).
+ * Home — phone keeps the chat-led iMessage hero (unchanged); desktop renders the
+ * full "Grace Landing" slide deck (Claude Design handoff), which owns its own
+ * header/nav, so the shared desktop nav is hidden.
  */
 const Landing = () => (
-  <MarketingLayout hideFooter>
-    <HeroSection />
+  <MarketingLayout hideFooter hideDesktopNav>
+    <MobileHero />
+    <DesktopDeck />
   </MarketingLayout>
 );
 

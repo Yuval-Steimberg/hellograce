@@ -39,6 +39,7 @@ import {
   normalizeTime,
 } from '../services/profile-extract.js';
 import { parseTimezone, timezoneFromPhone } from '../services/timezone-parse.js';
+import { detectOnboardingSideQuestion, buildSideAnswer } from '../services/capability.js';
 
 export type SlotId =
   | 'first_name'
@@ -163,7 +164,12 @@ export function isSlotAnswered(u: FlowUser, slot: SlotId): boolean {
 
 // ── Answer parsing ───────────────────────────────────────────────────────────
 
-const SKIP_RE = /\b(skip|later|not now|prefer not|rather not|pass|dunno|don'?t know|no idea|maybe later)\b/i;
+// A skippable slot is "skipped" by an explicit skip word OR a natural decline
+// ("no", "no goal", "no goal weight", "none", "not sure", "I don't have one",
+// "I don't know yet"). ANCHORED to the whole (short) message so a substantive
+// answer that merely contains "no" — e.g. "vegetarian, no nuts" — is NOT treated
+// as a skip. Only consulted for SKIPPABLE slots, so it never blocks a required one.
+const SKIP_RE = /^\s*(skip( it| this| that)?|pass|none|nope|nah|no|not (now|really|sure|yet)|maybe later|later|dunno|idk|no idea|no goal( weight)?|no preference|whatever|n\/a|prefer not( to)?|rather not|i'?m? not sure|i (really )?don'?t (know|have)( (one|any|it|a goal|yet))?)\s*[.!,?]*\s*$/i;
 /** Optional slots the user may skip; required signup slots must be answered.
  *  timezone is skippable so a hard-to-parse answer never traps onboarding — it
  *  falls back to the temporary default and can be set later in Settings. */
@@ -469,21 +475,23 @@ const SLOT_BRIEF: Record<SlotId, string> = {
   dislikes: 'foods they really dislike or want to avoid, so Grace never suggests them',
 };
 
-function fallbackQuestion(slot: SlotId, _name: string | null, reask: boolean): string {
-  // No name/greeting prefix on follow-up questions: the opener already greeted
-  // them, so leading every question with "Hey <name>," reads robotic + repetitive.
+function fallbackQuestion(slot: SlotId, name: string | null, reask: boolean): string {
+  // The medication question lands right after they tell us their name, so a warm
+  // "Nice to meet you, <name>!" fits there. Every OTHER question stays name-free
+  // — leading each step with "Hey <name>," reads robotic + repetitive.
+  const nm = name ? `, ${name}` : '';
   const variants: Record<SlotId, string[]> = {
     first_name: ["Hey, I'm Grace 🧡 What should I call you?", "Hi, I'm Grace! What's your name?"],
-    medication: [`Which GLP-1 are you on — Ozempic, Wegovy, Mounjaro, Zepbound, something else?`, `What medication are you taking?`, `Nice to meet you! So, which GLP-1 are you on?`],
+    medication: [`Nice to meet you${nm}! 😊 Which GLP-1 are you taking — Ozempic, Wegovy, Mounjaro, Zepbound, or something else?`, `Great to meet you${nm}! So, which GLP-1 are you on?`],
     medication_frequency: [`Got it. Do you take it weekly or daily?`, `Is that a weekly shot or a daily dose?`, `Perfect — weekly or daily?`],
-    injection_day: [`Which day do you usually do your shot?`, `What day's your injection?`, `And what day do you take it?`],
-    medication_time: [`What time of day do you usually take it?`, `When do you take your daily dose — morning or evening?`, `Morning or evening for your dose?`],
+    injection_day: [`Got it. What day do you usually take your shot?`, `Nice — which day's your injection?`, `And what day do you take it?`],
+    medication_time: [`Got it. What time of day do you usually take it?`, `Nice — morning or evening for your dose?`, `When do you take it — morning or evening?`],
     timezone: [`What timezone are you in? Just your city or region — it keeps your check-ins and daily totals on your local time.`, `Where are you based? (city or region) That way I send check-ins at the right time for you.`],
     goals: [`What would you most like my help with — protein, hydration, side effects, staying on track?`, `What matters most to you right now on this journey?`],
     consent: [`Is it ok if I check in with you by text now and then? (yes/no)`, `Want me to text you little check-ins? Just reply yes or no.`],
     wake_sleep: [`What time do you usually wake up, and when do you head to bed?`, `When's your usual wake-up and bedtime? Helps me check in at the right times.`],
-    goal_weight: [`Do you have a goal weight in mind? (totally optional)`, `Any goal weight you're working toward? You can skip this.`],
-    current_weight: [`If you're comfortable, what's your current weight? (optional)`, `Mind sharing your current weight? Feel free to skip.`],
+    goal_weight: [`Any goal weight you're working toward, or should we skip that for now?`, `Do you have a goal weight in mind? Totally fine to skip.`],
+    current_weight: [`Mind sharing your current weight? You can skip this too.`, `If you're comfortable, what's your current weight? Feel free to skip.`],
     sex: [`Quick one so I get your protein and hydration needs right — what's your biological sex?`, `To dial in your targets, can I ask your biological sex? (male/female/other)`],
     height: [`How tall are you? It helps me set accurate targets.`, `What's your height? (cm or ft/in) — just to keep your numbers accurate.`],
     age: [`How old are you? It helps me get your daily targets right.`, `Mind sharing your age? It makes your targets more accurate.`],
@@ -595,10 +603,11 @@ export async function buildOnboardingNudge(
  */
 export function buildSignupCompleteReply(firstName: string | null, upgradeUrl?: string): string {
   const greet = firstName ? `, ${firstName}` : '';
+  const intro = `Perfect, you're all set${greet} 🎉 I'm Grace, your GLP-1 companion — text me anytime about meals, protein, side effects, cravings, injection days, or just staying on track. I'll use what you shared to keep it personal. Try texting "What should I eat today?" to start.`;
   if (upgradeUrl) {
-    return `You're all set${greet} 🧡 Your 3-day free trial is on — daily check-ins, food & protein help, side-effect support, and someone who actually remembers your journey. To keep going after, lock it in here (I'll remind you before the trial ends): ${upgradeUrl}. For now just text me — log a meal, ask anything, or check in.`;
+    return `${intro} Your 3-day free trial's on — to keep going after, it's here (I'll remind you before it ends): ${upgradeUrl}`;
   }
-  return `You're all set${greet} 🧡 I'm here whenever you need me — log a meal, ask a question, or just check in. Talk soon.`;
+  return intro;
 }
 
 /**
@@ -633,7 +642,11 @@ Rules: fix obvious typos and expand abbreviations. For how-often answers output 
       new Promise<{ text: string }>((r) => setTimeout(() => r({ text: '' }), 3500)),
     ]);
     const value = (resp.text ?? '').trim().replace(/^["']|["']$/g, '');
-    if (!value || /^none\b/i.test(value)) return null;
+    if (!value || /^none\b/i.test(value)) {
+      // The LLM read it as "don't know / decline / unrelated". For an OPTIONAL
+      // field that means SKIP (advance, store nothing) — never re-ask in a loop.
+      return SKIPPABLE.has(slot) ? { ok: true, skipped: true } : null;
+    }
     // Re-validate the LLM's normalized value through the deterministic parser —
     // never trust the LLM's output into storage without the same checks.
     const parsed = parseSlotAnswer(slot, value);
@@ -724,6 +737,21 @@ export async function runOnboardingTurn(params: {
       return { reply: '', completed: true };
     }
 
+    // ── Side-question during onboarding ("what can you do?", "why do you need
+    // this?", "how does this work?", "can I skip?"). Answer briefly in Grace's
+    // voice, then re-pose the current question — never treat the side-question as
+    // the slot's answer, never derail the flow.
+    const side = detectOnboardingSideQuestion(text);
+    if (side === 'skip' && !SKIPPABLE.has(slot)) {
+      // They asked to skip a REQUIRED field — gently explain we need it, re-ask.
+      return { reply: `This one I do need to get you set up 😊 ${fallbackQuestion(slot, null, false)}`, completed: false };
+    }
+    if (side && side !== 'skip') {
+      return { reply: `${buildSideAnswer(side)} ${fallbackQuestion(slot, null, false)}`, completed: false };
+    }
+    // side === 'skip' on a skippable slot falls through — SKIP_RE in the parser
+    // marks it skipped and the flow advances.
+
     // Understand the reply: the current slot's answer (primary) PLUS any other
     // profile facts the message volunteered (multi-field, validated). A chatty
     // "I'm on ozempic once a week and want to get to 120kg" fills several slots
@@ -787,11 +815,16 @@ export async function runOnboardingTurn(params: {
       }
       await users.update(u.phone, { onboarding_state: 'complete', onboarding_last_slot: null } as Partial<GraceUser>);
       logger.info({ phone: u.phone, mode }, 'onboarding.completed');
-      return { reply: `Got it — thanks for sharing that 🧡`, completed: true };
+      return {
+        reply: `All set 🧡 I'm Grace, your GLP-1 companion — text me anytime about meals, protein, side effects, or just to check in. Try "What should I eat today?" to start.`,
+        completed: true,
+      };
     }
 
     await users.update(u.phone, { onboarding_last_slot: next } as Partial<GraceUser>);
-    const q = fallbackQuestion(next, null, false);
+    // Pass the name so the medication question (asked right after we learn it)
+    // can warmly greet — every other question ignores the name (stays name-free).
+    const q = fallbackQuestion(next, u.first_name ?? null, false);
     return { reply: q, completed: false };
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : String(err), phone: user.phone }, 'onboarding.turn.error');

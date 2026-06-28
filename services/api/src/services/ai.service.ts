@@ -22,6 +22,7 @@ import {
   FOOD_HISTORY_QUESTION,
   PROTEIN_TARGET_QUESTION,
   FOOD_REMOVAL_QUESTION,
+  GRACE_SYSTEM_PROMPT,
   type MessageContext,
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
@@ -473,6 +474,7 @@ import {
   buildReminderChangeReply,
 } from './reminder-service.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
+import { detectCapabilityQuestion, buildCapabilityReply } from './capability.js';
 import {
   relevantProfileSlot,
   nextMissingProfileSlot,
@@ -948,6 +950,20 @@ export class AIService {
             }
           }
         }
+      }
+
+      // ── Capability / identity question → deterministic Grace answer ──────
+      // "What can you do?" / "Who are you?" must ALWAYS be answered as Grace, the
+      // GLP-1 companion — short and SMS-friendly. Production failure: a generic
+      // assistant answer shipped ("I can write code, explain quantum physics…").
+      // Deterministic so it can never drift into a generic-LLM reply.
+      if (detectCapabilityQuestion(input.text)) {
+        const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+        const reply = buildCapabilityReply(user?.first_name ?? null);
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId: input.userId }, 'ai.capability_question.served');
+        this.persistLatency(input.userId, 'capability', totalMs, lat.snapshot(), input.text, reply);
+        return { text: reply, confidence: 'high', intent: 'capability', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
       }
 
       // ── Reminder questions → deterministic answer (2026-06-15) ───────────
@@ -4752,7 +4768,11 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
       memoryMd?: string | null;
     },
   ): string {
-    const base = this.systemPrompt ?? undefined;
+    // CRITICAL: fall back to the code's GRACE_SYSTEM_PROMPT when no DB prompt is
+    // loaded. Without this, a missing/empty active prompt left `base` undefined
+    // and Grace replied as a generic assistant ("I can write code, explain
+    // quantum physics…") with NO GLP-1 identity — reported in production.
+    const base = this.systemPrompt ?? GRACE_SYSTEM_PROMPT;
 
     const lines: string[] = [];
     if (user) {

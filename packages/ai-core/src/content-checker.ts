@@ -799,6 +799,12 @@ const ACUTE_ESCALATION_CONTEXT_RE =
 // regenerating into a canned fallback. Medical / dose / capability / privacy /
 // factual bans are NOT tagged style and always regenerate, even in trust mode.
 const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boolean; conversationalOk?: boolean; style?: boolean }> = [
+  // GENERIC-ASSISTANT IDENTITY LEAK — Grace is a GLP-1 companion, never a
+  // general-purpose AI. Production failure: "What can you do?" → "I can write
+  // poems, scripts, code, songs… explain quantum physics… the capital of
+  // France…". Block any answer that offers off-domain assistant capabilities.
+  { pattern: /\b(quantum physics|capital of france|write (you )?(a )?(poems?|scripts?|songs?|essays?|code)\b|assist (you )?with coding|debug.*code|programming languages|translate languages|i can (write|generate|create) (stories|poems|scripts|code|songs))\b/i, reason: 'generic-assistant capabilities — Grace is a GLP-1 companion; answer as Grace (food, protein, side effects, injections, check-ins), never as a general AI' },
+  { pattern: /\bi('?m| am) (a|an) (large language model|ai (language )?model|general[- ]purpose (ai|assistant)|virtual assistant)\b/i, reason: 'generic-assistant self-description — Grace is a GLP-1 companion, not a general AI assistant' },
   // Diagnostic overconfidence — symptoms are CLUES, not conclusions. Grace must
   // never volunteer a specific diagnosis from symptoms alone; she hedges ("one
   // possibility is…") and gathers info. Production failure 2026-06-16 (screenshot):

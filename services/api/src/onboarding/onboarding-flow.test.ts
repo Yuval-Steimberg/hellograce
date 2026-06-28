@@ -221,7 +221,10 @@ describe('parseSlotAnswer', () => {
     const vegan = parseSlotAnswer('dietary', 'vegan');
     expect(vegan.fields?.dietary_pattern).toBe('vegan');
     expect(vegan.fields?.dietary_restriction).toBe('vegan');
-    expect(parseSlotAnswer('dietary', 'no')).toEqual({ ok: true, fields: { dietary_restriction: null } });
+    // bare "no" → skipped (whole-message decline), functionally "no restriction"
+    expect(parseSlotAnswer('dietary', 'no')).toEqual({ ok: true, skipped: true });
+    // an explicit "none" of a diet also clears it via parseDiet when not a bare skip
+    expect(parseSlotAnswer('dietary', 'no specific diet').fields).toEqual({ dietary_restriction: null });
     expect(parseSlotAnswer('dietary', 'allergic to peanuts').fields?.dietary_restriction).toContain('peanut');
   });
 });
@@ -404,5 +407,53 @@ describe('understandSlotWithLlm — typo / slang / abbreviation tolerance', () =
     const res = await runOnboardingTurn({ user: u, text: 'munjaroo', mode: 'signup', users, llm, logger });
     expect(res.completed).toBe(false);
     expect(calls).toContainEqual({ medication: 'Mounjaro' });
+  });
+});
+
+describe('CRITICAL onboarding fixes — skip understanding, side-questions, welcome', () => {
+  // Test 1-3: optional field skip is understood (no repeat loop).
+  for (const ans of ['No goal weight', 'No goal', 'skip', 'none', 'no', "I don't have one", "I don't know yet", 'not sure']) {
+    it(`"${ans}" skips an optional field (no loop)`, () => {
+      const r = parseSlotAnswer('goal_weight', ans);
+      expect(r).toEqual({ ok: true, skipped: true });
+    });
+  }
+  it('a real value with "no" inside is NOT mistaken for a skip', () => {
+    // (goal_weight only takes a number, but dietary shows the substring guard)
+    expect(parseSlotAnswer('dietary', 'vegan, no nuts').skipped).toBeUndefined();
+    expect(parseSlotAnswer('dietary', 'vegan, no nuts').fields?.dietary_restriction).toMatch(/vegan/i);
+  });
+
+  // Test 4 + #7: a side-question during onboarding gets a short Grace answer,
+  // then re-poses the SAME question — never treated as the answer.
+  it('answers "what can you do?" in Grace voice and re-asks the current slot', async () => {
+    const { users, calls } = makeWriter();
+    const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'medication' });
+    const res = await runOnboardingTurn({ user: u, text: 'what can you do?', mode: 'signup', users, logger });
+    expect(res.completed).toBe(false);
+    expect(res.reply).toMatch(/Grace/);
+    expect(res.reply.toLowerCase()).toMatch(/which glp-1|medication|taking/); // re-asked the med question
+    expect(res.reply.toLowerCase()).not.toMatch(/quantum|code|poems?/);
+    // did NOT store the side-question as the medication value, did NOT advance
+    expect(calls.some((c) => 'medication' in c)).toBe(false);
+    expect(calls.some((c) => 'onboarding_last_slot' in c)).toBe(false);
+  });
+
+  it('"why do you need this?" → brief reason + re-ask, no advance', async () => {
+    const { users, calls } = makeWriter();
+    const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'injection_day' });
+    const res = await runOnboardingTurn({ user: u, text: 'why do you need this', mode: 'signup', users, logger });
+    expect(res.reply.toLowerCase()).toMatch(/personalize|helps/);
+    expect(res.reply.toLowerCase()).toMatch(/day|shot/); // re-asked injection day
+    expect(calls.some((c) => 'onboarding_last_slot' in c)).toBe(false);
+  });
+
+  // Test 5 + #8: the final welcome explains who Grace is + invites the user.
+  it('the signup-complete message is a strong, inviting Grace welcome', () => {
+    const r = buildSignupCompleteReply('Yuval', 'https://x/upgrade?phone=1');
+    expect(r).toMatch(/Grace/);
+    expect(r.toLowerCase()).toMatch(/glp-1 companion/);
+    expect(r.toLowerCase()).toMatch(/what should i eat/); // a concrete starter prompt
+    expect(r).toContain('https://x/upgrade?phone=1');
   });
 });

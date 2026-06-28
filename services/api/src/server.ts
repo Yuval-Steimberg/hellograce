@@ -161,6 +161,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       qualityStrict: env.QUALITY_GUARD_STRICT,
       geminiFirst: env.GEMINI_FIRST,
       directReplyMode: env.DIRECT_REPLY_MODE,
+      progressiveProfile: env.PROGRESSIVE_PROFILE_ENABLED,
     },
   });
   logger.info(

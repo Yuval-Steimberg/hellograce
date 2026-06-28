@@ -1,0 +1,130 @@
+import { describe, it, expect } from 'vitest';
+import {
+  PROGRESSIVE_SLOTS,
+  nextMissingProfileSlot,
+  relevantProfileSlot,
+  buildProfileGatherNote,
+  parseProfileReply,
+  isProfileSlotFilled,
+  getPendingProfileAsk,
+  setPendingProfileAsk,
+  clearPendingProfileAsk,
+  askedProfileRecently,
+  type RedisLike,
+} from './progressive-profile.js';
+
+// A user shape with everything missing by default.
+const empty = {
+  sex: null, current_weight: null, height_cm: null, age: null,
+  activity_level: null, dietary_restriction: null, dietary_pattern: null, goal_weight: null,
+} as Parameters<typeof nextMissingProfileSlot>[0];
+
+describe('nextMissingProfileSlot — priority order', () => {
+  it('walks sex → weight → height → age → activity → dietary → goal_weight', () => {
+    let u = { ...empty };
+    expect(nextMissingProfileSlot(u)).toBe('sex');
+    u = { ...u, sex: 'male' };
+    expect(nextMissingProfileSlot(u)).toBe('current_weight');
+    u = { ...u, current_weight: 180 };
+    expect(nextMissingProfileSlot(u)).toBe('height');
+    u = { ...u, height_cm: 180, age: 40, activity_level: 'light', dietary_restriction: 'vegan', goal_weight: 160 };
+    expect(nextMissingProfileSlot(u)).toBeNull();
+  });
+
+  it('dietary counts filled if either restriction OR pattern is set', () => {
+    expect(isProfileSlotFilled({ ...empty, dietary_pattern: 'vegan' }, 'dietary')).toBe(true);
+    expect(isProfileSlotFilled({ ...empty, dietary_restriction: 'kosher' }, 'dietary')).toBe(true);
+    expect(isProfileSlotFilled(empty, 'dietary')).toBe(false);
+  });
+});
+
+describe('relevantProfileSlot — ask the field that makes THIS answer accurate', () => {
+  it('a protein/calorie question pulls the first missing Mifflin input', () => {
+    expect(relevantProfileSlot(empty, 'how much protein should I eat?')).toBe('sex');
+    expect(relevantProfileSlot({ ...empty, sex: 'male' }, 'how many calories do I need?')).toBe('current_weight');
+  });
+  it('a food-idea question pulls dietary when unknown', () => {
+    expect(relevantProfileSlot(empty, 'what should I eat for dinner?')).toBe('dietary');
+    // already knows diet → not relevant
+    expect(relevantProfileSlot({ ...empty, dietary_pattern: 'vegan' }, 'any dinner ideas?')).toBeNull();
+  });
+  it('an unrelated message triggers nothing', () => {
+    expect(relevantProfileSlot(empty, 'good morning!')).toBeNull();
+  });
+  it('returns null once the relevant inputs are all known', () => {
+    const full = { ...empty, sex: 'male', current_weight: 180, height_cm: 180, age: 40, activity_level: 'light' };
+    expect(relevantProfileSlot(full, 'how much protein should I eat?')).toBeNull();
+  });
+});
+
+describe('buildProfileGatherNote', () => {
+  it('instructs ONE warm question at the end, with the reason, never stacked', () => {
+    const note = buildProfileGatherNote('current_weight');
+    expect(note).toMatch(/PROFILE GATHERING/);
+    expect(note).toMatch(/ONE/);
+    expect(note.toLowerCase()).toMatch(/weight/);
+    expect(note).toMatch(/never stack/i);
+  });
+});
+
+describe('parseProfileReply — defensive (short, direct answers only)', () => {
+  it('parses a short direct answer', () => {
+    expect(parseProfileReply('sex', 'male').fields).toEqual({ sex: 'male' });
+    expect(parseProfileReply('current_weight', '180 kg').fields).toEqual({ current_weight: 180 });
+    expect(parseProfileReply('height', "6'2").fields).toEqual({ height_cm: 188 });
+  });
+  it('REJECTS a long sentence that merely contains a number (no misparse)', () => {
+    // pending=current_weight, but the user moved on and logged food
+    expect(parseProfileReply('current_weight', 'I just had 90g of grilled chicken and some rice').fields).toBeNull();
+  });
+  it('returns null when the short reply still is not a valid value', () => {
+    expect(parseProfileReply('sex', 'idk').fields).toBeNull();
+  });
+  it('allows a slightly longer diet answer', () => {
+    expect(parseProfileReply('dietary', 'vegetarian, no nuts please').fields?.dietary_restriction).toContain('vegetarian');
+  });
+});
+
+// ── Redis-backed pending store (stubbed) ─────────────────────────────────────
+
+function makeRedis(): RedisLike & { store: Map<string, string> } {
+  const store = new Map<string, string>();
+  return {
+    store,
+    get: async (k) => store.get(k) ?? null,
+    set: async (k, v) => { store.set(k, v); return 'OK'; },
+    del: async (k) => { store.delete(k); return 1; },
+  };
+}
+
+describe('pending-ask Redis store', () => {
+  it('set → get → clear round-trips, and throttles by last-ask time', async () => {
+    const r = makeRedis();
+    const phone = '+15551112222';
+    const now = 1_000_000_000_000;
+    await setPendingProfileAsk(r, phone, 'sex', now);
+    expect(await getPendingProfileAsk(r, phone)).toBe('sex');
+    expect(await askedProfileRecently(r, phone, 20, now + 60_000)).toBe(true);          // 1 min later
+    expect(await askedProfileRecently(r, phone, 20, now + 21 * 3600 * 1000)).toBe(false); // 21h later
+    await clearPendingProfileAsk(r, phone);
+    expect(await getPendingProfileAsk(r, phone)).toBeNull();
+  });
+
+  it('no-ops safely when Redis is absent', async () => {
+    await setPendingProfileAsk(undefined, '+1', 'sex', 0);
+    expect(await getPendingProfileAsk(undefined, '+1')).toBeNull();
+    expect(await askedProfileRecently(undefined, '+1', 20, 0)).toBe(false);
+  });
+
+  it('ignores a corrupt pending value', async () => {
+    const r = makeRedis();
+    r.store.set('profile:ask:+1', 'not_a_slot');
+    expect(await getPendingProfileAsk(r, '+1')).toBeNull();
+  });
+});
+
+describe('PROGRESSIVE_SLOTS', () => {
+  it('covers exactly the accurate-target + food-rec fields', () => {
+    expect([...PROGRESSIVE_SLOTS]).toEqual(['sex', 'current_weight', 'height', 'age', 'activity', 'dietary', 'goal_weight']);
+  });
+});

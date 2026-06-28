@@ -108,8 +108,13 @@ describe('slot sequencing', () => {
     expect(nextSignupSlot(w, 'medication_frequency')).toBe('injection_day');
     expect(nextSignupSlot(w, 'injection_day')).toBe('timezone');
     expect(nextSignupSlot(w, 'timezone')).toBe('goals');
-    expect(nextSignupSlot(w, 'goals')).toBe('consent');
+    expect(nextSignupSlot(w, 'goals')).toBe('wake_sleep');
+    expect(nextSignupSlot(w, 'wake_sleep')).toBe('consent');
     expect(nextSignupSlot(w, 'consent')).toBeNull();
+  });
+
+  it('wake_sleep is in the short core (reminders fire at the right local hours day one)', () => {
+    expect(signupSequence({ medication_frequency: 'weekly' })).toContain('wake_sleep');
   });
 
   it('the signup sequence collects timezone (so reminders use local time)', () => {
@@ -164,6 +169,54 @@ describe('parseSlotAnswer', () => {
   });
   it('returns not-ok on unparseable required input', () => {
     expect(parseSlotAnswer('medication', 'idk lol').ok).toBe(false);
+  });
+
+  it('parses wake_sleep into wake + sleep times (24h)', () => {
+    expect(parseSlotAnswer('wake_sleep', '7 am go to bed 10 pm go to sleep'))
+      .toEqual({ ok: true, fields: { wake_time: '07:00', sleep_time: '22:00' } });
+    expect(parseSlotAnswer('wake_sleep', 'up at 6:30, bed by 23:00'))
+      .toEqual({ ok: true, fields: { wake_time: '06:30', sleep_time: '23:00' } });
+    expect(parseSlotAnswer('wake_sleep', 'whenever really').ok).toBe(false);
+    // it's skippable, so a genuine "no idea" never traps onboarding
+    expect(parseSlotAnswer('wake_sleep', 'no idea')).toEqual({ ok: true, skipped: true });
+  });
+
+  it('parses biological sex', () => {
+    expect(parseSlotAnswer('sex', 'male')).toEqual({ ok: true, fields: { sex: 'male' } });
+    expect(parseSlotAnswer('sex', 'female')).toEqual({ ok: true, fields: { sex: 'female' } });
+    expect(parseSlotAnswer('sex', 'non-binary')).toEqual({ ok: true, fields: { sex: 'other' } });
+    expect(parseSlotAnswer('sex', 'banana').ok).toBe(false);
+  });
+
+  it('parses height from cm and feet/inches', () => {
+    expect(parseSlotAnswer('height', '190cm')).toEqual({ ok: true, fields: { height_cm: 190 } });
+    expect(parseSlotAnswer('height', '190')).toEqual({ ok: true, fields: { height_cm: 190 } });
+    expect(parseSlotAnswer('height', "6'2")).toEqual({ ok: true, fields: { height_cm: 188 } });
+    expect(parseSlotAnswer('height', '5 foot 11')).toEqual({ ok: true, fields: { height_cm: 180 } });
+    expect(parseSlotAnswer('height', 'tall').ok).toBe(false);
+  });
+
+  it('parses age from a number or a date of birth', () => {
+    expect(parseSlotAnswer('age', '33')).toEqual({ ok: true, fields: { age: 33 } });
+    const r = parseSlotAnswer('age', '24/02/1993');
+    expect(r.ok).toBe(true);
+    expect(typeof r.fields?.age).toBe('number');
+    expect(r.fields!.age!).toBeGreaterThan(25);
+    expect(parseSlotAnswer('age', 'old').ok).toBe(false);
+  });
+
+  it('parses activity level into a bucket', () => {
+    expect(parseSlotAnswer('activity', 'mostly at a desk').fields?.activity_level).toBe('sedentary');
+    expect(parseSlotAnswer('activity', 'low').fields?.activity_level).toBe('sedentary');
+    expect(parseSlotAnswer('activity', "i'm pretty active, i run").fields?.activity_level).toBe('moderate');
+  });
+
+  it('parses diet → restriction (+ enum) and clears on "none"', () => {
+    const vegan = parseSlotAnswer('dietary', 'vegan');
+    expect(vegan.fields?.dietary_pattern).toBe('vegan');
+    expect(vegan.fields?.dietary_restriction).toBe('vegan');
+    expect(parseSlotAnswer('dietary', 'no')).toEqual({ ok: true, fields: { dietary_restriction: null } });
+    expect(parseSlotAnswer('dietary', 'allergic to peanuts').fields?.dietary_restriction).toContain('peanut');
   });
 });
 

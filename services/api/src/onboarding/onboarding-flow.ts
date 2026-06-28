@@ -48,9 +48,17 @@ export type SlotId =
   | 'medication_time'
   | 'timezone'
   | 'goals'
+  | 'wake_sleep'
   | 'consent'
   | 'goal_weight'
-  | 'current_weight';
+  | 'current_weight'
+  // Progressive (gathered along the way after the short signup core) — power
+  // accurate protein/calorie targets + food recommendations.
+  | 'sex'
+  | 'height'
+  | 'age'
+  | 'activity'
+  | 'dietary';
 
 /** Minimal user shape the flow reads/writes — keeps it decoupled + testable. */
 type FlowUser = Pick<
@@ -66,6 +74,14 @@ type FlowUser = Pick<
   | 'sms_consent'
   | 'goal_weight'
   | 'current_weight'
+  | 'wake_time'
+  | 'sleep_time'
+  | 'sex'
+  | 'height_cm'
+  | 'age'
+  | 'activity_level'
+  | 'dietary_restriction'
+  | 'dietary_pattern'
   | 'trial_start'
   | 'onboarding_state'
   | 'onboarding_last_slot'
@@ -87,7 +103,10 @@ function scheduleSlot(user: Pick<FlowUser, 'medication_frequency'>): SlotId {
 export function signupSequence(user: Pick<FlowUser, 'medication_frequency'>): SlotId[] {
   // 'timezone' comes right after the schedule slot so reminders + daily resets
   // run on the user's REAL local time from the first scheduled message.
-  return ['first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'timezone', 'goals', 'consent'];
+  // 'wake_sleep' is in the SHORT core (before consent) so morning/evening
+  // reminders fire at the right local hours from day one. Everything else
+  // (weight, height, sex, age, activity, diet) is gathered along the way.
+  return ['first_name', 'medication', 'medication_frequency', scheduleSlot(user), 'timezone', 'goals', 'wake_sleep', 'consent'];
 }
 
 /** Next signup slot after `lastSlot` (null → the first slot). Returns null when
@@ -118,7 +137,12 @@ const SKIP_RE = /\b(skip|later|not now|prefer not|rather not|pass|dunno|don'?t k
 /** Optional slots the user may skip; required signup slots must be answered.
  *  timezone is skippable so a hard-to-parse answer never traps onboarding — it
  *  falls back to the temporary default and can be set later in Settings. */
-const SKIPPABLE: ReadonlySet<SlotId> = new Set(['first_name', 'timezone', 'goals', 'goal_weight', 'current_weight']);
+const SKIPPABLE: ReadonlySet<SlotId> = new Set([
+  'first_name', 'timezone', 'goals', 'wake_sleep', 'goal_weight', 'current_weight',
+  // Progressive fields are always optional — a user can skip any of them and
+  // Grace falls back to safe defaults (e.g. an 80g protein target).
+  'sex', 'height', 'age', 'activity', 'dietary',
+]);
 
 const YES_RE = /\b(yes|yeah|yep|yup|sure|ok|okay|fine|sounds good|go ahead|please do|absolutely|of course|y)\b/i;
 const NO_RE = /\b(no|nope|nah|don'?t|do not|stop|rather not|n)\b/i;
@@ -163,6 +187,97 @@ function parseConsent(text: string): boolean | null {
   if (NO_RE.test(text) && !YES_RE.test(text)) return false;
   if (YES_RE.test(text)) return true;
   return null;
+}
+
+// ── Progressive-field parsers (strict — these run on free chat replies) ───────
+
+/** A single clock time → "HH:MM" (24h). Accepts "7am", "7 am", "7", "07:00",
+ *  "10pm", "22:00", "noon", "midnight". Returns null when unparseable. */
+export function parseClockTime(text: string): string | null {
+  const t = text.toLowerCase().trim();
+  if (/\bnoon\b/.test(t)) return '12:00';
+  if (/\bmidnight\b/.test(t)) return '00:00';
+  const m = t.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  if (!m) return null;
+  let h = parseInt(m[1]!, 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const ap = m[3];
+  if (h > 23 || min > 59) return null;
+  if (ap === 'pm' && h < 12) h += 12;
+  if (ap === 'am' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/** "7am ... 10pm" → { wake_time, sleep_time }. First time = wake, second = sleep. */
+function parseWakeSleep(text: string): Partial<GraceUser> | null {
+  const matches = text.toLowerCase().match(/\b(?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/g) ?? [];
+  const times = matches.map((m) => parseClockTime(m)).filter((t): t is string => !!t);
+  if (times.length === 0) return null;
+  const fields: Partial<GraceUser> = { wake_time: times[0]! };
+  if (times[1]) fields.sleep_time = times[1];
+  return fields;
+}
+
+function parseSex(text: string): 'male' | 'female' | 'other' | null {
+  const t = text.toLowerCase();
+  if (/\b(female|woman|girl|f)\b/.test(t)) return 'female';
+  if (/\b(male|man|boy|m)\b/.test(t)) return 'male';
+  if (/\b(other|non-?binary|nb|prefer not|intersex)\b/.test(t)) return 'other';
+  return null;
+}
+
+/** Height → cm. Accepts "190cm", "190", "6'2", "6 ft 2", "5'11\"", "5 foot 11". */
+export function parseHeight(text: string): number | null {
+  const t = text.toLowerCase().trim();
+  // feet'inches: 6'2, 6' 2", 6 ft 2, 5 foot 11
+  const ft = t.match(/(\d)\s*(?:'|’|ft|foot|feet)\s*(\d{1,2})?/);
+  if (ft) {
+    const feet = parseInt(ft[1]!, 10);
+    const inches = ft[2] ? parseInt(ft[2], 10) : 0;
+    const cm = Math.round(feet * 30.48 + inches * 2.54);
+    return cm >= 80 && cm <= 250 ? cm : null;
+  }
+  const m = t.match(/(\d{2,3})\s*(?:cm)?/);
+  if (!m) return null;
+  const cm = parseInt(m[1]!, 10);
+  return cm >= 80 && cm <= 250 ? cm : null;
+}
+
+/** Age from a plain number (13–120) or a date of birth (DD/MM/YYYY, YYYY-MM-DD,
+ *  or a bare 4-digit birth year). Returns whole years. */
+export function parseAge(text: string, now = new Date()): number | null {
+  const t = text.trim();
+  const year = t.match(/\b(19\d{2}|20[0-2]\d)\b/);
+  if (year) {
+    const age = now.getFullYear() - parseInt(year[1]!, 10);
+    return age >= 13 && age <= 120 ? age : null;
+  }
+  const m = t.match(/\b(\d{1,3})\b/);
+  if (!m) return null;
+  const n = parseInt(m[1]!, 10);
+  return n >= 13 && n <= 120 ? n : null;
+}
+
+function parseActivity(text: string): string | null {
+  const t = text.toLowerCase();
+  if (/\b(very active|athlete|intense|gym (daily|every)|heavy)\b/.test(t)) return 'very_active';
+  if (/\b(active|on (my|the) (feet|move)|moderate|workout|exercise|run|lift)\b/.test(t)) return 'moderate';
+  if (/\b(lightly active|light|some walking|walk)\b/.test(t)) return 'light';
+  if (/\b(sedentary|desk|sitting|low|not (very|much)|barely|inactive)\b/.test(t)) return 'sedentary';
+  return null;
+}
+
+/** Diet/allergies → dietary_restriction (free text) + dietary_pattern enum when
+ *  it's one of the supported plant-based patterns. "no/none" → cleared/skipped. */
+function parseDiet(text: string): Partial<GraceUser> | null {
+  const t = text.toLowerCase().trim();
+  if (/^(no|none|nope|nah|not really|n\/a|nothing)\b/.test(t)) return { dietary_restriction: null };
+  const fields: Partial<GraceUser> = {};
+  if (/\bvegan\b/.test(t)) fields.dietary_pattern = 'vegan';
+  else if (/\bvegetarian\b/.test(t)) fields.dietary_pattern = 'vegetarian';
+  else if (/\bpescatarian\b/.test(t)) fields.dietary_pattern = 'pescatarian';
+  fields.dietary_restriction = text.trim().slice(0, 120);
+  return fields;
 }
 
 export interface ParsedAnswer {
@@ -223,6 +338,30 @@ export function parseSlotAnswer(slot: SlotId, text: string): ParsedAnswer {
       const w = parseWeight(t);
       return w ? { ok: true, fields: { current_weight: w } } : { ok: false };
     }
+    case 'wake_sleep': {
+      const fields = parseWakeSleep(t);
+      return fields ? { ok: true, fields } : { ok: false };
+    }
+    case 'sex': {
+      const s = parseSex(t);
+      return s ? { ok: true, fields: { sex: s } } : { ok: false };
+    }
+    case 'height': {
+      const h = parseHeight(t);
+      return h ? { ok: true, fields: { height_cm: h } } : { ok: false };
+    }
+    case 'age': {
+      const a = parseAge(t);
+      return a ? { ok: true, fields: { age: a } } : { ok: false };
+    }
+    case 'activity': {
+      const a = parseActivity(t);
+      return a ? { ok: true, fields: { activity_level: a } } : { ok: false };
+    }
+    case 'dietary': {
+      const fields = parseDiet(t);
+      return fields ? { ok: true, fields } : { ok: false };
+    }
     default:
       return { ok: false };
   }
@@ -239,8 +378,14 @@ const SLOT_BRIEF: Record<SlotId, string> = {
   timezone: 'their timezone — ask for their city or region, so check-ins and daily totals use their local time',
   goals: 'what they most want help with on GLP-1 (protein, hydration, side effects, weight, habits)',
   consent: 'a yes/no OK to text them daily check-ins',
+  wake_sleep: 'what time they usually wake up and head to bed, so check-ins land at the right local hours',
   goal_weight: 'their goal weight, if they have one in mind (it is optional)',
   current_weight: 'their current weight, if they are comfortable sharing (it is optional)',
+  sex: 'their biological sex (male/female/other) — only to get hydration and protein needs right',
+  height: 'their height (cm or feet/inches) — to make calorie and protein targets accurate',
+  age: 'their age — to make daily targets accurate',
+  activity: 'how active they are day to day (mostly sitting, lightly active, or on the move)',
+  dietary: 'whether they follow any diet or have foods they avoid or are allergic to',
 };
 
 function fallbackQuestion(slot: SlotId, name: string | null, reask: boolean): string {
@@ -254,8 +399,14 @@ function fallbackQuestion(slot: SlotId, name: string | null, reask: boolean): st
     timezone: [`What timezone are you in? Just your city or region — it keeps your check-ins and daily totals on your local time.`, `Where are you based? (city or region) That way I send check-ins at the right time for you.`],
     goals: [`What would you most like my help with — protein, hydration, side effects, staying on track?`, `What matters most to you right now on this journey?`],
     consent: [`Is it ok if I check in with you by text now and then? (yes/no)`, `Want me to text you little check-ins? Just reply yes or no.`],
+    wake_sleep: [`What time do you usually wake up, and when do you head to bed?`, `When's your usual wake-up and bedtime? Helps me check in at the right times.`],
     goal_weight: [`Do you have a goal weight in mind? (totally optional)`, `Any goal weight you're working toward? You can skip this.`],
     current_weight: [`If you're comfortable, what's your current weight? (optional)`, `Mind sharing your current weight? Feel free to skip.`],
+    sex: [`Quick one so I get your protein and hydration needs right — what's your biological sex?`, `To dial in your targets, can I ask your biological sex? (male/female/other)`],
+    height: [`How tall are you? It helps me set accurate targets.`, `What's your height? (cm or ft/in) — just to keep your numbers accurate.`],
+    age: [`How old are you? It helps me get your daily targets right.`, `Mind sharing your age? It makes your targets more accurate.`],
+    activity: [`How active are you day to day — mostly sitting, lightly active, or on the move?`, `Would you say you're mostly at a desk, or pretty active during the day?`],
+    dietary: [`Do you follow any particular diet, or have foods you avoid or are allergic to?`, `Any diet you stick to, or foods I should keep out of suggestions?`],
   };
   const opts = variants[slot];
   const base = opts[reask ? Math.min(1, opts.length - 1) : Math.floor(Math.random() * opts.length)]!;

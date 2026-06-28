@@ -84,6 +84,15 @@ const EnvSchema = z.object({
     .optional()
     .transform((v) => v === 'true' || v === '1'),
 
+  /** Progressive profiling: after the short onboarding core, Grace gathers the
+   *  rest of the profile (sex, weight, height, age, activity, diet) "along the
+   *  way" — one gentle question woven into normal chat, relevance-first. Default
+   *  ON; instant revert with `fly secrets set PROGRESSIVE_PROFILE_ENABLED=false`. */
+  PROGRESSIVE_PROFILE_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v !== 'false' && v !== '0'),
+
   ADMIN_TOKEN: z.string().min(16).optional(),
   /** Phone number (E.164) to receive RLHF optimizer run reports via WhatsApp. */
   ADMIN_PHONE: z.string().optional(),

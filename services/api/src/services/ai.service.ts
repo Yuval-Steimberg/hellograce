@@ -473,6 +473,16 @@ import {
   buildReminderChangeReply,
 } from './reminder-service.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
+import {
+  relevantProfileSlot,
+  nextMissingProfileSlot,
+  buildProfileGatherNote,
+  parseProfileReply,
+  getPendingProfileAsk,
+  setPendingProfileAsk,
+  clearPendingProfileAsk,
+  askedProfileRecently,
+} from '../onboarding/progressive-profile.js';
 import { detectHypoglycemiaWarning, mightBeHypoSymptom, isWhatShouldIDo } from '../safety/hypoglycemia-warning.js';
 import {
   detectSummaryRequest,
@@ -581,6 +591,12 @@ export interface AIServiceDeps {
      *  tests keep the orchestrator path; server.ts passes env.DIRECT_REPLY_MODE
      *  (default true) for production. */
     directReplyMode?: boolean;
+    /** PROGRESSIVE PROFILING (2026-06-28). When true, after the short onboarding
+     *  core Grace gathers the rest of the profile (sex, weight, height, age,
+     *  activity, diet) one gentle question at a time, woven into normal chat
+     *  (relevance-first). Defaults false here so unit tests are unaffected;
+     *  server.ts passes env.PROGRESSIVE_PROFILE_ENABLED (default true). */
+    progressiveProfile?: boolean;
   };
   /** Production issue capture — Layer 4 of defense-in-depth. Every regen
    *  fire and safe-fallback fire is captured (fire-and-forget) so we can
@@ -621,6 +637,21 @@ export function reconstructFoodFromClarification(lastGraceMsg: string, reply: st
   return isQuantity ? `${r} of ${food}` : `${r} ${food}`;
 }
 
+// Progressive profiling: how long to wait before another *proactive* (non-
+// relevance) profile question, so it never feels like a survey.
+const PROFILE_GATHER_COOLDOWN_HOURS = 20;
+// A proactive gather only piggybacks on a NEUTRAL turn — never a food log,
+// weight, symptom, dosing, or emotional message (those carry digits/cue words).
+// This also protects the next-turn answer parse: we won't have a stale pending
+// ask sitting on a "had 90g chicken" turn that could mis-store as a weight.
+const PROFILE_GATHER_UNSAFE_RE =
+  /\d|\b(ate|eat|eating|eaten|had|have|drank|drink|log|logged|protein|calorie|calories|weigh|weight|kg|lbs?|pounds?|nause\w*|sick|vomit\w*|dizzy|pain|hurts?|headache|tired|fatigue|shot|inject\w*|dose|sad|depress\w*|anxious|anxiety|crying|hopeless|stop|cancel|unsubscribe)\b/i;
+function gatherSafeTurn(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  return !PROFILE_GATHER_UNSAFE_RE.test(t);
+}
+
 export class AIService {
   private systemPrompt: string | undefined;
 
@@ -640,6 +671,10 @@ export class AIService {
    *  (unit tests keep the orchestrator); production wires env.DIRECT_REPLY_MODE. */
   private get directReplyMode(): boolean {
     return this.deps.guards?.directReplyMode ?? false;
+  }
+
+  private get progressiveProfile(): boolean {
+    return this.deps.guards?.progressiveProfile ?? false;
   }
 
   /** The underlying LLM provider, exposed for adjacent flows (e.g. SMS
@@ -1702,6 +1737,17 @@ export class AIService {
             latencyMs: totalMs,
           };
         }
+      }
+    }
+
+    // Progressive profiling — gather the rest of the profile "along the way".
+    // (1) persist an answer to a question we asked last turn, (2) maybe weave ONE
+    // gentle question into this reply. Best-effort; never blocks the reply.
+    if (this.progressiveProfile && this.directReplyMode) {
+      try {
+        directContextNote = await this.applyProgressiveProfiling(input, directContextNote);
+      } catch (err) {
+        this.deps.logger.warn({ err: (err as Error).message, userId: input.userId }, 'progressive_profile.error');
       }
     }
 
@@ -2933,6 +2979,58 @@ CRITICAL RULES:
       latencyMs: Date.now() - t0,
       usedSafeFallback,
     };
+  }
+
+  /**
+   * Progressive profiling (see onboarding/progressive-profile.ts). Two steps:
+   *   1. If we asked a profile question last turn, parse this reply and persist
+   *      the value (then clear the pending ask either way — never trap the user).
+   *   2. Maybe weave ONE gentle question into THIS reply — relevance-first
+   *      (the user asked something a missing field makes accurate), else a
+   *      throttled proactive ask on a neutral turn. Returns the (possibly
+   *      augmented) directContextNote so the single Gemini call phrases it.
+   */
+  private async applyProgressiveProfiling(input: InboundMessage, directContextNote: string): Promise<string> {
+    const redis = this.deps.redis;
+    const phone = input.userId;
+
+    // 1) Resolve a pending answer from a question we asked last turn.
+    const pending = await getPendingProfileAsk(redis, phone);
+    if (pending) {
+      const { fields } = parseProfileReply(pending, input.text);
+      if (fields && Object.keys(fields).length > 0) {
+        await this.deps.users.update(phone, fields).catch(() => {});
+        this.deps.logger.info({ userId: phone, slot: pending, captured: Object.keys(fields) }, 'progressive_profile.captured');
+      }
+      await clearPendingProfileAsk(redis, phone);
+    }
+
+    // Don't stack a profile question onto another intercept's note, a media
+    // turn, or an empty message.
+    if (directContextNote || input.media.length > 0 || !input.text.trim()) return directContextNote;
+
+    const user = await this.deps.users.getById(phone).catch(() => null);
+    if (!user) return directContextNote;
+
+    const nowMs = Date.now();
+
+    // 2a) Relevance-first: the user asked something a missing field makes
+    //     accurate — ask for THAT field in context so the answer is right.
+    const relevant = relevantProfileSlot(user, input.text);
+    if (relevant) {
+      await setPendingProfileAsk(redis, phone, relevant, nowMs);
+      this.deps.logger.info({ userId: phone, slot: relevant, trigger: 'relevance' }, 'progressive_profile.ask');
+      return directContextNote + buildProfileGatherNote(relevant);
+    }
+
+    // 2b) Throttled proactive: only on a neutral turn, and not asked recently.
+    if (!gatherSafeTurn(input.text)) return directContextNote;
+    if (await askedProfileRecently(redis, phone, PROFILE_GATHER_COOLDOWN_HOURS, nowMs)) return directContextNote;
+    const next = nextMissingProfileSlot(user);
+    if (!next) return directContextNote;
+    await setPendingProfileAsk(redis, phone, next, nowMs);
+    this.deps.logger.info({ userId: phone, slot: next, trigger: 'proactive' }, 'progressive_profile.ask');
+    return directContextNote + buildProfileGatherNote(next);
   }
 
   // Full message processing flow: (1) parallel I/O (user profile, history, media

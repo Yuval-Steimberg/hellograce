@@ -35,7 +35,7 @@ const STRUGGLES = [
 ];
 
 const ProblemSection = () => (
-  <section className="py-20 md:py-32 px-6 md:px-14 max-w-[1320px] mx-auto">
+  <section className="pt-10 pb-20 md:py-32 px-6 md:px-14 max-w-[1320px] mx-auto">
     <div className="max-w-2xl mb-12 md:mb-16">
       <span className="grace-chip mb-5">The hard part</span>
       <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight text-foreground leading-[1.08] mb-5">

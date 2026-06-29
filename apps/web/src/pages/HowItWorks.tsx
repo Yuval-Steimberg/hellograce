@@ -10,7 +10,7 @@ const ConversationShowcase = lazy(() => import("@/components/landing/Conversatio
 const HowItWorks = () => (
   <MarketingLayout>
     <SEOHead canonical="/how-it-works" />
-    <div className="pt-20 lg:pt-28">
+    <div className="lg:pt-28">
       <ProblemSection />
       <SolutionSection />
       <Suspense fallback={null}>

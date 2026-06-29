@@ -45,7 +45,7 @@ const FAQS = [
 ];
 
 const FAQSection = () => (
-  <section id="faq" className="py-20 md:py-32 px-6 md:px-10">
+  <section id="faq" className="pt-10 pb-20 md:py-32 px-6 md:px-10">
     <div className="max-w-2xl mx-auto">
       <div className="text-center mb-12 md:mb-16">
         <span className="grace-chip mb-5">Questions</span>

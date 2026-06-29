@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ArrowUp } from "lucide-react";
 import { startWithGrace } from "@/lib/chatLinks";
-import Logo from "@/components/Logo";
 
 /**
  * Mobile hero — a real iMessage thread that plays out message after message,
@@ -24,27 +23,27 @@ const SCENES: Msg[][] = [
     { from: "user", text: "pretty good actually!" },
     { from: "grace", text: "Love that. Had anything yet?" },
     { from: "user", text: "just 2 eggs + greek yogurt" },
-    { from: "grace", text: "32g protein before 9am 💪 you're already ahead today." },
+    { from: "grace", text: "32g protein before 9am — you're already ahead today." },
     { from: "user", text: "ohh nice didn't realize" },
-    { from: "grace", text: "Yep! 48 to go. I'll nudge you at lunch so it's easy 🙌" },
+    { from: "grace", text: "Yep, 48 to go. I'll nudge you at lunch so it's easy." },
   ],
   [
-    { from: "user", text: "feeling queasy after my shot 😣" },
-    { from: "grace", text: "Aw, I'm sorry 💛 super common the first day or two." },
+    { from: "user", text: "feeling queasy after my shot" },
+    { from: "grace", text: "Aw, I'm sorry. Super common the first day or two." },
     { from: "user", text: "is it normal to feel this off?" },
     { from: "grace", text: "Totally. Your body's still adjusting to the dose." },
     { from: "grace", text: "Small plain bites + ginger tea help a ton. Skip the greasy stuff today." },
-    { from: "user", text: "ok i'll try that 🙏" },
+    { from: "user", text: "ok i'll try that" },
     { from: "grace", text: "Good. I'll check on you tonight to make sure it eased up." },
   ],
   [
-    { from: "user", text: "i caved and had ice cream at 11pm 🙈" },
-    { from: "grace", text: "Hey — one scoop isn't a setback, it's a Tuesday 😄" },
+    { from: "user", text: "i caved and had ice cream at 11pm" },
+    { from: "grace", text: "Hey — one scoop isn't a setback, it's a Tuesday." },
     { from: "user", text: "i feel kinda guilty though" },
-    { from: "grace", text: "Don't 💛 one treat doesn't undo your week." },
+    { from: "grace", text: "Don't. One treat doesn't undo your week." },
     { from: "grace", text: "You logged 6 days straight and hit protein every time. That's the real story." },
     { from: "user", text: "true. thanks for not judging" },
-    { from: "grace", text: "Never. Fresh start tomorrow, I've got you 🤍" },
+    { from: "grace", text: "Never. Fresh start tomorrow, I've got you." },
   ],
   [
     { from: "grace", text: "It's injection day 💉 want me to walk you through it?" },
@@ -52,16 +51,16 @@ const SCENES: Msg[][] = [
     { from: "grace", text: "Totally normal. Let's go slow." },
     { from: "grace", text: "Pen at room temp, pick a fresh spot, rotate from last week." },
     { from: "user", text: "did it! that wasn't bad" },
-    { from: "grace", text: "You've done this 7 times now 🙌 want a reminder for next week?" },
-    { from: "user", text: "yes 😊" },
-    { from: "grace", text: "Set for next Sunday morning. Proud of you 💛" },
+    { from: "grace", text: "You've done this 7 times now. Want a reminder for next week?" },
+    { from: "user", text: "yes please" },
+    { from: "grace", text: "Set for next Sunday morning. Proud of you." },
   ],
   [
     { from: "user", text: "down 3 lbs this week!! 🎉" },
-    { from: "grace", text: "YES!! That's huge 🎉 week 6 and you're flying." },
+    { from: "grace", text: "YES! That's huge — week 6 and you're flying." },
     { from: "user", text: "i honestly didn't think i could" },
     { from: "grace", text: "But you did — small consistent choices, every day." },
-    { from: "grace", text: "Let's keep protein up to protect that muscle while the fat comes off 💪" },
+    { from: "grace", text: "Let's keep protein up to protect that muscle while the fat comes off." },
     { from: "user", text: "what's a good target?" },
     { from: "grace", text: "Around 100g a day for you. I'll help you get there without thinking about it." },
   ],
@@ -69,10 +68,10 @@ const SCENES: Msg[][] = [
     { from: "user", text: "what should i eat tonight?" },
     { from: "grace", text: "Craving anything in particular?" },
     { from: "user", text: "not sure, something light" },
-    { from: "grace", text: "You love Mediterranean 🫒 a salmon + chickpea bowl is ~38g protein and easy on the stomach." },
+    { from: "grace", text: "You love Mediterranean — a salmon + chickpea bowl is ~38g protein and easy on the stomach." },
     { from: "user", text: "ooh that sounds perfect" },
     { from: "grace", text: "Want me to log it once you've had it?" },
-    { from: "user", text: "yes please, thank you 🥹" },
+    { from: "user", text: "yes please, thank you" },
   ],
 ];
 
@@ -136,9 +135,8 @@ const MobileHero = () => {
   return (
     <section className="lg:hidden flex h-[calc(100svh-64px)] flex-col bg-white">
       {/* iMessage-style contact header */}
-      <div className="flex flex-col items-center gap-1.5 border-b border-black/5 px-4 pb-3 pt-1">
-        <Logo size="default" markOnly />
-        <div className="text-[17px] font-semibold text-[#111]">Grace</div>
+      <div className="flex flex-col items-center gap-1 border-b border-black/5 px-4 pb-3 pt-1">
+        <div className="text-[20px] font-semibold text-[#111]">Grace</div>
         <div className="text-[12px] text-[#8e8e93]">GLP-1 companion</div>
       </div>
 
@@ -193,7 +191,7 @@ const MobileHero = () => {
           onClick={() => startWithGrace(() => navigate("/onboarding"))}
           className="flex w-full items-center justify-between rounded-full border border-black/10 bg-white py-2 pl-5 pr-2 text-left shadow-sm"
         >
-          <span className="text-[16px] font-medium text-[#111]">Hi Grace, I'm new to GLP-1 👋</span>
+          <span className="text-[16px] font-medium text-[#111]">Let's get started</span>
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2C7DFA] text-white">
             <ArrowUp className="h-4 w-4" strokeWidth={2.6} />
           </span>

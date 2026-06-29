@@ -89,8 +89,7 @@ const DesktopLanding = () => {
       {/* NAV */}
       <header style={{ position: "sticky", top: 0, zIndex: 50, background: "rgba(246,241,232,.82)", backdropFilter: "blur(14px)", borderBottom: "1px solid rgba(226,216,200,.7)" }}>
         <nav style={{ width: "min(1180px,92vw)", marginInline: "auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, padding: "16px 0" }}>
-          <a href="#top" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
-            <span style={{ width: 30, height: 30, borderRadius: "50%", background: ACCENT, display: "flex", alignItems: "center", justifyContent: "center", color: "#FBF6EE", fontFamily: SERIF, fontSize: 18, fontWeight: 500 }}>G</span>
+          <a href="#top" style={{ display: "flex", alignItems: "center", textDecoration: "none" }}>
             <span style={{ fontFamily: SERIF, fontSize: 24, fontWeight: 500, letterSpacing: "-.3px", color: "#2B2722" }}>Grace</span>
           </a>
           <div style={{ display: "flex", alignItems: "center", gap: 30 }}>
@@ -369,8 +368,7 @@ const DesktopLanding = () => {
         <div style={{ width: "min(1180px,92vw)", marginInline: "auto", padding: "clamp(48px,6vw,72px) 0 40px" }}>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 40, justifyContent: "space-between" }}>
             <div style={{ maxWidth: 320 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ width: 30, height: 30, borderRadius: "50%", background: ACCENT, display: "flex", alignItems: "center", justifyContent: "center", color: "#FBF6EE", fontFamily: SERIF, fontSize: 18 }}>G</span>
+              <div style={{ display: "flex", alignItems: "center" }}>
                 <span style={{ fontFamily: SERIF, fontSize: 24, color: "#FBF6EE" }}>Grace</span>
               </div>
               <p style={{ fontSize: "14.5px", lineHeight: 1.65, margin: "18px 0 0", color: "#A89E8F" }}>Your personal GLP-1 companion — helping you stay consistent, feel supported, and make daily progress without doing it alone.</p>

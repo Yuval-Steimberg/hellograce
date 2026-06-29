@@ -5,21 +5,21 @@ import { Check } from "lucide-react";
 import { startWithGrace } from "@/lib/chatLinks";
 
 /**
- * Mobile hero — Tomo-style intro flow. Grace introduces herself in a few chat
- * bubbles, asks one warm question, then shows selectable "which sounds like you"
- * option bubbles, and a "Get Started" button that's part of the same flow (the
- * natural next step in the conversation). Single screen, no scroll.
+ * Mobile hero — a chat-style intro flow. Grace introduces herself in a few
+ * bubbles, asks one warm question, then shows selectable option bubbles and a
+ * "Start with Grace" button that's part of the same flow (the natural next step
+ * in the conversation). Original Grace copy + brand. Single screen, no scroll.
  */
 
 const INTRO = [
-  "Hey! I'm Grace 🌸",
-  "Let's get you started",
-  "Which sounds more like you?",
+  "Hi, I'm Grace 🌸",
+  "I'm your GLP-1 companion — here to help with food, reminders, and the hard days.",
+  "Where are you in your journey?",
 ];
 
 const OPTIONS = [
-  "I just started GLP-1",
-  "I've been on it a while",
+  "Just started my GLP-1",
+  "A few months in",
 ];
 
 const TYPING = 1100;
@@ -154,7 +154,7 @@ const MobileHero = () => {
               onClick={start}
               className="w-full rounded-full bg-[#16110D] py-4 text-center text-[18px] font-semibold text-white shadow-sm active:scale-[0.99] transition-transform"
             >
-              Get Started
+              Start with Grace
             </button>
 
             <div className="mt-4 flex items-center justify-center gap-3">

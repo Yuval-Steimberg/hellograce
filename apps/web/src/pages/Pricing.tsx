@@ -8,7 +8,7 @@ const TrustSafety = lazy(() => import("@/components/landing/TrustSafety"));
 const Pricing = () => (
   <MarketingLayout>
     <SEOHead canonical="/pricing" />
-    <div className="pt-20 lg:pt-28">
+    <div className="lg:pt-28">
       <PricingSection />
       <Suspense fallback={null}>
         <TrustSafety />

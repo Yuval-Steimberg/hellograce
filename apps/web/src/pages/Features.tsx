@@ -9,7 +9,7 @@ const TestimonialsSection = lazy(() => import("@/components/landing/Testimonials
 const Features = () => (
   <MarketingLayout>
     <SEOHead canonical="/features" />
-    <div className="pt-20 lg:pt-28">
+    <div className="lg:pt-28">
       <FeatureGrid />
       <Suspense fallback={null}>
         <FeatureSpread />

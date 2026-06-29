@@ -54,7 +54,7 @@ const FEATURES = [
 ];
 
 const FeatureGrid = () => (
-  <section id="features" className="py-20 md:py-32 px-6 md:px-14 max-w-[1320px] mx-auto">
+  <section id="features" className="pt-10 pb-20 md:py-32 px-6 md:px-14 max-w-[1320px] mx-auto">
     <div className="max-w-2xl mx-auto text-center mb-12 md:mb-16">
       <span className="grace-chip mb-5">Everything in one chat</span>
       <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight text-foreground leading-[1.08] mb-5">

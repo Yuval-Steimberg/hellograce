@@ -16,7 +16,7 @@ const INCLUDED = [
 const PricingSection = () => {
   const navigate = useNavigate();
   return (
-    <section id="pricing" className="py-20 md:py-32 px-6 md:px-14 max-w-[1320px] mx-auto">
+    <section id="pricing" className="pt-10 pb-20 md:py-32 px-6 md:px-14 max-w-[1320px] mx-auto">
       <div className="max-w-2xl mx-auto text-center mb-12 md:mb-14">
         <span className="grace-chip mb-5">Simple pricing</span>
         <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight text-foreground leading-[1.08] mb-5">

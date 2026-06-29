@@ -6,32 +6,59 @@ import { startWithGrace } from "@/lib/chatLinks";
 import Logo from "@/components/Logo";
 
 /**
- * Mobile hero — a real iMessage thread that plays out message after message.
- * White background (no color), grey incoming + blue outgoing bubbles, a typing
- * indicator before Grace replies, and an iMessage-style input bar that doubles
- * as the Start CTA. Single screen, no scroll.
+ * Mobile hero — a real iMessage thread that plays out message after message,
+ * cycling through several little scenes so you feel the different ways Grace
+ * shows up: food wins, rough days, no-judgment moments, injection-day nerves,
+ * and milestones. White background (no color), grey incoming + blue outgoing
+ * bubbles, a typing indicator before Grace replies, and an iMessage-style input
+ * bar that doubles as the Start CTA. Single screen, no scroll.
  */
 
 type Msg = { from: "user" | "grace"; text: string };
 
-const SCRIPT: Msg[] = [
-  { from: "grace", text: "Hey, I'm Grace 🌿 your GLP-1 companion." },
-  { from: "user", text: "just had 2 eggs and Greek yogurt" },
-  { from: "grace", text: "Logged — that's 32g protein, 68 to go today. Nice start." },
-  { from: "user", text: "feeling nauseous after my shot" },
-  { from: "grace", text: "Common in the first day or two. Small plain meals + ginger tea help — I'll check in tonight." },
-  { from: "user", text: "when's my next reminder?" },
-  { from: "grace", text: "Tomorrow at 8:00 AM, your wake-up time. Want it earlier?" },
+/** Each scene is a self-contained little exchange. They rotate so the hero
+ *  feels alive and shows Grace's range — encouraging, gentle, never judgy. */
+const SCENES: Msg[][] = [
+  [
+    { from: "grace", text: "Morning 🌸 how'd you sleep?" },
+    { from: "user", text: "ok! just had 2 eggs + greek yogurt" },
+    { from: "grace", text: "Love that — 32g protein before 9am 💪 you're already ahead today." },
+  ],
+  [
+    { from: "user", text: "feeling queasy after my shot 😣" },
+    { from: "grace", text: "Aw, I'm sorry 💛 super common the first day or two." },
+    { from: "grace", text: "Small plain bites + ginger tea help a ton. I'll check on you tonight, ok?" },
+  ],
+  [
+    { from: "user", text: "i caved and had ice cream at 11pm 🙈" },
+    { from: "grace", text: "Hey — one scoop isn't a setback, it's a Tuesday 😄" },
+    { from: "grace", text: "Logged, no guilt. Fresh start tomorrow, I've got you." },
+  ],
+  [
+    { from: "grace", text: "It's injection day 💉 want me to walk you through it?" },
+    { from: "user", text: "yes please, kinda nervous" },
+    { from: "grace", text: "Totally normal. Rotate the site, room-temp pen, slow breath. You've done this 7 times — you've got this 🙌" },
+  ],
+  [
+    { from: "user", text: "down 3 lbs this week!! 🎉" },
+    { from: "grace", text: "YES!! That's huge 🎉 week 6 and you're flying." },
+    { from: "grace", text: "So proud of you. Let's keep protein up to protect that muscle 💛" },
+  ],
+  [
+    { from: "user", text: "what should i eat tonight?" },
+    { from: "grace", text: "You love Mediterranean 🫒 a salmon + chickpea bowl is ~38g protein and easy on the stomach." },
+    { from: "user", text: "perfect, thank you 🥹" },
+  ],
 ];
 
 const USER_DELAY = 1100;
 const TYPING = 1500;
-const LOOP_PAUSE = 4200;
+const SCENE_PAUSE = 3400;
 
 const MobileHero = () => {
   const navigate = useNavigate();
   const reduce = useReducedMotion();
-  const [visible, setVisible] = useState<Msg[]>(reduce ? SCRIPT : []);
+  const [visible, setVisible] = useState<Msg[]>(reduce ? SCENES[0] : []);
   const [typing, setTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -42,10 +69,10 @@ const MobileHero = () => {
     const wait = (ms: number) =>
       new Promise<void>((r) => timers.push(setTimeout(r, ms)));
 
-    const play = async () => {
+    const playScene = async (scene: Msg[]) => {
       setVisible([]);
       setTyping(false);
-      for (const msg of SCRIPT) {
+      for (const msg of scene) {
         if (cancelled) return;
         if (msg.from === "grace") {
           setTyping(true);
@@ -58,10 +85,19 @@ const MobileHero = () => {
         if (cancelled) return;
         setVisible((v) => [...v, msg]);
       }
-      await wait(LOOP_PAUSE);
-      if (!cancelled) play();
     };
-    play();
+
+    const run = async () => {
+      let i = 0;
+      // eslint-disable-next-line no-constant-condition
+      while (!cancelled) {
+        await playScene(SCENES[i % SCENES.length]);
+        if (cancelled) return;
+        await wait(SCENE_PAUSE);
+        i += 1;
+      }
+    };
+    run();
     return () => {
       cancelled = true;
       timers.forEach(clearTimeout);

@@ -103,6 +103,44 @@ describe('computeReminderSchedule — next reminder', () => {
     expect(s.next?.phrase).toMatch(/injection/i);
   });
 
+  // Regression (prod 2026-06: screenshot). At 10:32 PM on an injection day —
+  // long after the follow-up was sent and well into quiet hours (21:00+) — Grace
+  // wrongly said "later today (injection-day follow-up)". The scheduler sends
+  // nothing after 21:00, so the next reminder is TOMORROW morning.
+  it('injection day, late night (quiet hours) → tomorrow morning, NOT "later today"', () => {
+    const u: ReminderUser = { ...baseUser, injection_day: 'Monday', injection_flow_stage: 'followup_sent' };
+    const s = computeReminderSchedule(u, at('22:32', '2026-06-15')); // Monday 10:32 PM
+    expect(s.isInjectionDayToday).toBe(true);
+    expect(s.next?.kind).toBe('morning');
+    expect(s.next?.when).toBe('tomorrow (Tuesday) morning');
+    expect(s.next?.phrase).toContain('8:00 AM');
+    expect(s.next?.phrase).not.toMatch(/later today/i);
+    const reply = buildNextReminderReply(u, URL, at('22:32', '2026-06-15'));
+    expect(reply).toMatch(/tomorrow/i);
+    expect(reply).not.toMatch(/later today/i);
+  });
+
+  it('injection day, daytime, follow-up ALREADY sent → tomorrow morning (not "later today")', () => {
+    const u: ReminderUser = { ...baseUser, injection_day: 'Monday', injection_flow_stage: 'followup_sent' };
+    const s = computeReminderSchedule(u, at('15:00', '2026-06-15')); // Monday 3 PM
+    expect(s.next?.kind).toBe('morning');
+    expect(s.next?.phrase).not.toMatch(/later today/i);
+  });
+
+  it('injection day, daytime, follow-up still PENDING (done_confirmed) → later today', () => {
+    const u: ReminderUser = { ...baseUser, injection_day: 'Monday', injection_flow_stage: 'done_confirmed' };
+    const s = computeReminderSchedule(u, at('15:00', '2026-06-15')); // Monday 3 PM
+    expect(s.next?.kind).toBe('injection');
+    expect(s.next?.phrase).toMatch(/later today/i);
+  });
+
+  it('injection day, daytime, no stage info → still assumes a same-day follow-up', () => {
+    const u: ReminderUser = { ...baseUser, injection_day: 'Monday' }; // stage undefined
+    const s = computeReminderSchedule(u, at('15:00', '2026-06-15'));
+    expect(s.next?.kind).toBe('injection');
+    expect(s.next?.phrase).toMatch(/later today/i);
+  });
+
   it('paused user → no next reminder, not enabled', () => {
     const s = computeReminderSchedule({ ...baseUser, paused: true }, at('05:00'));
     expect(s.enabled).toBe(false);

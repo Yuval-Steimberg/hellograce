@@ -32,6 +32,10 @@ export interface ReminderUser {
   checkin_count_per_day?: number | null;
   checkin_days_interval?: number | null;
   paused?: boolean | null;
+  /** Injection state machine stage, so we don't promise a follow-up that already
+   *  fired. 'done_confirmed' = follow-up still pending; 'followup_sent'/null =
+   *  already done / not pending. Undefined when the caller doesn't supply it. */
+  injection_flow_stage?: string | null;
 }
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
@@ -159,6 +163,7 @@ export function computeReminderSchedule(user: ReminderUser, now: Date = new Date
 
   const next = paused ? null : computeNext(nowLocal, {
     wakeMin, eveningMin, eveningLabel, daysInterval, injectionDay,
+    injectionStage: user.injection_flow_stage,
   });
 
   return {
@@ -185,10 +190,16 @@ function computeNext(
     eveningLabel: string | null;
     daysInterval: number;
     injectionDay: string | null;
+    injectionStage?: string | null;
   },
 ): NextReminder | null {
   const nowMin = nowLocal.getHours() * 60 + nowLocal.getMinutes();
   const wakeLabel = formatClock(Math.floor(cfg.wakeMin / 60), cfg.wakeMin % 60);
+  // The scheduler sends NOTHING during quiet hours (21:00–07:00), so once we're
+  // past 21:00 there is no further reminder today — the next one is tomorrow
+  // morning. (Before 07:00 the morning reminder is still upcoming today, so that
+  // is NOT treated as "nothing left today".)
+  const afterQuietStart = nowMin >= QUIET_START_MIN;
 
   // Walk forward up to a week to find the next eligible occurrence.
   for (let offset = 0; offset <= 7; offset++) {
@@ -199,14 +210,29 @@ function computeNext(
 
     // Injection day replaces the regular schedule with the injection flow.
     if (isInjDay) {
-      // Morning injection message at wake time.
+      // Morning injection message at wake time (future injection days, or today
+      // if the morning window hasn't passed). Never blocked by quiet hours — it
+      // fires AT wake time, which is already clamped to ≥ 07:00.
       if (offset > 0 || nowMin <= cfg.wakeMin + 60) {
         const when = morningWhen(offset, dow);
         return { kind: 'injection', when, timeLabel: wakeLabel, phrase: `${when} around ${wakeLabel} (your injection-day check-in)` };
       }
-      // Past the morning window on injection day → the follow-up comes later today.
+      // Same day, past the morning window: the injection-day follow-up only
+      // still counts as "the next reminder" when it's genuinely pending —
+      //   • not yet in quiet hours (the scheduler can't send after 21:00), and
+      //   • the follow-up hasn't already fired (stage 'done_confirmed' = a
+      //     follow-up is queued; 'followup_sent'/null = it already went / the
+      //     flow is done). When the caller gives no stage, assume daytime = still
+      //     possibly pending. Otherwise there's nothing left today → roll forward
+      //     to the next eligible morning. (Prod bug: at 10:32 PM, long after the
+      //     follow-up had been sent, Grace still said "later today".)
       if (offset === 0) {
-        return { kind: 'injection', when: 'later today', timeLabel: null, phrase: 'later today (your injection-day follow-up)' };
+        const stageKnown = cfg.injectionStage !== undefined;
+        const followupPending = stageKnown ? cfg.injectionStage === 'done_confirmed' : true;
+        if (!afterQuietStart && followupPending) {
+          return { kind: 'injection', when: 'later today', timeLabel: null, phrase: 'later today (your injection-day follow-up)' };
+        }
+        continue; // nothing left today → next eligible morning
       }
       continue;
     }

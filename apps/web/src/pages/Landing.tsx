@@ -13,11 +13,14 @@ import DesktopLanding from "@/components/landing/DesktopLanding";
  */
 const Landing = () => (
   <>
+    {/* Phones + tablets (below lg): Grace-branded single-column hero that caps
+        its width so it reads well on both, with the shared footer below. */}
     <div className="lg:hidden">
-      <MarketingLayout hideFooter hideDesktopNav>
+      <MarketingLayout hideDesktopNav>
         <MobileHero />
       </MarketingLayout>
     </div>
+    {/* Desktop (lg+): the full vertical-scrolling landing. */}
     <DesktopLanding />
   </>
 );

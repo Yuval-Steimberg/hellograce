@@ -561,9 +561,9 @@ Rules: warm and natural, vary the wording, contractions ok, ${user.first_name ? 
 // genuinely in your corner. NO fabricated stats / user counts (we don't claim
 // numbers we can't back up).
 const OPENER_FALLBACKS = [
-  "Hi!! I'm Grace 🧡 and honestly I'm so glad you're here — this is the start of something really good. I'm going to be right here with you through all of it: the protein, the hard days, the little wins worth celebrating. First things first — what should I call you?",
-  "Hey you 🧡 I'm Grace, and I have a really good feeling about us. Think of me as the friend in your pocket for this whole GLP-1 journey — I've got your back on the food stuff, the rough days, all of it. So tell me — what's your name?",
-  "Oh hi 🧡 I'm Grace and I'm genuinely excited you found me. You don't have to do this alone anymore — I'm here for the questions, the wins, the messy middle, all of it. Let's make this fun. What should I call you?",
+  "Hi! I'm Grace 🧡 your GLP-1 companion, and I'm so glad you're here. First things first — what should I call you?",
+  "Hey! I'm Grace 🧡 think of me as your in-pocket buddy for this whole GLP-1 journey. What's your name?",
+  "Oh hi! I'm Grace 🧡 here for the food, the hard days, and the wins. What should I call you?",
 ];
 
 /**
@@ -579,20 +579,20 @@ export async function generateOpener(
   const fallback = OPENER_FALLBACKS[Math.floor(Math.random() * OPENER_FALLBACKS.length)]!;
   if (!llm) return fallback;
   try {
-    const system = `You are Grace, a warm, bubbly, genuinely EXCITED GLP-1 text companion greeting a brand-new user for the very first time over iMessage. This is the first impression — it should make them light up and feel an instant connection, like a friend who's thrilled they showed up.
-Write a SHORT opening message (2–3 sentences, max ~280 chars) that:
-- introduces you as Grace and radiates warmth + genuine excitement that they're here ("so glad you're here", "I have a good feeling about us"),
-- makes them feel they're not doing this alone — you're in their corner for the whole GLP-1 journey (protein, hydration, injection days, hard days, the wins) and you'll remember them,
-- sparks a little anticipation that this will actually be enjoyable, not a chore,
+    const system = `You are Grace, a warm, genuinely EXCITED GLP-1 text companion greeting a brand-new user for the very first time over iMessage. This is the first impression — it should make them feel an instant, friendly connection.
+Write a SHORT opening message (1–2 short sentences, MAX ~140 characters) that:
+- introduces you as Grace, their GLP-1 companion, with warmth + genuine excitement that they're here,
 - ENDS by warmly asking their first name.
-Rules: sound like a real, excited friend texting — casual, warm, a little playful; confident not salesy; contractions; at most ONE emoji; no lists, no markdown, plain text only. NEVER invent statistics or user counts. Output just the message.`;
+Rules: keep it BRIEF — one quick, warm line that ends in a name question. A long paragraph makes people drop off, so do NOT list everything you do. Sound like a real friend texting — casual, contractions; at most ONE emoji; no lists, no markdown, plain text only. NEVER invent statistics or user counts. Output just the message.`;
     const resp = await Promise.race([
       llm.generate({ messages: [{ role: 'system', content: system }, { role: 'user', content: '(write the opener)' }], temperature: 0.9, maxOutputTokens: 140, disableThinking: true }),
       new Promise<{ text: string }>((r) => setTimeout(() => r({ text: '' }), 4000)),
     ]);
     const text = (resp.text ?? '').trim().replace(/^["']|["']$/g, '');
     // Must actually ask something (end with a question) or we use the fallback.
-    if (text && /[A-Za-z]{3,}/.test(text) && text.includes('?')) return text.slice(0, 320);
+    // Cap hard at ~180 chars so a runaway LLM paragraph can't reintroduce the
+    // long-intro drop-off; a tidy short opener is the whole point here.
+    if (text && /[A-Za-z]{3,}/.test(text) && text.includes('?')) return text.slice(0, 180);
   } catch (err) {
     opts.logger?.warn({ err: err instanceof Error ? err.message : String(err) }, 'onboarding.opener.llm_failed');
   }

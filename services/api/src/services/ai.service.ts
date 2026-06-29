@@ -3324,16 +3324,23 @@ CRITICAL RULES:
       } else {
         augmentedText = `${input.text}\n\n[media: ${description}]`.trim();
       }
-    } else if (input.media.length > 0 && !input.text) {
-      // Analysis failed (or unsupported format) and user sent no caption — guard against
-      // sending an empty string to the LLM which causes a 400 from Gemini.
+    } else if (input.media.length > 0) {
+      // Media WAS attached but analysis returned nothing (a transient media-fetch
+      // or Gemini failure, or an unsupported format). This fires whether or not
+      // the user added a caption — previously it only handled the no-caption case,
+      // so a photo sent WITH text (the common case) fell through with no media
+      // note, and the model free-formed "I'm not seeing the images" (the exact
+      // production MMS failure). NEVER let the model deny it can see/receive
+      // images — that contradicts a real capability and confuses the user. Always
+      // acknowledge the attachment arrived and ask them to resend.
       const kind = input.media[0]?.kind;
+      const caption = input.text.trim() ? ` They also wrote: "${input.text.trim()}".` : '';
       if (kind === 'image') {
-        augmentedText = "[The user sent a photo but the image could not be processed right now. Acknowledge warmly that you received their photo, apologize briefly that you couldn't analyze it today, and ask them to describe what they sent or to try again.]";
+        augmentedText = `[The user sent you a PHOTO, but it didn't come through clearly on this turn (it couldn't be opened).${caption} Warmly acknowledge you received their photo, say it didn't load properly THIS time, and ask them to send it once more (or describe what's in it). NEVER say you can't see, receive, or view images — you can; this one just didn't load.]`;
       } else if (kind === 'audio') {
-        augmentedText = "[The user sent a voice message but it could not be transcribed right now. Acknowledge warmly, apologize briefly, and ask them to type what they were saying.]";
+        augmentedText = `[The user sent a voice message but it couldn't be transcribed on this turn.${caption} Warmly acknowledge it, say it didn't come through this time, and ask them to resend it or type what they were saying. NEVER say you can't receive voice messages — you can; this one just didn't load.]`;
       } else {
-        augmentedText = "[The user sent a file or attachment that could not be processed. Acknowledge warmly and ask them to describe what they wanted to share.]";
+        augmentedText = `[The user sent an attachment that couldn't be opened on this turn.${caption} Warmly acknowledge it and ask them to resend it or describe what they wanted to share.]`;
       }
     }
 

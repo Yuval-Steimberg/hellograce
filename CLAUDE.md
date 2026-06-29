@@ -6,6 +6,35 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Nudge-style food-photo flow: describe + confirm, then log (2026-06-29)
+
+Branch `claude/grace-landing-redesign-b8tdkd`. Production bug: a photo of a
+*basket of bananas* → "Okay, I logged your meal. That's about 22.5g of protein."
+(slow, wrong number, and silently logged food the user never ate).
+
+- **`multimodal/analyze.ts`** — the FOOD prompt now resolves in the single vision
+  pass (main already collapsed the old 2-pass for iMessage MIME work) and emits
+  `MEAL_STATUS: eaten_meal|ambiguous`, `ITEMS`, `TOTAL: protein Xg`, `CONFIDENCE`,
+  and `ASK` (a confirm question), with inline protein anchors + "a bowl of fruit
+  is mostly carbs — never inflate protein for produce". Removed the dead
+  `USDA_PROTEIN_TABLE` + `buildFoodMacroCalculationPrompt`. Body/Other unchanged.
+- **`services/ai.service.ts`** — new pure exported `parseFoodImageAnalysis()`
+  (tested) + rewired image branch: **auto-log only when `eaten_meal` && conf≠low
+  && protein parsed** → persist via `persistEstimatedFood` (mode-independent,
+  2-min dedupe) + a natural reply. **Ambiguous / low-conf / produce → DO NOT
+  log**; describe + ask ONE question + `addPendingFood` so the user's portion
+  answer logs it next turn (existing text pending path). Removed the old rigid
+  "Call log_food / I logged your meal" forced template + dead `buildFoodLogArg`.
+- **Double-log guards:** `shouldForceLogFood` requires `input.media.length===0
+  && !imageFoodAutoLogged`; `runDirectReply` gained `mediaPresent` to skip text
+  food-extract when a photo is present.
+- Tests: `food-image-analysis.test.ts` (6, incl. the banana regression).
+  **Live path = DIRECT_REPLY_MODE.** Needs `fly deploy` to reach prod (API isn't
+  auto-deployed). NOTE: the earlier landing redesign on this branch (PR #111) was
+  superseded by main's later editorial landing — this commit is food-photo only.
+
+---
+
 ### Personalization gather gate — ask-then-answer for EVERY response (2026-06-28)
 
 Branch `claude/system-migration-process-dtkyp3`. Driven by: "grace should gather

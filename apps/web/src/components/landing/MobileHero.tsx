@@ -76,9 +76,9 @@ const SCENES: Msg[][] = [
   ],
 ];
 
-const USER_DELAY = 1100;
-const TYPING = 1500;
-const SCENE_PAUSE = 3400;
+const USER_DELAY = 1500;
+const TYPING = 2000;
+const SCENE_PAUSE = 4200;
 
 const MobileHero = () => {
   const navigate = useNavigate();
@@ -138,8 +138,8 @@ const MobileHero = () => {
       {/* iMessage-style contact header */}
       <div className="flex flex-col items-center gap-1.5 border-b border-black/5 px-4 pb-3 pt-1">
         <Logo size="default" markOnly />
-        <div className="text-[15px] font-semibold text-[#111]">Grace</div>
-        <div className="text-[11px] text-[#8e8e93]">GLP-1 companion</div>
+        <div className="text-[17px] font-semibold text-[#111]">Grace</div>
+        <div className="text-[12px] text-[#8e8e93]">GLP-1 companion</div>
       </div>
 
       {/* Thread */}
@@ -154,7 +154,7 @@ const MobileHero = () => {
               className={`flex ${m.from === "user" ? "justify-end" : "justify-start"}`}
             >
               <span
-                className={`max-w-[78%] rounded-[1.25rem] px-3.5 py-2 text-[15px] leading-snug ${
+                className={`max-w-[80%] rounded-[1.25rem] px-4 py-2.5 text-[17px] leading-snug ${
                   m.from === "user"
                     ? "rounded-br-md bg-[#2C7DFA] text-white"
                     : "rounded-bl-md bg-[#E9E9EB] text-[#111]"
@@ -193,7 +193,7 @@ const MobileHero = () => {
           onClick={() => startWithGrace(() => navigate("/onboarding"))}
           className="flex w-full items-center justify-between rounded-full border border-black/10 bg-white py-2 pl-5 pr-2 text-left shadow-sm"
         >
-          <span className="text-[15px] font-medium text-[#111]">Hi Grace, I'm new to GLP-1 👋</span>
+          <span className="text-[16px] font-medium text-[#111]">Hi Grace, I'm new to GLP-1 👋</span>
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2C7DFA] text-white">
             <ArrowUp className="h-4 w-4" strokeWidth={2.6} />
           </span>

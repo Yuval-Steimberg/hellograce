@@ -12,14 +12,14 @@ import { startWithGrace } from "@/lib/chatLinks";
  */
 
 const INTRO = [
-  "Hey! I'm Grace 🌸",
-  "Let's get you started",
-  "Which sounds more like you?",
+  "Hi, I'm Grace 🌸",
+  "I'm your GLP-1 companion — here to help with food, reminders, and the hard days.",
+  "Where are you in your journey?",
 ];
 
 const OPTIONS = [
-  "I just started GLP-1",
-  "I've been on it a while",
+  "Just started my GLP-1",
+  "A few months in",
 ];
 
 const TYPING = 1100;
@@ -154,7 +154,7 @@ const MobileHero = () => {
               onClick={start}
               className="w-full rounded-full bg-[#16110D] py-4 text-center text-[18px] font-semibold text-white shadow-sm active:scale-[0.99] transition-transform"
             >
-              Get Started
+              Start with Grace
             </button>
 
             <div className="mt-4 flex items-center justify-center gap-3">

@@ -5,10 +5,10 @@ import { Check } from "lucide-react";
 import { startWithGrace } from "@/lib/chatLinks";
 
 /**
- * Mobile hero — Tomo-style intro flow. Grace introduces herself in a few chat
- * bubbles, asks one warm question, then shows selectable "which sounds like you"
- * option bubbles, and a "Get Started" button that's part of the same flow (the
- * natural next step in the conversation). Single screen, no scroll.
+ * Mobile hero — a chat-style intro flow. Grace introduces herself in a few
+ * bubbles, asks one warm question, then shows selectable option bubbles and a
+ * "Start with Grace" button that's part of the same flow (the natural next step
+ * in the conversation). Original Grace copy + brand. Single screen, no scroll.
  */
 
 const INTRO = [

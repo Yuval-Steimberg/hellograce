@@ -37,6 +37,7 @@ describe('generateOpener — magnetic first message', () => {
     expect(opener).toContain('?'); // it asks something (the name)
     expect(opener.toLowerCase()).toMatch(/name|call you/);
     expect(opener).not.toMatch(/\d[\d,]*\s*(people|users|members)/i); // no fabricated stats
+    expect(opener.length).toBeLessThanOrEqual(160); // short — long intros cause ask_name drop-off
   });
 
   it('uses the LLM opener when it ends with a question', async () => {

@@ -283,16 +283,36 @@ async function fetchMedia(
   if (twilio && isTwilioMediaUrl(url)) {
     headers.Authorization = `Basic ${Buffer.from(`${twilio.sid}:${twilio.token}`).toString('base64')}`;
   }
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), TWILIO_FETCH_TIMEOUT_MS);
-  try {
-    const resp = await fetch(url, { headers, signal: ac.signal });
-    if (!resp.ok) throw new Error(`media fetch ${resp.status} for ${url}`);
-    return {
-      buf: Buffer.from(await resp.arrayBuffer()),
-      contentType: resp.headers.get('content-type') ?? '',
-    };
-  } finally {
-    clearTimeout(timer);
+
+  // Retry transient failures so a single network blip / timeout / 5xx / rate-limit
+  // doesn't silently drop the user's photo. Deterministic 4xx (404 expired media,
+  // 401/403 auth) are NOT retried — a retry can't fix them. Up to 3 attempts with
+  // short backoff (200ms, 600ms).
+  const MAX_ATTEMPTS = 3;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), TWILIO_FETCH_TIMEOUT_MS);
+    try {
+      const resp = await fetch(url, { headers, signal: ac.signal });
+      if (!resp.ok) {
+        const transient = resp.status >= 500 || resp.status === 429 || resp.status === 408;
+        const err = new Error(`media fetch ${resp.status} for ${url}`);
+        if (!transient) throw err; // permanent — fail fast
+        lastErr = err;
+      } else {
+        return {
+          buf: Buffer.from(await resp.arrayBuffer()),
+          contentType: resp.headers.get('content-type') ?? '',
+        };
+      }
+    } catch (err) {
+      // Network error or abort/timeout — transient, worth a retry.
+      lastErr = err;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, attempt === 1 ? 200 : 600));
   }
+  throw lastErr instanceof Error ? lastErr : new Error(`media fetch failed for ${url}`);
 }

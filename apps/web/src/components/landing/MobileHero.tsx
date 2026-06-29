@@ -5,83 +5,34 @@ import { ArrowRight } from "lucide-react";
 import { startWithGrace } from "@/lib/chatLinks";
 
 /**
- * Mobile + tablet hero — a real iMessage-style conversation with Grace that
- * fills the screen, cycling through short warm scenes (food wins, rough days,
- * no-judgment moments, injection-day nerves, milestones). Plain white (no
- * background color). On tablets the thread is capped + centered so it doesn't
- * stretch full-width. A "Start with Grace" button anchors the CTA. Below lg;
- * desktop uses the full scrolling landing.
+ * Mobile + tablet hero — the START of the journey. Grace introduces herself and
+ * the very first conversation plays out, building toward an invitation ("let's
+ * set you up") so pressing "Start with Grace" is the natural next step. Plain
+ * white (no background color). On tablets the thread is capped + centered so it
+ * doesn't stretch full-width. Below lg; desktop uses the full scrolling landing.
  */
 
 type Msg = { from: "user" | "grace"; text: string };
 
-const SCENES: Msg[][] = [
-  [
-    { from: "grace", text: "Morning 🌸 how'd you sleep?" },
-    { from: "user", text: "pretty good actually!" },
-    { from: "grace", text: "Love that. Had anything yet?" },
-    { from: "user", text: "just 2 eggs + greek yogurt" },
-    { from: "grace", text: "32g protein before 9am — you're already ahead today." },
-    { from: "user", text: "ohh nice didn't realize" },
-    { from: "grace", text: "Yep, 48 to go. I'll nudge you at lunch so it's easy." },
-  ],
-  [
-    { from: "user", text: "feeling queasy after my shot" },
-    { from: "grace", text: "Aw, I'm sorry. Super common the first day or two." },
-    { from: "user", text: "is it normal to feel this off?" },
-    { from: "grace", text: "Totally. Your body's still adjusting to the dose." },
-    { from: "grace", text: "Small plain bites + ginger tea help a ton. Skip the greasy stuff today." },
-    { from: "user", text: "ok i'll try that" },
-    { from: "grace", text: "Good. I'll check on you tonight to make sure it eased up." },
-  ],
-  [
-    { from: "user", text: "i caved and had ice cream at 11pm" },
-    { from: "grace", text: "Hey — one scoop isn't a setback, it's a Tuesday." },
-    { from: "user", text: "i feel kinda guilty though" },
-    { from: "grace", text: "Don't. One treat doesn't undo your week." },
-    { from: "grace", text: "You logged 6 days straight and hit protein every time. That's the real story." },
-    { from: "user", text: "true. thanks for not judging" },
-    { from: "grace", text: "Never. Fresh start tomorrow, I've got you." },
-  ],
-  [
-    { from: "grace", text: "It's injection day 💉 want me to walk you through it?" },
-    { from: "user", text: "yes please, kinda nervous" },
-    { from: "grace", text: "Totally normal. Let's go slow." },
-    { from: "grace", text: "Pen at room temp, pick a fresh spot, rotate from last week." },
-    { from: "user", text: "did it! that wasn't bad" },
-    { from: "grace", text: "You've done this 7 times now. Want a reminder for next week?" },
-    { from: "user", text: "yes please" },
-    { from: "grace", text: "Set for next Sunday morning. Proud of you." },
-  ],
-  [
-    { from: "user", text: "down 3 lbs this week!! 🎉" },
-    { from: "grace", text: "YES! That's huge — week 6 and you're flying." },
-    { from: "user", text: "i honestly didn't think i could" },
-    { from: "grace", text: "But you did — small consistent choices, every day." },
-    { from: "grace", text: "Let's keep protein up to protect that muscle while the fat comes off." },
-    { from: "user", text: "what's a good target?" },
-    { from: "grace", text: "Around 100g a day for you. I'll help you get there without thinking about it." },
-  ],
-  [
-    { from: "user", text: "what should i eat tonight?" },
-    { from: "grace", text: "Craving anything in particular?" },
-    { from: "user", text: "not sure, something light" },
-    { from: "grace", text: "You love Mediterranean — a salmon + chickpea bowl is ~38g protein and easy on the stomach." },
-    { from: "user", text: "ooh that sounds perfect" },
-    { from: "grace", text: "Want me to log it once you've had it?" },
-    { from: "user", text: "yes please, thank you" },
-  ],
+const INTRO: Msg[] = [
+  { from: "grace", text: "Hi, I'm Grace 🌸" },
+  { from: "grace", text: "Your GLP-1 companion — here for the food, the reminders, and the hard days." },
+  { from: "user", text: "how does it work?" },
+  { from: "grace", text: "Just text me like a friend — what you ate, how you feel, when your shot is." },
+  { from: "grace", text: "I'll track it all and check in, so you're never doing this alone." },
+  { from: "user", text: "okay, I'm in" },
+  { from: "grace", text: "Love that. Let's set you up 💛" },
 ];
 
-const USER_DELAY = 1500;
-const TYPING = 2000;
-const SCENE_PAUSE = 4200;
+const USER_DELAY = 1300;
+const TYPING = 1700;
 
 const MobileHero = () => {
   const navigate = useNavigate();
   const reduce = useReducedMotion();
-  const [visible, setVisible] = useState<Msg[]>(reduce ? SCENES[0] : []);
+  const [visible, setVisible] = useState<Msg[]>(reduce ? INTRO : []);
   const [typing, setTyping] = useState(false);
+  const [done, setDone] = useState(reduce);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -91,10 +42,9 @@ const MobileHero = () => {
     const wait = (ms: number) =>
       new Promise<void>((r) => timers.push(setTimeout(r, ms)));
 
-    const playScene = async (scene: Msg[]) => {
-      setVisible([]);
-      setTyping(false);
-      for (const msg of scene) {
+    const play = async () => {
+      await wait(400);
+      for (const msg of INTRO) {
         if (cancelled) return;
         if (msg.from === "grace") {
           setTyping(true);
@@ -107,19 +57,9 @@ const MobileHero = () => {
         if (cancelled) return;
         setVisible((v) => [...v, msg]);
       }
+      if (!cancelled) setDone(true);
     };
-
-    const run = async () => {
-      let i = 0;
-      // eslint-disable-next-line no-constant-condition
-      while (!cancelled) {
-        await playScene(SCENES[i % SCENES.length]);
-        if (cancelled) return;
-        await wait(SCENE_PAUSE);
-        i += 1;
-      }
-    };
-    run();
+    play();
     return () => {
       cancelled = true;
       timers.forEach(clearTimeout);
@@ -187,15 +127,17 @@ const MobileHero = () => {
           </AnimatePresence>
         </div>
 
-        {/* CTA */}
+        {/* CTA — the user's next step in the conversation */}
         <div className="px-3.5 pb-5 pt-2">
-          <button
+          <motion.button
             onClick={start}
+            animate={done ? { scale: [1, 1.02, 1] } : { scale: 1 }}
+            transition={done ? { duration: 1.6, repeat: Infinity, ease: "easeInOut" } : {}}
             className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#16110D] text-[17px] font-semibold text-white shadow-sm transition-transform active:scale-[0.99]"
           >
             Start with Grace
             <ArrowRight className="h-4.5 w-4.5" strokeWidth={2.4} />
-          </button>
+          </motion.button>
           <p className="mt-2.5 text-center text-[12px] text-[#8e8e93]">
             Free to start · right inside iMessage
           </p>

@@ -13,10 +13,10 @@ import DesktopLanding from "@/components/landing/DesktopLanding";
  */
 const Landing = () => (
   <>
-    {/* Phones + tablets (below lg): Grace-branded single-column hero that caps
-        its width so it reads well on both, with the shared footer below. */}
+    {/* Phones + tablets (below lg): full-screen white chat hero (no background
+        color, no scroll). hideFooter clamps it to one clean screen. */}
     <div className="lg:hidden">
-      <MarketingLayout hideDesktopNav>
+      <MarketingLayout hideFooter hideDesktopNav>
         <MobileHero />
       </MarketingLayout>
     </div>

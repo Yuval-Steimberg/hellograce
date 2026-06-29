@@ -2762,6 +2762,7 @@ CRITICAL RULES:
     dietaryRestriction?: DietaryRestriction;
     medicationType?: 'unknown' | 'weekly_injection' | 'daily_pill' | 'daily_injection';
     foodDislikes: string[];
+    mediaPresent?: boolean;
     logger: Logger;
   }): Promise<OrchestratorOutput> {
     const t0 = Date.now();
@@ -2797,7 +2798,9 @@ CRITICAL RULES:
       // OR there's a pending item awaiting a portion (a continuation like
       // "cup of spaghetti" classifies as general but must resolve the pending).
       const pending = await getPendingFood(this.deps.redis, params.userId).catch(() => []);
-      const foodish = params.intent === 'food_log' || params.intent === 'food_question' || pending.length > 0;
+      // A food photo is already logged (or deferred to a pending question) in the
+      // media branch, so skip text extraction here to avoid double-logging.
+      const foodish = !params.mediaPresent && (params.intent === 'food_log' || params.intent === 'food_question' || pending.length > 0);
       if (foodish) {
         // Cap the extraction so a slow call can't stack onto the reply call and
         // make the turn look "stuck". On timeout we fall through to the
@@ -3250,6 +3253,9 @@ CRITICAL RULES:
 
     // Fold media description into the prompt (only after Promise.all resolves).
     let augmentedText = input.text;
+    // True once a food photo has been logged deterministically in this block,
+    // so the downstream text force-log paths don't double-count it.
+    let imageFoodAutoLogged = false;
 
     // Pre-compute gap so the inline instruction blocks for voice/image can be
     // gap-aware. Same threshold as buildPersonalisedPrompt: >24h = stale history.
@@ -3274,15 +3280,42 @@ CRITICAL RULES:
       } else if (kind === 'image') {
         const userIntent = input.text ? `The user said: "${input.text}"\n\n` : '';
         if (description.includes('IMAGE_TYPE: food')) {
-          const foodArg = buildFoodLogArg(description);
-          const confidence = description.match(/^CONFIDENCE:\s*(\w+)/m)?.[1]?.toLowerCase() ?? 'medium';
-          const confidenceNote = confidence === 'low'
-            ? ' (rough estimate — photo was unclear)'
-            : confidence === 'medium' ? ' (rough estimate)' : '';
-          augmentedText = `${userIntent}The user sent a meal photo. Internal nutrition data for your reference ONLY — never recite this breakdown:\n\n${description}\n\n[REQUIRED:
-1. Call log_food with args {"food": ${JSON.stringify(foodArg)}} — pass this string EXACTLY.
-2. Reply in 1–2 short sentences using the TOTAL protein number naturally. Example: "That looks like about 30g of protein${confidenceNote}. You're at 55g today."
-NEVER ask the user to specify portions, grams, ounces, or what's in the photo — the estimate is already done. NEVER output ITEMS/BREAKDOWN/TOTAL tables. NEVER list per-item macros. Sound like a supportive friend, not a nutrition app. If confidence was low, you may add ONE light human clarifier (e.g. "Was that a snack or a full plate?") — never a quantity question.${staleHistoryNote}]`;
+          // Nudge-style flow: only auto-log when it's clearly an EATEN meal we're
+          // confident about. Ambiguous photos (a fruit bowl, groceries, unclear
+          // portion) get described + a single confirm question — never silently
+          // logged with a fabricated number (the "basket of bananas → 22g logged"
+          // production bug).
+          const { mealStatus, confidence, items: itemsText, proteinTotal, caloriesTotal, ask, autoLog } =
+            parseFoodImageAnalysis(description);
+
+          if (autoLog) {
+            // Confident eaten meal → log deterministically (works in both direct
+            // and orchestrator mode), then let Gemini phrase a NATURAL confirmation
+            // with the real running total.
+            const est = {
+              items: itemsText.split(',').map((s) => ({ food: s.trim() })).filter((i) => i.food.length > 0),
+              protein_g: proteinTotal as number,
+              calories: caloriesTotal,
+            };
+            const totals = await this.persistEstimatedFood(input.userId, est, `photo: ${itemsText}`).catch(() => null);
+            imageFoodAutoLogged = true;
+            logger.info({ userId: input.userId, protein: proteinTotal, confidence, items: itemsText.slice(0, 80) }, 'ai.image_food.auto_logged');
+            const totalsClause = totals && totals.goal > 0
+              ? ` They're now at ${totals.dailyProtein}g of ${totals.goal}g protein today — weave that in naturally if it fits.`
+              : '';
+            const confNote = confidence === 'medium' ? ' Treat the number as a rough estimate.' : '';
+            augmentedText = `${userIntent}The user sent a photo of a meal they're eating. You identified: ${itemsText} (~${proteinTotal}g protein${caloriesTotal ? `, ~${caloriesTotal} cal` : ''}). It's already logged.${totalsClause}${confNote}\n\n[Reply like a warm friend in 1–2 short sentences: briefly name what you see, give the ~protein number, and confirm it's logged. NEVER recite a per-item breakdown or macro table. NEVER ask for portions, grams, or ounces.${staleHistoryNote}]`;
+          } else {
+            // Ambiguous (fruit bowl, groceries, unclear portion, or low confidence)
+            // → DON'T log. Describe what you see + ask ONE quick question, and stash
+            // a pending item so the user's portion answer logs it next turn (the
+            // existing text food-extract pending path resolves it).
+            const pendingItem = (itemsText || 'the food in the photo').slice(0, 120);
+            const question = ask || 'Did you eat some, and roughly how much?';
+            await addPendingFood(this.deps.redis, input.userId, [{ item: pendingItem, clarify_question: question }]).catch(() => {});
+            logger.info({ userId: input.userId, mealStatus, confidence, items: itemsText.slice(0, 80) }, 'ai.image_food.ambiguous_ask');
+            augmentedText = `${userIntent}The user sent a food photo, but it isn't clearly a meal they're eating right now — it looks like ${itemsText || 'food'} (could be sitting out, groceries, or an unclear portion), so nothing has been logged yet.\n\n[Reply like a warm friend in 1–2 short sentences: briefly say what you see, then ask "${question}" so you can log it accurately. Do NOT claim you logged anything. Do NOT state a protein number.${staleHistoryNote}]`;
+          }
         } else if (description.includes('IMAGE_TYPE: body')) {
           augmentedText = `${userIntent}The user shared a body/progress photo. Analysis:\n\n${description}\n\n[Respond warmly and personally using the observations above. Tie it to their GLP-1 weight-loss journey and encourage them. CRITICAL: Do NOT mention pain, discomfort, injuries, or any medical conditions — this is a progress selfie, not a medical photo. Do NOT invent symptoms or anything not in the analysis above. Do NOT call any logging tools.${staleHistoryNote}]`;
         } else {
@@ -3763,6 +3796,8 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
     // so a reorder can't silently start logging un-eaten meals again.
     const isMealPreference = detectMealConsumption(input.text) === 'preference';
     const shouldForceLogFood =
+      input.media.length === 0 && // image food is logged in the media branch above
+      !imageFoodAutoLogged &&
       !hasFoodDistress &&
       !isMealPreference &&
       flags.toolsEnabled &&
@@ -4434,6 +4469,7 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
         ...(dietaryRestriction ? { dietaryRestriction } : {}),
         medicationType,
         foodDislikes: cleanFoodDislikes,
+        mediaPresent: input.media.length > 0,
         logger,
       });
     } else {
@@ -5290,16 +5326,37 @@ NEVER ask the user to specify portions, grams, ounces, or what's in the photo �
   }
 }
 
-// Build a compact food string from a Gemini food-image analysis block so the
-// planner can pass it verbatim as the `food` arg to log_food — guaranteeing
-// the pre-calculated TOTAL is used instead of being re-estimated.
-function buildFoodLogArg(analysis: string): string {
-  const items = analysis.match(/^ITEMS:\s*(.+)$/m)?.[1]?.trim() ?? '';
-  const total = analysis.match(/^TOTAL:\s*(.+)$/m)?.[1]?.trim() ?? '';
-  if (items && total) return `${items}. ${total}`;
-  if (total) return total;
-  if (items) return items;
-  return analysis.replace(/IMAGE_TYPE: food\n?/i, '').trim().slice(0, 400);
+export interface FoodImageAnalysis {
+  mealStatus: 'eaten_meal' | 'ambiguous';
+  confidence: 'high' | 'medium' | 'low';
+  items: string;
+  proteinTotal: number | null;
+  caloriesTotal: number;
+  ask: string;
+  /** True only for a confident, clearly-eaten meal — drives deterministic auto-log. */
+  autoLog: boolean;
+}
+
+/**
+ * Parse the single-pass food-image analysis block from analyzeMedia into the
+ * fields the reply path needs. The autoLog gate is the heart of the Nudge-style
+ * "describe + confirm, then log" flow: a fruit bowl / groceries / unclear
+ * portion (MEAL_STATUS: ambiguous) or a low-confidence read is NEVER silently
+ * logged — it gets a confirm question instead.
+ */
+export function parseFoodImageAnalysis(description: string): FoodImageAnalysis {
+  const mealStatusRaw = description.match(/^MEAL_STATUS:\s*(\w+)/m)?.[1]?.toLowerCase();
+  const mealStatus: FoodImageAnalysis['mealStatus'] = mealStatusRaw === 'eaten_meal' ? 'eaten_meal' : 'ambiguous';
+  const confRaw = description.match(/^CONFIDENCE:\s*(\w+)/m)?.[1]?.toLowerCase();
+  const confidence: FoodImageAnalysis['confidence'] = confRaw === 'high' ? 'high' : confRaw === 'low' ? 'low' : 'medium';
+  const items = description.match(/^ITEMS:\s*(.+)$/m)?.[1]?.trim() ?? '';
+  const proteinMatch = description.match(/^TOTAL:\s*protein\s*([\d.]+)\s*g/im);
+  const proteinTotal = proteinMatch?.[1] ? Math.round(parseFloat(proteinMatch[1])) : null;
+  const calMatch = description.match(/calories?\s*([\d.]+)\s*kcal/i) ?? description.match(/([\d.]+)\s*kcal/i);
+  const caloriesTotal = calMatch?.[1] ? Math.round(parseFloat(calMatch[1])) : 0;
+  const ask = description.match(/^ASK:\s*(.+)$/m)?.[1]?.trim() ?? '';
+  const autoLog = mealStatus === 'eaten_meal' && confidence !== 'low' && proteinTotal != null && items.length > 0;
+  return { mealStatus, confidence, items, proteinTotal, caloriesTotal, ask, autoLog };
 }
 
 /**

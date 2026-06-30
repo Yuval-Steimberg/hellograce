@@ -575,6 +575,14 @@ describe('Scheduler — injection day flow', () => {
     await tick(h.scheduler);
     expect(h.generateCalls.filter((c) => c.type === 'injection_dayafter').length).toBe(1);
     expect(h.user.injection_flow_stage).toBeNull();
+    // The day-after message IS the morning check-in, so it must mark the morning
+    // as sent and NOT also fire a regular morning a minute later (prod: the user
+    // got two near-identical good-morning texts).
+    expect(h.user.last_morning_sent_at).not.toBeNull();
+    setUtc(2026, 5, 20, 12, 31);
+    await tick(h.scheduler);
+    expect(h.generateCalls.filter((c) => c.type === 'morning').length).toBe(0);
+    expect(h.generateCalls.filter((c) => c.type === 'injection_dayafter').length).toBe(1);
   });
 
   it('skips regular morning/midday/evening on injection day entirely', async () => {

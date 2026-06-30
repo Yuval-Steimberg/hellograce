@@ -247,12 +247,19 @@ export class Scheduler {
     }
 
     // ── Day-after injection (stage = followup_sent → next morning message)
+    // This message IS the day's morning check-in (just injection-aware), so it
+    // must also mark the morning as sent — otherwise, a minute later the stage is
+    // cleared, `morningAlreadySent` is still false, and the REGULAR morning fires
+    // too, so the user gets two near-identical "good morning" texts (prod
+    // screenshot 2026-06). Setting last_morning_sent_at suppresses the duplicate,
+    // exactly like the trial-reminder path does.
     if (user.injection_flow_stage === 'followup_sent' && user.injection_flow_started_at) {
       const flowDay = localNow(user.timezone, new Date(user.injection_flow_started_at));
       if (toDateStr(flowDay) !== todayStr && nowMin >= wakeBaseMin) {
         await this.sendAndRecord(user, 'injection_dayafter');
         await this.deps.users.setInjectionStage(user.phone, null, {
           injection_evening_followup_due: false,
+          last_morning_sent_at: new Date(),
         });
         return;
       }

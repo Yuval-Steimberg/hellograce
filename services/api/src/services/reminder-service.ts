@@ -326,3 +326,25 @@ export function buildReminderExplainReply(user: ReminderUser, settingsUrl: strin
 export function buildReminderChangeReply(settingsUrl: string): string {
   return `I can't customize reminder times through chat, but you can set exactly when reminders arrive in Settings — just update your wake-up time or reminder preferences there: ${settingsUrl}`;
 }
+
+/** True when Grace's PRIOR message was the "next reminder" answer (which ends by
+ *  offering "Want a different time?"). Used so a satisfied/decline reply to it
+ *  ("no, that's good", "leave it") is understood as "keep it" — a warm close —
+ *  instead of re-answering with the same reminder line (prod: "No that good" →
+ *  the exact reminder time repeated). */
+export function wasReminderOffer(lastGraceMessage: string | null | undefined): boolean {
+  const m = (lastGraceMessage || '').toLowerCase();
+  if (!m) return false;
+  return (
+    /\byour next reminder is\b/.test(m) ||
+    /\bwant a different time\b/.test(m) ||
+    (/\breminders?\b/.test(m) && /\bwake[\s-]?up time\b/.test(m))
+  );
+}
+
+/** Warm close when the user is HAPPY with the reminder as-is ("no, that's good").
+ *  Acknowledges their answer and keeps it — never restates the time, never denies
+ *  capability. */
+export function buildReminderKeptReply(): string {
+  return `Got it — I'll keep your reminders just as they are 🤍 Just text me anytime you'd like to change the timing.`;
+}

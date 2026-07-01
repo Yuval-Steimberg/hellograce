@@ -521,7 +521,7 @@ import {
   detectSummaryRequest,
   mightBeSummaryRequest,
   gatherWeeklySummary,
-  renderWeeklySummary,
+  buildWeeklySummaryNote,
   isDoctorQuestionsContext,
   isDoctorQuestionsReply,
   buildDoctorQuestions,
@@ -1105,27 +1105,21 @@ export class AIService {
             const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
             if (user) {
               const data = await gatherWeeklySummary(this.deps.users, user);
-              const reply = renderWeeklySummary(data);
-              // RETURN deterministically in BOTH modes. Previously the lean path
-              // only INJECTED this as a hint and let Gemini phrase it — but
-              // Gemini ignored the data and denied access ("I can't access your
-              // personal diary", production 2026-06-21). The summary is already
-              // warm prose; serving it directly guarantees Grace never denies
-              // having the user's own data.
-              const totalMs = Date.now() - t0;
+              // Nudge-style: hand the user's REAL data to Gemini and let it write
+              // a comprehensive, natural doctor summary, rather than returning the
+              // terse deterministic template (which reads thin and templated —
+              // the reason the earlier render was replaced here). The note embeds
+              // the actual values as authoritative facts + a firm "you HAVE this
+              // data, never deny access" instruction, so we keep the never-deny
+              // guarantee (the past "I can't access your diary" failure came from
+              // a WEAK hint, not real data) while getting a far richer answer.
+              directContextNote += buildWeeklySummaryNote(data);
               this.deps.logger.info(
                 { userId: input.userId, daysLogged: data.daysLogged, hasWeight: data.weightLatest != null, direct: this.directReplyMode },
-                'ai.weekly_summary.served',
+                'ai.weekly_summary.note_injected',
               );
-              this.persistLatency(input.userId, 'weekly_summary', totalMs, lat.snapshot(), input.text, reply);
-              return {
-                text: reply,
-                confidence: 'high',
-                intent: 'weekly_summary',
-                toolResults: [],
-                usedRetrieval: false,
-                latencyMs: totalMs,
-              };
+              // Fall through: the single Gemini reply composes the summary from
+              // the injected facts (handleMessageInner appends directContextNote).
             }
           } catch (err) {
             this.deps.logger.warn(

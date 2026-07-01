@@ -6,6 +6,55 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Symptom intelligence — personal side-effect pattern memory (2026-07-01)
+
+Branch `claude/system-migration-process-dtkyp3`. The signature DIFFERENTIATOR
+(product ask: "make the best in the market to sell more"). Grace learns how THIS
+person's body handles GLP-1 side effects over time so she recalls a PERSONAL
+pattern instead of generic advice — "this usually hits you the day after your
+shot, and ginger tea helped last time." The one thing a generic tracker or a
+15-minute clinic visit structurally can't do; it compounds into a switching-cost
+moat (you can't export what Grace learned about your body).
+
+- **`services/api/src/services/symptom-intelligence.ts`** (NEW, pure/fully
+  unit-tested): `classifySymptom` (9 canonical GLP-1 symptoms, specific→generic
+  so "throwing up"→vomiting not nausea); `detectRemedyOutcome`/`extractRemedy`
+  (named remedy from "the ginger tea helped", negation-voided);
+  `localDayOfWeek(tz)` + `daysSinceInjection(injectionDay, dow)`;
+  `analyzeSymptomPattern` (typical timing = a CLEAR majority of
+  days-since-injection, ≥2 occ & ≥half — never over-claims from noise; topRemedy
+  = most frequent); `buildSymptomRecallNote` (reactive directContextNote) +
+  `buildInjectionDaySymptomNote` (proactive). Note builders assert ONLY what we
+  have (timing and/or remedy), never invent, always keep safe-guidance framing.
+- **`supabase/migrations/20260701000001_symptom_episodes.sql`** (NEW) — table
+  `symptom_episodes(user_id, symptom, days_since_injection, dose_mg,
+  remedy_helped, created_at)` + 2 indexes, RLS default-deny (API uses direct PG).
+  **Apply in Supabase before deploy.**
+- **`user.service.ts`** — 4 best-effort methods: `recordSymptomEpisode`,
+  `getSymptomEpisodes` (by symptom), `getRecentSymptomEpisodes` (all),
+  `setLastEpisodeRemedy` (attributes a named remedy to the most recent OPEN
+  episode within 72h).
+- **`ai.service.ts`** — note-only intercept in the directContextNote block
+  (after the reminder intercept, gated `input.text.trim()`, in BOTH modes): on a
+  classified symptom → record THIS episode (days-since-injection from
+  `injection_day`+tz, dose from `dose_mg`) + inject `buildSymptomRecallNote` for
+  Gemini to phrase warmly; on a positive remedy report → attribute the NAMED
+  remedy to the last open episode. Wrapped in try/catch — NEVER short-circuits
+  (safety/hypo handlers stay in control) and never blocks a reply.
+- **`scheduler.ts` + `message-generator.ts`** — proactive: `injection_morning`
+  now weaves in `buildSymptomHeadsUp(user)` (groups the user's episodes by
+  symptom → analyzes each → strongest timed pattern) via new
+  `GenerateOpts.symptomHeadsUp`, so the injection reminder can gently pre-empt a
+  recurring effect + name what helped. Null when no confident pattern (never
+  manufactures worry).
+
+Tests: `symptom-intelligence.test.ts` (18). 1466 api green, typecheck clean
+across all packages. Flag: none (always on; degrades to no-op without the
+migration since every DB call is best-effort). **Deploy: apply the migration +
+`fly deploy`.**
+
+---
+
 ### Nudge-style food-photo flow: describe + confirm, then log (2026-06-29)
 
 Branch `claude/grace-landing-redesign-b8tdkd`. Production bug: a photo of a

@@ -26,6 +26,7 @@ import {
   type MessageContext,
 } from '@grace/ai-core';
 import { tryFastPath } from './fast-path.js';
+import { isAcceptableRephrase, buildRephraseSystem } from './rephrase.js';
 import { getCuratedFoodIdeas } from '../tools/curated-meal-ideas.js';
 import { estimateMultiItemFood, FOOD_TOKEN_SET } from '../tools/log-food.js';
 import {
@@ -717,6 +718,39 @@ export class AIService {
     return this.deps.llm;
   }
 
+  /**
+   * Let Gemini write the words (Nudge-style) for a deterministic intercept while
+   * keeping the FACTS and a guaranteed floor: it rewrites `basis` (the
+   * grounded template) in Grace's warm voice, and falls back to `fallback` if the
+   * model times out, errors, comes back empty, drifts into AI-speak, or denies
+   * having the data. All FACTS/numbers/offers in `basis` are preserved — the
+   * model only changes the wording, never the data. The result still passes
+   * through the outbound sanitizer/format-enforcer on send. Keeps every
+   * intercept's short-circuit + side-effects intact (no downstream re-handling).
+   */
+  private async warmlyRephrase(basis: string, guide: string, fallback: string): Promise<string> {
+    const clean = (basis ?? '').trim();
+    if (!clean) return fallback;
+    try {
+      const resp = await Promise.race([
+        this.deps.llm.generate({
+          messages: [
+            { role: 'system', content: buildRephraseSystem(clean, guide) },
+            { role: 'user', content: '(rewrite it now)' },
+          ],
+          temperature: 0.7,
+          maxOutputTokens: 500,
+          disableThinking: true,
+        }),
+        new Promise<{ text: string }>((r) => setTimeout(() => r({ text: '' }), 4500)),
+      ]);
+      const text = (resp.text ?? '').trim().replace(/^["']|["']$/g, '');
+      return isAcceptableRephrase(text) ? text : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
   updateSystemPrompt(prompt: string | undefined): void {
     this.systemPrompt = prompt;
     this.deps.logger.info({ hasPrompt: !!prompt }, 'system_prompt.updated');
@@ -847,7 +881,12 @@ export class AIService {
           const detailed = isDoctorQuestionsReply(lastAssistant) || wantsMoreDetail(followUp);
           const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
           const data = user ? await gatherWeeklySummary(this.deps.users, user).catch(() => null) : null;
-          const reply = buildDoctorQuestions(data, { detailed });
+          const grounded = buildDoctorQuestions(data, { detailed });
+          const reply = await this.warmlyRephrase(
+            grounded,
+            'This is a short set of questions to bring to their doctor — keep each one specific and grounded in their real numbers, and keep the closing offer to adjust them.',
+            grounded,
+          );
           const totalMs = Date.now() - t0;
           this.deps.logger.info({ userId: input.userId, detailed, kind: followUp.kind, modifier: followUp.modifier }, 'ai.doctor_questions.served');
           this.persistLatency(input.userId, 'appointment_prep', totalMs, lat.snapshot(), input.text, reply);
@@ -1163,7 +1202,12 @@ export class AIService {
               this.deps.logger.info({ userId: input.userId, text: input.text.slice(0, 80) }, 'ai.meal_suggested.direct_context');
             } else {
               try {
-                const reply = await this.buildMealSuggestionReply(input.userId, input.text);
+                const grounded = await this.buildMealSuggestionReply(input.userId, input.text);
+                const reply = await this.warmlyRephrase(
+                  grounded,
+                  "The user is INTERESTED in a meal but has NOT eaten it yet — keep it a brief, warm acknowledgement, do NOT say it's logged or add any macros, and keep the offer to log it once they've had it.",
+                  grounded,
+                );
                 const totalMs = Date.now() - t0;
                 this.deps.logger.info({ userId: input.userId, text: input.text.slice(0, 80) }, 'ai.meal_suggested.served');
                 this.persistLatency(input.userId, 'meal_suggested', totalMs, lat.snapshot(), input.text, reply);
@@ -1220,7 +1264,12 @@ export class AIService {
             // Keep the dish as the active meal so a later "log it" / "I had it"
             // resolves it. extractAndStore (post-turn) remembers that it sat well.
             if (named) void setActiveMeal(this.deps.redis, input.userId, named, this.deps.logger).catch(() => {});
-            const reply = buildConsumptionFeedbackReply(named);
+            const grounded = buildConsumptionFeedbackReply(named);
+            const reply = await this.warmlyRephrase(
+              grounded,
+              "The user is giving feedback on a meal they tried — acknowledge it warmly and connect to it, keep the OFFER to log it (never assume macros or say it's already logged), and don't restart any recommendation or re-ask their preferences.",
+              grounded,
+            );
             const totalMs = Date.now() - t0;
             this.deps.logger.info(
               { userId: input.userId, text: input.text.slice(0, 80), named: named ?? null },
@@ -1404,8 +1453,13 @@ export class AIService {
       {
         try {
           lat.mark('personal_stats');
-          const ps = await this.tryPersonalStats(input);
-          if (ps) {
+          const psRaw = await this.tryPersonalStats(input);
+          if (psRaw) {
+            const ps = await this.warmlyRephrase(
+              psRaw,
+              'This is the answer to a question about their own numbers (protein, calories, target, weight). Keep every number EXACTLY as given — these are their real totals — just say it warmly and naturally.',
+              psRaw,
+            );
             const stageTimings = lat.snapshot();
             const totalMs = Date.now() - t0;
             this.deps.logger.info(

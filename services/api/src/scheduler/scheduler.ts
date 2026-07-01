@@ -8,6 +8,7 @@ import type { MessageGenerator, GenerateOpts } from './message-generator.js';
 import type { PromptOptimizer } from './prompt-optimizer.js';
 import type { AnomalyDetectorService } from './anomaly-detector.service.js';
 import { buildOnboardingNudge } from '../onboarding/onboarding-flow.js';
+import { analyzeSymptomPattern, buildInjectionDaySymptomNote, type SymptomPattern } from '../services/symptom-intelligence.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const MIDDAY_DAYS = new Set([1, 3, 5]); // Mon, Wed, Fri
@@ -607,11 +608,45 @@ export class Scheduler {
    * Every fetch is best-effort: a DB hiccup never blocks the reminder — the
    * generator just falls back to its generic (still safe) prompt.
    */
+  /** Build the proactive injection-day heads-up from the user's symptom history:
+   *  group their recorded episodes by symptom, analyze each into a personal
+   *  pattern, and let symptom-intelligence pick the strongest timed one to warn
+   *  about. Returns null when no confident pattern exists (we never manufacture
+   *  worry). Best-effort — the caller swallows any error. */
+  private async buildSymptomHeadsUp(user: GraceUser): Promise<string | null> {
+    const episodes = await this.deps.users.getRecentSymptomEpisodes(user.phone, 40);
+    if (episodes.length === 0) return null;
+    const bySymptom = new Map<string, typeof episodes>();
+    for (const e of episodes) {
+      const arr = bySymptom.get(e.symptom) ?? [];
+      arr.push(e);
+      bySymptom.set(e.symptom, arr);
+    }
+    const patterns: SymptomPattern[] = [];
+    for (const [symptom, eps] of bySymptom) {
+      const p = analyzeSymptomPattern(symptom, eps);
+      if (p) patterns.push(p);
+    }
+    return buildInjectionDaySymptomNote(patterns);
+  }
+
   private async enrichGenerateOpts(
     user: GraceUser,
     type: Parameters<MessageGenerator['generate']>[0],
     opts?: GenerateOpts,
   ): Promise<GenerateOpts | undefined> {
+    // Injection-day heads-up (symptom-intelligence): even though injection_morning
+    // isn't a "generative" reminder, if this user has a clear personal pattern of
+    // a side effect around their shot, weave a gentle pre-emptive heads-up + what
+    // helped before into the injection message. Best-effort; never blocks.
+    if (type === 'injection_morning') {
+      try {
+        const headsUp = await this.buildSymptomHeadsUp(user);
+        if (headsUp) return { ...(opts ?? {}), symptomHeadsUp: headsUp };
+      } catch { /* best-effort */ }
+      return opts;
+    }
+
     const GENERATIVE_TYPES = new Set(['morning', 'midday', 'evening', 'bonus', 'injection_dayafter', 'journey', 'winback']);
     if (!GENERATIVE_TYPES.has(type)) return opts;
     const enriched: GenerateOpts = { ...(opts ?? {}) };

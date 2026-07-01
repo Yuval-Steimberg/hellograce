@@ -382,6 +382,73 @@ export class UserService {
     return rows;
   }
 
+  /** Record a symptom episode (side effect + injection timing + dose at the time).
+   *  Powers the personal side-effect pattern intelligence. Best-effort. */
+  async recordSymptomEpisode(userId: string, data: {
+    symptom: string;
+    days_since_injection: number | null;
+    dose_mg: number | null;
+  }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO symptom_episodes (user_id, symptom, days_since_injection, dose_mg)
+       VALUES ($1, $2, $3, $4)`,
+      [userId, data.symptom, data.days_since_injection, data.dose_mg],
+    );
+  }
+
+  /** Prior episodes of a symptom (most recent first), for pattern analysis. */
+  async getSymptomEpisodes(userId: string, symptom: string, limit = 12): Promise<Array<{
+    symptom: string;
+    days_since_injection: number | null;
+    dose_mg: number | null;
+    remedy_helped: string | null;
+    created_at: Date;
+  }>> {
+    const { rows } = await this.pool.query(
+      `SELECT symptom, days_since_injection, dose_mg, remedy_helped, created_at
+       FROM symptom_episodes
+       WHERE user_id = $1 AND symptom = $2
+       ORDER BY created_at DESC
+       LIMIT $3`,
+      [userId, symptom, limit],
+    );
+    return rows;
+  }
+
+  /** All recent episodes across symptoms (for the injection-day proactive note). */
+  async getRecentSymptomEpisodes(userId: string, limit = 40): Promise<Array<{
+    symptom: string;
+    days_since_injection: number | null;
+    dose_mg: number | null;
+    remedy_helped: string | null;
+    created_at: Date;
+  }>> {
+    const { rows } = await this.pool.query(
+      `SELECT symptom, days_since_injection, dose_mg, remedy_helped, created_at
+       FROM symptom_episodes
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [userId, limit],
+    );
+    return rows;
+  }
+
+  /** Attribute a remedy that worked to the user's most recent open episode of a
+   *  symptom within the last `withinHours` (default 72h). Best-effort. */
+  async setLastEpisodeRemedy(userId: string, symptom: string, remedy: string, withinHours = 72): Promise<void> {
+    await this.pool.query(
+      `UPDATE symptom_episodes SET remedy_helped = $3
+       WHERE id = (
+         SELECT id FROM symptom_episodes
+         WHERE user_id = $1 AND symptom = $2 AND remedy_helped IS NULL
+           AND created_at > now() - ($4 || ' hours')::interval
+         ORDER BY created_at DESC LIMIT 1
+       )`,
+      [userId, symptom, remedy, String(withinHours)],
+    );
+  }
+
   /** Record a sent check-in. */
   async recordCheckIn(data: {
     userId: string;

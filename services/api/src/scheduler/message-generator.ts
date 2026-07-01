@@ -138,6 +138,11 @@ export interface GenerateOpts {
   journeyDay?: number;
   /** Win-back ladder stage: 1 (≈1 day quiet), 2 (≈3 days), 3 (≈7+ days). */
   winbackStage?: number;
+  /** Personal injection-day heads-up derived from the user's own symptom history
+   *  (symptom-intelligence) — a directive block woven into the injection_morning
+   *  reminder so Grace can gently pre-empt a recurring side effect + what helped
+   *  before. Empty/absent when there's no confident pattern. */
+  symptomHeadsUp?: string;
 }
 
 // ─── Morning "yesterday bridge" ──────────────────────────────────────────────
@@ -749,7 +754,7 @@ export class MessageGenerator {
         }
         return `${base}Context: evening wind-down — a daily check-in that wraps the day, NOT a repeat of this morning's message. ${weightCtx} ${moodCtx}${dataBlock} ${dislikes} If suggesting evening food, filter by dislikes.${hook}`;
       })(),
-      injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}. Tell them to reply "done" when injected. No questions about feelings — that comes later.`,
+      injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}. Tell them to reply "done" when injected. No questions about feelings — that comes later.${opts?.symptomHeadsUp ?? ''}`,
       injection_followup: `${base}Context: ~3 hours after their shot. Just check in softly — no interrogation. One brief opening for them to share if they want.`,
       injection_dayafter: `${base}Context: morning after injection. Acknowledge that day-after can be tough, be gentle. No checklist questions.`,
       side_effect_nausea: `${base}Context: they reported nausea earlier. Soft follow-up only — no question stack. Offer one practical tip in passing.`,

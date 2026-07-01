@@ -530,6 +530,14 @@ import {
   buildDoctorQuestions,
 } from './weekly-summary.js';
 import { detectFollowUp, wantsMoreDetail } from './follow-up.js';
+import {
+  classifySymptom,
+  analyzeSymptomPattern,
+  buildSymptomRecallNote,
+  detectRemedyOutcome,
+  daysSinceInjection,
+  localDayOfWeek,
+} from './symptom-intelligence.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
@@ -1139,6 +1147,69 @@ export class AIService {
             );
             // Fall through to the normal pipeline rather than drop the turn.
           }
+        }
+      }
+
+      // ── Symptom intelligence: personal side-effect pattern memory (2026-07-01)
+      // Grace's signature differentiator. When the user reports a GLP-1 side
+      // effect, record it with how many days since their injection + the dose at
+      // the time, and — if we've seen it before — inject a PERSONAL pattern note
+      // so Gemini can recall "this usually hits you the day after your shot, and
+      // ginger tea helped last time." When the user later says a remedy WORKED,
+      // attribute it to their last open episode so the memory compounds. This is
+      // the one thing a generic tracker or a 15-minute clinic visit structurally
+      // can't do — and it's a switching-cost moat (you can't export what Grace
+      // learned about YOUR body). Note-only + best-effort: never short-circuits
+      // (safety handlers below stay in control) and never blocks a reply on error.
+      if (input.text.trim()) {
+        try {
+          const symptom = classifySymptom(input.text);
+          if (symptom) {
+            const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+            if (user) {
+              const prior = await this.deps.users.getSymptomEpisodes(input.userId, symptom).catch(() => []);
+              const pattern = analyzeSymptomPattern(symptom, prior);
+              const dow = localDayOfWeek(user.timezone);
+              const dsi = daysSinceInjection(user.injection_day, dow);
+              // Record THIS episode BEFORE building the note so the pattern is
+              // based on prior history only (this episode compounds next time).
+              await this.deps.users.recordSymptomEpisode(input.userId, {
+                symptom,
+                days_since_injection: dsi,
+                dose_mg: user.dose_mg ?? null,
+              }).catch(() => {});
+              const note = buildSymptomRecallNote(pattern);
+              if (note) {
+                directContextNote += note;
+                this.deps.logger.info(
+                  { userId: input.userId, symptom, priorCount: pattern?.count ?? 0 },
+                  'ai.symptom_memory.recall',
+                );
+              }
+            }
+          } else {
+            // Remedy outcome ("the ginger tea helped") → attribute a NAMED remedy
+            // to the user's most recent still-open episode, so next time Grace
+            // knows what settled it. Only record a concrete remedy (never "that"),
+            // so topRemedy stays meaningful.
+            const outcome = detectRemedyOutcome(input.text);
+            if (outcome?.remedy) {
+              const recent = await this.deps.users.getRecentSymptomEpisodes(input.userId, 20).catch(() => []);
+              const open = recent.find((e) => e.remedy_helped == null);
+              if (open) {
+                await this.deps.users.setLastEpisodeRemedy(input.userId, open.symptom, outcome.remedy).catch(() => {});
+                this.deps.logger.info(
+                  { userId: input.userId, symptom: open.symptom, remedy: outcome.remedy },
+                  'ai.symptom_memory.remedy_attributed',
+                );
+              }
+            }
+          }
+        } catch (err) {
+          this.deps.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.symptom_memory.error',
+          );
         }
       }
 

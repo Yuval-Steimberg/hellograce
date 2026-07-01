@@ -161,11 +161,16 @@ export async function processInboundMessage(
       // pure dead time for them. Skip coalesce when the message is short and
       // matches a no-continuation pattern. Real multi-message bursts (food
       // logs, questions, longer content) still go through the buffer.
-      if (deps.redis && normalized.type === 'text') {
+      // Never coalesce a message that carries media — a photo/voice note must
+      // fire immediately and can NEVER be dropped by the buffer. (Gating on media
+      // as well as type keeps the "media fires immediately" invariant true even if
+      // a normalizer mis-types an extensionless media URL as 'text'.)
+      if (deps.redis && normalized.type === 'text' && normalized.media.length === 0) {
         if (!shouldSkipCoalesce(normalized.text)) {
           const coalesced = await coalesceMessages(deps.redis, normalized.userId, normalized.text);
-          if (coalesced === null) return;
-          normalized.text = coalesced;
+          // Only a pure-text absorption may be dropped here; a media turn never is.
+          if (coalesced === null && normalized.media.length === 0) return;
+          if (coalesced !== null) normalized.text = coalesced;
         }
       }
 

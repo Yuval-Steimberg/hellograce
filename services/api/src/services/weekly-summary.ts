@@ -327,52 +327,6 @@ export function renderWeeklySummary(data: WeeklySummaryData): string {
   return sentences.join(' ');
 }
 
-/**
- * Build the directContextNote that hands the user's REAL weekly data to Gemini
- * so it composes a warm, comprehensive, doctor-shareable summary in its own
- * voice (Nudge-style) — richer and more natural than the terse deterministic
- * `renderWeeklySummary`. The data below is authoritative (already pulled from
- * the user's own logs), so Gemini writes FROM it and can never claim it "can't
- * access your data" (the past failure that forced the deterministic path).
- */
-export function buildWeeklySummaryNote(data: WeeklySummaryData): string {
-  const facts: string[] = [];
-
-  if (data.daysLogged > 0 && data.avgProtein != null) {
-    let f = `Food — logged on ${data.daysLogged} of ${data.daysWindow} days, averaging ${data.avgProtein}g protein`;
-    if (data.avgCalories != null) f += ` and about ${data.avgCalories.toLocaleString('en-US')} calories a day`;
-    if (data.proteinGoal != null) f += ` (protein goal ${data.proteinGoal}g)`;
-    facts.push(f + '.');
-  } else {
-    facts.push('Food — nothing logged in the last 7 days.');
-  }
-
-  if (data.weightLatest != null) {
-    if (data.weightStart != null && data.weightStart !== data.weightLatest) {
-      const delta = Math.round((data.weightStart - data.weightLatest) * 10) / 10;
-      facts.push(`Weight — ${data.weightStart} to ${data.weightLatest} lbs this week${delta > 0 ? ` (down ${delta})` : ''}.`);
-    } else {
-      facts.push(`Weight — latest ${data.weightLatest} lbs.`);
-    }
-  } else {
-    facts.push('Weight — none logged this week.');
-  }
-
-  facts.push(data.avgMood != null ? `Mood — averaging ${data.avgMood} out of 10.` : 'Mood — not logged this week.');
-
-  const med = data.medication
-    ? `${titleCaseMed(data.medication)}${data.doseMg != null ? ` ${data.doseMg}mg` : ''}`
-    : data.doseMg != null ? `${data.doseMg}mg` : null;
-  if (med) facts.push(`Medication — ${med}${data.injectionDay ? `, injection day ${data.injectionDay}` : ''}.`);
-  if (data.sideEffect) facts.push(`Side effect flagged this week — ${data.sideEffect}.`);
-
-  return (
-    `\n\n[WEEKLY SUMMARY FOR THE DOCTOR — the user asked for a recap of their last 7 days to share with their doctor. Below is their REAL logged data, already pulled from their own records — you HAVE this data, so write from it and NEVER say you can't access it or their "diary":\n` +
-    facts.map((f) => `- ${f}`).join('\n') +
-    `\n\nWrite a warm, clear, genuinely COMPREHENSIVE summary the user can copy straight to their doctor. Cover every point above; where something wasn't logged, mention it briefly and kindly (it's useful for the doctor to know) — never invent a number you weren't given. Deliver the summary itself NOW — do not just offer to make one. Write it as flowing prose in Grace's warm voice — NO bullet points, NO headers, NO "Label:" lines (they get stripped before sending). It can run a little longer than a normal reply since it's a doctor recap. Close by offering to turn it into a few specific questions for the doctor.]`
-  );
-}
-
 // ─── Doctor-questions follow-through (intent lock) ────────────────────────────
 
 /**

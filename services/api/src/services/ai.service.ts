@@ -522,7 +522,7 @@ import {
   detectSummaryRequest,
   mightBeSummaryRequest,
   gatherWeeklySummary,
-  buildWeeklySummaryNote,
+  renderWeeklySummary,
   isDoctorQuestionsContext,
   isDoctorQuestionsReply,
   buildDoctorQuestions,
@@ -1144,21 +1144,37 @@ export class AIService {
             const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
             if (user) {
               const data = await gatherWeeklySummary(this.deps.users, user);
-              // Nudge-style: hand the user's REAL data to Gemini and let it write
-              // a comprehensive, natural doctor summary, rather than returning the
-              // terse deterministic template (which reads thin and templated —
-              // the reason the earlier render was replaced here). The note embeds
-              // the actual values as authoritative facts + a firm "you HAVE this
-              // data, never deny access" instruction, so we keep the never-deny
-              // guarantee (the past "I can't access your diary" failure came from
-              // a WEAK hint, not real data) while getting a far richer answer.
-              directContextNote += buildWeeklySummaryNote(data);
+              // The outbound pipeline caps EVERY message at ~420 chars (the sender
+              // re-runs the length enforcer), so a long "Hi Doctor" letter gets
+              // guillotined mid-sentence and only a preamble ships (prod screenshot).
+              // So: build the CONCISE, complete, enforcer-safe summary
+              // deterministically (it already covers every data point and fits the
+              // cap), then let Gemini warm the WORDING — same facts, same length —
+              // so it reads natural but always DELIVERS in full. Falls back to the
+              // grounded text on any LLM failure/denial (never-deny preserved).
+              const grounded = renderWeeklySummary(data);
+              const warmed = await this.warmlyRephrase(
+                grounded,
+                "This is a recap of the user's week to share with their doctor. Keep it CONCISE — about the same length, a few short sentences that must stay well under 400 characters so it's never cut off. Do NOT open with a preamble ('Okay, here's...'), a title/header, or a 'Hi Doctor' letter format — just give the recap directly in warm prose. Keep the closing offer to turn it into questions for the doctor.",
+                grounded,
+              );
+              // Never let a long rephrase get guillotined by the sender's ~420-char
+              // cap — if Gemini ran long, ship the concise grounded summary instead.
+              const reply = warmed.length > 415 ? grounded : warmed;
+              const totalMs = Date.now() - t0;
               this.deps.logger.info(
                 { userId: input.userId, daysLogged: data.daysLogged, hasWeight: data.weightLatest != null, direct: this.directReplyMode },
-                'ai.weekly_summary.note_injected',
+                'ai.weekly_summary.served',
               );
-              // Fall through: the single Gemini reply composes the summary from
-              // the injected facts (handleMessageInner appends directContextNote).
+              this.persistLatency(input.userId, 'weekly_summary', totalMs, lat.snapshot(), input.text, reply);
+              return {
+                text: reply,
+                confidence: 'high',
+                intent: 'weekly_summary',
+                toolResults: [],
+                usedRetrieval: false,
+                latencyMs: totalMs,
+              };
             }
           } catch (err) {
             this.deps.logger.warn(

@@ -4,7 +4,6 @@ import {
   mightBeSummaryRequest,
   gatherWeeklySummary,
   renderWeeklySummary,
-  buildWeeklySummaryNote,
   looksEncrypted,
   isDoctorQuestionsOffer,
   isDoctorQuestionsReply,
@@ -191,42 +190,6 @@ describe('gatherWeeklySummary', () => {
 });
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
-
-describe('buildWeeklySummaryNote — Nudge-style facts for Gemini', () => {
-  const fullData: WeeklySummaryData = {
-    daysWindow: 7, daysLogged: 5, avgProtein: 82, avgCalories: 1650, proteinGoal: 100,
-    weightStart: 190, weightLatest: 187, avgMood: 6.5,
-    medication: 'mounjaro', doseMg: 0.5, injectionDay: 'Monday', sideEffect: 'nausea',
-  };
-
-  it('embeds the real values as authoritative facts and forbids denial', () => {
-    const note = buildWeeklySummaryNote(fullData);
-    expect(note).toContain('82g protein');
-    expect(note).toContain('1,650 calories');
-    expect(note).toContain('190 to 187 lbs');
-    expect(note).toContain('6.5 out of 10');
-    expect(note).toContain('Mounjaro 0.5mg');
-    expect(note).toContain('injection day Monday');
-    expect(note).toContain('nausea');
-    // The instruction must forbid the past "can't access" failure and demand delivery.
-    expect(note.toLowerCase()).toMatch(/never say you can'?t access|you have this data/i);
-    expect(note.toLowerCase()).toMatch(/comprehensive/);
-    expect(note.toLowerCase()).toMatch(/no bullet points|flowing prose/);
-  });
-
-  it('states plainly what was NOT logged (so Gemini notes it, never invents)', () => {
-    const sparse: WeeklySummaryData = {
-      daysWindow: 7, daysLogged: 0, avgProtein: null, avgCalories: null, proteinGoal: null,
-      weightStart: null, weightLatest: null, avgMood: null,
-      medication: null, doseMg: 0.5, injectionDay: 'Monday', sideEffect: null,
-    };
-    const note = buildWeeklySummaryNote(sparse);
-    expect(note).toContain('nothing logged');
-    expect(note).toContain('none logged this week');
-    expect(note).toContain('not logged this week');
-    expect(note).toContain('0.5mg');
-  });
-});
 
 describe('isDoctorQuestionsOffer', () => {
   it('recognizes the summary offer (both data + no-data variants)', () => {

@@ -47,6 +47,16 @@ describe('normalizeSendblue', () => {
     expect(msg.media[0]!.kind).toBe('audio');
   });
 
+  it('an EXTENSIONLESS media URL with no caption is still a media turn (type=image, never text)', () => {
+    // Regression: a no-caption selfie over iMessage has a signed CDN URL with no
+    // file extension → classifyMediaKind='other'. It must NOT become type:'text'
+    // (that let it enter coalesce and get silently dropped — photo, zero response).
+    const msg = normalizeSendblue({ number: '+1', content: '', media_url: 'https://media.sendblue.co/abc123XYZ' });
+    expect(msg.type).toBe('image');
+    expect(msg.media.length).toBe(1);
+    expect(msg.text).toBe('');
+  });
+
   it('strips a stray imessage: prefix from the number', () => {
     const msg = normalizeSendblue({ number: 'imessage:+15550001111', content: 'hi' });
     expect(msg.userId).toBe('+15550001111');

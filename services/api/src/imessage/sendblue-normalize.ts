@@ -56,12 +56,16 @@ export function normalizeSendblue(raw: RawSendbluePayload): InboundMessage {
   }
 
   const text = (raw.content ?? '').trim();
+  // Any attached media makes this a MEDIA turn — never 'text'. iMessage/Sendblue
+  // media URLs are usually signed CDN links with NO file extension, so
+  // classifyMediaKind returns 'other'; that must still be treated as media (default
+  // to 'image', since analyzeMedia re-resolves the true kind from the sniffed
+  // bytes anyway). Collapsing it to 'text' let a no-caption selfie enter the
+  // coalesce buffer and get silently dropped (prod: photo sent, zero response).
   const type: InboundMessage['type'] = media.length > 0
     ? media[0]!.kind === 'audio'
       ? 'audio'
-      : media[0]!.kind === 'image'
-        ? 'image'
-        : 'text'
+      : 'image'
     : 'text';
 
   return {

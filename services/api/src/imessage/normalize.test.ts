@@ -43,6 +43,19 @@ describe('normalizeImessage', () => {
     expect(out.media[0]!.kind).toBe('audio');
   });
 
+  it('an EXTENSIONLESS attachment with no caption is still a media turn (type=image, never text)', () => {
+    // Regression: a no-caption selfie has a signed CDN URL with no file extension
+    // → kind='other'. It must NOT collapse to type:'text' (that let it enter
+    // coalesce and get silently dropped — photo sent, zero response in prod).
+    const out = normalizeImessage({
+      recipient: '+15551234567',
+      text: '',
+      attachments: ['https://cdn.example.com/attachments/abc123XYZ'],
+    });
+    expect(out.type).toBe('image');
+    expect(out.media.length).toBe(1);
+  });
+
   it('synthesizes a providerMessageId when none is given', () => {
     const out = normalizeImessage({ recipient: '+1', text: 'x' });
     expect(out.providerMessageId).toMatch(/^imsg_/);

@@ -345,6 +345,29 @@ describe('renderWeeklySummary', () => {
     expect(renderWeeklySummary(fullData).length).toBeLessThanOrEqual(420);
   });
 
+  it('one near-empty day is framed as a PARTIAL picture, not a daily average (prod)', () => {
+    // The exact production case: logged 1 of 7 days, 12g protein / 140 cal, 140g goal.
+    const out = renderWeeklySummary({
+      daysWindow: 7, daysLogged: 1, avgProtein: 12, avgCalories: 140, proteinGoal: 140,
+      weightStart: null, weightLatest: null, avgMood: null,
+      medication: null, doseMg: 0.5, injectionDay: 'Monday', sideEffect: null,
+    });
+    expect(out.toLowerCase()).toContain('partial picture');
+    expect(out).toMatch(/one day/i);
+    expect(out).not.toMatch(/averaging/i);        // not presented as a daily average
+    expect(out).not.toMatch(/a bit under/i);      // 12 vs 140 is NOT "a bit under"
+    expect(out).toMatch(/far below your 140g goal/i);
+    expect(out).toContain('12g protein');
+  });
+
+  it('scales the goal gap: a bit under (>=80%) vs well under (>=50%) vs far below', () => {
+    const base = { daysWindow: 7, daysLogged: 5, avgCalories: null, weightStart: null, weightLatest: null, avgMood: null, medication: null, doseMg: null, injectionDay: null, sideEffect: null };
+    expect(renderWeeklySummary({ ...base, avgProtein: 90, proteinGoal: 100 })).toMatch(/a bit under your 100g goal/i);
+    expect(renderWeeklySummary({ ...base, avgProtein: 60, proteinGoal: 100 })).toMatch(/well under your 100g goal/i);
+    expect(renderWeeklySummary({ ...base, avgProtein: 30, proteinGoal: 100 })).toMatch(/far below your 100g goal/i);
+    expect(renderWeeklySummary({ ...base, avgProtein: 105, proteinGoal: 100 })).toMatch(/right around your 100g goal/i);
+  });
+
   it('omits lines it has no data for (never fabricates)', () => {
     const out = renderWeeklySummary({
       daysWindow: 7,

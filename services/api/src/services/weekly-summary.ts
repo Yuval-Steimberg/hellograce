@@ -273,14 +273,32 @@ export function renderWeeklySummary(data: WeeklySummaryData): string {
   const hasMood = data.avgMood != null;
 
   if (hasNutrition) {
-    let s = `Over the last ${data.daysWindow} days you logged food on ${data.daysLogged} of ${data.daysWindow} days, averaging ${data.avgProtein}g protein`;
-    if (data.avgCalories != null) s += ` and about ${data.avgCalories.toLocaleString('en-US')} calories a day`;
-    if (data.proteinGoal != null) {
-      s += data.avgProtein! >= data.proteinGoal
-        ? `, right around your ${data.proteinGoal}g goal`
-        : `, a bit under your ${data.proteinGoal}g goal`;
+    const p = data.avgProtein!;
+    const g = data.proteinGoal;
+    // Scale the goal comparison HONESTLY — 12g against a 140g goal is NOT "a bit
+    // under" (prod screenshot). Say how far under it really is.
+    const goalNote = g == null ? ''
+      : p >= g ? ` (right around your ${g}g goal)`
+      : p >= g * 0.8 ? ` (a bit under your ${g}g goal)`
+      : p >= g * 0.5 ? ` (well under your ${g}g goal)`
+      : ` (far below your ${g}g goal)`;
+    const cal = data.avgCalories != null ? data.avgCalories.toLocaleString('en-US') : null;
+
+    if (data.daysLogged <= 2) {
+      // Too few days to be a meaningful average — frame it as what was logged on
+      // those day(s), NOT a daily average (prod: "averaging 12g protein and 140
+      // calories daily" from ONE near-empty day read as alarming/misleading), and
+      // flag it's only a partial picture so the doctor reads it in context.
+      const dayWord = data.daysLogged === 1 ? 'one day' : `${data.daysLogged} days`;
+      const dayRef = data.daysLogged === 1 ? 'that day' : 'those days';
+      let s = `You logged food on just ${dayWord} this past week, so it's only a partial picture — on ${dayRef} it came to about ${p}g protein${goalNote}`;
+      if (cal) s += ` and ${cal} calories`;
+      sentences.push(s + '.');
+    } else {
+      let s = `Over the last ${data.daysWindow} days you logged food on ${data.daysLogged} of ${data.daysWindow} days, averaging ${p}g protein${goalNote}`;
+      if (cal) s += ` and about ${cal} calories a day`;
+      sentences.push(s + '.');
     }
-    sentences.push(s + '.');
   }
 
   if (hasWeight) {

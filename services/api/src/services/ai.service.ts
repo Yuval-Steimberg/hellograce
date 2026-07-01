@@ -499,6 +499,8 @@ import {
   buildNextReminderReply,
   buildReminderExplainReply,
   buildReminderChangeReply,
+  wasReminderOffer,
+  buildReminderKeptReply,
 } from './reminder-service.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
 import { detectCapabilityQuestion, buildCapabilityReply } from './capability.js';
@@ -898,6 +900,25 @@ export class AIService {
             usedRetrieval: false,
             latencyMs: totalMs,
           };
+        }
+        // ── Reminder offer follow-up ─────────────────────────────────────────
+        // Grace's prior turn answered "your next reminder is … Want a different
+        // time?". A satisfied/decline reply to THAT ("No that good", "leave it",
+        // "no thanks") means the user is HAPPY — warmly confirm we'll keep it,
+        // don't restate the reminder line (prod: "No that good" → the exact same
+        // time repeated). Guarded so an actual change ("no, make it 8am" / "no,
+        // earlier") is left to the reminder/Settings path, not treated as "keep".
+        if (
+          followUp?.kind === 'reject' &&
+          wasReminderOffer(lastAssistant) &&
+          !detectReminderIntent(input.text) &&
+          !/\d|earlier|later|\bchange\b|different|instead|\bmove\b/i.test(input.text)
+        ) {
+          const reply = buildReminderKeptReply();
+          const totalMs = Date.now() - t0;
+          this.deps.logger.info({ userId: input.userId }, 'ai.reminder_kept.served');
+          this.persistLatency(input.userId, 'reminder', totalMs, lat.snapshot(), input.text, reply);
+          return { text: reply, confidence: 'high', intent: 'reminder', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
         }
         const lastWasOfferQuestion = /\?\s*$/.test(lastAssistant.trim()) &&
           /\b(want me to|would you (?:like|want)|should i|can i|may i|how about|do you want|interested in|let me know if you'?d like|let me know if you want|i can (?:walk you|show you|share|give|explain|break|go through|run through))\b/i.test(lastAssistant);

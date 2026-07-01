@@ -5,6 +5,8 @@ import {
   buildNextReminderReply,
   buildReminderExplainReply,
   buildReminderChangeReply,
+  wasReminderOffer,
+  buildReminderKeptReply,
   formatClock,
   type ReminderUser,
 } from './reminder-service.js';
@@ -157,6 +159,23 @@ describe('computeReminderSchedule — next reminder', () => {
     expect(s.next?.kind).toBe('morning');
     // It still resolves to *a* morning (this/tomorrow/named day) — never null.
     expect(s.next?.phrase).toMatch(/morning/i);
+  });
+});
+
+describe('reminder offer follow-up — understand "no, that\'s good" as keep', () => {
+  it('recognizes the prior reminder answer as an offer', () => {
+    expect(wasReminderOffer('Your next reminder is tomorrow (Thursday) morning around 7:00 AM, based on your wake-up time. Want a different time?')).toBe(true);
+    expect(wasReminderOffer('Want a different time?')).toBe(true);
+    expect(wasReminderOffer('You logged chicken and rice, nice work.')).toBe(false);
+    expect(wasReminderOffer('')).toBe(false);
+    expect(wasReminderOffer(null)).toBe(false);
+  });
+
+  it('keep-reply confirms warmly, never restates a time, never denies', () => {
+    const r = buildReminderKeptReply();
+    expect(r.toLowerCase()).toMatch(/keep your reminders|leave (it|them)/);
+    expect(r).not.toMatch(/\d/); // no time restated
+    expect(r.toLowerCase()).not.toMatch(/can'?t|unable/);
   });
 });
 

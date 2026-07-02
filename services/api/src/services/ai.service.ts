@@ -3311,6 +3311,12 @@ CRITICAL RULES:
     const nowMs = Date.now();
 
     if (input.media.length > 0 || !input.text.trim()) return {};
+    // Never interrupt a multi-topic message with a data-collection question —
+    // the user asked for several things; answer them, don't interrogate. The
+    // multi-part handler covers these, and asking "what's your activity level?"
+    // in the middle of a real question is exactly the "out of nowhere" behavior
+    // to avoid (2026-07-02).
+    if (analyzeMessage(input.text).hasMultiple) return {};
     const user = await this.deps.users.getById(phone).catch(() => null);
     if (!user) return {};
     // The onboarding flow owns data collection — never ask-first mid-signup.

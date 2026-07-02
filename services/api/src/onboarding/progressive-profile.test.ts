@@ -56,6 +56,15 @@ describe('relevantProfileSlot — ask the field that makes THIS answer accurate'
     expect(relevantProfileSlot(empty, 'how much protein should I eat?')).toBe('sex');
     expect(relevantProfileSlot({ ...empty, sex: 'male' }, 'how many calories do I need?')).toBe('current_weight');
   });
+  it('a FACTUAL food-content estimate never gathers (production: salmon protein)', () => {
+    // "how much protein IS that" is answered directly — it does NOT depend on
+    // the user's activity level / Mifflin inputs, so no ask-out-of-nowhere.
+    expect(relevantProfileSlot(empty, 'I had salmon with potatoes and salad. How much protein is that roughly, and what should I eat later?')).toBeNull();
+    expect(relevantProfileSlot(empty, 'how much protein is in salmon?')).toBeNull();
+    expect(relevantProfileSlot(empty, 'how many calories was that meal?')).toBeNull();
+    // The bare word "protein" alone must not trigger a gather.
+    expect(relevantProfileSlot(empty, 'I love a good protein shake')).toBeNull();
+  });
   it('a food-idea question pulls dietary, then dislikes, then nothing', () => {
     expect(relevantProfileSlot(empty, 'what should I eat for dinner?')).toBe('dietary');
     // diet known but dislikes unknown → ask dislikes

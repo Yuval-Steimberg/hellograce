@@ -74,8 +74,15 @@ export function nextMissingProfileSlot(user: ProfileShape): ProgressiveSlot | nu
 // accurate as these. Asked in this order when one is missing.
 const TARGET_INPUTS: ProgressiveSlot[] = ['sex', 'current_weight', 'height', 'age', 'activity'];
 
+// Only a question about the USER'S OWN target/goal — "how much protein SHOULD I
+// eat", "what's my protein target", "am I getting enough" — depends on the
+// Mifflin inputs. A factual estimate of a food's content ("how much protein IS
+// that / is in this salmon") does NOT — Grace just estimates it, never gathers.
 const TARGET_QUESTION_RE =
-  /\b(protein|calorie|calories|macro|macros|how much (should|do|can) i (eat|need|have)|my (daily )?(target|goal)|am i (eating|getting) enough|how many calories)\b/i;
+  /\b(?:how (?:much|many) (?:protein|calories?|carbs?|macros?) (?:should|do|can|must) i (?:eat|need|have|get|aim|hit)|what'?s?(?: is)? my (?:daily )?(?:protein|calorie|macro)?\s?(?:target|goal|intake|need)|my (?:protein|calorie|daily) (?:target|goal)|am i (?:eating|getting) enough|do i (?:eat|get) enough (?:protein|calories))\b/i;
+// A factual "how much protein/calories is in this food" — must NEVER gather.
+const FOOD_CONTENT_RE =
+  /\bhow (?:much|many) (?:protein|calories?|carbs?|fat|macros?)\b[^?]*\b(?:is|was|in|does|has|that|this|it|there|the meal)\b/i;
 const FOOD_IDEA_RE =
   /\b(what (should|can|could) i (eat|have|make)|(?:meal|dinner|lunch|breakfast|snack|food)\s+ideas?|recipe|suggest|recommend|any ideas?|what's for)\b/i;
 // A reminder/check-in timing question is only accurate once Grace knows the
@@ -90,6 +97,9 @@ const REMINDER_TIMING_RE =
  */
 export function relevantProfileSlot(user: ProfileShape, text: string): ProgressiveSlot | null {
   const t = text ?? '';
+  // A factual food-content estimate ("how much protein is that?") is answered
+  // directly — it never depends on the user's profile, so never gather for it.
+  if (FOOD_CONTENT_RE.test(t)) return null;
   if (TARGET_QUESTION_RE.test(t)) {
     for (const slot of TARGET_INPUTS) {
       if (!isProfileSlotFilled(user, slot)) return slot;

@@ -2407,12 +2407,12 @@ export class AIService {
 
     // Extract meal type and try the curated bank deterministically first.
     const lower = userText.toLowerCase();
-    const mealType =
+    const explicitMeal =
       /\bbreakfast\b/.test(lower) ? 'breakfast'
       : /\blunch\b/.test(lower) ? 'lunch'
       : /\bdinner\b|supper/.test(lower) ? 'dinner'
       : /\bsnack/.test(lower) ? 'snack'
-      : 'general';
+      : null;
 
     // Fetch user profile for dietary restriction + dislikes.
     let user;
@@ -2420,6 +2420,25 @@ export class AIService {
       user = await this.deps.users.getById(input.userId);
     } catch {
       user = null;
+    }
+
+    // Time-of-day scoping (2026-07-02): when the user names NO meal and isn't
+    // asking for a whole-day plan, answer for the meal that fits their LOCAL
+    // clock right now (evening → dinner, morning → breakfast) instead of a
+    // generic breakfast-lunch-dinner rundown. Falls back to 'general' when the
+    // timezone is unknown.
+    const localHour = localHourForTimezone(user?.timezone);
+    const fullDay = wantsFullDayPlan(lower);
+    let mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'general';
+    let timeScopeNote = '';
+    if (explicitMeal) {
+      mealType = explicitMeal;
+    } else if (!fullDay && localHour != null) {
+      mealType = mealForLocalHour(localHour);
+      const clock = `${((localHour + 11) % 12) + 1}${localHour < 12 ? 'am' : 'pm'}`;
+      timeScopeNote = `\n\nTIME CONTEXT — it's about ${clock} for the user right now, so suggest ${mealType} options for THIS moment. Do NOT lay out a full breakfast-lunch-dinner day plan unless they explicitly ask for the whole day.`;
+    } else {
+      mealType = 'general';
     }
     const dietaryRestriction = effectiveDietaryRestriction(user);
     const dislikes = (user?.food_dislikes ?? [])
@@ -2498,7 +2517,7 @@ NEVER (any of these mean refusal — banned):
 - Ask "what kind of meal are you thinking?" — they already told you (or didn't, you suggest anyway).
 - Use parenthetical brand-name dumps.
 
-If you don't know specifics, name standard GLP-1 friendly options and move on.${dietaryContextBlock}
+If you don't know specifics, name standard GLP-1 friendly options and move on.${dietaryContextBlock}${timeScopeNote}
 
 CRITICAL CONTEXT RULES — apply on every turn:
 - You ALWAYS have the user's recent conversation history above. Use it to remember context, preferences, prior side effects, weight changes, mood, what they ate, and what you've discussed.
@@ -5207,6 +5226,9 @@ CRITICAL RULES:
           if (localTodayIdx === -1) localTodayIdx = new Date().getDay();
         }
         lines.push(`Time of day for this user right now: ${timeOfDay}`);
+        // Scope food recs to the current meal, not a whole-day rundown, unless
+        // the user names a meal or asks for a full-day plan (2026-07-02).
+        lines.push('FOOD TIMING: when suggesting what to eat and the user has NOT named a meal or asked for a full-day plan, recommend options for the CURRENT meal that fits the time of day above (morning → breakfast, midday → lunch, evening → dinner, late night → a light snack). Do NOT lay out a full breakfast-lunch-dinner day.');
       } catch {
         // Fall back silently if timezone is malformed.
       }
@@ -5645,6 +5667,37 @@ export function parseFoodImageAnalysis(description: string): FoodImageAnalysis {
  * dinner / snack / brunch). We split on those labels and keep each segment
  * with its food description.
  */
+/** The user's current local hour (0-23) from their timezone, or null if
+ *  unknown/unparseable. Uses Intl so it's DST-correct. */
+export function localHourForTimezone(tz: string | null | undefined): number | null {
+  if (!tz) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hour12: false }).formatToParts(new Date());
+    const h = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '', 10);
+    return Number.isFinite(h) ? h % 24 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Map a local hour to the meal a food recommendation should focus on RIGHT
+ *  NOW, so "what should I eat?" answers for the current moment instead of a
+ *  full-day plan. Early morning → breakfast, midday → lunch, late afternoon →
+ *  snack, evening → dinner, late night → a light snack. */
+export function mealForLocalHour(hour: number): 'breakfast' | 'lunch' | 'snack' | 'dinner' {
+  if (hour >= 5 && hour < 11) return 'breakfast';
+  if (hour >= 11 && hour < 15) return 'lunch';
+  if (hour >= 15 && hour < 17) return 'snack';
+  if (hour >= 17 && hour < 21) return 'dinner';
+  return 'snack'; // 21:00–04:59 → keep it light
+}
+
+/** True when the user explicitly wants a WHOLE-DAY plan (so we should NOT scope
+ *  the answer to the current meal). */
+export function wantsFullDayPlan(text: string): boolean {
+  return /\b(meal\s*plan|whole day|full day|entire day|for the (?:whole |entire )?day|all day|throughout the day|plan (?:my|the) day|breakfast[\s,]+lunch|day'?s worth|each meal|every meal)\b/i.test(text);
+}
+
 export function splitMultiMealText(text: string): string[] {
   const cleaned = text.replace(/\s+/g, ' ').trim();
   // 2026-06-14 fix: the old version anchored on the meal label and captured

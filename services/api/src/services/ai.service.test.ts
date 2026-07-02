@@ -1,6 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts } from './ai.service.js';
+import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone } from './ai.service.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+
+describe('time-of-day food scoping', () => {
+  it('maps local hours to the right current meal', () => {
+    expect(mealForLocalHour(7)).toBe('breakfast');
+    expect(mealForLocalHour(12)).toBe('lunch');
+    expect(mealForLocalHour(16)).toBe('snack');
+    expect(mealForLocalHour(19)).toBe('dinner');
+    expect(mealForLocalHour(23)).toBe('snack'); // late night → light
+    expect(mealForLocalHour(2)).toBe('snack');
+  });
+  it('detects an explicit full-day request (so we do NOT scope to one meal)', () => {
+    expect(wantsFullDayPlan('give me a meal plan for the day')).toBe(true);
+    expect(wantsFullDayPlan('what should I eat for the whole day')).toBe(true);
+    expect(wantsFullDayPlan('breakfast, lunch and dinner ideas')).toBe(true);
+    expect(wantsFullDayPlan('what should I eat today')).toBe(false); // "today" ≠ full-day plan
+    expect(wantsFullDayPlan('what should I eat')).toBe(false);
+  });
+  it('resolves a real timezone to an hour, null when unknown', () => {
+    expect(localHourForTimezone('UTC')).toBeGreaterThanOrEqual(0);
+    expect(localHourForTimezone('UTC')).toBeLessThan(24);
+    expect(localHourForTimezone(null)).toBeNull();
+    expect(localHourForTimezone('Not/AZone')).toBeNull();
+  });
+});
 
 describe('splitQuestionParts — multi-part questions', () => {
   it('splits a 3-part question (production: alcohol + protein + weight)', () => {

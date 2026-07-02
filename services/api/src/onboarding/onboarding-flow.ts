@@ -646,7 +646,10 @@ export async function buildOnboardingNudge(
  */
 export function buildSignupCompleteReply(firstName: string | null, _upgradeUrl?: string): string {
   const greet = firstName ? `, ${firstName}` : '';
-  return `Perfect, you're all set${greet} 🎉 Text me anytime about meals, protein, side effects, cravings, injection days, or just staying on track — I'll use what you shared to keep it personal. Try texting "What should I eat today?" to start. And whenever you want the full picture, just text "dashboard" — I'll send you a private link to your progress app, where your weight, meals, protein, charts, and photos all live in one place.`;
+  // Keep this UNDER the outbound 420-char format cap (it truncates at the last
+  // sentence boundary) so the dashboard line is never cut off. Two short
+  // sentences: start texting + the dashboard option.
+  return `Perfect, you're all set${greet} 🎉 Text me anytime — meals, protein, side effects, cravings, injection days, or just to stay on track. Try "What should I eat today?" to start. And text "dashboard" anytime to open your progress app (weight, meals, protein, charts, and photos, all in one place).`;
 }
 
 /**
@@ -869,7 +872,7 @@ export async function runOnboardingTurn(params: {
       await users.update(u.phone, { onboarding_state: 'complete', onboarding_last_slot: null } as Partial<GraceUser>);
       logger.info({ phone: u.phone, mode }, 'onboarding.completed');
       return {
-        reply: `All set 🧡 Text me anytime about meals, protein, side effects, or just to check in — I'll use what you shared to keep it personal. Try "What should I eat today?" to start. And whenever you want the full picture, just text "dashboard" — I'll send you a private link to your progress app (weight, meals, protein, charts, and photos, all in one place).`,
+        reply: `All set 🧡 Text me anytime — meals, protein, side effects, or just to check in. Try "What should I eat today?" to start. And text "dashboard" anytime to open your progress app (weight, meals, protein, charts, and photos, all in one place).`,
         completed: true,
       };
     }

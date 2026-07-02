@@ -149,10 +149,20 @@ describe('parseSlotAnswer', () => {
     expect(parseSlotAnswer('first_name', "hey it's Sarah")).toEqual({ ok: true, fields: { first_name: 'Sarah' } });
   });
   it('parses medication / frequency / day / time', () => {
-    expect(parseSlotAnswer('medication', 'mounjaro')).toEqual({ ok: true, fields: { medication: 'Mounjaro' } });
+    expect(parseSlotAnswer('medication', 'mounjaro')).toEqual({ ok: true, fields: { medication: 'Mounjaro', medication_frequency: 'weekly' } });
     expect(parseSlotAnswer('medication_frequency', 'just once a week')).toEqual({ ok: true, fields: { medication_frequency: 'weekly' } });
     expect(parseSlotAnswer('injection_day', 'fridays')).toEqual({ ok: true, fields: { injection_day: 'Friday' } });
     expect(parseSlotAnswer('medication_time', '8am')).toEqual({ ok: true, fields: { medication_time: '08:00' } });
+  });
+  it('infers dosing cadence from the drug name (2026-07-02)', () => {
+    // Daily meds → set medication_frequency=daily so the flow asks for the TIME.
+    expect(parseSlotAnswer('medication', 'Rybelsus').fields).toMatchObject({ medication: 'Rybelsus', medication_frequency: 'daily' });
+    expect(parseSlotAnswer('medication', 'I take Saxenda').fields).toMatchObject({ medication_frequency: 'daily' });
+    // Weekly injectables → medication_frequency=weekly so the flow asks the DAY.
+    expect(parseSlotAnswer('medication', 'Ozempic').fields).toMatchObject({ medication: 'Ozempic', medication_frequency: 'weekly' });
+    expect(parseSlotAnswer('medication', 'mounjaro').fields).toMatchObject({ medication_frequency: 'weekly' });
+    // Daily drug → schedule slot becomes medication_time (not injection_day).
+    expect(signupSequence({ medication_frequency: 'daily' })).toContain('medication_time');
   });
   it('finds the weekday inside a phrase, incl. abbreviations (2026-07-02)', () => {
     expect(parseSlotAnswer('injection_day', 'on wed').fields?.injection_day).toBe('Wednesday');
@@ -262,9 +272,9 @@ describe('runOnboardingTurn (signup)', () => {
     const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'medication' });
     const res = await runOnboardingTurn({ user: u, text: 'Mounjaro', mode: 'signup', users, logger });
     expect(res.completed).toBe(false);
-    expect(calls).toContainEqual({ medication: 'Mounjaro' });
-    // medication_frequency is already 'weekly' on this user → skip-answered jumps
-    // past it to the next unfilled slot (injection_day).
+    // Medication parse now also infers the cadence from the drug (Mounjaro → weekly).
+    expect(calls).toContainEqual({ medication: 'Mounjaro', medication_frequency: 'weekly' });
+    // weekly → the schedule slot is injection_day.
     expect(calls).toContainEqual({ onboarding_last_slot: 'injection_day' });
   });
 
@@ -421,7 +431,7 @@ describe('understandSlotWithLlm — typo / slang / abbreviation tolerance', () =
 
   it('recovers a typo medication via the LLM, re-validated through the parser', async () => {
     const r = await understandSlotWithLlm('medication', 'im on ozemic', stub('Ozempic'), { logger });
-    expect(r).toEqual({ ok: true, fields: { medication: 'Ozempic' } });
+    expect(r).toEqual({ ok: true, fields: { medication: 'Ozempic', medication_frequency: 'weekly' } });
   });
   it('recovers an abbreviated frequency ("1x a wk" → weekly)', async () => {
     const r = await understandSlotWithLlm('medication_frequency', '1x a wk', stub('weekly'), { logger });
@@ -443,7 +453,7 @@ describe('understandSlotWithLlm — typo / slang / abbreviation tolerance', () =
     // "munjaroo" isn't a known brand to the strict regex → LLM normalizes it.
     const res = await runOnboardingTurn({ user: u, text: 'munjaroo', mode: 'signup', users, llm, logger });
     expect(res.completed).toBe(false);
-    expect(calls).toContainEqual({ medication: 'Mounjaro' });
+    expect(calls).toContainEqual({ medication: 'Mounjaro', medication_frequency: 'weekly' });
   });
 });
 

@@ -125,6 +125,18 @@ export function normalizeMedication(raw: unknown): string | null {
   return null;
 }
 
+/** GLP-1 dosing cadence is deterministic from the drug: Rybelsus (oral) and
+ *  Saxenda/Victoza (liraglutide) are DAILY; Ozempic/Wegovy/Mounjaro/Zepbound and
+ *  compounded semaglutide/tirzepatide are WEEKLY. Returns null when the drug is
+ *  unknown so the caller keeps the user's own answer / the default. */
+export function inferFrequencyFromMedication(medication: string | null | undefined): 'daily' | 'weekly' | null {
+  if (!medication) return null;
+  const m = medication.toLowerCase();
+  if (/rybelsus|saxenda|victoza|liraglutide/.test(m)) return 'daily';
+  if (/ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide/.test(m)) return 'weekly';
+  return null;
+}
+
 export function normalizeFrequency(raw: unknown): ProfileUpdates['medication_frequency'] | null {
   if (typeof raw !== 'string') return null;
   const t = raw.toLowerCase();

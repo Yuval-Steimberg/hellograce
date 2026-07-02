@@ -37,6 +37,7 @@ import {
   normalizeFrequency,
   normalizeDay,
   normalizeTime,
+  inferFrequencyFromMedication,
 } from '../services/profile-extract.js';
 import { parseTimezone, timezoneFromPhone } from '../services/timezone-parse.js';
 import { detectOnboardingSideQuestion, buildSideAnswer } from '../services/capability.js';
@@ -417,7 +418,14 @@ export function parseSlotAnswer(slot: SlotId, text: string): ParsedAnswer {
     }
     case 'medication': {
       const med = parseMedicationStrict(t);
-      return med ? { ok: true, fields: { medication: med } } : { ok: false };
+      if (!med) return { ok: false };
+      // Dosing cadence is deterministic from the drug — infer it so a daily
+      // med (Rybelsus / Saxenda / Victoza) asks "what time?" and a weekly one
+      // asks "which day?", without a separate frequency question.
+      const fields: Partial<GraceUser> = { medication: med };
+      const freq = inferFrequencyFromMedication(med);
+      if (freq) fields.medication_frequency = freq;
+      return { ok: true, fields };
     }
     case 'medication_frequency': {
       const freq = normalizeFrequency(t);

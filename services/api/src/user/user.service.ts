@@ -829,6 +829,17 @@ export class UserService {
     return rows.map((r) => this.decryptUser(r));
   }
 
+  /** Users who opted OUT of reminders (paused = TRUE) but are still active +
+   *  not blocked. listActiveUsers excludes them, so this is the ONLY way the
+   *  scheduler can reach a paused user — used solely for the heavily-throttled
+   *  "I'm still here" quiet re-engagement after a long silence. */
+  async listPausedUsers(): Promise<GraceUser[]> {
+    const { rows } = await this.pool.query<GraceUser>(
+      `SELECT * FROM users WHERE active = TRUE AND paused = TRUE AND blocked = FALSE`,
+    );
+    return rows.map((r) => this.decryptUser(r));
+  }
+
   /** Users who STARTED conversational onboarding but haven't finished — used by
    *  the scheduler to nudge abandoned signups. They may not be `active` yet (no
    *  trial until completion), so this is a separate query from listActiveUsers.

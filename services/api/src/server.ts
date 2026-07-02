@@ -491,6 +491,8 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     researchAutoFix,
     engagementCooldownHours: env.ENGAGEMENT_COOLDOWN_HOURS,
     onboardingNudgeAfterHours: env.ONBOARDING_NUDGE_AFTER_HOURS,
+    reengageQuietAfterHours: env.REENGAGE_QUIET_AFTER_HOURS,
+    reengageQuietMinGapHours: env.REENGAGE_QUIET_MIN_GAP_HOURS,
     optimizersEnabled: env.OPTIMIZERS_ENABLED,
   });
 

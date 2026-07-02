@@ -158,6 +158,12 @@ const EnvSchema = z.object({
    *  onboarding (SMS_ONBOARDING_ENABLED) but didn't finish. Default 4. The
    *  scheduler sends at most 2 nudges, ≥20h apart, in the user's daytime. */
   ONBOARDING_NUDGE_AFTER_HOURS: z.coerce.number().min(1).max(72).default(4),
+  /** Even users who turned reminders OFF (paused) get ONE warm "I'm still here"
+   *  hello after this many hours of silence. Default 24. */
+  REENGAGE_QUIET_AFTER_HOURS: z.coerce.number().min(1).max(168).default(24),
+  /** Minimum gap between quiet re-engagements to the same opted-out user, so
+   *  they're never nagged. Default 72 (every 3 days at most). 0 disables it. */
+  REENGAGE_QUIET_MIN_GAP_HOURS: z.coerce.number().min(0).max(720).default(72),
 
   /** How many recent conversation turns to feed the orchestrator/Gemini so a
    *  message is never interpreted in isolation (short replies, multi-turn

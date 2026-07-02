@@ -8,6 +8,7 @@ import type { MessageGenerator, GenerateOpts } from './message-generator.js';
 import type { PromptOptimizer } from './prompt-optimizer.js';
 import type { AnomalyDetectorService } from './anomaly-detector.service.js';
 import { buildOnboardingNudge } from '../onboarding/onboarding-flow.js';
+import { buildQuietReengagement } from './quiet-reengagement.js';
 import { analyzeSymptomPattern, buildInjectionDaySymptomNote, type SymptomPattern } from '../services/symptom-intelligence.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
@@ -45,6 +46,13 @@ interface SchedulerDeps {
   /** Hours of silence before nudging a user who started conversational
    *  onboarding but didn't finish. Default 4. Set via ONBOARDING_NUDGE_AFTER_HOURS. */
   onboardingNudgeAfterHours?: number;
+  /** Hours of silence after which an OPTED-OUT (paused) user gets ONE warm
+   *  "I'm still here" hello. Default 24. Set via REENGAGE_QUIET_AFTER_HOURS. */
+  reengageQuietAfterHours?: number;
+  /** Minimum gap (hours) between quiet re-engagements to the same opted-out
+   *  user, so they're never nagged. Default 72 (every 3 days at most).
+   *  Set via REENGAGE_QUIET_MIN_GAP_HOURS. Set to 0 to disable the feature. */
+  reengageQuietMinGapHours?: number;
 }
 
 export class Scheduler {
@@ -144,6 +152,67 @@ export class Scheduler {
     // Separate pass: nudge users who started conversational onboarding but went
     // quiet (they aren't in listActiveUsers — no trial until they finish).
     await this.nudgeAbandonedOnboarding();
+    // Separate pass: opted-out (paused) users are excluded from listActiveUsers,
+    // so re-engage them with ONE warm "I'm still here" hello after a long silence.
+    await this.reengageQuietOptedOut();
+  }
+
+  /**
+   * Re-engage users who turned reminders OFF (paused) but have gone quiet for
+   * more than `reengageQuietAfterHours` (default 24h). They're excluded from the
+   * normal proactive tick, so without this they'd never hear from Grace again.
+   * Sends ONE warm, no-pressure "I'm still here" hello — explicitly keeps
+   * reminders off — then a Redis gate (TTL = min-gap) prevents another for
+   * `reengageQuietMinGapHours` (default 72h), so an opted-out user is never
+   * nagged. Quiet-hours aware. Best-effort; anything missing simply no-ops.
+   */
+  private async reengageQuietOptedOut(): Promise<void> {
+    if (typeof this.deps.users.listPausedUsers !== 'function') return;
+    const minGapHours = this.deps.reengageQuietMinGapHours ?? 72;
+    if (minGapHours <= 0) return; // feature disabled
+    const afterHours = this.deps.reengageQuietAfterHours ?? 24;
+
+    let users: GraceUser[] = [];
+    try {
+      users = await this.deps.users.listPausedUsers();
+    } catch (err) {
+      this.deps.logger.warn({ err: (err as Error).message }, 'scheduler.quiet_reengage.list_failed');
+      return;
+    }
+    for (const user of users) {
+      try {
+        // Never interrupt an in-flight signup, and respect quiet hours.
+        if (user.onboarding_state === 'in_progress') continue;
+        const localHour = localNow(user.timezone || 'America/New_York').getHours();
+        if (localHour >= 21 || localHour < 7) continue;
+        // Only re-engage someone we've actually heard from before — never cold-
+        // message a paused user we have no reply timestamp for.
+        const lastReplyMs = user.last_reply_at ? new Date(user.last_reply_at).getTime() : 0;
+        if (!lastReplyMs) continue;
+        const hoursSilent = (Date.now() - lastReplyMs) / 3_600_000;
+        if (hoursSilent < afterHours) continue;
+        // Throttle: one send per min-gap window (the gate's TTL IS the min gap).
+        const gateKey = `reengage:quiet:${user.phone}`;
+        const already = await this.deps.redis.get(gateKey).catch(() => null);
+        if (already) continue;
+
+        const seed = `${user.phone}-${toDateStr(localNow(user.timezone || 'America/New_York'))}`;
+        const body = buildQuietReengagement(user, seed);
+        await this.deps.sender.send({ to: user.phone, body, channel: user.channel ?? 'imessage' });
+        await this.deps.redis
+          .set(gateKey, String(Date.now()), 'EX', Math.round(minGapHours * 3_600))
+          .catch(() => {});
+        this.deps.logger.info(
+          { phone: user.phone, hoursSilent: Math.round(hoursSilent) },
+          'scheduler.quiet_reengage.sent',
+        );
+      } catch (err) {
+        this.deps.logger.warn(
+          { err: (err as Error).message, phone: user.phone },
+          'scheduler.quiet_reengage.error',
+        );
+      }
+    }
   }
 
   /** Re-engage users who started SMS onboarding but stopped before finishing.

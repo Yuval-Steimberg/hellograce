@@ -213,10 +213,12 @@ export function analyzeMessage(text: string): MessageUnderstanding {
  */
 export function buildMultiPartNote(understanding: MessageUnderstanding): string {
   if (!understanding.hasMultiple) return '';
-  const lines = understanding.parts.map((p, i) => `${i + 1}) ${p.label}`);
+  // Deliberately a SINGLE plain-language instruction — NOT an enumerated
+  // "Parts to cover: 1)… 2)…" block. That structured list caused Gemini to
+  // treat the prompt scaffolding as data and reply "Here's an analysis of your
+  // entries, categorizing them…" (production 2026-07-02). Keep it conversational
+  // so Gemini answers like a person, not a report generator.
   return (
-    `\n\n[MULTI-PART MESSAGE — the user said several things at once. Reply to ALL of it the way a caring friend texts back: ONE short, natural message of about 2-4 sentences. GROUND YOUR ANSWER ONLY IN WHAT THIS MESSAGE SAYS — if they told you what they just ate (e.g. salmon with potatoes and salad), answer about THAT. Do NOT pull in a food from earlier in the conversation (a shake, pizza, etc.) and do NOT ask what was in it — that is a different, past meal. Hard rules: NO lists, NO bullet points, NO headings, NO "Option 1 / Option 2", NO numbered choices, NO "let's look at your previous questions", NO restating their history. If a part is a feeling, react to it FIRST in a few words, then answer the rest in the same breath. Every question gets a REAL, specific answer right now (give a protein/calorie estimate for the food they named; name 2-3 actual foods for what to eat next) — NEVER defer with "I can help you think about it". Keep it warm and brief. Parts to cover:\n` +
-    lines.join('\n') +
-    `]`
+    '\n\nThe user just said a few things in one text. Reply to ALL of it in ONE short, warm message, the way a friend texts back — NOT an analysis, NOT a summary, NOT a categorization, NOT a list, no headings, no "Option 1/2", and never restate or label their earlier messages. React to any feeling FIRST in a few words, then give each part a real, specific answer (an estimate, a couple of concrete foods) — never deflect with "I can help you think about it." Use ONLY what THIS message says; do not bring in a food or topic from earlier turns.'
   );
 }

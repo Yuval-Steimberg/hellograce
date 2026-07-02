@@ -81,16 +81,16 @@ describe('analyzeMessage — multi-intent detection', () => {
 });
 
 describe('buildMultiPartNote', () => {
-  it('enumerates every part and forbids dropping/checklist', () => {
+  it('is one plain instruction, NOT an enumerated data block (anti-analysis regression)', () => {
     const u = analyzeMessage(
       'I had chicken and rice, I feel nauseous, how much protein do I still need today?',
     );
     const note = buildMultiPartNote(u);
     expect(note).toMatch(/Reply to ALL of it/i);
-    expect(note).toMatch(/2-4 sentences/i);
-    expect(note).toMatch(/NO lists/i);
-    // One numbered line per detected part.
-    expect((note.match(/\n\d\)/g) ?? []).length).toBe(u.parts.length);
+    expect(note.toLowerCase()).toMatch(/not an analysis|not a categorization|not a list/);
+    // CRITICAL: no "1) … 2) …" enumeration — that structure made Gemini reply
+    // "Here's an analysis of your entries, categorizing them…" (production bug).
+    expect(note).not.toMatch(/\n\d\)/);
   });
 
   it('returns empty string for a single-intent message', () => {
@@ -133,7 +133,7 @@ describe('multi-topic FULL coverage matrix', () => {
       for (const k of c.expect) expect(u.kinds).toContain(k);
       // The note enumerates one line per detected part (nothing dropped).
       const note = buildMultiPartNote(u);
-      expect((note.match(/\n\d\)/g) ?? []).length).toBe(u.parts.length);
+      expect(note).not.toMatch(/\n\d\)/); // plain instruction, never an enumerated data block
     });
   }
 });
@@ -182,7 +182,7 @@ describe('multi-topic breadth: all subjects, slang, typos, styles', () => {
       const u = analyzeMessage(c.msg);
       expect(u.hasMultiple).toBe(true);
       for (const k of c.expect) expect(u.kinds).toContain(k);
-      expect((buildMultiPartNote(u).match(/\n\d\)/g) ?? []).length).toBe(u.parts.length);
+      expect(buildMultiPartNote(u)).not.toMatch(/\n\d\)/); // plain instruction, never an enumerated data block
     });
   }
 

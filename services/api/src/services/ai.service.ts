@@ -637,6 +637,13 @@ export interface AIServiceDeps {
      *  tests keep the orchestrator path; server.ts passes env.DIRECT_REPLY_MODE
      *  (default true) for production. */
     directReplyMode?: boolean;
+    /** LEAN REPLY MODE (2026-07-02). When true, the reply prompt drops the heavy
+     *  analytical BACKGROUND blocks — the dashboard PROGRESS SNAPSHOT, learned
+     *  SIDE-EFFECT PATTERNS, and the foods-logged-today enumeration — that Gemini
+     *  was categorizing into "Here's an analysis of your entries…" replies. Core
+     *  persona, safety, medication, and today's totals stay. Default false so
+     *  nothing changes until it's flipped via env LEAN_REPLY_MODE. */
+    leanReplyMode?: boolean;
     /** PROGRESSIVE PROFILING (2026-06-28). When true, after the short onboarding
      *  core Grace gathers the rest of the profile (sex, weight, height, age,
      *  activity, diet) one gentle question at a time, woven into normal chat
@@ -729,6 +736,12 @@ export class AIService {
    *  (unit tests keep the orchestrator); production wires env.DIRECT_REPLY_MODE. */
   private get directReplyMode(): boolean {
     return this.deps.guards?.directReplyMode ?? false;
+  }
+
+  /** LEAN REPLY MODE — strips analytical background blocks from the reply prompt
+   *  so Gemini stops "analyzing entries". Default false. */
+  private get leanReplyMode(): boolean {
+    return this.deps.guards?.leanReplyMode ?? false;
   }
 
   private get progressiveProfile(): boolean {
@@ -5448,9 +5461,11 @@ CRITICAL RULES:
         } else if (f.calories) {
           lines.push(`Total calories TODAY: ${f.calories} kcal (no personal target set yet)`);
         }
-        if (f.items.length > 0) {
+        if (f.items.length > 0 && !this.leanReplyMode) {
           // Aggregated + deduped so the model never echoes a raw repetitive
           // dump ("2 eggs; 2 eggs; chicken breast; chicken breast; …").
+          // LEAN MODE drops this enumerated list — another "entries to
+          // categorize" trigger; the running totals above are enough.
           lines.push(`Foods logged today: ${formatAggregatedInline(aggregateFoodItems(f.items), 10)}`);
         }
       }
@@ -5459,7 +5474,10 @@ CRITICAL RULES:
       // the user's real journey, not just today. Background only: Grace weaves a
       // line in ONLY when the user's message is about progress / weight / their
       // streak / mood / side effects — never as an unsolicited data dump.
-      if (runtime?.dashboardSignals) {
+      // LEAN MODE suppresses this entirely: these labeled analytical lines are
+      // exactly what Gemini turned into "Here's an analysis of your entries,
+      // categorizing them… Dashboard/…" (production 2026-07-02).
+      if (!this.leanReplyMode && runtime?.dashboardSignals) {
         const d = runtime.dashboardSignals;
         const snap: string[] = [];
         if (d.weightLost != null && d.weightLost > 0) {

@@ -268,6 +268,14 @@ const EnvSchema = z.object({
    *  GEMINI_FIRST but keeps the guards that prevent those regressions. Flip to
    *  true (fly secrets set DIRECT_REPLY_MODE=true) only to A/B the lean path. */
   DIRECT_REPLY_MODE: z.coerce.boolean().default(false),
+  /** LEAN_REPLY_MODE (2026-07-02). Strips the analytical BACKGROUND blocks from
+   *  the shared reply prompt (dashboard PROGRESS SNAPSHOT, learned SIDE-EFFECT
+   *  PATTERNS, foods-logged-today enumeration) — the labeled "data" lines Gemini
+   *  turned into "Here's an analysis of your entries, categorizing them…".
+   *  Applies to BOTH the orchestrator and direct paths (they share
+   *  buildPersonalisedPrompt). Default false; flip with
+   *  `fly secrets set LEAN_REPLY_MODE=true` to A/B against the regression net. */
+  LEAN_REPLY_MODE: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

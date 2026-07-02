@@ -162,11 +162,12 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       qualityStrict: env.QUALITY_GUARD_STRICT,
       geminiFirst: env.GEMINI_FIRST,
       directReplyMode: env.DIRECT_REPLY_MODE,
+      leanReplyMode: env.LEAN_REPLY_MODE,
       progressiveProfile: env.PROGRESSIVE_PROFILE_ENABLED,
     },
   });
   logger.info(
-    { geminiFirst: env.GEMINI_FIRST, directReplyMode: env.DIRECT_REPLY_MODE },
+    { geminiFirst: env.GEMINI_FIRST, directReplyMode: env.DIRECT_REPLY_MODE, leanReplyMode: env.LEAN_REPLY_MODE },
     env.DIRECT_REPLY_MODE
       ? 'startup.direct_reply_mode — single Gemini call per reply (no orchestrator/guard cascade)'
       : env.GEMINI_FIRST

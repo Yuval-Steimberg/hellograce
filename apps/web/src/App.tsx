@@ -15,6 +15,7 @@ const Pricing = lazy(() => import("./pages/Pricing.tsx"));
 const Faq = lazy(() => import("./pages/Faq.tsx"));
 const Onboarding = lazy(() => import("./pages/Onboarding.tsx"));
 const Settings = lazy(() => import("./pages/Settings.tsx"));
+const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const Privacy = lazy(() => import("./pages/Privacy.tsx"));
 const Terms = lazy(() => import("./pages/Terms.tsx"));
 const Disclaimer = lazy(() => import("./pages/Disclaimer.tsx"));
@@ -63,6 +64,7 @@ const App = () => (
               <Route path="/faq" element={<Faq />} />
               <Route path="/onboarding" element={<Onboarding />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/privacy" element={<Privacy />} />
               <Route path="/terms" element={<Terms />} />
               <Route path="/disclaimer" element={<Disclaimer />} />

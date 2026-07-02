@@ -31,6 +31,7 @@ import { registerStripeWebhookRoutes } from './routes/stripe-webhook.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerUserRoutes } from './routes/users.js';
 import { registerSettingsRoutes } from './routes/settings.js';
+import { registerDashboardRoutes } from './routes/dashboard.js';
 import { UserService } from './user/user.service.js';
 import { ContentRulesService } from './services/content-rules.service.js';
 import { TodayFoodCacheService } from './cache/today-food-cache.js';
@@ -566,6 +567,10 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService });
   registerUserRoutes(app, { pool, users, sender, generator });
   registerSettingsRoutes(app, { redis, sender, users, whatsappEnabled: !!env.TWILIO_WHATSAPP_FROM });
+  registerDashboardRoutes(app, {
+    redis, users, pool, llm, logger,
+    gemini: { apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL },
+  });
   registerChatRoutes(app, ai, pool);
   registerAdminRoutes(app, {
     pool, cache, llm, promptOptimizer, reloadActivePrompt, redis,

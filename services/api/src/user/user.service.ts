@@ -480,6 +480,33 @@ export class UserService {
     return rows;
   }
 
+  /** Log a weight entry (lbs) from the dashboard, keep users.current_weight in
+   *  sync, and invalidate the user cache so chat/prompt context sees it next turn. */
+  async logWeightEntry(userId: string, weight: number): Promise<void> {
+    await this.pool.query(`INSERT INTO weight_logs (user_id, weight) VALUES ($1, $2)`, [userId, weight]);
+    await this.pool.query(`UPDATE users SET current_weight = $2 WHERE phone = $1`, [userId, weight]).catch(() => undefined);
+    this.invalidate(userId);
+  }
+
+  /** Log a mood score (1-10) from the dashboard (stored like the log_mood tool). */
+  async logMoodEntry(userId: string, score: number): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO check_ins (user_id, type, message_sent, mood_score) VALUES ($1, 'mood_log', '', $2)`,
+      [userId, score],
+    );
+  }
+
+  /** Recent mood scores (most recent first) for the dashboard's mood chart. */
+  async getMoodHistory(userId: string, limit = 30): Promise<Array<{ mood_score: number; created_at: Date }>> {
+    const { rows } = await this.pool.query(
+      `SELECT mood_score, created_at FROM check_ins
+       WHERE user_id = $1 AND mood_score IS NOT NULL
+       ORDER BY created_at DESC LIMIT $2`,
+      [userId, limit],
+    );
+    return rows;
+  }
+
   /**
    * Get today's food logs summary in the USER'S personal logging day — the
    * window from their wake_time to the next wake_time, in their timezone (see

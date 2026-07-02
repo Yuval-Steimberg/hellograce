@@ -538,6 +538,7 @@ import {
   daysSinceInjection,
   localDayOfWeek,
 } from './symptom-intelligence.js';
+import { detectDashboardRequest, buildDashboardLinkReply } from './dashboard-link.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
@@ -1148,6 +1149,19 @@ export class AIService {
             // Fall through to the normal pipeline rather than drop the turn.
           }
         }
+      }
+
+      // ── Dashboard link: "show me my progress / charts / the app" (2026-07-02)
+      // Grace hands the user the link to their web dashboard (the real app behind
+      // the messages). Deterministic so the link is always right and Grace never
+      // implies there's no app. Short-circuits before the food/logging paths so a
+      // "see my progress" request is never misread as a food log or summary.
+      if (detectDashboardRequest(input.text)) {
+        const reply = buildDashboardLinkReply(); // host rewritten by TwilioSender
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId: input.userId }, 'ai.dashboard_link.served');
+        this.persistLatency(input.userId, 'dashboard_link', totalMs, lat.snapshot(), input.text, reply);
+        return { text: reply, confidence: 'high', intent: 'dashboard_link', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
       }
 
       // ── Symptom intelligence: personal side-effect pattern memory (2026-07-01)

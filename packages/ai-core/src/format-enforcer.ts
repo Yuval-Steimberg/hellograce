@@ -113,6 +113,15 @@ const FILLER_OPENERS: RegExp[] = [
   //   "Here's an analysis of your entries, categorizing them…"
   /^here'?s an analysis[^.!?:]*[:.!?]\s*/i,
   /^here'?s a (?:breakdown|summary|categorization|rundown) of your (?:entries|messages|questions|requests|meal|day)[^.!?:]*[:.!?]\s*/i,
+  //   "here's a typical breakdown:" / "here's the breakdown:" (mid or lead)
+  /^here'?s (?:a |the )?(?:typical |quick |rough )?(?:breakdown|rundown|estimate)[^.!?:]{0,40}:\s*/i,
+  //   Leading GERUND HEADING with a colon — "Estimating Protein in Your Salmon
+  //   Meal:", "Calculating Your Macros:", "Breaking Down Your Dinner:". A
+  //   title-style label the reply should never open with; strip up to the colon.
+  /^(?:estimating|calculating|breaking down|analyzing|understanding|assessing|reviewing|regarding|about) [A-Z][^:.!?]{3,55}:\s*/i,
+  //   "This is a rough estimate as portion sizes vary, but here's a typical…" —
+  //   the disclaimer-before-answer preamble (strip up to "but"/colon).
+  /^this is (?:just )?a (?:rough|general|ballpark|quick) estimate[^.!?]*?(?:,\s*but\s*|:\s*)/i,
   //   Hedge-without-answer opener: "It's tough to give an exact number, but…"
   /^it'?s (?:tough|hard|difficult|tricky|impossible) to (?:give|say|know|provide|pin down)[^.!?]*,?\s*but\s*/i,
 ];

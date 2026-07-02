@@ -272,6 +272,14 @@ describe('enforceFormat', () => {
       expect(text).toMatch(/salmon with potatoes/i);
       expect(text.startsWith('Salmon')).toBe(true);
     });
+    it('strips a leading gerund HEADING + disclaimer (the salmon breakdown reply)', () => {
+      const { text } = enforceFormat(
+        "Estimating Protein in Your Salmon Meal: This is a rough estimate as portion sizes vary, but a 4 oz salmon fillet has about 22-26g of protein, and a Greek yogurt later would round out your day.",
+      );
+      expect(text).not.toMatch(/estimating protein in your|this is a rough estimate/i);
+      expect(text.startsWith('A 4 oz salmon') || text.startsWith('A 4Oz salmon')).toBe(true);
+      expect(text).toMatch(/22-26g/);
+    });
     it('leaves a normal answer untouched', () => {
       const input = 'So glad that meal sat well. For Friday night, a sheet-pan lemon chicken with veggies is easy and satisfying.';
       const { text } = enforceFormat(input);

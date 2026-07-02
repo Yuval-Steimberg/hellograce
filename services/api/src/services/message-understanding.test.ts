@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeMessage, buildMultiPartNote } from './message-understanding.js';
+import { analyzeMessage, buildMultiPartNote, type MessagePartKind } from './message-understanding.js';
+
+type MessagePartKindLite = MessagePartKind;
 
 describe('analyzeMessage — multi-intent detection', () => {
   it('the canonical food + symptom + question message → all three parts', () => {
@@ -120,7 +122,7 @@ describe('multi-topic FULL coverage matrix', () => {
     { msg: "I'm down 3 lbs and so proud, what should I focus on now?", expect: ['weight', 'emotion', 'question'] },
     { msg: 'how much protein do I still need today and what should I make for dinner?', expect: ['progress_question', 'food_question'] },
     { msg: 'I had chicken and rice, I feel bloated, how many calories is that?', expect: ['food', 'symptom', 'progress_question'] },
-    { msg: 'feeling low today and I skipped my dose, what should I do?', expect: ['emotion', 'injection', 'question'] },
+    { msg: 'feeling low today and I skipped my dose, what should I do?', expect: ['emotion', 'medication', 'question'] },
     { msg: 'I ate a big lunch and I feel guilty, am I over my calories?', expect: ['food', 'emotion', 'progress_question'] },
   ];
   for (const c of CASES) {
@@ -131,6 +133,67 @@ describe('multi-topic FULL coverage matrix', () => {
       // The note enumerates one line per detected part (nothing dropped).
       const note = buildMultiPartNote(u);
       expect((note.match(/\n\d\)/g) ?? []).length).toBe(u.parts.length);
+    });
+  }
+});
+
+// VERY BROAD coverage — EVERY topic a GLP-1 user might combine, across slang,
+// typos, lowercase, no punctuation, emoji, and run-on styles. Each must be
+// flagged multi-part and surface the named topics. This is the "accurate
+// machine" net: no complex message slips through as single-intent.
+describe('multi-topic breadth: all subjects, slang, typos, styles', () => {
+  const BROAD: Array<{ msg: string; expect: MessagePartKindLite[] }> = [
+    // sleep + emotion (no question, lowercase, no punctuation)
+    { msg: 'couldnt sleep at all last night and im feeling so anxious', expect: ['sleep', 'emotion'] },
+    // exercise + food idea (slang)
+    { msg: 'just crushed a 5k run 💪 what should i eat after', expect: ['exercise', 'food_question'] },
+    // hydration + progress question
+    { msg: 'been drinking tons of water today, how much protein have i had', expect: ['hydration', 'progress_question'] },
+    // craving + emotion
+    { msg: 'the food noise is back and im feeling super frustrated', expect: ['craving', 'emotion'] },
+    // medication + symptom (typo "nauseus")
+    { msg: 'upped my dose to 1mg and now im nauseus', expect: ['medication', 'symptom'] },
+    // appointment + emotion
+    { msg: 'got a doctor appointment friday and im nervous about it', expect: ['appointment', 'emotion'] },
+    // social + food idea
+    { msg: 'eating out at a restaurant tonight, what should i order', expect: ['social', 'food_question'] },
+    // reminder + emotion
+    { msg: 'can you text me less, its stressing me out', expect: ['reminder', 'emotion'] },
+    // gratitude + food idea
+    { msg: 'thanks so much!! what should i make for dinner', expect: ['gratitude', 'food_question'] },
+    // symptom typo variants + question
+    { msg: 'got bad diarhea and a headache, is that normal on wegovy', expect: ['symptom', 'question'] },
+    // weight update + emotion + food idea (run-on)
+    { msg: 'scale said 178 im down 4lbs so happy what should i eat to keep it going', expect: ['weight', 'emotion', 'food_question'] },
+    // injection + hydration + sleep (three non-question topics)
+    { msg: 'took my shot, drank all my water, but slept terribly', expect: ['injection', 'hydration', 'sleep'] },
+    // exercise + craving
+    { msg: 'went to the gym but now im craving something sweet', expect: ['exercise', 'craving'] },
+    // emotion + appointment + question (formal)
+    { msg: 'I am quite worried. I have blood work on Monday. Should I fast beforehand?', expect: ['emotion', 'appointment', 'question'] },
+    // food log + medication + symptom (slang "n")
+    { msg: 'had chicken n rice, took my 2mg dose, feeling kinda queasy', expect: ['food', 'medication', 'symptom'] },
+    // hydration + exercise + food idea
+    { msg: 'walked 10k steps and drank plenty of water, any snack ideas', expect: ['hydration', 'exercise', 'food_question'] },
+  ];
+  for (const c of BROAD) {
+    it(`"${c.msg.slice(0, 44)}…" → ${c.expect.join('+')}`, () => {
+      const u = analyzeMessage(c.msg);
+      expect(u.hasMultiple).toBe(true);
+      for (const k of c.expect) expect(u.kinds).toContain(k);
+      expect((buildMultiPartNote(u).match(/\n\d\)/g) ?? []).length).toBe(u.parts.length);
+    });
+  }
+
+  // Single-topic messages (any subject) must NOT over-fire → fast paths keep them.
+  const SINGLE_BROAD = [
+    'went for a run', 'couldnt sleep', 'drank a lot of water', 'i have a doctor appointment tomorrow',
+    'took my shot', 'im craving chocolate', 'eating out tonight', 'thanks', 'what should i eat for dinner',
+    'how much protein have i had today', 'i feel nauseous', 'i had 2 eggs',
+  ];
+  for (const m of SINGLE_BROAD) {
+    it(`single: "${m}" → hasMultiple=false`, () => {
+      expect(analyzeMessage(m).hasMultiple).toBe(false);
     });
   }
 });

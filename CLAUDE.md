@@ -6,6 +6,29 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### In-chat onboarding is now the DEFAULT — no more web quiz (2026-07-02)
+
+Product: "no more web quizzes." The live entry is iMessage-first ("Start with
+Grace" → `sms:<line>&body=…` → user texts first), so Grace already has the phone
+from the inbound — bouncing them to the web `/onboarding` form (which re-asked
+the phone) was redundant. The conversational onboarding was already fully built,
+wired, and tested (`onboarding/onboarding-flow.ts` `runOnboardingTurn`: short warm
+slot sequence — first_name, medication, frequency, injection day/schedule,
+timezone auto-from-phone, wake_sleep, dietary, consent; completion sets
+`trial_start` so they're registered without leaving Messages; every other webhook
+intercept already gated behind `!onboardingActive`). It was just disabled.
+**Change: `SMS_ONBOARDING_ENABLED` now defaults ON** (`config/env.ts`, opt-out
+via `fly secrets set SMS_ONBOARDING_ENABLED=false`) — so a new number texting is
+onboarded entirely in chat and the web-signup bounce never fires. The web
+`/onboarding` quiz remains only as a desktop fallback (`startWithGrace` opens
+iMessage when `VITE_IMESSAGE_NUMBER` is set, else navigates to `/onboarding`).
+**Requires the `20260628000001_sms_onboarding.sql` migration in prod** (adds
+`onboarding_state`/`onboarding_last_slot`/`onboarding_started_at`) — without it
+the in-chat `users.update` throws and the flow loops. 65 onboarding-flow + 42
+webhook tests green; 1497 api green.
+
+---
+
 ### Post-payment "welcome back" message (trial → paid) (2026-07-02)
 
 When a user upgrades to paid/pro, Grace no longer re-introduces herself — she

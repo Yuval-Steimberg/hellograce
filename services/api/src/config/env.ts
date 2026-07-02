@@ -74,15 +74,17 @@ const EnvSchema = z.object({
     .optional()
     .transform((v) => v !== 'false'),
 
-  /** Conversational SMS/WhatsApp onboarding. When OFF (default), unknown numbers
-   *  are redirected to the web signup flow (unchanged behavior). When ON, a new
-   *  number is onboarded entirely over chat (LLM-phrased, varied questions) and
-   *  an in-progress flow is continued. Enable per-environment once verified:
-   *  `fly secrets set SMS_ONBOARDING_ENABLED=true`. */
+  /** Conversational SMS/iMessage onboarding — now the DEFAULT (2026-07-02, "no
+   *  more web quizzes"). A new number is onboarded entirely over chat (a short,
+   *  warm, LLM-phrased sequence: name, medication, schedule, wake/sleep, diet,
+   *  consent — timezone auto from the phone), and completion sets trial_start so
+   *  they're registered without ever leaving Messages. The web /onboarding form
+   *  stays only as a desktop fallback. Opt out per-environment with
+   *  `fly secrets set SMS_ONBOARDING_ENABLED=false`. */
   SMS_ONBOARDING_ENABLED: z
     .string()
     .optional()
-    .transform((v) => v === 'true' || v === '1'),
+    .transform((v) => v !== 'false' && v !== '0'),
 
   /** Progressive profiling: after the short onboarding core, Grace gathers the
    *  rest of the profile (sex, weight, height, age, activity, diet) "along the

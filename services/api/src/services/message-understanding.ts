@@ -24,6 +24,7 @@ import { mentionsFood } from './meal-lifecycle.js';
 
 export type MessagePartKind =
   | 'food'
+  | 'food_question'
   | 'symptom'
   | 'progress_question'
   | 'question'
@@ -68,9 +69,15 @@ const INJECTION_RE =
 const WEIGHT_UPDATE_RE =
   /\b(?:i'?m\s+down|lost\s+\d|weighed?\s+\d|down\s+\d+\s*(?:lbs?|pounds?|kg)|scale\s+(?:said|read|showed))\b/i;
 
+// A request for food/meal IDEAS (a recommendation), distinct from logging what
+// they ate. Typo/grammar-tolerant: allows a stray word between "i" and the verb
+// ("what should I WILL make for Friday night"), and covers meal-idea phrasing.
+const FOOD_REC_RE =
+  /\b(?:what\s+(?:should|can|could|do|will|to)\s+i\s+(?:\w+\s+){0,2}(?:eat|have|make|cook|order|try|prepare|fix)|(?:dinner|lunch|breakfast|brunch|supper|snack|meal|something)\s+(?:idea|ideas|option|options|suggestion|suggestions|recommendation|recommendations)|(?:recommend|suggest)\s+(?:a\s+|some\s+|me\s+)?(?:meal|food|dinner|lunch|breakfast|snack)|what'?s\s+(?:a\s+|for\s+)?(?:good|healthy|filling|nice)\s+(?:[\w-]+\s+){0,2}(?:to\s+eat|meal|food|snack|dinner|lunch|breakfast)|(?:ideas?|options?|suggestions?)\s+for\s+(?:dinner|lunch|breakfast|brunch|a\s+snack|friday|saturday|sunday|monday|tuesday|wednesday|thursday|tonight|the\s+weekend)|what\s+to\s+(?:eat|make|cook|have))\b/i;
+
 // Emotional content — "I feel <emotion>", or bare emotion words.
 const EMOTION_RE =
-  /\b(?:i\s+feel|i'?m\s+feeling|feeling)\s+(?:good|great|happy|excited|proud|hopeful|ok(?:ay)?|fine|down|sad|low|anxious|nervous|worried|scared|frustrated|stressed|overwhelmed|discouraged|defeated|lonely|tired\s+of|exhausted|hopeless|stuck)\b|\b(?:so\s+(?:proud|happy|frustrated|anxious|discouraged))\b|\b(?:struggling|i\s+give\s+up|can'?t\s+do\s+this)\b/i;
+  /\b(?:i\s+feel|i'?m\s+feeling|feeling)\s+(?:good|great|amazing|wonderful|fantastic|happy|excited|proud|hopeful|motivated|grateful|ok(?:ay)?|fine|down|sad|low|blue|anxious|nervous|worried|scared|afraid|frustrated|stressed|overwhelmed|discouraged|defeated|lonely|guilty|ashamed|embarrassed|bad|upset|disappointed|terrible|awful|gross|tired\s+of|exhausted|hopeless|stuck|emotional|off)\b|\b(?:so\s+(?:proud|happy|excited|frustrated|anxious|discouraged|grateful))\b|\b(?:struggling|i\s+give\s+up|can'?t\s+do\s+this)\b/i;
 
 function hasQuestion(text: string): boolean {
   if (text.includes('?')) return true;
@@ -93,7 +100,16 @@ export function analyzeMessage(text: string): MessageUnderstanding {
 
   if (t.length === 0) return { parts, hasMultiple: false, kinds: [] };
 
-  const foodish = mentionsFood(t) && (ATE_RE.test(t) || /\band\b/.test(t));
+  // A food LOG: a named food with an eating verb/"and", OR a clear eating report
+  // about a meal ("I ate a big lunch") even when no specific food noun is named.
+  // The meal-word path requires a PAST-TENSE eating verb (i ate/had/made…), not
+  // the "for lunch" time phrase — so a REQUEST ("what should I eat for lunch")
+  // is never mistaken for a log.
+  const MEAL_WORD_RE = /\b(?:breakfast|lunch|dinner|brunch|supper|snack|meal)\b/i;
+  const ATE_VERB_RE = /\b(?:i\s+(?:ate|had|grabbed|made|drank|got|finished)|just\s+(?:ate|had|drank))\b/i;
+  const foodish =
+    (mentionsFood(t) && (ATE_RE.test(t) || /\band\b/.test(t))) ||
+    (MEAL_WORD_RE.test(t) && ATE_VERB_RE.test(t));
   if (foodish) add('food', 'food they ate (log it if the amount is clear; otherwise ask one short question)');
 
   if (SYMPTOM_RE.test(t)) add('symptom', 'a symptom / how they feel physically (acknowledge + apply safety rules)');
@@ -108,8 +124,12 @@ export function analyzeMessage(text: string): MessageUnderstanding {
 
   if (EMOTION_RE.test(t)) add('emotion', 'an emotional note (respond to the feeling FIRST, warmly)');
 
-  // A general question that is NOT already the progress question.
-  if (!isProgressQ && hasQuestion(t)) add('question', 'a question to answer directly');
+  // A food/meal-idea request — answer with SPECIFIC foods, never deflect.
+  const isFoodQ = FOOD_REC_RE.test(t);
+  if (isFoodQ) add('food_question', 'a request for food/meal ideas — answer with 3-5 SPECIFIC foods that fit their diet and the time of day/occasion; NEVER deflect with "I can help you think about it" or "let\'s make sure your meal supports your goals"');
+
+  // A general question that is NOT already the progress or food-idea question.
+  if (!isProgressQ && !isFoodQ && hasQuestion(t)) add('question', 'a question to answer directly');
 
   const kinds = parts.map((p) => p.kind);
   return { parts, hasMultiple: parts.length >= 2, kinds };
@@ -124,7 +144,7 @@ export function buildMultiPartNote(understanding: MessageUnderstanding): string 
   if (!understanding.hasMultiple) return '';
   const lines = understanding.parts.map((p, i) => `${i + 1}) ${p.label}`);
   return (
-    `\n\n[MULTI-PART MESSAGE — the user said several things at once. Address EVERY part below in ONE short, warm, natural reply (not a checklist, not separate stitched-together answers). Do NOT drop any part, and do NOT answer only the first or last one. Use the user's profile + today's totals already in context; only ask a clarification if a detail is genuinely needed (e.g. an unclear food amount). Parts:\n` +
+    `\n\n[MULTI-PART MESSAGE — the user said several things at once. Address EVERY part below in ONE short, warm, natural reply (not a checklist, not separate stitched-together answers). Do NOT drop any part, and do NOT answer only the first or last one. If a part is a feeling, respond to it FIRST and briefly ("love that", "so glad"), THEN answer the rest. Every question gets a REAL, specific answer right now — name actual foods/steps; NEVER defer with "I can help you think about it", "let's explore", or "I can help you make sure your meal supports your goals". Use the user's profile + today's totals already in context; only ask a clarification if a detail is genuinely needed (e.g. an unclear food amount). Parts:\n` +
     lines.join('\n') +
     `]`
   );

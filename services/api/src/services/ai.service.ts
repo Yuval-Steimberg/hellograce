@@ -1691,6 +1691,16 @@ export class AIService {
         } catch { /* keep 'general' */ }
       }
 
+      // MULTI-TOPIC GUARD (2026-07-02): when the message bundles ≥2 meaningful
+      // parts (e.g. "I feel good after the meal. What should I make Friday
+      // night?" = an emotional note + a food-idea request), a SINGLE-intent
+      // direct path (food_question / emotional / knowledge) would answer only
+      // ONE part and drop the rest. Route these through the full direct-reply
+      // path instead, where buildMultiPartNote forces Gemini to address EVERY
+      // part accurately. Cheap pure regex; media/audio handled downstream.
+      const isMultiTopic =
+        input.media.length === 0 && analyzeMessage(input.text).hasMultiple;
+
       // 2026-06-06 production failure: user "Yes" after Grace asked "want
       // me to walk you through the numbers?" → got "Tell me a bit more?".
       // "Yes" classifies as 'general' so it doesn't hit any direct path,
@@ -1851,7 +1861,7 @@ export class AIService {
       // through a dedicated path that hits the curated meal idea bank
       // FIRST (deterministic, no LLM), falls back to a focused Gemini
       // call only when curated returns nothing.
-      if (directIntent === 'food_question') {
+      if (directIntent === 'food_question' && !isMultiTopic) {
         try {
           lat.mark('food_question_direct');
           const direct = await this.handleFoodQuestionDirect(input);
@@ -1881,11 +1891,13 @@ export class AIService {
       }
 
       const wantsDirect =
-        directIntent === 'knowledge' ||
-        directIntent === 'emotional' ||
-        directIntent === 'appointment_prep' ||
-        directIntent === 'medication_question' ||
-        directIntent === 'social_situation';
+        !isMultiTopic && (
+          directIntent === 'knowledge' ||
+          directIntent === 'emotional' ||
+          directIntent === 'appointment_prep' ||
+          directIntent === 'medication_question' ||
+          directIntent === 'social_situation'
+        );
       if (wantsDirect) {
         try {
           const stage = `${directIntent}_direct`;

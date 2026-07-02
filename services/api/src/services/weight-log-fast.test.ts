@@ -28,6 +28,12 @@ describe('parseWeight', () => {
     expect(parseWeight('100 kilos')).toEqual({ lbs: 220.5 });
   });
 
+  it('converts stone (+ optional pounds) to lbs', () => {
+    expect(parseWeight('12 st')).toEqual({ lbs: 168 });
+    expect(parseWeight('12 stone 6')).toEqual({ lbs: 174 });
+    expect(parseWeight('13 st 4 lb')).toEqual({ lbs: 186 });
+  });
+
   it('parses inside a sentence', () => {
     expect(parseWeight('I weigh 185 lbs')).toEqual({ lbs: 185 });
     expect(parseWeight('scale says 184.6')).toEqual({ lbs: 184.6 });

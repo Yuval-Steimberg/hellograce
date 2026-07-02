@@ -69,11 +69,11 @@ async function call<T>(path: string, init: RequestInit & { auth?: boolean } = {}
 export const dashboardApi = {
   summary: () => call<DashboardSummary>("/dashboard/summary", { auth: true }),
 
-  logWeight: (weight: number) =>
+  logWeight: (weight: number, unit: "lbs" | "kg" = "lbs") =>
     call<{ ok: boolean; weight: DashboardSummary["weight"] }>("/dashboard/weight", {
       method: "POST",
       auth: true,
-      body: JSON.stringify({ weight }),
+      body: JSON.stringify({ weight, unit }),
     }),
 
   logMood: (score: number) =>

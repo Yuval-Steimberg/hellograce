@@ -44,14 +44,18 @@ export function StatCard({ label, value, sub, tone = "ink" }: { label: string; v
   );
 }
 
-export function WeightChart({ weight }: { weight: DashboardSummary["weight"] }) {
-  const data = weight.series.map((p) => ({ date: p.date, weight: p.weight }));
+const KG = 1 / 2.2046226218;
+export function WeightChart({ weight, unit = "lbs" }: { weight: DashboardSummary["weight"]; unit?: "lbs" | "kg" }) {
+  const conv = (lbs: number) => (unit === "kg" ? Math.round(lbs * KG * 10) / 10 : Math.round(lbs * 10) / 10);
+  const u = unit === "kg" ? "kg" : "lbs";
+  const data = weight.series.map((p) => ({ date: p.date, weight: conv(p.weight) }));
+  const goal = weight.goal != null ? conv(weight.goal) : null;
   const hasData = data.length >= 2;
   return (
     <div className={card}>
       <div className="mb-3 flex items-baseline justify-between">
         <h3 className="font-serif text-lg text-foreground">Weight</h3>
-        {weight.goal != null && <span className="text-xs text-muted-foreground">Goal {weight.goal} lbs</span>}
+        {goal != null && <span className="text-xs text-muted-foreground">Goal {goal} {u}</span>}
       </div>
       {hasData ? (
         <ResponsiveContainer width="100%" height={220}>
@@ -65,8 +69,8 @@ export function WeightChart({ weight }: { weight: DashboardSummary["weight"] }) 
             <CartesianGrid stroke={GRID} vertical={false} />
             <XAxis dataKey="date" tickFormatter={fmtDay} tick={{ fontSize: 11, fill: MUTE }} tickLine={false} axisLine={false} minTickGap={28} />
             <YAxis domain={["dataMin - 3", "dataMax + 3"]} tick={{ fontSize: 11, fill: MUTE }} tickLine={false} axisLine={false} width={38} />
-            <Tooltip contentStyle={TT} labelFormatter={fmtDay} formatter={(v: number) => [`${v} lbs`, "Weight"]} />
-            {weight.goal != null && <ReferenceLine y={weight.goal} stroke={SAGE} strokeDasharray="4 4" strokeWidth={1.5} />}
+            <Tooltip contentStyle={TT} labelFormatter={fmtDay} formatter={(v: number) => [`${v} ${u}`, "Weight"]} />
+            {goal != null && <ReferenceLine y={goal} stroke={SAGE} strokeDasharray="4 4" strokeWidth={1.5} />}
             <Area type="monotone" dataKey="weight" stroke={CLAY} strokeWidth={2.5} fill="url(#wg)" dot={{ r: 2.5, fill: CLAY }} activeDot={{ r: 4 }} />
           </AreaChart>
         </ResponsiveContainer>

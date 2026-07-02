@@ -61,9 +61,20 @@ export interface WeightLogFastDeps {
   intentType: string;
 }
 
-/** Parse the weight value + unit from a short weight-log message. */
+/** Parse the weight value + unit from a short weight-log message. Understands
+ *  pounds, kilograms, and stone (+ optional pounds). */
 export function parseWeight(text: string): { lbs: number } | null {
   const t = text.toLowerCase();
+
+  // Stone (+ optional pounds): "12 st", "12 stone 6", "12 st 6 lb".
+  const st = t.match(/(?<![\d.])(\d{1,2}(?:\.\d)?)\s*(?:st|stone)s?\b(?:\s*(\d{1,2}(?:\.\d)?)\s*(?:lb|lbs|pound|pounds)?)?/);
+  if (st) {
+    const stone = parseFloat(st[1]!);
+    const extraLb = st[2] ? parseFloat(st[2]!) : 0;
+    const lbs = stone * 14 + (Number.isFinite(extraLb) ? extraLb : 0);
+    if (lbs >= MIN_WEIGHT_LBS && lbs <= MAX_WEIGHT_LBS) return { lbs: Math.round(lbs * 10) / 10 };
+  }
+
   // Match number with optional decimal followed by optional unit
   // Anchor: not preceded by a digit/dot, not followed by a digit (so "2024"
   // doesn't parse as "202"). 2-3 digit integer with optional decimal.

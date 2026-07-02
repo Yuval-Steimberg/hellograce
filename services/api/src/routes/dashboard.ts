@@ -22,6 +22,7 @@ import {
   loggingStreak,
   summarizeSymptoms,
 } from '../services/dashboard-data.js';
+import { kgToLbs } from '../nutrition/units.js';
 
 /**
  * Grace user dashboard API (2026-07-02).
@@ -161,9 +162,15 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
   // ── POST /dashboard/weight — log a weight entry ────────────────────────────
   app.post('/dashboard/weight', async (req) => {
     const phone = await requireVerifiedPhone(req);
-    const parsed = z.object({ weight: z.number().positive().min(60).max(700) }).safeParse(req.body);
-    if (!parsed.success) throw new ValidationError('Enter a weight between 60 and 700 lbs.');
-    await deps.users.logWeightEntry(phone, Math.round(parsed.data.weight * 10) / 10);
+    const parsed = z.object({
+      weight: z.number().positive().max(2000),
+      unit: z.enum(['lbs', 'kg']).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('Enter your weight.');
+    // Normalize to pounds (the stored unit) — the user may weigh in kg.
+    const lbs = parsed.data.unit === 'kg' ? kgToLbs(parsed.data.weight) : parsed.data.weight;
+    if (lbs < 60 || lbs > 700) throw new ValidationError('That weight looks out of range — double-check the number and unit.');
+    await deps.users.logWeightEntry(phone, Math.round(lbs * 10) / 10);
     deps.logger.info({ phone }, 'dashboard.weight.logged');
     const user = await deps.users.getByPhone(phone);
     return { ok: true, weight: weightProgress(user?.starting_weight, user?.current_weight, user?.goal_weight) };
@@ -293,17 +300,23 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
       dataUrl: z.string().regex(DATA_URL_RE, 'Upload a photo (PNG, JPG, or WebP).'),
       thumbUrl: z.string().regex(DATA_URL_RE).optional(),
       note: z.string().trim().max(400).optional(),
-      weight: z.number().positive().min(60).max(700).optional(),
+      weight: z.number().positive().max(2000).optional(),
+      unit: z.enum(['lbs', 'kg']).optional(),
     }).safeParse(req.body);
     if (!parsed.success) throw new ValidationError("That photo couldn't be saved — try a PNG, JPG, or WebP.");
     const contentType = parsed.data.dataUrl.slice(5, parsed.data.dataUrl.indexOf(';'));
+    let weightLbs: number | null = null;
+    if (parsed.data.weight != null) {
+      const lbs = parsed.data.unit === 'kg' ? kgToLbs(parsed.data.weight) : parsed.data.weight;
+      if (lbs >= 60 && lbs <= 700) weightLbs = Math.round(lbs * 10) / 10;
+    }
     const saved = await deps.users.saveProgressPhoto(phone, {
       kind: 'progress',
       image_data: parsed.data.dataUrl,
       thumb_data: parsed.data.thumbUrl ?? null,
       content_type: contentType,
       note: parsed.data.note ?? null,
-      weight_lbs: parsed.data.weight ?? null,
+      weight_lbs: weightLbs,
     });
     deps.logger.info({ phone, id: saved.id }, 'dashboard.progress_photo.saved');
     return { ok: true, photo: mapPhoto(saved) };

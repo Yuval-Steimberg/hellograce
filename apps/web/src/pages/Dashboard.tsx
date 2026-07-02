@@ -12,6 +12,7 @@ import {
 } from "@/components/dashboard/DashboardCharts";
 import { QuickLog } from "@/components/dashboard/QuickLog";
 import { ProgressGallery } from "@/components/dashboard/ProgressGallery";
+import { getWeightUnit, fromLbs, type WeightUnit } from "@/lib/units";
 
 type Stage = "phone" | "code" | "ready";
 
@@ -121,6 +122,10 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
   const w = data.weight;
   const n = data.nutrition;
   const proteinPct = n.proteinGoal ? Math.min(100, Math.round((n.today.protein / n.proteinGoal) * 100)) : 0;
+  // Display weight in the user's chosen unit (data comes back in lbs).
+  const wUnit = getWeightUnit();
+  const wLabel = wUnit === "kg" ? "kg" : "lb";
+  const wConv = (lbs: number) => (wUnit === "kg" ? fromLbs(lbs, "kg") : Math.round(lbs * 10) / 10);
 
   return (
     <div className="mx-auto max-w-5xl px-4 pb-20 pt-8 sm:px-6">
@@ -141,15 +146,15 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
 
       {/* Hero stats */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Reveal delay={0}><StatCard label="Lost so far" tone="clay" value={w.lostLbs != null ? `${w.lostLbs} lb` : "—"} sub={w.start != null ? `from ${w.start} lb` : "add starting weight"} /></Reveal>
-        <Reveal delay={0.05}><StatCard label="To goal" value={w.toGoLbs != null ? `${w.toGoLbs} lb` : "—"} sub={w.goal != null ? `goal ${w.goal} lb` : "set a goal"} /></Reveal>
+        <Reveal delay={0}><StatCard label="Lost so far" tone="clay" value={w.lostLbs != null ? `${wConv(w.lostLbs)} ${wLabel}` : "—"} sub={w.start != null ? `from ${wConv(w.start)} ${wLabel}` : "add starting weight"} /></Reveal>
+        <Reveal delay={0.05}><StatCard label="To goal" value={w.toGoLbs != null ? `${wConv(w.toGoLbs)} ${wLabel}` : "—"} sub={w.goal != null ? `goal ${wConv(w.goal)} ${wLabel}` : "set a goal"} /></Reveal>
         <Reveal delay={0.1}><StatCard label="Protein today" tone={proteinPct >= 100 ? "sage" : "ink"} value={`${n.today.protein}g`} sub={`of ${n.proteinGoal}g · ${proteinPct}%`} /></Reveal>
         <Reveal delay={0.15}><StatCard label="Logging streak" tone="sage" value={n.streak > 0 ? `${n.streak} day${n.streak === 1 ? "" : "s"}` : "—"} sub={n.streak > 0 ? "keep it going" : "log a meal today"} /></Reveal>
       </div>
 
       {/* Charts grid — two-up from tablet width */}
       <div className="grid gap-4 md:grid-cols-2">
-        <Reveal><WeightChart weight={w} /></Reveal>
+        <Reveal><WeightChart weight={w} unit={wUnit} /></Reveal>
         <Reveal delay={0.05}><NutritionChart nutrition={n} /></Reveal>
       </div>
 

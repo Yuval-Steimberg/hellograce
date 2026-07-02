@@ -6,6 +6,35 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Units: enter/read weight & height in any unit (kg/lb/stone, cm/ft-in) (2026-07-02)
+
+Product ask: Grace should understand any unit so users put their own data in
+whatever they think in. Canonical storage unchanged (weight = lbs, height = cm);
+units are parsed on the way in, displayed on the way out.
+- **`services/api/src/nutrition/units.ts`** (NEW, pure/tested — 15 cases):
+  `parseWeightToLbs` (lb/pound/kg/kilo/stone + "12 st 6 lb", bare number →
+  defaultUnit), `parseHeightToCm` (cm/m/`5'10`/`5 ft 10 in`/`5 foot 10`/inches,
+  bare ≥90→cm else inches), converters (`kgToLbs`/`lbsToKg`/`cmToFeetInches`/
+  `feetInchesToCm`), `formatWeight`/`formatHeight`.
+- **Chat**: `weight-log-fast.parseWeight` now also understands **stone** (kg/lbs
+  already worked) — "12 stone 6" logs correctly.
+- **Dashboard API**: `POST /dashboard/weight` + `/dashboard/progress-photo`
+  accept `unit: 'lbs'|'kg'` and normalize to lbs (range-check AFTER conversion).
+- **Frontend `apps/web/src/lib/units.ts`** (NEW): converters + localStorage unit
+  prefs (`grace_weight_unit`/`grace_height_unit`).
+  - **QuickLog** weight tab: lbs/kg toggle (persisted); sends the unit.
+  - **Settings**: Body & goals weight fields show/save in lbs **or** kg (toggle);
+    Height entered as **cm** or **ft/in** (two inputs). Form still stores
+    canonical lbs/cm — conversion is display-only. `Field` label widened to
+    `ReactNode`; new `UnitToggle` component.
+  - **Dashboard read**: hero weight stat cards + the weight chart (axis, goal
+    line, tooltip) render in the user's chosen unit.
+Tests: units (15) + weight-log-fast stone (+1). 1495 api green, web builds +
+typecheck clean. No migration. (Onboarding weight/height still collect canonical
+units — a later pass can add the same toggles there.)
+
+---
+
 ### Food day = LOCAL CALENDAR DAY (midnight → 11:59 PM) (2026-07-02)
 
 Product ask: food/protein/calorie totals should run "from wake-up until 11:59

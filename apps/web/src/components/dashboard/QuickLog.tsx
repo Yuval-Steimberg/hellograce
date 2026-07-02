@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { dashboardApi } from "@/lib/dashboardApi";
 import { fileToDataUrl } from "@/lib/image";
+import { getWeightUnit, setWeightUnit, toLbs, type WeightUnit } from "@/lib/units";
 
 const SYMPTOMS = [
   "nausea", "vomiting", "constipation", "diarrhea", "fatigue",
@@ -20,6 +21,7 @@ export function QuickLog({ onLogged }: { onLogged: () => void }) {
   const [tab, setTab] = useState<Tab>("weight");
   const [busy, setBusy] = useState(false);
   const [weight, setWeight] = useState("");
+  const [wUnit, setWUnit] = useState<WeightUnit>(getWeightUnit());
   const [food, setFood] = useState("");
   const [symptom, setSymptom] = useState<string>("");
   const [remedy, setRemedy] = useState("");
@@ -30,11 +32,14 @@ export function QuickLog({ onLogged }: { onLogged: () => void }) {
 
   const submitWeight = async () => {
     const w = Number(weight);
-    if (!Number.isFinite(w) || w < 60 || w > 700) { toast.error("Enter a weight in lbs"); return; }
+    const lbs = Number.isFinite(w) ? toLbs(w, wUnit) : NaN;
+    if (!Number.isFinite(lbs) || lbs < 60 || lbs > 700) { toast.error(`Enter a weight in ${wUnit}`); return; }
     setBusy(true);
-    try { await dashboardApi.logWeight(w); setWeight(""); done("Weight logged"); }
+    try { await dashboardApi.logWeight(w, wUnit); setWeight(""); done("Weight logged"); }
     catch (e) { toast.error(e instanceof Error ? e.message : "Couldn't log that"); } finally { setBusy(false); }
   };
+
+  const pickWUnit = (u: WeightUnit) => { setWUnit(u); setWeightUnit(u); };
 
   const submitFood = async () => {
     if (!food.trim()) { toast.error("Tell Grace what you ate"); return; }
@@ -89,9 +94,17 @@ export function QuickLog({ onLogged }: { onLogged: () => void }) {
       <AnimatePresence mode="wait">
         <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
           {tab === "weight" && (
-            <div className="flex gap-3">
-              <input className={input} type="number" inputMode="decimal" placeholder="Weight in lbs" value={weight} onChange={(e) => setWeight(e.target.value)} />
-              <button className={primaryBtn} disabled={busy} onClick={submitWeight}>{busy ? "…" : "Log"}</button>
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                <input className={input} type="number" inputMode="decimal" placeholder={`Weight in ${wUnit}`} value={weight} onChange={(e) => setWeight(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitWeight()} />
+                <div className="flex rounded-xl bg-secondary p-0.5 text-sm">
+                  {(["lbs", "kg"] as const).map((u) => (
+                    <button key={u} onClick={() => pickWUnit(u)}
+                      className={`rounded-lg px-3 transition-colors ${wUnit === u ? "bg-white text-foreground shadow-sm" : "text-muted-foreground"}`}>{u}</button>
+                  ))}
+                </div>
+                <button className={primaryBtn} disabled={busy} onClick={submitWeight}>{busy ? "…" : "Log"}</button>
+              </div>
             </div>
           )}
 

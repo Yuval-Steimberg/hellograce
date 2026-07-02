@@ -13,6 +13,10 @@ import {
   type SettingsProfile,
   type SettingsUpdate,
 } from "@/lib/settingsApi";
+import {
+  getWeightUnit, setWeightUnit as persistWeightUnit, getHeightUnit, setHeightUnit as persistHeightUnit,
+  toLbs, fromLbs, cmToFeetInches, feetInchesToCm, type WeightUnit, type HeightUnit,
+} from "@/lib/units";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const MEDICATIONS = ["Ozempic", "Wegovy", "Mounjaro", "Zepbound", "Compounded semaglutide", "Compounded tirzepatide", "Rybelsus", "Other"];
@@ -139,6 +143,8 @@ const Settings = () => {
   const [profile, setProfile] = useState<SettingsProfile | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
   const [bootLoading, setBootLoading] = useState(true);
+  const [wUnit, setWUnit] = useState<WeightUnit>(getWeightUnit());
+  const [hUnit, setHUnit] = useState<HeightUnit>(getHeightUnit());
 
   // Resume an existing verified session on load.
   useEffect(() => {
@@ -160,6 +166,20 @@ const Settings = () => {
   const setField = useCallback((k: keyof FormState, v: string) => {
     setForm((f) => (f ? { ...f, [k]: v } : f));
   }, []);
+
+  // ── Unit-aware helpers (form stores canonical lbs/cm; user sees their unit) ──
+  const pickWUnit = (u: WeightUnit) => { setWUnit(u); persistWeightUnit(u); };
+  const pickHUnit = (u: HeightUnit) => { setHUnit(u); persistHeightUnit(u); };
+  // Weight field: convert stored lbs → display unit, and back on edit.
+  const wDisplay = (lbsStr: string): string =>
+    lbsStr.trim() === "" ? "" : String(fromLbs(Number(lbsStr), wUnit));
+  const wOnChange = (key: keyof FormState, v: string) =>
+    setField(key, v.trim() === "" ? "" : String(Math.round(toLbs(Number(v), wUnit) * 10) / 10));
+  // Height (ft/in mode): derive feet/inches from stored cm; write cm on edit.
+  const heightFt = form?.height_cm ? cmToFeetInches(Number(form.height_cm)).feet : 0;
+  const heightIn = form?.height_cm ? cmToFeetInches(Number(form.height_cm)).inches : 0;
+  const setHeightFtIn = (feet: number, inches: number) =>
+    setField("height_cm", feet === 0 && inches === 0 ? "" : String(Math.round(feetInchesToCm(feet, inches))));
 
   const sendCode = async () => {
     if (phone.replace(/\D/g, "").length < 8) { toast.error("Enter a valid phone number"); return; }
@@ -267,7 +287,16 @@ const Settings = () => {
                   <Field label="First name"><input className={inputClass} value={form.first_name} onChange={(e) => setField("first_name", e.target.value)} placeholder="Your name" /></Field>
                   <Field label="Age"><input type="number" className={inputClass} value={form.age} onChange={(e) => setField("age", e.target.value)} /></Field>
                   <SelectField label="Sex" value={form.sex} onChange={(v) => setField("sex", v)} options={[["", "—"], ["female", "Female"], ["male", "Male"], ["other", "Other"]]} />
-                  <Field label="Height (cm)"><input type="number" className={inputClass} value={form.height_cm} onChange={(e) => setField("height_cm", e.target.value)} /></Field>
+                  <Field label={<span className="flex items-center justify-between">Height <UnitToggle options={[["cm", "cm"], ["ftin", "ft/in"]]} value={hUnit} onChange={(v) => pickHUnit(v as HeightUnit)} /></span>}>
+                    {hUnit === "cm" ? (
+                      <input type="number" className={inputClass} value={form.height_cm} onChange={(e) => setField("height_cm", e.target.value)} placeholder="cm" />
+                    ) : (
+                      <div className="flex gap-2">
+                        <input type="number" min={0} max={8} className={inputClass} value={form.height_cm ? String(heightFt) : ""} onChange={(e) => setHeightFtIn(Number(e.target.value) || 0, heightIn)} placeholder="ft" />
+                        <input type="number" min={0} max={11} className={inputClass} value={form.height_cm ? String(heightIn) : ""} onChange={(e) => setHeightFtIn(heightFt, Number(e.target.value) || 0)} placeholder="in" />
+                      </div>
+                    )}
+                  </Field>
                   <SelectField label="Timezone" value={form.timezone} onChange={(v) => setField("timezone", v)} options={TIMEZONES.map((t) => [t, t])} />
                 </Section>
 
@@ -280,9 +309,12 @@ const Settings = () => {
                 </Section>
 
                 <Section title="Body & goals">
-                  <Field label="Starting weight (lbs)"><input type="number" className={inputClass} value={form.starting_weight} onChange={(e) => setField("starting_weight", e.target.value)} /></Field>
-                  <Field label="Current weight (lbs)"><input type="number" className={inputClass} value={form.current_weight} onChange={(e) => setField("current_weight", e.target.value)} /></Field>
-                  <Field label="Goal weight (lbs)"><input type="number" className={inputClass} value={form.goal_weight} onChange={(e) => setField("goal_weight", e.target.value)} /></Field>
+                  <div className="sm:col-span-2 -mb-2 flex justify-end">
+                    <UnitToggle options={[["lbs", "lbs"], ["kg", "kg"]]} value={wUnit} onChange={(v) => pickWUnit(v as WeightUnit)} />
+                  </div>
+                  <Field label={`Starting weight (${wUnit})`}><input type="number" className={inputClass} value={wDisplay(form.starting_weight)} onChange={(e) => wOnChange("starting_weight", e.target.value)} /></Field>
+                  <Field label={`Current weight (${wUnit})`}><input type="number" className={inputClass} value={wDisplay(form.current_weight)} onChange={(e) => wOnChange("current_weight", e.target.value)} /></Field>
+                  <Field label={`Goal weight (${wUnit})`}><input type="number" className={inputClass} value={wDisplay(form.goal_weight)} onChange={(e) => wOnChange("goal_weight", e.target.value)} /></Field>
                   <SelectField label="Primary goal" value={form.primary_goal} onChange={(v) => setField("primary_goal", v)} options={[["", "—"], ["fat_loss", "Fat loss"], ["muscle_gain", "Muscle gain"], ["maintenance", "Maintenance"], ["recomposition", "Recomposition"]]} />
                   <SelectField label="Activity level" value={form.activity_level} onChange={(v) => setField("activity_level", v)} options={[["", "—"], ["sedentary", "Sedentary"], ["light", "Light"], ["moderate", "Moderate"], ["active", "Active"], ["very_active", "Very active"]]} />
                   <Field label="Protein goal (g/day)"><input type="number" className={inputClass} value={form.protein_goal_grams} onChange={(e) => setField("protein_goal_grams", e.target.value)} /></Field>
@@ -327,12 +359,23 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Field({ label, children, full }: { label: string; children: React.ReactNode; full?: boolean }) {
+function Field({ label, children, full }: { label: React.ReactNode; children: React.ReactNode; full?: boolean }) {
   return (
     <div className={full ? "sm:col-span-2" : ""}>
       <label className={labelClass}>{label}</label>
       {children}
     </div>
+  );
+}
+
+function UnitToggle({ options, value, onChange }: { options: [string, string][]; value: string; onChange: (v: string) => void }) {
+  return (
+    <span className="inline-flex rounded-full bg-secondary p-0.5 text-xs normal-case tracking-normal">
+      {options.map(([v, l]) => (
+        <button key={v} type="button" onClick={() => onChange(v)}
+          className={`rounded-full px-2.5 py-0.5 transition-colors ${value === v ? "bg-white text-foreground shadow-sm" : "text-muted-foreground"}`}>{l}</button>
+      ))}
+    </span>
   );
 }
 

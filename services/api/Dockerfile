@@ -44,5 +44,11 @@ RUN pnpm install --prod --frozen-lockfile
 RUN ln -s dist services/api/src
 # Create results directories for auto-eval + coverage output
 RUN mkdir -p services/api/auto-eval/results services/api/coverage/results
+# Build/version marker — pass at deploy time with:
+#   fly deploy --build-arg GIT_COMMIT=$(git rev-parse --short HEAD)
+# Surfaced at GET /health so you can confirm the running code == the code you
+# deployed. Placed at the very end so changing it never busts earlier layers.
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=$GIT_COMMIT
 EXPOSE 3001
 CMD ["node", "services/api/dist/server.js"]

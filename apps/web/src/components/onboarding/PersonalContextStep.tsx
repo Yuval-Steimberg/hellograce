@@ -96,13 +96,13 @@ const PersonalContextStep = ({
           Your story
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          Help me understand you better
+          What's this really about for you?
         </h2>
         <p className="text-primary font-medium text-lg leading-relaxed mb-2">
-          Optional — but the more you tell me, the better I'll be
+          Optional — but the more I know, the more I'll feel like your friend, not an app.
         </p>
         <p className="text-muted-foreground text-sm leading-relaxed mb-8">
-          Tap any question to answer it. Skip what you'd rather not share.
+          Tap anything you'd like to share. Skip what you'd rather keep to yourself — no pressure, ever.
         </p>
 
         <div className="space-y-3">

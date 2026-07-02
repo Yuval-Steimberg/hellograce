@@ -25,10 +25,10 @@ const InjectionDayStep = ({ selected, onSelect, onNext }: InjectionDayStepProps)
           Injection schedule
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          What day is your shot?
+          When's your shot?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-8">
-          I'll remind you the day before so you're always prepared.
+          I'll give you a gentle heads-up the day before — and I'll be right here after, in case it hits you a certain way.
         </p>
 
         <div className="flex flex-col gap-3">

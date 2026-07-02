@@ -17,10 +17,10 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
           Welcome to grace
         </span>
         <h1 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-5">
-          A new chapter begins.
+          Hi, I'm Grace 🤍
         </h1>
         <p className="text-lg text-muted-foreground leading-relaxed">
-          Your daily iMessage companion for GLP-1 — no app to open, no dashboard to remember. Just a warm, helpful friend who checks in by text.
+          I'll be your friend through this GLP-1 journey — right here in your texts, no app to open. Someone who remembers you, checks in on the good days and the hard ones, and actually gets it. Let's get to know each other.
         </p>
 
         {/* Social Proof */}

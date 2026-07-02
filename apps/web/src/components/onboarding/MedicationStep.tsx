@@ -27,10 +27,10 @@ const MedicationStep = ({ selected, onSelect, onNext }: MedicationStepProps) => 
           Your medication
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          Understanding your rhythm.
+          Which one are you on?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-8">
-          Which medication are you on? This helps me give you the right tips.
+          Every GLP-1 is a little different. Tell me yours and everything I share will actually fit you — not generic advice.
         </p>
 
         <div className="flex flex-col gap-3">

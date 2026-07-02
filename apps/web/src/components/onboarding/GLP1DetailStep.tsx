@@ -28,10 +28,10 @@ const GLP1DetailStep = ({
           Your medication
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          A bit more about your journey
+          How far along are you?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-10">
-          This helps me track your milestones and tailor advice to where you are.
+          So I can celebrate your milestones with you and meet you exactly where you are today.
         </p>
 
         <div className="space-y-7">

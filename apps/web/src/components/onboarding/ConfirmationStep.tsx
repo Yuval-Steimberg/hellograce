@@ -56,7 +56,7 @@ const ConfirmationStep = ({ firstName, phone }: ConfirmationStepProps) => {
           transition={{ delay: 0.45 }}
           className="text-muted-foreground text-center max-w-[280px] mb-2"
         >
-          Your first message arrives soon. Check your texts.
+          I'm so glad you're here. My first text is on its way — open it and let's keep the conversation going. I'll be with you every step from here 🤍
         </motion.p>
 
         {/* Phone display with update link */}

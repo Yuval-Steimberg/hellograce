@@ -34,10 +34,10 @@ const GoalsStep = ({ selected, onChange, onNext }: GoalsStepProps) => {
           Your focus
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-3">
-          What matters most right now?
+          What are we working toward?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-8">
-          Pick all that feel right. I'll tailor my check-ins to match.
+          Pick whatever feels true — there's no wrong answer here. I'll shape every check-in around what matters to you.
         </p>
 
         <div className="flex flex-col gap-3">

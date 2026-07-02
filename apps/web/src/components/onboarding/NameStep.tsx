@@ -23,13 +23,13 @@ const NameStep = ({ value, onChange, onNext }: NameStepProps) => {
     <>
       <div className="flex-1 pt-4">
         <span className="uppercase tracking-widest text-xs font-semibold text-muted-foreground/60 block mb-4">
-          Introduction
+          Nice to meet you
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          First things first.
+          What should I call you?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-10">
-          Every great journey starts with a proper introduction. How shall we address you?
+          I want this to feel personal from our very first text — so tell me the name you'd love to be greeted by.
         </p>
 
         <div className="w-full">

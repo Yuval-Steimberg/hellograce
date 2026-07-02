@@ -159,10 +159,10 @@ const PhoneStep = ({
           Almost done
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          Where should I text you?
+          Where can I reach you?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-10">
-          This is how we'll stay in touch — everything happens over text.
+          This is where we'll actually become friends — every check-in, every win, every hard day happens right here in your messages.
         </p>
 
         <div className="mb-8">

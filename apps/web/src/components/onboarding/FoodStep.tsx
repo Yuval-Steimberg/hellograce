@@ -28,10 +28,10 @@ const FoodStep = ({ foodDislikes, dietaryRestriction, onChangeDislikes, onChange
           Food preferences
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          How do you eat?
+          How do you like to eat?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-8">
-          Helps me suggest meals you'll actually enjoy.
+          So every meal and snack I suggest is one you'll actually be excited about — never one-size-fits-all.
         </p>
 
         <div className="space-y-8">

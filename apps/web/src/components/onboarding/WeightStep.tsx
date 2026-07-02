@@ -134,10 +134,10 @@ const WeightStep = ({
           About you
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          A few basics so I can tailor things
+          Tell me a little about you
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-10">
-          This helps me personalize every message to your body and goals.
+          So every message I send feels made for you — your body, your goals, your pace. This stays just between us.
         </p>
 
         <div className="space-y-7">

@@ -24,7 +24,7 @@ const MedicationTimeStep = ({ selected, onSelect, onNext }: MedicationTimeStepPr
           When do you take it?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-8">
-          I'll remind you at the right time and check in on how you're feeling.
+          I'll nudge you at just the right moment, then check in on how you're feeling. You won't have to do this alone.
         </p>
 
         <div className="flex flex-col gap-3">

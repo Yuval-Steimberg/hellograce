@@ -15,10 +15,10 @@ const ScheduleStep = ({ wakeTime, sleepTime, onChange, onNext }: ScheduleStepPro
           Your schedule
         </span>
         <h2 className="text-4xl font-serif text-foreground tracking-tight leading-[1.1] mb-4">
-          When are you up?
+          When are you usually up?
         </h2>
         <p className="text-muted-foreground text-base leading-relaxed mb-10">
-          I'll text at the right time — never too early, never too late.
+          So I reach you at moments that fit your life — never too early, never too late. Like a friend who just knows your rhythm.
         </p>
 
         <div className="space-y-8">

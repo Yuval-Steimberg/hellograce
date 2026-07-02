@@ -87,7 +87,8 @@ describe('buildMultiPartNote', () => {
     );
     const note = buildMultiPartNote(u);
     expect(note).toMatch(/Reply to ALL of it/i);
-    expect(note.toLowerCase()).toMatch(/not an analysis|not a categorization|not a list/);
+    expect(note.toLowerCase()).toMatch(/lead with the answer/);
+    expect(note.toLowerCase()).toMatch(/no lists|narrating/);
     // CRITICAL: no "1) … 2) …" enumeration — that structure made Gemini reply
     // "Here's an analysis of your entries, categorizing them…" (production bug).
     expect(note).not.toMatch(/\n\d\)/);
@@ -101,9 +102,9 @@ describe('buildMultiPartNote', () => {
     const note = buildMultiPartNote(
       analyzeMessage('I feel good after the meal. What should I make for dinner?'),
     );
-    expect(note).toMatch(/REAL, specific answer/i);
-    expect(note.toLowerCase()).toMatch(/never defer|i can help you think about/);
-    expect(note.toLowerCase()).toMatch(/feeling.*first|react to it first|respond to it first/);
+    expect(note.toLowerCase()).toMatch(/specific answer/);
+    expect(note.toLowerCase()).toMatch(/don'?t hedge|commit to/);
+    expect(note.toLowerCase()).toMatch(/feeling first|react to any feeling first/);
   });
 });
 

@@ -264,6 +264,14 @@ describe('enforceFormat', () => {
       expect(text).not.toMatch(/analysis of your entries|categorizing/i);
       expect(text).toMatch(/Friday night/);
     });
+    it('strips CHAINED preambles + hedge (the exact salmon production reply)', () => {
+      const { text } = enforceFormat(
+        "That sounds like a delicious and nutritious meal. Let's break down the protein and then discuss your next steps. It's tough to give an exact number without knowing the precise quantities, but salmon with potatoes and salad is roughly 30-35g of protein, and a Greek yogurt later would round out your day.",
+      );
+      expect(text).not.toMatch(/sounds like a delicious|let'?s break|tough to give/i);
+      expect(text).toMatch(/salmon with potatoes/i);
+      expect(text.startsWith('Salmon')).toBe(true);
+    });
     it('leaves a normal answer untouched', () => {
       const input = 'So glad that meal sat well. For Friday night, a sheet-pan lemon chicken with veggies is easy and satisfying.';
       const { text } = enforceFormat(input);

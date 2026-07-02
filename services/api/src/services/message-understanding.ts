@@ -219,6 +219,6 @@ export function buildMultiPartNote(understanding: MessageUnderstanding): string 
   // entries, categorizing them…" (production 2026-07-02). Keep it conversational
   // so Gemini answers like a person, not a report generator.
   return (
-    '\n\nThe user just said a few things in one text. Reply to ALL of it in ONE short, warm message, the way a friend texts back — NOT an analysis, NOT a summary, NOT a categorization, NOT a list, no headings, no "Option 1/2", and never restate or label their earlier messages. React to any feeling FIRST in a few words, then give each part a real, specific answer (an estimate, a couple of concrete foods) — never deflect with "I can help you think about it." Use ONLY what THIS message says; do not bring in a food or topic from earlier turns.'
+    '\n\nThe user just said a few things in one text. Reply to ALL of it in ONE short, warm message, the way a friend texts back. LEAD WITH THE ANSWER — do NOT open by narrating what you\'re about to do ("let\'s break down", "let\'s discuss", "here\'s how", "estimating protein from…"), do NOT restate/label/analyze their message, and do NOT write a heading. React to any feeling FIRST in a few words, then give each part a direct, specific answer: for a food they named, COMMIT to a rough protein/calorie number or range (don\'t hedge with "it\'s tough to say" — just estimate and say it\'s approximate); for what to eat next, name 1-2 concrete foods. Plain prose only, no lists, no "Option 1/2". Use ONLY what THIS message says; never bring in a food or topic from earlier turns.'
   );
 }

@@ -99,19 +99,22 @@ const FILLER_OPENERS: RegExp[] = [
   /^(?:i'?m here (?:and )?ready to help|how can i help (?:you )?today|what'?s on your mind|happy to (?:chat|help|assist))[!.,]?\s*/i,
   // "Of course! Yes," "Definitely! Sure," patterns
   /^(?:of course|definitely|absolutely)[!.,]?\s+(?:yes|sure|i can|happy to|i'?d be (?:happy|glad))[,.!]?\s*/i,
-  // 2026-07-02 production: multi-topic replies opened with meta-analysis
-  // framing — Grace narrating that she's about to categorize/break down the
-  // user's message instead of just answering it. Strip the whole meta opener
-  // (up to two chained meta sentences) so the reply starts at the actual answer.
-  //   "It looks like you're asking for a mix of food-related advice and
-  //    calculations. Let's break it down."
-  /^it (?:looks|seems|sounds) like you'?re (?:asking|interested|looking|trying)[^.!?]*[.!?]\s*(?:let'?s break[^.!?:]*[:.!?]\s*)?/i,
-  //   "Let's break down your questions about protein and meals."
-  /^(?:okay|ok|alright)?[,.!]?\s*let'?s break (?:it|this|that|things|down)[^.!?:]*[:.!?]\s*/i,
-  //   "Here's an analysis of your entries, categorizing them and providing
-  //    responses where appropriate:"
+  // 2026-07-02 production: replies opened by NARRATING what Grace is about to
+  // do instead of just doing it — meta-analysis / "let's break it down" /
+  // "that sounds like a nice meal, let's…" preambles. Strip the whole preamble
+  // so the reply starts at the actual answer. Applied on every outbound, so it
+  // generalizes across intents (food estimate, knowledge, advice), not one case.
+  //   "It looks like you're asking for a mix of advice and calculations. Let's break it down."
+  /^it (?:looks|seems|sounds) like you'?re (?:asking|interested|looking|trying|wondering)[^.!?]*[.!?]\s*(?:let'?s [a-z]+[^.!?:]*[:.!?]\s*)?/i,
+  //   "Let's break down / dive into / go over / unpack / tackle / discuss your questions…"
+  /^(?:okay|ok|alright|sure|great)?[,.!]?\s*let'?s (?:break|dive|go|take|walk|unpack|tackle|discuss|explore|look|get)[^.!?:]{0,80}[:.!?]\s*/i,
+  //   "That sounds like a delicious and nutritious meal." (sycophantic meal preamble)
+  /^(?:that|this|it) (?:sounds|looks) (?:like )?(?:a |an )?(?:really |very |so |quite )?(?:delicious|tasty|great|nutritious|balanced|healthy|solid|lovely|wonderful|good|nice|yummy|hearty|light)[^.!?]{0,60}(?:meal|choice|dinner|lunch|breakfast|option|combo|plate)[!.,]?\s*/i,
+  //   "Here's an analysis of your entries, categorizing them…"
   /^here'?s an analysis[^.!?:]*[:.!?]\s*/i,
-  /^here'?s a (?:breakdown|summary|categorization) of your (?:entries|messages|questions|requests)[^.!?:]*[:.!?]\s*/i,
+  /^here'?s a (?:breakdown|summary|categorization|rundown) of your (?:entries|messages|questions|requests|meal|day)[^.!?:]*[:.!?]\s*/i,
+  //   Hedge-without-answer opener: "It's tough to give an exact number, but…"
+  /^it'?s (?:tough|hard|difficult|tricky|impossible) to (?:give|say|know|provide|pin down)[^.!?]*,?\s*but\s*/i,
 ];
 
 // Map: each context type allows these specific runtime-data openers.
@@ -256,16 +259,24 @@ export function enforceFormat(
   // ─── Generic AI-filler opener strip (universal — every response) ─────────
   // "I understand your concern..." / "Thanks for sharing..." / "As an AI..."
   // These are corporate-AI tells that add no value. Strip them unconditionally.
-  for (const pattern of FILLER_OPENERS) {
-    if (pattern.test(text)) {
-      const stripped = text.replace(pattern, '').trim();
-      if (stripped.length > 30) {
-        // Capitalize the new first letter
-        text = stripped.charAt(0).toUpperCase() + stripped.slice(1);
-        fixes.push('filler_opener_stripped');
-        break;
+  // Strip CHAINED openers, not just the first — a reply can stack two or three
+  // ("That sounds like a delicious meal. Let's break down the protein. Here's
+  // how…") and only removing one still ships preamble. Loop up to 3 passes.
+  for (let pass = 0; pass < 3; pass++) {
+    let strippedThisPass = false;
+    for (const pattern of FILLER_OPENERS) {
+      if (pattern.test(text)) {
+        const stripped = text.replace(pattern, '').trim();
+        if (stripped.length > 30) {
+          // Capitalize the new first letter
+          text = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+          fixes.push('filler_opener_stripped');
+          strippedThisPass = true;
+          break;
+        }
       }
     }
+    if (!strippedThisPass) break;
   }
 
   // ─── Em dash (—) and en dash (–) → comma ───────────────────────────────

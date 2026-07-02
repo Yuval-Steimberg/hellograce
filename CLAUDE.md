@@ -6,6 +6,54 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### User progress dashboard — the app behind the messages (2026-07-02)
+
+Branch `claude/system-migration-process-dtkyp3` (merged to main). Product ask:
+"a real app behind the messages" the user opens from a link Grace texts — see
+progress (charts/graphs/details), upload stuff, put/read data, save all progress.
+
+- **Auth reuses the Settings session token EXACTLY** (`settings:session:{token}`
+  in Redis) — one phone+code verification unlocks BOTH Settings and the
+  dashboard, no second login. Frontend shares `grace_settings_token`.
+- **`services/api/src/routes/dashboard.ts`** (NEW): `GET /dashboard/summary`
+  (profile snapshot + weight progress/series + nutrition today/history/streak +
+  mood series + symptom patterns/recent) — every read best-effort (a missing
+  table degrades that section to empty, never 500). Writes: `POST
+  /dashboard/{weight,mood,symptom,food,photo}`. Symptom logging feeds the SAME
+  symptom-intelligence memory as chat (records episode w/ days-since-injection +
+  dose, attributes a named remedy). Food uses the real `makeLogFoodTool`
+  estimator. **Photo upload = zero new infra**: browser downscales to a `data:`
+  URL, undici's `fetch` resolves it, so `analyzeMedia` runs the exact inbound
+  vision pipeline (food auto-logs w/ `parseFoodImageAnalysis`; progress photo
+  returns a warm read, never logged). Per-route 12MB bodyLimit.
+- **`services/api/src/services/dashboard-data.ts`** (NEW, pure/tested):
+  `glp1WeekNumber`, `weightProgress` (lost/to-go/pct), `loggingStreak`
+  (consecutive logged days, alive if today not-yet-logged but yesterday was),
+  `summarizeSymptoms` (group→analyze→order). Wired via `registerDashboardRoutes`
+  in server.ts (deps: redis, users, pool, llm, logger, gemini{apiKey,model,fallback}).
+- **`services/api/src/services/dashboard-link.ts`** (NEW, tested):
+  `detectDashboardRequest` ("show my progress/charts/stats", "the app", guarded
+  against "log/track my protein") → early short-circuit intercept in ai.service
+  (`intent:'dashboard_link'`, before food paths) returns
+  `buildDashboardLinkReply()` with the `/dashboard` link (host rewritten by
+  TwilioSender). Grace never denies the app exists.
+- **`user.service.ts`**: `logWeightEntry` (+ syncs `current_weight`, invalidates
+  cache), `logMoodEntry`, `getMoodHistory`.
+- **Frontend** (`apps/web`): `pages/Dashboard.tsx` (brand-consistent,
+  framer-motion, phone+code gate, hero stats, charts, symptom panel, quick-log,
+  today's meals), `components/dashboard/DashboardCharts.tsx` (recharts weight
+  area / nutrition bars w/ protein|calorie toggle + goal line / mood line + the
+  "what Grace has learned about your body" pattern cards), `QuickLog.tsx`
+  (weight/meal/symptom/mood/photo w/ client-side canvas downscale),
+  `lib/dashboardApi.ts`. Route `/dashboard` in App.tsx. Dashboard bundle ~24kB.
+
+Tests: dashboard-data (11) + dashboard-link (5). 1482 api green, web builds
+clean, typecheck clean across all packages. **Deploy: `fly deploy` (API) + web
+auto-deploys on Vercel; needs the symptom_episodes migration for the symptom
+panel, but the dashboard itself needs no new migration.**
+
+---
+
 ### Symptom intelligence — personal side-effect pattern memory (2026-07-01)
 
 Branch `claude/system-migration-process-dtkyp3`. The signature DIFFERENTIATOR

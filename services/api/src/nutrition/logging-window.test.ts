@@ -8,24 +8,23 @@ import {
   DEFAULT_WAKE_TIME,
 } from './logging-window.js';
 
-describe('logging-window SQL helpers', () => {
-  it('CTE selects tz AND wake interval from the user row', () => {
+describe('logging-window SQL helpers (local calendar day)', () => {
+  it('CTE selects tz from the user row', () => {
     expect(USER_DAY_CTE).toMatch(/AS tz/);
-    expect(USER_DAY_CTE).toMatch(/::interval AS wake/);
     expect(USER_DAY_CTE).toContain(DEFAULT_WAKE_TIME);
     expect(USER_DAY_CTE).toMatch(/FROM users WHERE phone = \$1/);
   });
 
-  it('userDayExpr shifts the local time back by wake before taking the date', () => {
-    expect(userDayExpr('fl.created_at')).toBe(
-      '((fl.created_at AT TIME ZONE user_tz.tz) - user_tz.wake)::date',
-    );
+  it('userDayExpr takes the LOCAL date (no wake shift)', () => {
+    expect(userDayExpr('fl.created_at')).toBe('(fl.created_at AT TIME ZONE user_tz.tz)::date');
+    expect(userDayExpr('fl.created_at')).not.toContain('wake');
   });
 
-  it('isCurrentUserDay compares the row day to now()\'s day, both wake-shifted', () => {
+  it('isCurrentUserDay compares the row local date to now()\'s local date', () => {
     const sql = isCurrentUserDay('fl.created_at');
-    expect(sql).toContain('- user_tz.wake)::date');
-    expect(sql).toContain('now() AT TIME ZONE user_tz.tz');
+    expect(sql).toContain('(fl.created_at AT TIME ZONE user_tz.tz)::date');
+    expect(sql).toContain('(now() AT TIME ZONE user_tz.tz)::date');
+    expect(sql).not.toContain('wake');
     expect(sql).toMatch(/=/);
   });
 });
@@ -42,50 +41,32 @@ describe('parseWakeTime', () => {
   });
 });
 
-describe('computeUserLoggingDay ↔ SQL window parity (spot checks)', () => {
-  // The JS key must equal ((now() AT TIME ZONE tz) - wake)::date.
-  it('matches the wake boundary for the default 07:00', () => {
-    expect(computeUserLoggingDay('UTC', undefined, new Date('2026-06-07T06:59:00Z'))).toBe('2026-06-06');
-    expect(computeUserLoggingDay('UTC', undefined, new Date('2026-06-07T07:00:00Z'))).toBe('2026-06-07');
-  });
-});
-
-describe('per-user logging day — spec scenarios', () => {
-  // Spec example: a user who wakes at 7:00 AM. Meals after 7 AM belong to that
-  // day; a pre-wake snack belongs to the day that began the previous 7 AM.
-  it('wakes 07:00 — an 8 AM meal is today, a 2 AM snack is the prior day', () => {
-    const wake = '07:00';
-    expect(computeUserLoggingDay('UTC', wake, new Date('2026-06-15T08:00:00Z'))).toBe('2026-06-15');
-    expect(computeUserLoggingDay('UTC', wake, new Date('2026-06-15T02:00:00Z'))).toBe('2026-06-14');
-    // 23:30 the same night is still the 15th's logging day (before the next 7 AM).
-    expect(computeUserLoggingDay('UTC', wake, new Date('2026-06-15T23:30:00Z'))).toBe('2026-06-15');
+describe('computeUserLoggingDay — local calendar day (midnight → 11:59 PM)', () => {
+  it('is the local date regardless of wake time', () => {
+    // Early morning and late night on the same calendar day → same day.
+    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-15T02:00:00Z'))).toBe('2026-06-15');
+    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-15T08:00:00Z'))).toBe('2026-06-15');
+    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-15T23:59:00Z'))).toBe('2026-06-15');
+    // Midnight starts the next day.
+    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-16T00:00:00Z'))).toBe('2026-06-16');
   });
 
-  // A custom wake time shifts the boundary, never midnight or a fixed 5am.
-  it('a late riser (wake 10:00) — a 9 AM meal still counts toward yesterday', () => {
-    expect(computeUserLoggingDay('UTC', '10:00', new Date('2026-06-15T09:00:00Z'))).toBe('2026-06-14');
-    expect(computeUserLoggingDay('UTC', '10:00', new Date('2026-06-15T10:00:00Z'))).toBe('2026-06-15');
+  it('ignores wake time entirely (same timestamp, different wake → same day)', () => {
+    const ts = new Date('2026-06-15T06:30:00Z');
+    expect(computeUserLoggingDay('UTC', '06:00', ts)).toBe('2026-06-15');
+    expect(computeUserLoggingDay('UTC', '10:00', ts)).toBe('2026-06-15');
+    expect(computeUserLoggingDay('UTC', null, ts)).toBe('2026-06-15');
   });
 
-  // Updating wake time in Settings must re-bucket the SAME timestamp dynamically
-  // (no rows move — totals are recomputed from the current window).
-  it('changing wake time re-buckets the same timestamp', () => {
-    const ts = new Date('2026-06-15T06:30:00Z'); // 6:30 AM local
-    expect(computeUserLoggingDay('UTC', '06:00', ts)).toBe('2026-06-15'); // wake 6 → after wake → today
-    expect(computeUserLoggingDay('UTC', '07:00', ts)).toBe('2026-06-14'); // wake 7 → before wake → yesterday
+  it('is computed in the user timezone', () => {
+    // 2026-06-15T02:30Z = 2026-06-14 22:30 EDT → still the 14th locally.
+    expect(computeUserLoggingDay('America/New_York', '07:00', new Date('2026-06-15T02:30:00Z'))).toBe('2026-06-14');
+    // 2026-06-15T05:00Z = 2026-06-15 01:00 EDT → the 15th locally (new calendar day).
+    expect(computeUserLoggingDay('America/New_York', '07:00', new Date('2026-06-15T05:00:00Z'))).toBe('2026-06-15');
   });
 
-  // Missing wake time falls back to the safe 07:00 default (not midnight).
-  it('missing wake time uses the 07:00 safe default', () => {
-    expect(computeUserLoggingDay('UTC', null, new Date('2026-06-15T06:30:00Z'))).toBe('2026-06-14');
-    expect(computeUserLoggingDay('UTC', '', new Date('2026-06-15T07:30:00Z'))).toBe('2026-06-15');
-  });
-
-  // The window is computed in the user's own timezone.
-  it('respects the user timezone (New York, wake 07:00)', () => {
-    // 2026-06-15T10:30Z = 06:30 EDT → before 7 AM local → prior logging day.
-    expect(computeUserLoggingDay('America/New_York', '07:00', new Date('2026-06-15T10:30:00Z'))).toBe('2026-06-14');
-    // 2026-06-15T11:30Z = 07:30 EDT → after 7 AM local → today.
-    expect(computeUserLoggingDay('America/New_York', '07:00', new Date('2026-06-15T11:30:00Z'))).toBe('2026-06-15');
+  it('a pre-wake snack now counts toward the day it happened (calendar day), not the prior day', () => {
+    // 1 AM local on the 16th → the 16th (previously would have been the 15th).
+    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-16T01:00:00Z'))).toBe('2026-06-16');
   });
 });

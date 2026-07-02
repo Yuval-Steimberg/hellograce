@@ -6,6 +6,28 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Food day = LOCAL CALENDAR DAY (midnight → 11:59 PM) (2026-07-02)
+
+Product ask: food/protein/calorie totals should run "from wake-up until 11:59
+PM." A window can't both start at wake AND end at 11:59 PM without gaps, so the
+clean implementation is the **local calendar day** (12:00 AM → 11:59 PM in the
+user's timezone) — functionally identical to "from when you wake until 11:59 PM"
+for anyone asleep overnight (fresh at midnight, closes at 11:59 PM). This
+SUPERSEDES the 2026-06-15 wake_time-to-next-wake_time window (which let a day
+bleed ~7h past midnight). Single source of truth `nutrition/logging-window.ts`:
+`userDayExpr` → `(col AT TIME ZONE tz)::date` (no wake shift); `isCurrentUserDay`
+compares local dates; `computeUserLoggingDay` (the Redis-key twin) returns the
+local date, wake arg ignored. Because EVERY food "today"/per-day read routes
+through these helpers, the change applies everywhere at once — chat context,
+`getTodaysFoodSummary`, `getDailyProteinHistory`, `log-food`/`remove-food`
+running totals, `food-log-fast`, admin food-logs, the L2 cache key, the
+scheduler reminders, AND the dashboard (`/dashboard/summary` today + history +
+streak). Tests updated (logging-window + today-food-cache); 1479 api green,
+typecheck clean. To revert to wake-based: restore the `- user_tz.wake` in
+`userDayExpr` + the pre-wake shift in `computeUserLoggingDay`.
+
+---
+
 ### User progress dashboard — the app behind the messages (2026-07-02)
 
 Branch `claude/system-migration-process-dtkyp3` (merged to main). Product ask:

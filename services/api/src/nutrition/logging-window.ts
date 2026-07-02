@@ -1,32 +1,34 @@
 /**
- * Per-user food "logging day" window (2026-06-15).
+ * Per-user food "logging day" window (2026-07-02).
  *
- * The food / protein / calorie day starts at each user's wake_time (NOT local
- * midnight) and runs 24 hours to the next wake_time. So someone who wakes at
- * 7:00 AM has a day of [07:00, 07:00 next day); a 1 AM snack counts toward the
- * day that began at the previous 7:00 AM.
+ * The food / protein / calorie day is the user's LOCAL CALENDAR DAY: it runs
+ * from 12:00 AM to 11:59 PM in their timezone, and totals reset at local
+ * midnight. In practice this is exactly "from when you wake up until 11:59 PM"
+ * for anyone asleep overnight — the day is already fresh by the time they wake,
+ * and it closes at 11:59 PM the same night. (Superseded the earlier
+ * wake_time-to-next-wake_time window, which let a day bleed ~7h past midnight.)
  *
- * A row's logging day is its LOCAL timestamp shifted back by wake_time, taken
- * as a date:
- *     ((created_at AT TIME ZONE tz) - wake)::date
+ * A row's logging day is simply its LOCAL date:
+ *     (created_at AT TIME ZONE tz)::date
  * "Today" = that value equals the same expression evaluated for now().
  *
- * Missing/blank wake_time falls back to 07:00 (safe default). Existing rows are
- * never moved — totals are computed dynamically from this window, so changing
- * wake_time in Settings immediately changes which rows count as "today".
+ * Existing rows are never moved — totals are computed dynamically from this
+ * window, so a timezone change in Settings immediately re-buckets "today".
  *
  * EVERY food_logs "today"/per-day query AND the Redis cache key MUST use these
  * helpers (SQL) and computeUserLoggingDay (JS) so the window is identical
  * across the DB and the cache. Do NOT hand-roll the boundary anywhere else.
  */
 
-/** Default wake time when the user hasn't set one. */
+/** Default wake time when the user hasn't set one. Retained for callers that
+ *  still read a wake time; the food-day boundary no longer depends on it. */
 export const DEFAULT_WAKE_TIME = '07:00';
 
 /**
- * CTE named `user_tz` exposing the user's timezone (`tz`) and wake offset
- * (`wake`, a Postgres interval) for the user identified by `$1`
- * (phone == food_logs.user_id). Prepend to a food_logs query.
+ * CTE named `user_tz` exposing the user's timezone (`tz`) for the user
+ * identified by `$1` (phone == food_logs.user_id). Prepend to a food_logs query.
+ * (A `wake` interval is still selected for backward compatibility with any
+ * query that references it, but the day boundary itself is local midnight.)
  */
 export const USER_DAY_CTE = `WITH user_tz AS (
          SELECT COALESCE(NULLIF(timezone, ''), 'UTC') AS tz,
@@ -34,9 +36,10 @@ export const USER_DAY_CTE = `WITH user_tz AS (
          FROM users WHERE phone = $1
        )`;
 
-/** SQL: the logging-day date for a timestamp column (or `now()`). */
+/** SQL: the logging-day date for a timestamp column (or `now()`) — LOCAL
+ *  calendar day in the user's timezone (midnight → 11:59 PM). */
 export const userDayExpr = (col: string): string =>
-  `((${col} AT TIME ZONE user_tz.tz) - user_tz.wake)::date`;
+  `(${col} AT TIME ZONE user_tz.tz)::date`;
 
 /** SQL predicate: the row's timestamp column is in the CURRENT logging day. */
 export const isCurrentUserDay = (col: string): string =>
@@ -54,11 +57,14 @@ export function parseWakeTime(wake: string | null | undefined): [number, number]
 /**
  * JS twin of the SQL window: the user's current logging-day date (YYYY-MM-DD),
  * used as the Redis cache key so L2 matches the DB exactly. Equivalent to
- * `((now() AT TIME ZONE tz) - wake)::date`.
+ * `(now() AT TIME ZONE tz)::date` — the LOCAL calendar day.
+ *
+ * `wakeTime` is accepted for signature compatibility with existing callers but
+ * no longer affects the boundary (the day is the local calendar day).
  */
 export function computeUserLoggingDay(
   timezone: string | null | undefined,
-  wakeTime: string | null | undefined,
+  _wakeTime?: string | null | undefined,
   now: Date = new Date(),
 ): string {
   const tz = timezone && timezone.length > 0 ? timezone : 'UTC';
@@ -66,25 +72,15 @@ export function computeUserLoggingDay(
   try {
     parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: tz,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour12: false,
     }).formatToParts(now);
   } catch {
     parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'UTC',
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour12: false,
     }).formatToParts(now);
   }
   const get = (t: string): number => Number(parts.find((p) => p.type === t)?.value ?? '0');
   const y = get('year'), mo = get('month'), d = get('day');
-  let h = get('hour');
-  if (h === 24) h = 0; // some environments emit '24' at local midnight
-  const mi = get('minute');
-  const [wh, wm] = parseWakeTime(wakeTime);
-  // Shift the local date back one day when the current local time is before
-  // wake — that places pre-wake hours in the day that began the prior wake.
-  let date = new Date(Date.UTC(y, mo - 1, d));
-  if (h * 60 + mi < wh * 60 + wm) date = new Date(date.getTime() - 86_400_000);
-  return date.toISOString().slice(0, 10);
+  return new Date(Date.UTC(y, mo - 1, d)).toISOString().slice(0, 10);
 }

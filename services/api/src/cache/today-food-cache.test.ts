@@ -38,49 +38,45 @@ const SAMPLE = {
   ],
 };
 
-describe('computeUserLoggingDay — wake-time food day (2026-06-15)', () => {
+describe('computeUserLoggingDay — local calendar day, midnight → 11:59 PM (2026-07-02)', () => {
   it('returns YYYY-MM-DD format', () => {
     expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-07T12:00:00.000Z')))
       .toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it('after wake (noon) → that calendar day', () => {
+  it('noon → that calendar day', () => {
     expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-07T12:00:00.000Z')))
       .toBe('2026-06-07');
   });
 
-  it('exactly at wake (07:00) → the new logging day starts', () => {
-    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-07T07:00:00.000Z')))
+  it('early morning (06:59) is the SAME calendar day', () => {
+    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-07T06:59:00.000Z')))
       .toBe('2026-06-07');
   });
 
-  it('before wake (06:59) → belongs to the PREVIOUS logging day', () => {
-    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-07T06:59:00.000Z')))
-      .toBe('2026-06-06');
-  });
-
-  it('a 1 AM snack counts toward the day that began the prior wake', () => {
+  it('a 1 AM snack counts toward that calendar day (not the prior day)', () => {
     expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-07T01:00:00.000Z')))
-      .toBe('2026-06-06');
+      .toBe('2026-06-07');
   });
 
-  it('honors a custom wake time (09:00)', () => {
-    expect(computeUserLoggingDay('UTC', '09:00', new Date('2026-06-07T08:00:00.000Z'))).toBe('2026-06-06');
-    expect(computeUserLoggingDay('UTC', '09:00', new Date('2026-06-07T09:30:00.000Z'))).toBe('2026-06-07');
+  it('local midnight starts the new day; 11:59 PM is still the old day', () => {
+    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-07T23:59:00.000Z'))).toBe('2026-06-07');
+    expect(computeUserLoggingDay('UTC', '07:00', new Date('2026-06-08T00:00:00.000Z'))).toBe('2026-06-08');
   });
 
-  it('missing wake time falls back to 07:00', () => {
-    expect(computeUserLoggingDay('UTC', null, new Date('2026-06-07T06:00:00.000Z'))).toBe('2026-06-06');
+  it('ignores wake time (boundary is midnight, not wake)', () => {
+    expect(computeUserLoggingDay('UTC', '09:00', new Date('2026-06-07T08:00:00.000Z'))).toBe('2026-06-07');
+    expect(computeUserLoggingDay('UTC', null, new Date('2026-06-07T06:00:00.000Z'))).toBe('2026-06-07');
     expect(computeUserLoggingDay('UTC', '', new Date('2026-06-07T08:00:00.000Z'))).toBe('2026-06-07');
   });
 
-  it('uses the user timezone (Asia/Jerusalem, +3): 05:00 UTC = 08:00 local, after a 07:00 wake', () => {
-    // 2026-06-07 05:00 UTC = 08:00 Jerusalem → after wake → 2026-06-07
-    expect(computeUserLoggingDay('Asia/Jerusalem', '07:00', new Date('2026-06-07T05:00:00.000Z')))
-      .toBe('2026-06-07');
-    // 2026-06-07 03:00 UTC = 06:00 Jerusalem → before wake → previous day
+  it('uses the user timezone (Asia/Jerusalem, +3)', () => {
+    // 2026-06-07 03:00 UTC = 06:00 Jerusalem → the 7th locally
     expect(computeUserLoggingDay('Asia/Jerusalem', '07:00', new Date('2026-06-07T03:00:00.000Z')))
-      .toBe('2026-06-06');
+      .toBe('2026-06-07');
+    // 2026-06-07 22:00 UTC = 01:00 Jerusalem on the 8th → the 8th locally
+    expect(computeUserLoggingDay('Asia/Jerusalem', '07:00', new Date('2026-06-07T22:00:00.000Z')))
+      .toBe('2026-06-08');
   });
 
   it('invalid / empty timezone falls back to UTC', () => {

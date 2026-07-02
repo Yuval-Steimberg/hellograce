@@ -383,7 +383,7 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
     // the STOP/HELP + "Msg & data rates may apply" footer is an A2P requirement
     // and must ship verbatim — an LLM would paraphrase or drop it. generate()
     // short-circuits 'welcome' to this template so the exact wording always ships.
-    return `Hi ${name}, it's Grace, your new GLP-1 sidekick. I'll check in daily with meal ideas, protein tips, and encouragement. Text me what you ate (or snap a pic) and I'll log it. Ask me anything, anytime. Save this number so you never miss a check-in. Reply STOP to cancel, HELP for help. Msg & data rates may apply.`;
+    return `Hi ${name}, it's Grace, your new GLP-1 sidekick. I'll check in daily with meal ideas, protein tips, and encouragement. Text me what you ate (or snap a pic) and I'll log it. Want to see your progress anytime? Just text me "dashboard" and I'll send your private link — weight, protein, mood, and the side-effect patterns I learn about your body, all in one place. Ask me anything, anytime. Save this number so you never miss a check-in. Reply STOP to cancel, HELP for help. Msg & data rates may apply.`;
   },
   trial_expiry_reminder: (u) => {
     const upgradeUrl = buildUpgradeUrl(u.phone);

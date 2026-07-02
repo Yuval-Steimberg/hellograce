@@ -125,15 +125,15 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
   return (
     <div className="mx-auto max-w-5xl px-4 pb-20 pt-8 sm:px-6">
       {/* Header */}
-      <header className="mb-8 flex items-start justify-between">
-        <div>
-          <p className="font-serif text-2xl text-foreground sm:text-3xl">{greeting} 🤍</p>
+      <header className="mb-6 flex items-start justify-between gap-3 sm:mb-8">
+        <div className="min-w-0">
+          <p className="font-serif text-xl text-foreground sm:text-3xl">{greeting} 🤍</p>
           <p className="mt-1 text-sm text-muted-foreground">
             {data.profile.glp1Week != null && <>Week {data.profile.glp1Week} on {data.profile.medication ?? "your GLP-1"}</>}
             {data.profile.injectionDay && <> · {data.profile.injectionDay} injections</>}
           </p>
         </div>
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex shrink-0 items-center gap-3 text-sm">
           <Link to="/settings" className="text-muted-foreground underline">Settings</Link>
           <button onClick={onLogout} className="text-muted-foreground underline">Sign out</button>
         </div>
@@ -147,8 +147,8 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
         <Reveal delay={0.15}><StatCard label="Logging streak" tone="sage" value={n.streak > 0 ? `${n.streak} day${n.streak === 1 ? "" : "s"}` : "—"} sub={n.streak > 0 ? "keep it going" : "log a meal today"} /></Reveal>
       </div>
 
-      {/* Charts grid */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* Charts grid — two-up from tablet width */}
+      <div className="grid gap-4 md:grid-cols-2">
         <Reveal><WeightChart weight={w} /></Reveal>
         <Reveal delay={0.05}><NutritionChart nutrition={n} /></Reveal>
       </div>
@@ -164,7 +164,7 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
       </div>
 
       {/* Mood + Quick log */}
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
         <Reveal><QuickLog onLogged={reload} /></Reveal>
         <Reveal delay={0.05}>
           <div className="space-y-4">

@@ -45,6 +45,8 @@ describe('welcome message — deterministic, compliance-correct (2026-06-14)', (
     // Name + the key beats + the A2P compliance footer (verbatim, at the end).
     expect(out).toContain('Hi Yuval, it\'s Grace, your new GLP-1 sidekick.');
     expect(out).toContain('snap a pic');
+    // Tells the user how to get their dashboard link (text "dashboard").
+    expect(out).toContain('"dashboard"');
     expect(out).toContain('Save this number');
     expect(out.trimEnd().endsWith('Reply STOP to cancel, HELP for help. Msg & data rates may apply.')).toBe(true);
   });

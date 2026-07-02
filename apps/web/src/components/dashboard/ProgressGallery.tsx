@@ -66,7 +66,7 @@ export function ProgressGallery() {
       <div className="mb-1 flex items-center justify-between">
         <h3 className="font-serif text-lg text-foreground">Progress photos</h3>
         <button onClick={() => fileRef.current?.click()} className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-white">+ Add photo</button>
-        <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
       </div>
       <p className="mb-4 text-sm text-muted-foreground">Private to you — a before/after record of how far you've come. Never logged, never shared.</p>
 
@@ -102,7 +102,7 @@ export function ProgressGallery() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center" onClick={() => !busy && setPending(null)}>
             <motion.div initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }}
-              className="w-full max-w-sm rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
+              className="max-h-[92vh] w-full max-w-sm overflow-y-auto rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
               <h4 className="mb-3 font-serif text-lg text-foreground">Save this photo</h4>
               <img src={pending.full} alt="New progress" className="mb-4 max-h-64 w-full rounded-xl object-cover" />
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note (optional)"
@@ -124,7 +124,7 @@ export function ProgressGallery() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setOpen(null)}>
             <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }}
-              className="w-full max-w-lg overflow-hidden rounded-2xl bg-white" onClick={(e) => e.stopPropagation()}>
+              className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white" onClick={(e) => e.stopPropagation()}>
               <div className="flex min-h-[240px] items-center justify-center bg-black/5">
                 {openFull ? <img src={openFull} alt={open.note ?? "Progress photo"} className="max-h-[60vh] w-full object-contain" />
                   : <p className="py-16 text-sm text-muted-foreground">Loading…</p>}

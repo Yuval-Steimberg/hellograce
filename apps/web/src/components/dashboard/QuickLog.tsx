@@ -124,7 +124,7 @@ export function QuickLog({ onLogged }: { onLogged: () => void }) {
 
           {tab === "photo" && (
             <div className="space-y-3">
-              <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
               <button onClick={() => fileRef.current?.click()} disabled={busy}
                 className="flex h-28 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-sand bg-secondary/30 text-sm text-muted-foreground transition-colors hover:border-primary disabled:opacity-50">
                 {busy ? "Reading your photo…" : (<><span className="text-2xl">📷</span><span className="mt-1">Upload a meal or progress photo</span></>)}

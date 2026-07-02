@@ -4590,11 +4590,13 @@ CRITICAL RULES:
     // analyze that for audio — a multi-topic voice note gets the same handling
     // as a multi-topic text. Images are handled by the media pipeline above, so
     // analyze only a typed caption there (never the internal nutrition blob).
+    let isMultiTopicReply = false;
     if (this.directReplyMode) {
       const understandingText =
         input.media[0]?.kind === 'audio' && description ? description : input.text;
       const understanding = analyzeMessage(understandingText);
       if (understanding.hasMultiple) {
+        isMultiTopicReply = true;
         systemPromptWithStrategy += buildMultiPartNote(understanding);
         this.deps.logger.info(
           { userId: input.userId, kinds: understanding.kinds, source: input.media[0]?.kind ?? 'text' },
@@ -4608,11 +4610,15 @@ CRITICAL RULES:
     // the LLM starts fresh and doesn't anchor on the old conversation thread.
     const TOPIC_CLOSERS = /^(thanks|thank you|thx|ty|ok|okay|got it|cool|great|perfect|awesome|nice|good|alright|sounds good|will do|noted|k|kk)\.?!?$/i;
     let effectiveHistory = history;
-    if (isolateFoodLog) {
-      // Strip all prior Grace replies: the food-log response should NOT be
-      // anchored to a prior dinner/recommendation thread. Only user turns are
-      // kept so the profile context (dietary, goal) is still visible to the LLM
-      // via the system prompt rather than through assistant-turn anchoring.
+    if (isolateFoodLog || isMultiTopicReply) {
+      // Strip all prior Grace replies: a food-log OR a multi-topic message must
+      // be answered from ITS OWN content, not anchored to a prior dinner /
+      // recommendation / shake thread. Only user turns are kept so profile
+      // context (dietary, goal) stays visible via the system prompt rather than
+      // through assistant-turn anchoring. (2026-07-02: production bug — a
+      // "salmon, how much protein + what to eat later?" reply latched onto a
+      // "protein shake" from earlier assistant turns and never answered the
+      // salmon question.)
       effectiveHistory = history.filter((t) => t.role === 'user');
       logger.info(
         { userId: input.userId, textPreview: input.text.slice(0, 60) },

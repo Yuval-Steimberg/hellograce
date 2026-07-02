@@ -11,6 +11,7 @@ import {
   Reveal, StatCard, WeightChart, NutritionChart, MoodChart, SymptomPatterns, useGreeting,
 } from "@/components/dashboard/DashboardCharts";
 import { QuickLog } from "@/components/dashboard/QuickLog";
+import { ProgressGallery } from "@/components/dashboard/ProgressGallery";
 
 type Stage = "phone" | "code" | "ready";
 
@@ -155,6 +156,11 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
       {/* Symptom intelligence — the differentiator, full width */}
       <div className="mt-4">
         <Reveal><SymptomPatterns symptoms={data.symptoms} /></Reveal>
+      </div>
+
+      {/* Progress photo gallery — full width */}
+      <div className="mt-4">
+        <Reveal><ProgressGallery /></Reveal>
       </div>
 
       {/* Mood + Quick log */}

@@ -5,7 +5,7 @@ import type { Logger } from 'pino';
 import type { LLMProvider } from '@grace/shared';
 import { z } from 'zod';
 import type { UserService } from '../user/user.service.js';
-import { ValidationError, UnauthorizedError } from '../errors.js';
+import { ValidationError, UnauthorizedError, NotFoundError } from '../errors.js';
 import { makeLogFoodTool } from '../tools/log-food.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
 import { parseFoodImageAnalysis } from '../services/ai.service.js';
@@ -273,5 +273,65 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
     const clean = analysis.replace(/^IMAGE_TYPE:.*$/im, '').replace(/^BREAKDOWN:[\s\S]*/im, '').trim();
     deps.logger.info({ phone }, 'dashboard.photo.body');
     return { ok: true, kind: 'body', logged: false, analysis: clean.slice(0, 800) };
+  });
+
+  // ── Progress photo gallery ─────────────────────────────────────────────────
+  // Stored inline (downscaled data URLs) so there's no object-storage bucket to
+  // provision — the browser caps the image to ~1024px + a ~400px thumb before
+  // upload. The gallery is a personal before/after record; photos are NEVER
+  // logged as food and never leave the user's own account.
+  const DATA_URL_RE = /^data:image\/(png|jpe?g|webp|heic|heif);base64,/i;
+  const mapPhoto = (p: { id: string; kind: string; note: string | null; weight_lbs: number | null; thumb_data: string | null; taken_at: Date }) => ({
+    id: p.id, kind: p.kind, note: p.note, weightLbs: p.weight_lbs,
+    thumbUrl: p.thumb_data, takenAt: new Date(p.taken_at).toISOString(),
+  });
+
+  // Save a progress photo to the gallery.
+  app.post('/dashboard/progress-photo', { bodyLimit: 12 * 1024 * 1024 }, async (req) => {
+    const phone = await requireVerifiedPhone(req);
+    const parsed = z.object({
+      dataUrl: z.string().regex(DATA_URL_RE, 'Upload a photo (PNG, JPG, or WebP).'),
+      thumbUrl: z.string().regex(DATA_URL_RE).optional(),
+      note: z.string().trim().max(400).optional(),
+      weight: z.number().positive().min(60).max(700).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) throw new ValidationError("That photo couldn't be saved — try a PNG, JPG, or WebP.");
+    const contentType = parsed.data.dataUrl.slice(5, parsed.data.dataUrl.indexOf(';'));
+    const saved = await deps.users.saveProgressPhoto(phone, {
+      kind: 'progress',
+      image_data: parsed.data.dataUrl,
+      thumb_data: parsed.data.thumbUrl ?? null,
+      content_type: contentType,
+      note: parsed.data.note ?? null,
+      weight_lbs: parsed.data.weight ?? null,
+    });
+    deps.logger.info({ phone, id: saved.id }, 'dashboard.progress_photo.saved');
+    return { ok: true, photo: mapPhoto(saved) };
+  });
+
+  // List gallery photos (metadata + thumbnail only).
+  app.get('/dashboard/photos', async (req) => {
+    const phone = await requireVerifiedPhone(req);
+    const photos = await deps.users.listProgressPhotos(phone, 60).catch(() => []);
+    return { photos: photos.map(mapPhoto) };
+  });
+
+  // Full image for the lightbox (owner-scoped).
+  app.get('/dashboard/photos/:id', async (req) => {
+    const phone = await requireVerifiedPhone(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const photo = await deps.users.getProgressPhoto(phone, id);
+    if (!photo) throw new NotFoundError('Photo not found');
+    return { dataUrl: photo.image_data };
+  });
+
+  // Delete a gallery photo (owner-scoped).
+  app.delete('/dashboard/photos/:id', async (req) => {
+    const phone = await requireVerifiedPhone(req);
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const ok = await deps.users.deleteProgressPhoto(phone, id);
+    if (!ok) throw new NotFoundError('Photo not found');
+    deps.logger.info({ phone, id }, 'dashboard.progress_photo.deleted');
+    return { ok: true };
   });
 }

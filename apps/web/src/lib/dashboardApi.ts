@@ -96,4 +96,28 @@ export const dashboardApi = {
       "/dashboard/photo",
       { method: "POST", auth: true, body: JSON.stringify({ dataUrl }) },
     ),
+
+  // Progress photo gallery.
+  listPhotos: () => call<{ photos: ProgressPhoto[] }>("/dashboard/photos", { auth: true }),
+
+  getPhoto: (id: string) => call<{ dataUrl: string }>(`/dashboard/photos/${id}`, { auth: true }),
+
+  addProgressPhoto: (dataUrl: string, thumbUrl: string, note?: string, weight?: number) =>
+    call<{ ok: boolean; photo: ProgressPhoto }>("/dashboard/progress-photo", {
+      method: "POST",
+      auth: true,
+      body: JSON.stringify({ dataUrl, thumbUrl, note: note || undefined, weight: weight ?? undefined }),
+    }),
+
+  deletePhoto: (id: string) =>
+    call<{ ok: boolean }>(`/dashboard/photos/${id}`, { method: "DELETE", auth: true }),
 };
+
+export interface ProgressPhoto {
+  id: string;
+  kind: string;
+  note: string | null;
+  weightLbs: number | null;
+  thumbUrl: string | null;
+  takenAt: string;
+}

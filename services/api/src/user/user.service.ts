@@ -449,6 +449,55 @@ export class UserService {
     );
   }
 
+  /** Save a progress-gallery photo (downscaled data URLs from the browser).
+   *  Best-effort — returns the new row's id + metadata, or throws on a real DB
+   *  error so the route can report it. */
+  async saveProgressPhoto(userId: string, data: {
+    kind: string;
+    image_data: string;
+    thumb_data: string | null;
+    content_type: string;
+    note: string | null;
+    weight_lbs: number | null;
+  }): Promise<{ id: string; kind: string; note: string | null; weight_lbs: number | null; thumb_data: string | null; taken_at: Date }> {
+    const { rows } = await this.pool.query(
+      `INSERT INTO progress_photos (user_id, kind, image_data, thumb_data, content_type, note, weight_lbs)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, kind, note, weight_lbs, thumb_data, taken_at`,
+      [userId, data.kind, data.image_data, data.thumb_data, data.content_type, data.note, data.weight_lbs],
+    );
+    return rows[0]!;
+  }
+
+  /** List a user's progress photos (most recent first) — metadata + thumbnail
+   *  only, so the grid payload stays light. The full image is fetched per-photo. */
+  async listProgressPhotos(userId: string, limit = 60): Promise<Array<{
+    id: string; kind: string; note: string | null; weight_lbs: number | null; thumb_data: string | null; taken_at: Date;
+  }>> {
+    const { rows } = await this.pool.query(
+      `SELECT id, kind, note, weight_lbs, thumb_data, taken_at
+       FROM progress_photos WHERE user_id = $1
+       ORDER BY taken_at DESC LIMIT $2`,
+      [userId, limit],
+    );
+    return rows;
+  }
+
+  /** The full image for one photo (owner-scoped). Null when not found / not theirs. */
+  async getProgressPhoto(userId: string, id: string): Promise<{ image_data: string; content_type: string } | null> {
+    const { rows } = await this.pool.query(
+      `SELECT image_data, content_type FROM progress_photos WHERE id = $1 AND user_id = $2`,
+      [id, userId],
+    );
+    return rows[0] ?? null;
+  }
+
+  /** Delete a photo (owner-scoped). Returns true when a row was removed. */
+  async deleteProgressPhoto(userId: string, id: string): Promise<boolean> {
+    const res = await this.pool.query(`DELETE FROM progress_photos WHERE id = $1 AND user_id = $2`, [id, userId]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
   /** Record a sent check-in. */
   async recordCheckIn(data: {
     userId: string;

@@ -47,10 +47,24 @@ progress (charts/graphs/details), upload stuff, put/read data, save all progress
   (weight/meal/symptom/mood/photo w/ client-side canvas downscale),
   `lib/dashboardApi.ts`. Route `/dashboard` in App.tsx. Dashboard bundle ~24kB.
 
+- **Progress photo gallery (added 2026-07-02):** migration
+  `20260702000001_progress_photos.sql` (table stores downscaled data URLs inline
+  — full ~1024px + ~400px thumb — so NO object-storage bucket is needed; RLS
+  default-deny). `user.service` gained `saveProgressPhoto`/`listProgressPhotos`
+  (metadata + thumb only, light payload) / `getProgressPhoto` (full, owner-scoped)
+  / `deleteProgressPhoto`. Routes: `POST /dashboard/progress-photo`,
+  `GET /dashboard/photos`, `GET /dashboard/photos/:id`, `DELETE …/:id` (owner-
+  scoped, `NotFoundError` added to errors.ts). Frontend
+  `components/dashboard/ProgressGallery.tsx` (thumbnail grid + save-sheet with
+  optional note/weight + lightbox that fetches the full image on click + delete)
+  + `lib/image.ts` (shared `fileToDataUrl`/`fileToFullAndThumb`, QuickLog reuses
+  it). Photos are private, never logged as food.
+
 Tests: dashboard-data (11) + dashboard-link (5). 1482 api green, web builds
 clean, typecheck clean across all packages. **Deploy: `fly deploy` (API) + web
-auto-deploys on Vercel; needs the symptom_episodes migration for the symptom
-panel, but the dashboard itself needs no new migration.**
+auto-deploys on Vercel. Apply the symptom_episodes migration (symptom panel) +
+the new progress_photos migration (gallery); the rest of the dashboard needs no
+migration.**
 
 ---
 

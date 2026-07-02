@@ -24,6 +24,13 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+export class NotFoundError extends AppError {
+  constructor(message = 'Not found') {
+    super(message, { statusCode: 404, code: 'NOT_FOUND' });
+    this.name = 'NotFoundError';
+  }
+}
+
 export class UpstreamError extends AppError {
   constructor(message: string, cause?: unknown) {
     super(message, { statusCode: 502, code: 'UPSTREAM_ERROR', cause });

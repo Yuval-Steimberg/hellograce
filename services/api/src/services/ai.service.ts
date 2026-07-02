@@ -38,6 +38,7 @@ import {
 } from './food-summary.js';
 import { buildFoodFitAnswer } from '../tools/food-fit.js';
 import { createHash } from 'crypto';
+import { isEncryptedBlob } from '../crypto/field-encrypt.js';
 import type { GraceUser } from '../user/user.service.js';
 
 /**
@@ -644,6 +645,12 @@ export interface AIServiceDeps {
      *  persona, safety, medication, and today's totals stay. Default false so
      *  nothing changes until it's flipped via env LEAN_REPLY_MODE. */
     leanReplyMode?: boolean;
+    /** COMPACT REPLY MODE (2026-07-02, the "Nudge" model). When true, the reply
+     *  uses a TINY system prompt instead of the big personalised one, so Gemini
+     *  physically can't produce heading/breakdown/preamble essays — the shape fix
+     *  at the source. Crisis safety + food logging + the format floor are
+     *  unchanged (they run around it). Default false; flip via COMPACT_REPLY_MODE. */
+    compactReplyMode?: boolean;
     /** PROGRESSIVE PROFILING (2026-06-28). When true, after the short onboarding
      *  core Grace gathers the rest of the profile (sex, weight, height, age,
      *  activity, diet) one gentle question at a time, woven into normal chat
@@ -742,6 +749,12 @@ export class AIService {
    *  so Gemini stops "analyzing entries". Default false. */
   private get leanReplyMode(): boolean {
     return this.deps.guards?.leanReplyMode ?? false;
+  }
+
+  /** COMPACT REPLY MODE — tiny Nudge-style reply prompt (no heading/breakdown
+   *  essays possible). Default false. */
+  private get compactReplyMode(): boolean {
+    return this.deps.guards?.compactReplyMode ?? false;
   }
 
   private get progressiveProfile(): boolean {
@@ -4495,18 +4508,23 @@ CRITICAL RULES:
       );
     }
 
-    // Build personalised system prompt with user context.
-    const systemPrompt = this.buildPersonalisedPrompt(user, isNew, {
-      todaysFood,
-      checkinsToday,
-      knownFacts,
-      dietaryRestriction,
-      currentUserText: input.text,
-      memoryMd,
-      dashboardSignals,
-      ...(!topicSwitchAtAiService && conversationSummary ? { conversationSummary: conversationSummary.summary } : {}),
-      ...(!topicSwitchAtAiService && activeTopic ? { activeTopic } : {}),
-    });
+    // Build the reply system prompt. COMPACT_REPLY_MODE swaps the big
+    // personalised prompt for a tiny "Nudge-style" one so Gemini can't produce
+    // heading/breakdown essays — the real fix for reply SHAPE. Not used for a
+    // brand-new user's very first message (that welcome wants the full warmth).
+    const systemPrompt = (this.compactReplyMode && !isNew)
+      ? this.buildCompactReplyPrompt(user, { todaysFood, dietaryRestriction, dislikes: cleanFoodDislikes })
+      : this.buildPersonalisedPrompt(user, isNew, {
+          todaysFood,
+          checkinsToday,
+          knownFacts,
+          dietaryRestriction,
+          currentUserText: input.text,
+          memoryMd,
+          dashboardSignals,
+          ...(!topicSwitchAtAiService && conversationSummary ? { conversationSummary: conversationSummary.summary } : {}),
+          ...(!topicSwitchAtAiService && activeTopic ? { activeTopic } : {}),
+        });
 
     // Track which modality drove this request so log_food rows are tagged
     // correctly (text vs image vs voice) — used by analytics + dedup.
@@ -5235,6 +5253,52 @@ CRITICAL RULES:
     const value = hasSomething ? signals : null;
     this.dashboardSignalsCache.set(userId, { value, expiresAt: Date.now() + this.DASHBOARD_SIGNALS_TTL_MS });
     return value;
+  }
+
+  /**
+   * COMPACT reply prompt (the "Nudge" model, 2026-07-02). A deliberately TINY
+   * system prompt for the reply call. A small prompt physically can't produce
+   * the heading/breakdown/preamble essays the big personalised prompt was
+   * steering Gemini into — this fixes the SHAPE of every reply at the source
+   * instead of stripping openers one phrasing at a time. Keeps just the facts a
+   * warm, specific reply needs (name, medication, today's totals, diet). Crisis
+   * safety runs BEFORE this (SafetyGuard/hypoglycemia) and the dose-safety block
+   * runs AFTER, so the reply prompt itself stays lean. Gated behind
+   * COMPACT_REPLY_MODE.
+   */
+  private buildCompactReplyPrompt(
+    user: (ReturnType<UserService['getById']> extends Promise<infer T> ? T : never),
+    opts: {
+      todaysFood?: { protein_g: number; calories: number; items: string[] };
+      dietaryRestriction?: DietaryRestriction | null;
+      dislikes?: string[];
+    },
+  ): string {
+    const name = user?.first_name && !isEncryptedBlob(user.first_name) ? user.first_name.trim() : null;
+    const med = user?.medication && !isEncryptedBlob(user.medication) ? user.medication.trim() : null;
+    const facts: string[] = [];
+    if (name) facts.push(`Their name is ${name}.`);
+    if (med) facts.push(`They're on ${med}.`);
+    const f = opts.todaysFood;
+    if (f && (f.protein_g > 0 || f.calories > 0)) {
+      facts.push(`So far today they've logged about ${Math.round(f.protein_g)}g protein${f.calories > 0 ? ` and ${Math.round(f.calories)} calories` : ''}.`);
+    }
+    const diet = opts.dietaryRestriction?.label;
+    if (diet) facts.push(`They follow a ${diet} diet — never suggest a food that breaks it.`);
+    if (opts.dislikes && opts.dislikes.length > 0) facts.push(`They dislike/avoid: ${opts.dislikes.join(', ')} — never suggest these.`);
+    const factBlock = facts.length > 0 ? `\n\nWhat you know about them:\n- ${facts.join('\n- ')}` : '';
+    return (
+      `You are Grace, a warm, concise companion for someone on a GLP-1 medication, texting them over iMessage/WhatsApp. You sound like a caring friend who happens to know nutrition — short, natural, specific, never clinical.${factBlock}\n\n` +
+      `HOW YOU REPLY, every single time:\n` +
+      `- Answer their latest message directly. Lead with the answer. 1 to 3 short sentences, like a real text.\n` +
+      `- If they said several things in one message, answer ALL of them briefly, in one flowing reply — react to any feeling first, then the rest.\n` +
+      `- NEVER open with narration or a preamble ("let's break down", "here's a breakdown", "estimating protein from…", "that sounds like a nice meal", "this is a rough estimate but…"). Just give the answer.\n` +
+      `- NEVER use headings, titles, bullet points, numbered lists, or "Label:" breakdowns. Plain sentences only.\n` +
+      `- For a food, commit to a rough number or range ("about 25-30g protein") — don't hedge with "it's tough to say".\n` +
+      `- Don't restate, quote, label, or analyze their message. Don't add nutrition facts they didn't ask for. No em dashes.\n` +
+      `- If they mention a serious/worsening symptom, be warm and supportive and suggest checking with their doctor; never give dosing or medical advice.` +
+      (GRACE_VOICE_ENABLED ? GRACE_VOICE_BRIEF : '')
+    );
   }
 
   private buildPersonalisedPrompt(

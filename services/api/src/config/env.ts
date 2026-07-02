@@ -276,6 +276,13 @@ const EnvSchema = z.object({
    *  buildPersonalisedPrompt). Default false; flip with
    *  `fly secrets set LEAN_REPLY_MODE=true` to A/B against the regression net. */
   LEAN_REPLY_MODE: z.coerce.boolean().default(false),
+  /** COMPACT_REPLY_MODE (2026-07-02, the "Nudge" model). Swaps the big
+   *  personalised reply prompt for a TINY one so Gemini can't produce
+   *  heading/breakdown/preamble essays — the reply-SHAPE fix at the source.
+   *  Crisis safety + food logging + the format floor run around it, unchanged.
+   *  Default false; `fly secrets set COMPACT_REPLY_MODE=true` to A/B against the
+   *  regression net. */
+  COMPACT_REPLY_MODE: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

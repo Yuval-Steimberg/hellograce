@@ -638,18 +638,15 @@ export async function buildOnboardingNudge(
 }
 
 /**
- * The signup-complete message. Tomo-style: rather than just "you're all set," it
- * names the free trial that's now running and drops the checkout link so the
- * user can lock in their subscription — woven into the flow, never a hard wall.
- * Falls back to the plain confirmation when no checkout link is provided.
+ * The signup-complete message. Warm, zero-pressure: it just invites the user to
+ * start texting Grace — NO payment link here. The free trial is already running;
+ * the checkout link is delivered later (the Day-2 trial reminder + the
+ * post-expiry paywall), so the very first moment after onboarding isn't a sales
+ * ask. `upgradeUrl` is accepted for back-compat but intentionally unused.
  */
-export function buildSignupCompleteReply(firstName: string | null, upgradeUrl?: string): string {
+export function buildSignupCompleteReply(firstName: string | null, _upgradeUrl?: string): string {
   const greet = firstName ? `, ${firstName}` : '';
-  const intro = `Perfect, you're all set${greet} 🎉 Text me anytime about meals, protein, side effects, cravings, injection days, or just staying on track — I'll use what you shared to keep it personal. Try texting "What should I eat today?" to start, or "dashboard" whenever you want to see your whole progress (weight, meals, charts) in one place.`;
-  if (upgradeUrl) {
-    return `${intro} Your 3-day free trial's on — to keep going after, it's here (I'll remind you before it ends): ${upgradeUrl}`;
-  }
-  return intro;
+  return `Perfect, you're all set${greet} 🎉 Text me anytime about meals, protein, side effects, cravings, injection days, or just staying on track — I'll use what you shared to keep it personal. Try texting "What should I eat today?" to start. And whenever you want the full picture, just text "dashboard" — I'll send you a private link to your progress app, where your weight, meals, protein, charts, and photos all live in one place.`;
 }
 
 /**
@@ -872,7 +869,7 @@ export async function runOnboardingTurn(params: {
       await users.update(u.phone, { onboarding_state: 'complete', onboarding_last_slot: null } as Partial<GraceUser>);
       logger.info({ phone: u.phone, mode }, 'onboarding.completed');
       return {
-        reply: `All set 🧡 Text me anytime about meals, protein, side effects, or just to check in — I'll use what you shared to keep it personal. Try "What should I eat today?" to start, or "dashboard" to see your whole progress in one place.`,
+        reply: `All set 🧡 Text me anytime about meals, protein, side effects, or just to check in — I'll use what you shared to keep it personal. Try "What should I eat today?" to start. And whenever you want the full picture, just text "dashboard" — I'll send you a private link to your progress app (weight, meals, protein, charts, and photos, all in one place).`,
         completed: true,
       };
     }

@@ -13,15 +13,15 @@ import {
   understandSlotWithLlm,
 } from './onboarding-flow.js';
 
-describe('buildSignupCompleteReply — Tomo-style trial offer at completion', () => {
-  it('with a checkout link: names the free trial + drops the link', () => {
+describe('buildSignupCompleteReply — warm, zero-pressure, no payment link', () => {
+  it('never includes a payment link or trial ask, even if a url is passed', () => {
     const r = buildSignupCompleteReply('Sam', 'https://x/upgrade?phone=1');
     expect(r).toMatch(/Sam/);
-    expect(r.toLowerCase()).toMatch(/3-day free trial|free trial/);
-    expect(r).toContain('https://x/upgrade?phone=1');
-    expect(r.toLowerCase()).toMatch(/remind you before/); // reminder promise
+    expect(r).not.toMatch(/http/i);        // no link at all
+    expect(r).not.toMatch(/trial|upgrade|subscribe|pay/i); // no payment pressure
+    expect(r.toLowerCase()).toMatch(/dashboard/); // still points to the app
   });
-  it('without a link: plain confirmation, no payment ask', () => {
+  it('invites the user to start texting Grace', () => {
     const r = buildSignupCompleteReply('Sam');
     expect(r).toMatch(/all set/i);
     expect(r).not.toMatch(/trial|upgrade|http/i);
@@ -502,7 +502,8 @@ describe('CRITICAL onboarding fixes — skip understanding, side-questions, welc
     const r = buildSignupCompleteReply('Yuval', 'https://x/upgrade?phone=1');
     expect(r.toLowerCase()).toMatch(/all set/);
     expect(r.toLowerCase()).toMatch(/what should i eat/); // a concrete starter prompt
-    expect(r).toContain('https://x/upgrade?phone=1');
+    expect(r.toLowerCase()).toMatch(/dashboard/); // explains the dashboard option
+    expect(r).not.toMatch(/http/i); // no payment link at completion — trial isn't a sales ask
     expect(r).not.toMatch(/I'?m Grace/i); // no redundant re-introduction
   });
 });

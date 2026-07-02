@@ -70,6 +70,13 @@ const SettingsUpdateSchema = z.object({
   checkin_count_per_day: z.number().int().min(1).max(3).optional(),
   checkin_days_interval: z.number().int().min(1).max(14).optional(),
   glp1_start_date: z.string().nullable().optional(),
+  // Fields also collected at onboarding — editable here so Settings shows every
+  // piece of data the user entered.
+  medication_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  biggest_challenge: z.string().trim().max(120).nullable().optional(),
+  why_started: z.string().trim().max(120).nullable().optional(),
+  support_style: z.enum(['gentle', 'straight_facts', 'tough_love', 'mix']).nullable().optional(),
+  exercise_habits: z.string().trim().max(200).nullable().optional(),
 });
 
 /**
@@ -124,6 +131,11 @@ function toProfile(u: GraceUser): Record<string, unknown> {
     checkin_count_per_day: u.checkin_count_per_day,
     checkin_days_interval: u.checkin_days_interval,
     glp1_start_date: u.glp1_start_date,
+    medication_time: u.medication_time,
+    biggest_challenge: u.biggest_challenge,
+    why_started: u.why_started,
+    support_style: u.support_style,
+    exercise_habits: u.exercise_habits,
     // read-only context (shown, not edited)
     is_paid: u.is_paid,
     is_pro: u.is_pro,

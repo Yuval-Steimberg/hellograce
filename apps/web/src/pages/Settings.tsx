@@ -61,6 +61,11 @@ interface FormState {
   checkin_count_per_day: string;
   checkin_days_interval: string;
   glp1_start_date: string;
+  medication_time: string;
+  biggest_challenge: string;
+  why_started: string;
+  support_style: string;
+  exercise_habits: string;
 }
 
 // At-rest field encryption was dropped (the key is gone), but legacy rows may
@@ -100,6 +105,11 @@ function profileToForm(p: SettingsProfile): FormState {
     checkin_count_per_day: num(p.checkin_count_per_day),
     checkin_days_interval: num(p.checkin_days_interval),
     glp1_start_date: p.glp1_start_date ? String(p.glp1_start_date).slice(0, 10) : "",
+    medication_time: (p.medication_time ?? "").slice(0, 5),
+    biggest_challenge: p.biggest_challenge ?? "",
+    why_started: p.why_started ?? "",
+    support_style: p.support_style ?? "",
+    exercise_habits: p.exercise_habits ?? "",
   };
 }
 
@@ -132,6 +142,11 @@ function formToUpdate(f: FormState): SettingsUpdate {
     checkin_count_per_day: f.checkin_count_per_day ? Number(f.checkin_count_per_day) : undefined,
     checkin_days_interval: f.checkin_days_interval ? Number(f.checkin_days_interval) : undefined,
     glp1_start_date: strOrNull(f.glp1_start_date),
+    medication_time: f.medication_time || null,
+    biggest_challenge: strOrNull(f.biggest_challenge),
+    why_started: strOrNull(f.why_started),
+    support_style: (f.support_style || null) as SettingsUpdate["support_style"],
+    exercise_habits: strOrNull(f.exercise_habits),
   };
 }
 
@@ -305,6 +320,7 @@ const Settings = () => {
                   <SelectField label="Frequency" value={form.medication_frequency} onChange={(v) => setField("medication_frequency", v)} options={[["weekly", "Weekly"], ["biweekly", "Every 2 weeks"], ["daily", "Daily"]]} />
                   <Field label="Dose (mg)"><input type="number" step="0.05" className={inputClass} value={form.dose_mg} onChange={(e) => setField("dose_mg", e.target.value)} /></Field>
                   <SelectField label="Injection day" value={form.injection_day} onChange={(v) => setField("injection_day", v)} options={[["", "—"], ...DAYS.map((d) => [d, d] as [string, string])]} />
+                  <Field label="Medication time (daily meds)"><input type="time" className={inputClass} value={form.medication_time} onChange={(e) => setField("medication_time", e.target.value)} /></Field>
                   <Field label="GLP-1 start date"><input type="date" className={inputClass} value={form.glp1_start_date} onChange={(e) => setField("glp1_start_date", e.target.value)} /></Field>
                 </Section>
 
@@ -326,6 +342,13 @@ const Settings = () => {
                   <Field label="Other diet (kosher, halal, gluten-free…)"><input className={inputClass} value={form.dietary_restriction} onChange={(e) => setField("dietary_restriction", e.target.value)} /></Field>
                   <Field label="Foods to avoid (comma-separated)" full><input className={inputClass} value={form.food_dislikes} onChange={(e) => setField("food_dislikes", e.target.value)} placeholder="broccoli, mushrooms" /></Field>
                   <Field label="Goals (comma-separated)" full><input className={inputClass} value={form.goals} onChange={(e) => setField("goals", e.target.value)} placeholder="Losing weight, Eating enough protein" /></Field>
+                </Section>
+
+                <Section title="Your journey">
+                  <SelectField label="How you want support" value={form.support_style} onChange={(v) => setField("support_style", v)} options={[["", "—"], ["gentle", "Gentle & encouraging"], ["straight_facts", "Straight facts"], ["tough_love", "Tough love"], ["mix", "A mix"]]} />
+                  <Field label="Exercise habits"><input className={inputClass} value={form.exercise_habits} onChange={(e) => setField("exercise_habits", e.target.value)} placeholder="e.g. walks, strength 2x/week" /></Field>
+                  <Field label="Biggest challenge" full><input className={inputClass} value={form.biggest_challenge} onChange={(e) => setField("biggest_challenge", e.target.value)} placeholder="what's hardest right now" /></Field>
+                  <Field label="Why you started" full><input className={inputClass} value={form.why_started} onChange={(e) => setField("why_started", e.target.value)} placeholder="what's driving you" /></Field>
                 </Section>
 
                 <Section title="Check-ins & reminders">

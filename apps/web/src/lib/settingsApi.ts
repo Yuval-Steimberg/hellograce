@@ -30,6 +30,11 @@ export interface SettingsProfile {
   checkin_count_per_day: number | null;
   checkin_days_interval: number | null;
   glp1_start_date: string | null;
+  medication_time: string | null;
+  biggest_challenge: string | null;
+  why_started: string | null;
+  support_style: string | null;
+  exercise_habits: string | null;
   is_paid: boolean;
   is_pro: boolean;
   trial_start: string | null;

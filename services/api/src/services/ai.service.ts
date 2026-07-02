@@ -3162,8 +3162,16 @@ CRITICAL RULES:
     //    FOCUS DIRECTIVE: a hard guard against the model summarizing the whole
     //    conversation or stitching past topics (reminders + appointment + every
     //    past meal) into one mega-reply — reply ONLY to the latest message.
+    // Multi-topic turns (feeling + food question, log + snack question, …) get
+    // the plain-prose multi-part note in systemPrompt already. For those, the
+    // enumerated "The parts: (1)… (2)…" directive below must NOT fire — quoting
+    // the user's own sentences back as a numbered list is what pushed Gemini
+    // into "Let's break down your questions…" meta-analysis (prod 2026-07-02).
+    const isMultiTopicMsg = analyzeMessage(params.rawUserText).hasMultiple;
     const multiParts = splitQuestionParts(params.rawUserText);
-    const focusDirective = multiParts.length >= 2
+    const focusDirective = isMultiTopicMsg
+      ? '' // the multi-part note (plain prose, no enumeration) already covers it
+      : multiParts.length >= 2
       ? `\n\n[REPLY FOCUS — the user asked SEVERAL things in ONE message. You MUST answer EVERY part, briefly, in the order asked — never stop after the first. The parts: ${multiParts.map((p, i) => `(${i + 1}) ${p}`).join(' ')}. Give a direct answer to each (one short sentence per part is fine), plain prose only — NO headers, NO bullet points, NO "Label:" lists. Cover them all even if the reply runs a few sentences.]`
       : `\n\n[REPLY FOCUS — non-negotiable: Respond ONLY to the user's most recent message below. Keep it to 1–2 short sentences, plain prose — NO headers, NO "Label:" lists, NO bullet points. Do NOT summarize the conversation or list past meals/reminders/appointments. Do NOT give unsolicited nutrition facts or education (no "high in protein", "supports muscle growth", "low in calories", etc.) unless they explicitly ask. If it's a food log, ONLY warmly confirm what was logged OR ask the one portion question — nothing else.]`;
     // For a food/log turn, send NO chat history — the logNote already carries
@@ -3172,7 +3180,13 @@ CRITICAL RULES:
     // to the PILE of past food fragments in history ("pasta and chicken", "cup
     // of spaghetti", repeated "eggs and cottage cheese") and tries to "rephrase
     // for clarity" or summarize instead of handling the current message.
-    const isLogTurn = logNote.length > 0;
+    //
+    // EXCEPT multi-topic turns: the bare log micro-prompt forbids answering
+    // anything beyond the confirmation, which silently DROPPED the rest of the
+    // message ("I ate yogurt… any snack idea?" → only "logged", no snack answer
+    // — prod 2026-07-02). Those route through the full prompt with the logNote
+    // appended, so the log is confirmed AND every other part gets answered.
+    const isLogTurn = logNote.length > 0 && !isMultiTopicMsg;
     let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
     if (isLogTurn) {
       // A log reply does NOT use the big personalized prompt — that prompt keeps
@@ -3186,8 +3200,11 @@ CRITICAL RULES:
         { role: 'user', content: params.userText },
       ];
     } else {
+      // logNote is '' on non-log turns; on a multi-topic log turn it carries the
+      // "[just logged … running total …]" facts so the reply can confirm the log
+      // while ALSO answering the message's other parts.
       messages = [
-        { role: 'system', content: params.systemPrompt + focusDirective + voiceSuffix(params.history) },
+        { role: 'system', content: params.systemPrompt + logNote + focusDirective + voiceSuffix(params.history) },
         ...params.history.map((t) => ({ role: t.role, content: t.content })),
         { role: 'user', content: params.userText },
       ];
@@ -4623,15 +4640,28 @@ CRITICAL RULES:
     // the LLM starts fresh and doesn't anchor on the old conversation thread.
     const TOPIC_CLOSERS = /^(thanks|thank you|thx|ty|ok|okay|got it|cool|great|perfect|awesome|nice|good|alright|sounds good|will do|noted|k|kk)\.?!?$/i;
     let effectiveHistory = history;
-    if (isolateFoodLog || isMultiTopicReply) {
-      // Strip all prior Grace replies: a food-log OR a multi-topic message must
-      // be answered from ITS OWN content, not anchored to a prior dinner /
-      // recommendation / shake thread. Only user turns are kept so profile
-      // context (dietary, goal) stays visible via the system prompt rather than
-      // through assistant-turn anchoring. (2026-07-02: production bug — a
-      // "salmon, how much protein + what to eat later?" reply latched onto a
-      // "protein shake" from earlier assistant turns and never answered the
-      // salmon question.)
+    if (isMultiTopicReply) {
+      // A multi-topic message is SELF-CONTAINED (the user restates what they
+      // ate / feel / want in it) — answer it with NO history at all.
+      //
+      // Why empty and not user-turns-only: the earlier fix kept only user
+      // turns, which handed Gemini a transcript of 4-5 back-to-back user
+      // messages with no assistant replies between them. That reads as a LIST
+      // OF UNANSWERED ENTRIES, which is exactly what produced "Let's break
+      // down your questions… 'I ate yogurt with berries…'" — quoting and
+      // answering a PREVIOUS message instead of the current one (production
+      // 2026-07-02, twice). Profile context (dietary, goals, today's totals)
+      // still reaches the model via the system prompt.
+      effectiveHistory = [];
+      logger.info(
+        { userId: input.userId, textPreview: input.text.slice(0, 60) },
+        'ai.handle.multi_topic_history_dropped',
+      );
+    } else if (isolateFoodLog) {
+      // Strip all prior Grace replies: the food-log response should NOT be
+      // anchored to a prior dinner/recommendation thread. Only user turns are
+      // kept so the profile context (dietary, goal) is still visible to the LLM
+      // via the system prompt rather than through assistant-turn anchoring.
       effectiveHistory = history.filter((t) => t.role === 'user');
       logger.info(
         { userId: input.userId, textPreview: input.text.slice(0, 60) },

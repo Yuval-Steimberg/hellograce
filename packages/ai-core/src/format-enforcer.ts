@@ -99,6 +99,19 @@ const FILLER_OPENERS: RegExp[] = [
   /^(?:i'?m here (?:and )?ready to help|how can i help (?:you )?today|what'?s on your mind|happy to (?:chat|help|assist))[!.,]?\s*/i,
   // "Of course! Yes," "Definitely! Sure," patterns
   /^(?:of course|definitely|absolutely)[!.,]?\s+(?:yes|sure|i can|happy to|i'?d be (?:happy|glad))[,.!]?\s*/i,
+  // 2026-07-02 production: multi-topic replies opened with meta-analysis
+  // framing — Grace narrating that she's about to categorize/break down the
+  // user's message instead of just answering it. Strip the whole meta opener
+  // (up to two chained meta sentences) so the reply starts at the actual answer.
+  //   "It looks like you're asking for a mix of food-related advice and
+  //    calculations. Let's break it down."
+  /^it (?:looks|seems|sounds) like you'?re (?:asking|interested|looking|trying)[^.!?]*[.!?]\s*(?:let'?s break[^.!?:]*[:.!?]\s*)?/i,
+  //   "Let's break down your questions about protein and meals."
+  /^(?:okay|ok|alright)?[,.!]?\s*let'?s break (?:it|this|that|things|down)[^.!?:]*[:.!?]\s*/i,
+  //   "Here's an analysis of your entries, categorizing them and providing
+  //    responses where appropriate:"
+  /^here'?s an analysis[^.!?:]*[:.!?]\s*/i,
+  /^here'?s a (?:breakdown|summary|categorization) of your (?:entries|messages|questions|requests)[^.!?:]*[:.!?]\s*/i,
 ];
 
 // Map: each context type allows these specific runtime-data openers.

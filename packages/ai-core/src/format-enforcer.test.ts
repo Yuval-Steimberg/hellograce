@@ -242,6 +242,35 @@ describe('enforceFormat', () => {
     });
   });
 
+  describe('meta-analysis opener strip (2026-07-02 production)', () => {
+    it('strips "It looks like you\'re asking… Let\'s break it down."', () => {
+      const { text, fixes } = enforceFormat(
+        "It looks like you're asking for a mix of food-related advice and calculations. Let's break it down. Salmon with potatoes and salad runs about 30-35g of protein, a really solid meal.",
+      );
+      expect(fixes).toContain('filler_opener_stripped');
+      expect(text.startsWith('Salmon with potatoes')).toBe(true);
+      expect(text).not.toMatch(/looks like you'?re asking|break it down/i);
+    });
+    it('strips "Let\'s break down your questions about protein and meals."', () => {
+      const { text } = enforceFormat(
+        "Let's break down your questions about protein and meals. Your salmon dinner was roughly 30g of protein, and a Greek yogurt later would round out the day nicely.",
+      );
+      expect(text.startsWith('Your salmon dinner')).toBe(true);
+    });
+    it('strips "Here\'s an analysis of your entries, categorizing them…"', () => {
+      const { text } = enforceFormat(
+        "Here's an analysis of your entries, categorizing them and providing responses where appropriate: That's great to hear. Since you're feeling good, let's make Friday night special with a simple sheet-pan chicken dinner.",
+      );
+      expect(text).not.toMatch(/analysis of your entries|categorizing/i);
+      expect(text).toMatch(/Friday night/);
+    });
+    it('leaves a normal answer untouched', () => {
+      const input = 'So glad that meal sat well. For Friday night, a sheet-pan lemon chicken with veggies is easy and satisfying.';
+      const { text } = enforceFormat(input);
+      expect(text).toBe(input);
+    });
+  });
+
   describe('hard length cap (WhatsApp readability)', () => {
     it('does not touch responses under the context cap', () => {
       const input = 'Short reply that ends cleanly.';

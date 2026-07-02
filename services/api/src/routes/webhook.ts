@@ -668,7 +668,17 @@ export async function processInboundMessage(
         // anyway. Final sender-level gate: any response over 40 chars must
         // end with terminal punctuation or emoji. If not, drop the send.
         const trimmedResp = responseText.trim();
+        // A message ending in a URL is COMPLETE — a link is the natural end of a
+        // dashboard/settings/upgrade reply and does NOT end in terminal
+        // punctuation, so without this it was flagged "truncated" and the salvage
+        // below trimmed the link off (prod: the "text dashboard" reply shipped
+        // "…all in one place." with the /dashboard link dropped). Mirrors the
+        // same guard in sanitizeOutbound (twilio/sender.ts).
+        const endsWithUrl =
+          /https?:\/\/\S+$/i.test(trimmedResp) ||
+          /\b[\w-]+\.(?:com|app|io|org|net|co|dev|ai|me|health|care)(?:\/\S*)?$/i.test(trimmedResp);
         const looksTruncated = trimmedResp.length > 40 &&
+          !endsWithUrl &&
           !/[.!?…"')\]}]\s*$/.test(trimmedResp) &&
           !/\p{Extended_Pictographic}\s*$/u.test(trimmedResp);
         if (responseText.trim().length > 0 && hasUsefulContent && !looksTruncated) {

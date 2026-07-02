@@ -799,12 +799,21 @@ export function enforceFormat(
   // costs zero LLM time.
   const allQuestionMarks = (text.match(/\?/g) ?? []).length;
   if (allQuestionMarks >= 2) {
-    const lastQ = text.lastIndexOf('?');
-    if (lastQ > 0) {
-      const before = text.slice(0, lastQ).replace(/\?/g, '.');
-      text = before + text.slice(lastQ);
-      fixes.push('multi_question_collapsed');
+    // Protect URLs first — a query string legitimately contains '?', and the
+    // collapse below would mangle a link (/upgrade?phone=… → /upgrade.phone=…,
+    // a real production bug that 404'd every upgrade/settings link with a query
+    // param). Mask URLs, collapse only the '?' that live in prose, then restore.
+    const urls: string[] = [];
+    const masked = text.replace(/https?:\/\/\S+/gi, (m) => `  U${urls.push(m) - 1}  `);
+    if ((masked.match(/\?/g) ?? []).length >= 2) {
+      const lastQ = masked.lastIndexOf('?');
+      if (lastQ > 0) {
+        const collapsed = masked.slice(0, lastQ).replace(/\?/g, '.') + masked.slice(lastQ);
+        text = collapsed.replace(/ U(\d+) /g, (_, i) => urls[Number(i)] ?? '').replace(/[ \t]{2,}/g, ' ');
+        fixes.push('multi_question_collapsed');
+      }
     }
+    // else: the only extra '?' lived inside URL(s) — nothing in prose to collapse.
   }
 
   // ─── Final whitespace cleanup ─────────────────────────────────────────

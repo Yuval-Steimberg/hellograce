@@ -381,6 +381,30 @@ describe('enforceFormat', () => {
     });
   });
 
+  describe('multi-question collapse must not mangle a URL query string (2026-07-02 production fix)', () => {
+    it('preserves ?phone= in a link even when the message also ends with a question', () => {
+      const { text } = enforceFormat(
+        'head to https://grace-admin-silk.vercel.app/upgrade?phone=%2B972547722420 to subscribe. Questions? Reply HELP.',
+      );
+      expect(text).toContain('/upgrade?phone=%2B972547722420');
+      expect(text).not.toContain('/upgrade.phone=');
+    });
+
+    it('still collapses genuine multiple questions in prose', () => {
+      const { text, fixes } = enforceFormat('How are you? Feeling ok? Anything else?');
+      expect(fixes).toContain('multi_question_collapsed');
+      expect(text).toBe('How are you. Feeling ok. Anything else?');
+    });
+
+    it('does not touch digits outside URLs when restoring (no "3-day" corruption)', () => {
+      const { text } = enforceFormat(
+        'Your 3-day trial ended. Visit https://x.com/upgrade?phone=1 now? Reply HELP.',
+      );
+      expect(text).toContain('3-day');
+      expect(text).toContain('https://x.com/upgrade?phone=1');
+    });
+  });
+
   describe('missing space after period + duplicate sentence (2026-06-01 production fix)', () => {
     it('inserts the missing space after a period before a capital letter', () => {
       const { text, fixes } = enforceFormat(

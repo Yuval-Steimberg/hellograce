@@ -40,6 +40,46 @@ describe('UserService.getTodaysFoodSummary caching', () => {
   });
 });
 
+describe('UserService.purgeUserData — complete delete + cache eviction', () => {
+  it('deletes every child table incl. symptom_episodes / progress_photos', async () => {
+    const pool = makePool([]);
+    const svc = new UserService(pool);
+    await svc.purgeUserData('+15551234');
+    const deleted = pool.query.mock.calls
+      .map((c: any[]) => String(c[0]))
+      .filter((sql: string) => /DELETE FROM/i.test(sql));
+    for (const table of [
+      'user_memories', 'user_profile_facts', 'tool_logs', 'injections',
+      'feedback', 'messages', 'conversations', 'embeddings',
+      'food_logs', 'weight_logs', 'symptom_episodes', 'progress_photos', 'users',
+    ]) {
+      expect(deleted.some((sql: string) => sql.includes(`DELETE FROM ${table} `) || sql.includes(`DELETE FROM ${table}\n`) || new RegExp(`DELETE FROM ${table}\\b`).test(sql))).toBe(true);
+    }
+  });
+
+  it('deletes check_ins by user_id OR phone (catches NULL-phone mood rows)', async () => {
+    const pool = makePool([]);
+    const svc = new UserService(pool);
+    await svc.purgeUserData('+15551234');
+    const checkIns = pool.query.mock.calls
+      .map((c: any[]) => String(c[0]))
+      .find((sql: string) => /DELETE FROM check_ins/i.test(sql));
+    expect(checkIns).toMatch(/user_id = \$1 OR phone = \$1/);
+  });
+
+  it('evicts the today-food cache so a deleted user is not served stale totals', async () => {
+    const pool = makePool([
+      { food: 'eggs', protein_g: 12, calories: 140, created_at: new Date() },
+    ]);
+    const svc = new UserService(pool);
+    await svc.getTodaysFoodSummary('+15551234'); // warms L1 cache
+    await svc.purgeUserData('+15551234');
+    pool.query.mockClear();
+    await svc.getTodaysFoodSummary('+15551234'); // must hit DB again, not cache
+    expect(pool.query).toHaveBeenCalled();
+  });
+});
+
 describe('UserService.getKnownFacts caching', () => {
   let pool: any;
   let svc: UserService;

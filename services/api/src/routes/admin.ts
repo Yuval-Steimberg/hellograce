@@ -1282,22 +1282,24 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
   /** Permanently delete a user and all their data. */
   app.delete('/admin/users/:phone', async (req) => {
     const { phone } = req.params as { phone: string };
-    await deps.pool.query('DELETE FROM user_memories WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM user_profile_facts WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM tool_logs WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM injections WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM check_ins WHERE phone = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM feedback WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM messages WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM embeddings WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM food_logs WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM weight_logs WHERE user_id = $1', [phone]).catch(() => null);
-    await deps.pool.query('DELETE FROM users WHERE phone = $1', [phone]).catch(() => null);
-    // Evict the in-memory user cache so a subsequent inbound message doesn't
-    // read the deleted user from cache. ensureUser recreates the row fresh
-    // (trial_start = NULL → registration gate fires).
-    deps.users?.invalidate(phone);
+    // Single source of truth for a complete purge: deletes EVERY child table
+    // (incl. symptom_episodes, progress_photos, and mood rows in check_ins that
+    // carry a NULL phone) AND evicts all caches (user, today-food L1/L2, known
+    // facts) so no surface — dashboard, Settings, chat — can serve stale data.
+    // Falls back to the row-by-row deletes if the service isn't wired.
+    if (deps.users) {
+      await deps.users.purgeUserData(phone);
+    } else {
+      for (const table of [
+        'user_memories', 'user_profile_facts', 'tool_logs', 'injections',
+        'feedback', 'messages', 'conversations', 'embeddings',
+        'food_logs', 'weight_logs', 'symptom_episodes', 'progress_photos',
+      ]) {
+        await deps.pool.query(`DELETE FROM ${table} WHERE user_id = $1`, [phone]).catch(() => null);
+      }
+      await deps.pool.query('DELETE FROM check_ins WHERE user_id = $1 OR phone = $1', [phone]).catch(() => null);
+      await deps.pool.query('DELETE FROM users WHERE phone = $1', [phone]).catch(() => null);
+    }
     void auditLogFull(deps.pool, { action: 'admin.user_deleted', ip: req.ip, actor: actorOf(req), targetUser: phone });
     return { ok: true };
   });

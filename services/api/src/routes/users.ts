@@ -311,22 +311,10 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     }
 
     const { phone } = req.params as { phone: string };
-    await pool.query('DELETE FROM user_memories WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM user_profile_facts WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM tool_logs WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM injections WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM check_ins WHERE phone = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM messages WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM conversations WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM embeddings WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM food_logs WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM weight_logs WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM feedback WHERE user_id = $1', [phone]).catch(() => null);
-    await pool.query('DELETE FROM users WHERE phone = $1', [phone]).catch(() => null);
-    // Evict the in-memory cache so a subsequent message recreates the user
-    // fresh (trial_start = NULL → must register again) instead of reading the
-    // pre-delete cached row.
-    users.invalidate(phone);
+    // Complete purge (every child table incl. symptom_episodes / progress_photos
+    // / NULL-phone mood rows) + full cache eviction, so no surface serves stale
+    // data after deletion. See UserService.purgeUserData.
+    await users.purgeUserData(phone);
     req.log.info('user.data_deleted');
     return { ok: true };
   });

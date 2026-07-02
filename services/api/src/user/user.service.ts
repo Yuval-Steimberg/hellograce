@@ -192,6 +192,43 @@ export class UserService {
     this.invalidateUserCache([phone, id]);
   }
 
+  /**
+   * Hard-delete a user AND every row that references them, then evict all of
+   * their caches — the SINGLE source of truth for "remove this user." Used by
+   * both the admin delete and the GDPR self-serve delete so neither path can
+   * leave orphaned data that keeps surfacing on the dashboard/Settings/chat.
+   *
+   * Why this exists: child rows are keyed by `user_id = phone` in most tables,
+   * but a few subtleties bit us — `check_ins` mood rows are inserted with
+   * `phone = NULL` (only `user_id`), and `symptom_episodes` / `progress_photos`
+   * were never deleted at all. So after a delete, the dashboard still showed
+   * mood, symptom patterns, the photo gallery, AND today's food total (served
+   * from the L1/L2 caches, which were never invalidated). This purges all of it.
+   *
+   * Every statement is best-effort (a missing table pre-migration must not
+   * abort the purge). Ordered children-before-parent for FK safety.
+   */
+  async purgeUserData(phone: string, id?: string): Promise<void> {
+    const q = (sql: string, params: unknown[]) => this.pool.query(sql, params).catch(() => null);
+    // Tables keyed by user_id = phone.
+    for (const table of [
+      'user_memories', 'user_profile_facts', 'tool_logs', 'injections',
+      'feedback', 'messages', 'conversations', 'embeddings',
+      'food_logs', 'weight_logs', 'symptom_episodes', 'progress_photos',
+    ]) {
+      await q(`DELETE FROM ${table} WHERE user_id = $1`, [phone]);
+    }
+    // check_ins: scheduler rows carry `phone`, but mood/tool logs carry only
+    // `user_id` (phone is NULL) — delete on EITHER so nothing survives.
+    await q('DELETE FROM check_ins WHERE user_id = $1 OR phone = $1', [phone]);
+    // Finally the parent row.
+    await q('DELETE FROM users WHERE phone = $1', [phone]);
+    // Evict every cache layer so no surface reads stale data.
+    this.invalidate(phone, id);
+    this.invalidateTodaysFoodCache(phone);
+    this.invalidateKnownFactsCache(phone);
+  }
+
   private cacheUser(user: GraceUser): void {
     const expiresAt = Date.now() + this.USER_CACHE_TTL_MS;
     if (user.id) this.userCache.set(String(user.id), { user, expiresAt });
@@ -539,8 +576,10 @@ export class UserService {
 
   /** Log a mood score (1-10) from the dashboard (stored like the log_mood tool). */
   async logMoodEntry(userId: string, score: number): Promise<void> {
+    // Store `phone` too (userId IS the phone) so mood rows are deletable by
+    // phone like scheduler rows — keeps deletes/purges consistent.
     await this.pool.query(
-      `INSERT INTO check_ins (user_id, type, message_sent, mood_score) VALUES ($1, 'mood_log', '', $2)`,
+      `INSERT INTO check_ins (user_id, phone, type, message_sent, mood_score) VALUES ($1, $1, 'mood_log', '', $2)`,
       [userId, score],
     );
   }

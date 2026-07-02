@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { UserService } from '../user/user.service.js';
 import { ValidationError, UnauthorizedError, NotFoundError } from '../errors.js';
 import { makeLogFoodTool } from '../tools/log-food.js';
+import { isEncryptedBlob } from '../crypto/field-encrypt.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
 import { parseFoodImageAnalysis } from '../services/ai.service.js';
 import {
@@ -49,6 +50,13 @@ export interface DashboardRouteDeps {
 }
 
 const SESSION_TTL_SEC = 1800; // mirror settings.ts sliding session
+
+/** Drop an unrecoverable ciphertext blob so the dashboard never renders it. */
+const plainOrNull = (v: string | null | undefined): string | null =>
+  v && isEncryptedBlob(v) ? null : (v ?? null);
+
+/** Suppress an implausible GLP-1 week (mis-entered start date) — 260 weeks ≈ 5y. */
+const saneWeek = (w: number | null): number | null => (w != null && w >= 1 && w <= 260 ? w : null);
 
 const CANON_SYMPTOMS: CanonSymptom[] = [
   'nausea', 'vomiting', 'constipation', 'diarrhea', 'fatigue',
@@ -113,11 +121,17 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
     return {
       generatedAt: new Date().toISOString(),
       profile: {
-        firstName: user.first_name ?? null,
-        medication: user.medication ?? null,
+        // Never surface an unrecoverable ciphertext blob (enc:<iv>:<data>:<tag>)
+        // for the two encrypted fields — if the decryption key is absent the
+        // decrypt is a no-op, so guard here like the Settings route does.
+        firstName: plainOrNull(user.first_name),
+        medication: plainOrNull(user.medication),
         doseMg: user.dose_mg ?? null,
         injectionDay: user.injection_day ?? null,
-        glp1Week: glp1WeekNumber(user.glp1_start_date),
+        // Cap the GLP-1 week at a sane range — an implausible value (e.g. 479)
+        // means a mis-entered start date, and showing it makes the app look
+        // broken. Beyond ~5 years we suppress it rather than display nonsense.
+        glp1Week: saneWeek(glp1WeekNumber(user.glp1_start_date)),
         primaryGoal: user.primary_goal ?? null,
         goals: user.goals ?? [],
         isPro: !!user.is_pro,

@@ -117,8 +117,15 @@ function AuthGate({ stage, phone, code, busy, setPhone, setCode, sendCode, verif
   );
 }
 
+// Never render an unrecoverable ciphertext blob (enc:<iv>:<data>:<tag>) if a
+// stale API ever leaks one for the encrypted name/medication fields.
+const ENC_BLOB_RE = /^enc:[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/i;
+const clean = (v: string | null): string | null => (v && ENC_BLOB_RE.test(v.trim()) ? null : v);
+
 function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; reload: () => void; onLogout: () => void }) {
-  const greeting = useGreeting(data.profile.firstName);
+  const firstName = clean(data.profile.firstName);
+  const medication = clean(data.profile.medication);
+  const greeting = useGreeting(firstName);
   const w = data.weight;
   const n = data.nutrition;
   const proteinPct = n.proteinGoal ? Math.min(100, Math.round((n.today.protein / n.proteinGoal) * 100)) : 0;
@@ -134,7 +141,7 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
         <div className="min-w-0">
           <p className="font-serif text-xl text-foreground sm:text-3xl">{greeting} 🤍</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            {data.profile.glp1Week != null && <>Week {data.profile.glp1Week} on {data.profile.medication ?? "your GLP-1"}</>}
+            {data.profile.glp1Week != null && <>Week {data.profile.glp1Week} on {medication ?? "your GLP-1"}</>}
             {data.profile.injectionDay && <> · {data.profile.injectionDay} injections</>}
           </p>
         </div>

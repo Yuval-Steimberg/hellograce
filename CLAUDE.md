@@ -60,6 +60,19 @@ progress (charts/graphs/details), upload stuff, put/read data, save all progress
   + `lib/image.ts` (shared `fileToDataUrl`/`fileToFullAndThumb`, QuickLog reuses
   it). Photos are private, never logged as food.
 
+- **Chat grounded in the dashboard data (added 2026-07-02):** every orchestrator
+  reply now sees a PROGRESS SNAPSHOT of the user's real journey.
+  `AIService.gatherDashboardSignals` (cached 60s, best-effort, fetched in the
+  RAG/planner `Promise.all` so zero added latency) derives weight lost + % to
+  goal (`weightProgress`), food-logging streak (`loggingStreak`), recent mood +
+  trend (`getMoodHistory`), and the learned symptom patterns
+  (`summarizeSymptoms`) → passed to `buildPersonalisedPrompt` as
+  `dashboardSignals` and rendered as two background lines ("PROGRESS …
+  acknowledge ONLY if the user asks about progress/weight/streak/mood" +
+  "SIDE-EFFECT PATTERNS … reference ONLY if the user brings up a symptom"). So
+  Grace talks about the user's real numbers when relevant, never as a data dump.
+  Post-onboarding welcome tells the user to text **"dashboard"** to get the link.
+
 Tests: dashboard-data (11) + dashboard-link (5). 1482 api green, web builds
 clean, typecheck clean across all packages. **Deploy: `fly deploy` (API) + web
 auto-deploys on Vercel. Apply the symptom_episodes migration (symptom panel) +

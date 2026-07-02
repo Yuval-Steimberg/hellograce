@@ -539,6 +539,7 @@ import {
   localDayOfWeek,
 } from './symptom-intelligence.js';
 import { detectDashboardRequest, buildDashboardLinkReply } from './dashboard-link.js';
+import { weightProgress, loggingStreak, summarizeSymptoms } from './dashboard-data.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
@@ -695,6 +696,18 @@ function gatherSafeTurn(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
   return !PROFILE_GATHER_UNSAFE_RE.test(t);
+}
+
+/** Derived per-user dashboard signals woven into the chat prompt as background,
+ *  so replies are grounded in the user's real progress (referenced only when the
+ *  user's message is about it). */
+interface DashboardSignals {
+  weightLost: number | null;
+  weightPct: number | null;
+  streak: number;
+  moodLatest: number | null;
+  moodTrend: 'up' | 'down' | 'steady' | null;
+  patterns: Array<{ symptom: string; count: number; typicalTiming: string | null; topRemedy: string | null }>;
 }
 
 export class AIService {
@@ -3637,7 +3650,7 @@ CRITICAL RULES:
     const userMemorySkipped = RAG_SKIP_INTENTS.has(intentClass.type);
 
     lat.mark('rag_planner_memory');
-    const [retrieved, userMemories, prePlannedDecisionRaw] = await Promise.all([
+    const [retrieved, userMemories, prePlannedDecisionRaw, dashboardSignals] = await Promise.all([
       flags.ragEnabled && !ragSkippedForIntent
         ? rag.retrieve(augmentedText, { userId: input.userId, topK: 5 })
         : Promise.resolve([]),
@@ -3647,6 +3660,9 @@ CRITICAL RULES:
       skipPlanner
         ? Promise.resolve<PlannerDecision>({ intent: 'chat', needsTools: false, toolCalls: [], rationale: `classifier_fast_path_${intentClass.type}` })
         : planner.plan(augmentedText).catch((): PlannerDecision => ({ intent: 'chat', needsTools: false, toolCalls: [], rationale: 'planner_error' })),
+      // Derived dashboard signals (weight/streak/mood/symptom patterns) — grounds
+      // the reply in the user's real progress. Best-effort, cached 60s.
+      this.gatherDashboardSignals(input.userId, user).catch(() => null),
     ]);
     if (ragSkippedForIntent || userMemorySkipped) {
       logger.info(
@@ -4420,6 +4436,7 @@ CRITICAL RULES:
       dietaryRestriction,
       currentUserText: input.text,
       memoryMd,
+      dashboardSignals,
       ...(!topicSwitchAtAiService && conversationSummary ? { conversationSummary: conversationSummary.summary } : {}),
       ...(!topicSwitchAtAiService && activeTopic ? { activeTopic } : {}),
     });
@@ -5085,6 +5102,55 @@ CRITICAL RULES:
     return value;
   }
 
+  /**
+   * Gather the derived DASHBOARD signals for THIS user so every chat reply can be
+   * grounded in their real progress (not just today's food): weight lost + % to
+   * goal, food-logging streak, recent mood, and the personal side-effect patterns
+   * Grace has learned. Injected into the prompt as background — Grace references
+   * it ONLY when the user's message is about that topic. All best-effort; a
+   * missing table just drops that signal. Cached 60s (parallels the food read).
+   */
+  private dashboardSignalsCache = new Map<string, { value: DashboardSignals | null; expiresAt: number }>();
+  private readonly DASHBOARD_SIGNALS_TTL_MS = 60_000;
+
+  private async gatherDashboardSignals(
+    userId: string,
+    user: { starting_weight?: number | null; current_weight?: number | null; goal_weight?: number | null } | null,
+  ): Promise<DashboardSignals | null> {
+    const cached = this.dashboardSignalsCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+    const [proteinHist, moodRows, symptomRows] = await Promise.all([
+      this.deps.users.getDailyProteinHistory(userId, 14).catch(() => [] as Array<{ day: string; protein_g: number; calories: number; item_count: number }>),
+      this.deps.users.getMoodHistory(userId, 5).catch(() => [] as Array<{ mood_score: number; created_at: Date }>),
+      this.deps.users.getRecentSymptomEpisodes(userId, 60).catch(() => [] as Array<{ symptom: string; days_since_injection: number | null; dose_mg: number | null; remedy_helped: string | null; created_at: Date }>),
+    ]);
+
+    const wp = weightProgress(user?.starting_weight ?? null, user?.current_weight ?? null, user?.goal_weight ?? null);
+    const streak = loggingStreak(proteinHist);
+    // Mood trend from the last few scores (most recent first from the query).
+    let moodLatest: number | null = null;
+    let moodTrend: 'up' | 'down' | 'steady' | null = null;
+    if (moodRows.length > 0) {
+      moodLatest = moodRows[0]!.mood_score;
+      if (moodRows.length >= 3) {
+        const recent = moodRows.slice(0, 2).reduce((s, r) => s + r.mood_score, 0) / 2;
+        const older = moodRows.slice(-2).reduce((s, r) => s + r.mood_score, 0) / 2;
+        moodTrend = recent - older >= 1 ? 'up' : older - recent >= 1 ? 'down' : 'steady';
+      }
+    }
+    const patterns = summarizeSymptoms(symptomRows).slice(0, 3);
+
+    const signals: DashboardSignals = {
+      weightLost: wp.lostLbs, weightPct: wp.pct, streak, moodLatest, moodTrend, patterns,
+    };
+    // Null out when there's genuinely nothing worth surfacing (keeps the prompt clean).
+    const hasSomething = (signals.weightLost != null && signals.weightLost > 0) || streak >= 2 || moodLatest != null || patterns.length > 0;
+    const value = hasSomething ? signals : null;
+    this.dashboardSignalsCache.set(userId, { value, expiresAt: Date.now() + this.DASHBOARD_SIGNALS_TTL_MS });
+    return value;
+  }
+
   private buildPersonalisedPrompt(
     user: ReturnType<UserService['getById']> extends Promise<infer T> ? T : never,
     isNew: boolean,
@@ -5105,6 +5171,10 @@ CRITICAL RULES:
        *  is not enrolled in the pilot. When present, injected verbatim
        *  into the system prompt as a dedicated section. */
       memoryMd?: string | null;
+      /** Derived dashboard progress signals (weight/streak/mood/symptom
+       *  patterns) — background context so replies are grounded in the user's
+       *  real progress, referenced only when relevant. */
+      dashboardSignals?: DashboardSignals | null;
     },
   ): string {
     // CRITICAL: fall back to the code's GRACE_SYSTEM_PROMPT when no DB prompt is
@@ -5336,6 +5406,32 @@ CRITICAL RULES:
           // Aggregated + deduped so the model never echoes a raw repetitive
           // dump ("2 eggs; 2 eggs; chicken breast; chicken breast; …").
           lines.push(`Foods logged today: ${formatAggregatedInline(aggregateFoodItems(f.items), 10)}`);
+        }
+      }
+
+      // PROGRESS SNAPSHOT — derived dashboard signals so replies are grounded in
+      // the user's real journey, not just today. Background only: Grace weaves a
+      // line in ONLY when the user's message is about progress / weight / their
+      // streak / mood / side effects — never as an unsolicited data dump.
+      if (runtime?.dashboardSignals) {
+        const d = runtime.dashboardSignals;
+        const snap: string[] = [];
+        if (d.weightLost != null && d.weightLost > 0) {
+          snap.push(`down ${d.weightLost} lbs from their starting weight${d.weightPct != null ? ` (${d.weightPct}% of the way to goal)` : ''}`);
+        }
+        if (d.streak >= 2) snap.push(`on a ${d.streak}-day food-logging streak`);
+        if (d.moodLatest != null) snap.push(`recent mood ${d.moodLatest}/10${d.moodTrend && d.moodTrend !== 'steady' ? ` (trending ${d.moodTrend})` : ''}`);
+        if (snap.length > 0) {
+          lines.push(`PROGRESS (from their dashboard — acknowledge warmly ONLY if the user asks about progress/weight/streak/mood, never volunteer): ${snap.join('; ')}.`);
+        }
+        if (d.patterns.length > 0) {
+          const pats = d.patterns.map((p) => {
+            const bits = [p.symptom];
+            if (p.typicalTiming) bits.push(`usually ${p.typicalTiming}`);
+            if (p.topRemedy) bits.push(`${p.topRemedy} helped`);
+            return bits.join(', ');
+          });
+          lines.push(`SIDE-EFFECT PATTERNS Grace has learned about THIS body (reference naturally ONLY if the user brings up a symptom — recall it like you remember them, never invent beyond this): ${pats.join('; ')}.`);
         }
       }
 

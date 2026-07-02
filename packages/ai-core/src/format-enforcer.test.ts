@@ -281,14 +281,23 @@ describe('enforceFormat', () => {
       expect(text).not.toMatch(/e\.g\.$/);
     });
 
-    it('does not truncate when no valid sentence boundary exists past position 300 (avoids mid-sentence cut)', () => {
-      // 700 chars with no period, !, or ? anywhere — should NOT cut at all.
-      const input = 'A'.repeat(700);
-      const { text, fixes } = enforceFormat(input);
-      expect(fixes).not.toContain('length_capped');
-      // Original text returned (no cut), but our trailing whitespace cleanup
-      // may shave the string. Length should be at least within 5 chars of original.
-      expect(text.length).toBeGreaterThanOrEqual(input.length - 5);
+    it('hard-caps a long run-on with no late sentence boundary (essay guard, 2026-07-02)', () => {
+      // A rambling reply whose only period is an early opener, then a colon/comma
+      // "Option 1 / Option 2" list — the exact production failure. It MUST be
+      // capped now (previously the whole essay shipped).
+      const input =
+        'A protein shake is a good way to stay full. ' + // the only early period
+        'For Friday night you might consider a few simple options here, ' +
+        'a sheet pan dinner with chicken sausage and veggies like broccoli bell peppers and sweet potatoes roasted together, ' +
+        'or a big salad with grilled chicken salmon or chickpeas plus some quinoa, ' +
+        'homemade pizza on a flatbread with your favorite toppings, ' +
+        'pasta with a quick tomato or pesto sauce and shrimp, ' +
+        'or build your own tacos with beans and lots of toppings to keep it satisfying on a busy night';
+      const { text, fixes } = enforceFormat(input, { messageContext: 'general' });
+      expect(fixes).toContain('length_capped');
+      expect(text.length).toBeLessThanOrEqual(501); // general cap (500) + terminal char
+      expect(text).not.toContain('busy night'); // the rambling tail is gone
+      expect(/[.!?…]$/.test(text)).toBe(true);   // ends cleanly
     });
 
     it('handles "!" and "?" as sentence terminators', () => {
@@ -303,14 +312,11 @@ describe('enforceFormat', () => {
       expect(/[.!?]$/.test(text)).toBe(true);
     });
 
-    it('matches a sentence ending at the very last position of the window (no trailing space)', () => {
-      // 588 chars of 'A' + 'great choice.' (13 chars) = 601 chars total.
-      // The period sits at index 600 — exactly at window boundary.
-      const input = 'A'.repeat(588) + 'great choice.';
-      const { text } = enforceFormat(input);
-      // Either capped (returns full text since len ≤ 600 isn't true) or untouched.
-      // Either way, must not be cut mid-word.
-      expect(text.endsWith('.')).toBe(true);
+    it('captures a sentence ending exactly at the window boundary (knowledge cap 600)', () => {
+      // With the knowledge cap (600), a period sitting right at the boundary is
+      // captured by the primary path — nothing is lost.
+      const input = 'A'.repeat(587) + ' great choice.'; // period at index 600
+      const { text } = enforceFormat(input, { messageContext: 'knowledge' });
       expect(text.endsWith('great choice.')).toBe(true);
     });
   });

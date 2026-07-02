@@ -215,7 +215,7 @@ export function buildMultiPartNote(understanding: MessageUnderstanding): string 
   if (!understanding.hasMultiple) return '';
   const lines = understanding.parts.map((p, i) => `${i + 1}) ${p.label}`);
   return (
-    `\n\n[MULTI-PART MESSAGE — the user said several things at once. Address EVERY part below in ONE short, warm, natural reply (not a checklist, not separate stitched-together answers). Do NOT drop any part, and do NOT answer only the first or last one. If a part is a feeling, respond to it FIRST and briefly ("love that", "so glad"), THEN answer the rest. Every question gets a REAL, specific answer right now — name actual foods/steps; NEVER defer with "I can help you think about it", "let's explore", or "I can help you make sure your meal supports your goals". Use the user's profile + today's totals already in context; only ask a clarification if a detail is genuinely needed (e.g. an unclear food amount). Parts:\n` +
+    `\n\n[MULTI-PART MESSAGE — the user said several things at once. Reply to ALL of it the way a caring friend texts back: ONE short, natural message of about 2-4 sentences. Hard rules: NO lists, NO bullet points, NO headings, NO "Option 1 / Option 2", NO numbered choices, NO "let's look at your previous questions". Do NOT analyze them or restate their history. If a part is a feeling, react to it FIRST in a few words, then answer the rest in the same breath. Every question gets a REAL, specific answer right now (name 2-3 actual foods/steps in a flowing sentence) — NEVER defer with "I can help you think about it" or "let's make sure your meal supports your goals". Keep it warm and brief. Parts to cover:\n` +
     lines.join('\n') +
     `]`
   );

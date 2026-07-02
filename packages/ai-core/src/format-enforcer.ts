@@ -778,6 +778,19 @@ export function enforceFormat(
     if (lastEnd > MAX_CHARS / 3) {
       text = text.slice(0, lastEnd).trim();
       fixes.push('length_capped');
+    } else {
+      // No clean sentence boundary late enough in the window — the reply is a
+      // long run-on (e.g. an essay whose only early period is a short opener,
+      // then a colon/comma "Option 1 / Option 2" list). This USED to skip
+      // truncation, so the whole 1800-char essay shipped (production bug). Now
+      // hard-cap at the last word boundary before MAX_CHARS so a rambling list
+      // can never ship in full — the multi-part note keeps Gemini brief so this
+      // safety net rarely fires.
+      const hard = text.slice(0, MAX_CHARS);
+      const lastSpace = hard.lastIndexOf(' ');
+      const cut = lastSpace > MAX_CHARS / 2 ? hard.slice(0, lastSpace) : hard;
+      text = cut.replace(/[\s,;:—–-]+$/, '').trim() + '.';
+      fixes.push('length_capped');
     }
   }
 

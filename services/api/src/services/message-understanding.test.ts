@@ -20,8 +20,9 @@ describe('analyzeMessage — multi-intent detection', () => {
     expect(u.kinds).toContain('food_question'); // the Friday-night meal-idea request (typo-tolerant)
     expect(u.hasMultiple).toBe(true);
     const note = buildMultiPartNote(u);
-    expect(note).toMatch(/SPECIFIC/);
-    expect(note.toLowerCase()).toMatch(/feeling.*first|feeling first|respond to it first/);
+    expect(note.toLowerCase()).toMatch(/specific/);
+    expect(note.toLowerCase()).toMatch(/feeling.*first|react to it first|respond to it first/);
+    expect(note.toLowerCase()).toMatch(/no lists|no bullet|option 1/); // bans the essay format
   });
 
   it('detects a food-idea request as food_question, tolerant of grammar/typos', () => {
@@ -85,9 +86,9 @@ describe('buildMultiPartNote', () => {
       'I had chicken and rice, I feel nauseous, how much protein do I still need today?',
     );
     const note = buildMultiPartNote(u);
-    expect(note).toMatch(/Address EVERY part/i);
-    expect(note).toMatch(/ONE short, warm/i);
-    expect(note).toMatch(/not a checklist/i);
+    expect(note).toMatch(/Reply to ALL of it/i);
+    expect(note).toMatch(/2-4 sentences/i);
+    expect(note).toMatch(/NO lists/i);
     // One numbered line per detected part.
     expect((note.match(/\n\d\)/g) ?? []).length).toBe(u.parts.length);
   });
@@ -102,7 +103,7 @@ describe('buildMultiPartNote', () => {
     );
     expect(note).toMatch(/REAL, specific answer/i);
     expect(note.toLowerCase()).toMatch(/never defer|i can help you think about/);
-    expect(note.toLowerCase()).toMatch(/feeling.*first|respond to it first/);
+    expect(note.toLowerCase()).toMatch(/feeling.*first|react to it first|respond to it first/);
   });
 });
 

@@ -154,6 +154,16 @@ describe('parseSlotAnswer', () => {
     expect(parseSlotAnswer('injection_day', 'fridays')).toEqual({ ok: true, fields: { injection_day: 'Friday' } });
     expect(parseSlotAnswer('medication_time', '8am')).toEqual({ ok: true, fields: { medication_time: '08:00' } });
   });
+  it('finds the weekday inside a phrase, incl. abbreviations (2026-07-02)', () => {
+    expect(parseSlotAnswer('injection_day', 'on wed').fields?.injection_day).toBe('Wednesday');
+    expect(parseSlotAnswer('injection_day', 'usually a Monday').fields?.injection_day).toBe('Monday');
+    expect(parseSlotAnswer('injection_day', 'I take it thurs').fields?.injection_day).toBe('Thursday');
+  });
+  it('stores a CLEAN diet value from conversational phrasing (2026-07-02)', () => {
+    expect(parseSlotAnswer('dietary', "I'm pescatarian").fields).toMatchObject({ dietary_pattern: 'pescatarian', dietary_restriction: 'pescatarian' });
+    expect(parseSlotAnswer('dietary', 'I follow a keto diet').fields?.dietary_restriction).toBe('keto diet');
+    expect(parseSlotAnswer('dietary', "I'm vegan").fields).toMatchObject({ dietary_pattern: 'vegan', dietary_restriction: 'vegan' });
+  });
   it('parses a timezone from a city/region (→ IANA)', () => {
     expect(parseSlotAnswer('timezone', "I'm in Israel")).toEqual({ ok: true, fields: { timezone: 'Asia/Jerusalem' } });
     expect(parseSlotAnswer('timezone', 'New York')).toEqual({ ok: true, fields: { timezone: 'America/New_York' } });

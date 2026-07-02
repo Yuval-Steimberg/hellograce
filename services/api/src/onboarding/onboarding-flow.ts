@@ -353,7 +353,16 @@ function parseDiet(text: string): Partial<GraceUser> | null {
   if (/\bvegan\b/.test(t)) fields.dietary_pattern = 'vegan';
   else if (/\bvegetarian\b/.test(t)) fields.dietary_pattern = 'vegetarian';
   else if (/\bpesc[ae]tarian\b/.test(t)) fields.dietary_pattern = 'pescatarian';
-  fields.dietary_restriction = text.trim().slice(0, 120);
+  // Store a CLEAN free-text value — strip conversational lead-ins so "I'm
+  // pescatarian" / "I follow a keto diet" persist as "pescatarian" / "keto diet",
+  // not the raw sentence (writing-variation handling).
+  fields.dietary_restriction = fields.dietary_pattern
+    ? fields.dietary_pattern
+    : text.trim()
+        .replace(/^(i'?m|i am|im|i)\s+(a\s+|an\s+|on\s+(?:a\s+)?|following\s+(?:a\s+)?|follow\s+(?:a\s+)?|eat\s+|eating\s+|keep\s+(?:a\s+)?|doing\s+(?:a\s+)?|do\s+(?:a\s+)?)?/i, '')
+        .replace(/\s+diet$/i, ' diet')
+        .trim()
+        .slice(0, 120);
   return fields;
 }
 
@@ -415,7 +424,10 @@ export function parseSlotAnswer(slot: SlotId, text: string): ParsedAnswer {
       return freq ? { ok: true, fields: { medication_frequency: freq } } : { ok: false };
     }
     case 'injection_day': {
-      const day = normalizeDay(t);
+      // Scan for a weekday ANYWHERE in the phrase ("on wed", "I take it Fridays",
+      // "usually a Monday") — not just a bare day word.
+      const m = t.match(/\b(sundays?|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sun|mon|tues?|weds?|thurs?|fri|sat)\b/i);
+      const day = normalizeDay(m ? m[1] : t);
       return day ? { ok: true, fields: { injection_day: day } } : { ok: false };
     }
     case 'medication_time': {
@@ -726,6 +738,20 @@ export async function runOnboardingTurn(params: {
 
   try {
     const starting = u.onboarding_state !== 'in_progress';
+
+    // Derive timezone from the phone's country/area code, overriding the blind
+    // 'America/New_York' DB default, so reminders + daily food resets run on the
+    // user's REAL local time from message one. The 'timezone' slot is never
+    // asked (isSlotAnswered is always true because of that default), so this is
+    // the only place it gets set. Runs once, on the first turn.
+    if (starting) {
+      const tz = timezoneFromPhone(u.phone);
+      if (tz && tz !== u.timezone && (u.timezone == null || u.timezone === 'America/New_York')) {
+        await users.update(u.phone, { timezone: tz } as Partial<GraceUser>);
+        u = { ...u, timezone: tz };
+        logger.info({ phone: u.phone, tz }, 'onboarding.timezone.derived_from_phone');
+      }
+    }
 
     // First turn — greet (signup) and ask the first slot. We do NOT parse the
     // user's opening message as an answer (it's usually "hi"); volunteered facts

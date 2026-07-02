@@ -29,9 +29,12 @@ units are parsed on the way in, displayed on the way out.
     `ReactNode`; new `UnitToggle` component.
   - **Dashboard read**: hero weight stat cards + the weight chart (axis, goal
     line, tooltip) render in the user's chosen unit.
+  - **Onboarding** (`WeightStep.tsx`, added 2026-07-02): the About-you step has
+    the same lbs/kg weight toggle + cm/ft-in height toggle; parent state stays
+    canonical (lbs/cm), conversion is display-only, so `/users/onboard` is
+    unchanged. Height validation message made unit-neutral.
 Tests: units (15) + weight-log-fast stone (+1). 1495 api green, web builds +
-typecheck clean. No migration. (Onboarding weight/height still collect canonical
-units — a later pass can add the same toggles there.)
+typecheck clean. No migration.
 
 ---
 

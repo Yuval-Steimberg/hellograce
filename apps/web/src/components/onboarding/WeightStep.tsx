@@ -1,5 +1,20 @@
 import { useState } from "react";
 import QuizButton from "./QuizButton";
+import {
+  getWeightUnit, setWeightUnit as persistWeightUnit, getHeightUnit, setHeightUnit as persistHeightUnit,
+  toLbs, fromLbs, cmToFeetInches, feetInchesToCm, type WeightUnit, type HeightUnit,
+} from "@/lib/units";
+
+function UnitToggle({ options, value, onChange }: { options: [string, string][]; value: string; onChange: (v: string) => void }) {
+  return (
+    <span className="inline-flex rounded-full bg-secondary p-0.5 text-xs">
+      {options.map(([v, l]) => (
+        <button key={v} type="button" onClick={() => onChange(v)}
+          className={`rounded-full px-2.5 py-0.5 transition-colors ${value === v ? "bg-white text-foreground shadow-sm" : "text-muted-foreground"}`}>{l}</button>
+      ))}
+    </span>
+  );
+}
 
 interface AboutYouData {
   sex?: string;
@@ -59,6 +74,20 @@ const WeightStep = ({
 }: AboutYouProps) => {
   const [error, setError] = useState("");
   const [touched, setTouched] = useState(false);
+  const [wUnit, setWUnit] = useState<WeightUnit>(getWeightUnit());
+  const [hUnit, setHUnit] = useState<HeightUnit>(getHeightUnit());
+
+  // Parent state stays canonical (weights in lbs, height in cm); the user sees +
+  // types in their chosen unit and we convert on the way in/out.
+  const pickWUnit = (u: WeightUnit) => { setWUnit(u); persistWeightUnit(u); };
+  const pickHUnit = (u: HeightUnit) => { setHUnit(u); persistHeightUnit(u); };
+  const wDisplay = (lbsStr: string): string => (lbsStr.trim() === "" ? "" : String(fromLbs(Number(lbsStr), wUnit)));
+  const wOnChange = (field: keyof AboutYouData, v: string) =>
+    onChange({ [field]: v.trim() === "" ? "" : String(Math.round(toLbs(Number(v), wUnit) * 10) / 10) });
+  const heightFt = heightCm ? cmToFeetInches(Number(heightCm)).feet : 0;
+  const heightIn = heightCm ? cmToFeetInches(Number(heightCm)).inches : 0;
+  const setHeightFtIn = (feet: number, inches: number) =>
+    onChange({ heightCm: feet === 0 && inches === 0 ? "" : String(Math.round(feetInchesToCm(feet, inches))) });
 
   const missing: string[] = [];
   if (!sex) missing.push("sex");
@@ -78,7 +107,7 @@ const WeightStep = ({
     const a = Number(age);
     const cw = Number(currentWeight);
     const gw = Number(goalWeight);
-    if (h < 100 || h > 260) { setError("Height should be between 100 and 260 cm"); return; }
+    if (h < 100 || h > 260) { setError("Please enter a valid height"); return; }
     if (a < 13 || a > 120) { setError("Age should be between 13 and 120"); return; }
     if (cw < 50 || cw > 700) { setError("Please enter a valid current weight"); return; }
     if (gw < 50 || gw > 700) { setError("Please enter a valid goal weight"); return; }
@@ -141,17 +170,29 @@ const WeightStep = ({
 
           <div className="grid grid-cols-2 gap-5">
             <label className="flex flex-col gap-2">
-              <span className={`font-medium text-sm px-1 ${showFieldError("height") ? "text-destructive" : "text-foreground"}`}>
-                Height (cm) {showFieldError("height") && <span className="text-xs">*</span>}
+              <span className={`flex items-center justify-between font-medium text-sm px-1 ${showFieldError("height") ? "text-destructive" : "text-foreground"}`}>
+                <span>Height {showFieldError("height") && <span className="text-xs">*</span>}</span>
+                <UnitToggle options={[["cm", "cm"], ["ftin", "ft/in"]]} value={hUnit} onChange={(v) => { pickHUnit(v as HeightUnit); setError(""); }} />
               </span>
-              <input
-                type="number"
-                inputMode="numeric"
-                placeholder="e.g. 168"
-                value={heightCm}
-                onChange={(e) => { onChange({ heightCm: e.target.value }); setError(""); }}
-                className={showFieldError("height") ? errorInputClass : inputClass}
-              />
+              {hUnit === "cm" ? (
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="e.g. 168"
+                  value={heightCm}
+                  onChange={(e) => { onChange({ heightCm: e.target.value }); setError(""); }}
+                  className={showFieldError("height") ? errorInputClass : inputClass}
+                />
+              ) : (
+                <div className="flex gap-2">
+                  <input type="number" inputMode="numeric" placeholder="ft" value={heightCm ? String(heightFt) : ""}
+                    onChange={(e) => { setHeightFtIn(Number(e.target.value) || 0, heightIn); setError(""); }}
+                    className={showFieldError("height") ? errorInputClass : inputClass} />
+                  <input type="number" inputMode="numeric" placeholder="in" value={heightCm ? String(heightIn) : ""}
+                    onChange={(e) => { setHeightFtIn(heightFt, Number(e.target.value) || 0); setError(""); }}
+                    className={showFieldError("height") ? errorInputClass : inputClass} />
+                </div>
+              )}
             </label>
             <label className="flex flex-col gap-2">
               <span className={`font-medium text-sm px-1 ${showFieldError("age") ? "text-destructive" : "text-foreground"}`}>
@@ -168,30 +209,33 @@ const WeightStep = ({
             </label>
           </div>
 
+          <div className="flex justify-end -mb-3">
+            <UnitToggle options={[["lbs", "lbs"], ["kg", "kg"]]} value={wUnit} onChange={(v) => { pickWUnit(v as WeightUnit); setError(""); }} />
+          </div>
           <div className="grid grid-cols-2 gap-5">
             <label className="flex flex-col gap-2">
               <span className={`font-medium text-sm px-1 ${showFieldError("current weight") ? "text-destructive" : "text-foreground"}`}>
-                Current weight (lbs) {showFieldError("current weight") && <span className="text-xs">*</span>}
+                Current weight ({wUnit}) {showFieldError("current weight") && <span className="text-xs">*</span>}
               </span>
               <input
                 type="number"
                 inputMode="numeric"
-                placeholder="e.g. 175"
-                value={currentWeight}
-                onChange={(e) => { onChange({ currentWeight: e.target.value }); setError(""); }}
+                placeholder={wUnit === "kg" ? "e.g. 80" : "e.g. 175"}
+                value={wDisplay(currentWeight)}
+                onChange={(e) => { wOnChange("currentWeight", e.target.value); setError(""); }}
                 className={showFieldError("current weight") ? errorInputClass : inputClass}
               />
             </label>
             <label className="flex flex-col gap-2">
               <span className={`font-medium text-sm px-1 ${showFieldError("goal weight") ? "text-destructive" : "text-foreground"}`}>
-                Goal weight (lbs) {showFieldError("goal weight") && <span className="text-xs">*</span>}
+                Goal weight ({wUnit}) {showFieldError("goal weight") && <span className="text-xs">*</span>}
               </span>
               <input
                 type="number"
                 inputMode="numeric"
-                placeholder="e.g. 150"
-                value={goalWeight}
-                onChange={(e) => { onChange({ goalWeight: e.target.value }); setError(""); }}
+                placeholder={wUnit === "kg" ? "e.g. 68" : "e.g. 150"}
+                value={wDisplay(goalWeight)}
+                onChange={(e) => { wOnChange("goalWeight", e.target.value); setError(""); }}
                 className={showFieldError("goal weight") ? errorInputClass : inputClass}
               />
             </label>
@@ -201,14 +245,14 @@ const WeightStep = ({
               Defaults to empty; Grace will never invent a baseline if left blank. */}
           <label className="flex flex-col gap-2">
             <span className="font-medium text-sm px-1 text-foreground">
-              Starting weight (lbs) <span className="text-muted-foreground text-xs ml-1">— optional</span>
+              Starting weight ({wUnit}) <span className="text-muted-foreground text-xs ml-1">— optional</span>
             </span>
             <input
               type="number"
               inputMode="numeric"
               placeholder="The weight you started at, if you remember"
-              value={startingWeight}
-              onChange={(e) => { onChange({ startingWeight: e.target.value }); setError(""); }}
+              value={wDisplay(startingWeight)}
+              onChange={(e) => { wOnChange("startingWeight", e.target.value); setError(""); }}
               className={inputClass}
             />
             <span className="text-xs text-muted-foreground/70 px-1">

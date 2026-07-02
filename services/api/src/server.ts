@@ -590,6 +590,9 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       logger,
       webhookSecret: env.STRIPE_WEBHOOK_SECRET,
       proPriceId: env.STRIPE_PRO_PRICE_ID,
+      sender,
+      redis,
+      users,
     });
   }
 

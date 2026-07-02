@@ -22,6 +22,7 @@ import type { LLMProvider } from '@grace/shared';
 import type { PromptOptimizer } from '../scheduler/prompt-optimizer.js';
 import type { MessageTemplatesService } from '../services/message-templates.service.js';
 import type { BanditService } from '../services/bandit.service.js';
+import { sendPaidWelcomeOnce } from '../services/paid-welcome.js';
 
 export interface AdminDeps {
   pool: Pool;
@@ -815,6 +816,19 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
       );
       if (!rowCount) throw new ValidationError('User not found');
     }
+    // Post-payment welcome: on a trial→paid (or →pro) transition, Grace
+    // celebrates that they're continuing (by name) instead of re-introducing
+    // herself. Best-effort + once per user (Redis-deduped in the helper).
+    const nowPaid = requested.is_paid === true || requested.is_pro === true;
+    const wasPaid = beforeSnapshot.is_paid === true || beforeSnapshot.is_pro === true;
+    if (nowPaid && !wasPaid && deps.sender) {
+      const u = await deps.users?.getByPhone(phone).catch(() => null);
+      void sendPaidWelcomeOnce(
+        { redis: deps.redis as import('ioredis').Redis | undefined, sender: deps.sender, logger: req.log },
+        { phone, first_name: u?.first_name ?? null, medication: u?.medication ?? null, channel: u?.channel ?? null },
+      );
+    }
+
     // Return the updated row so caller can verify the write landed.
     // Production failure 2026-06-03: admin couldn't tell if the dietary
     // PUT had any effect because the response was just { ok: true }.

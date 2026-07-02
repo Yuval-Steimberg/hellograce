@@ -6,6 +6,23 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Post-payment "welcome back" message (trial → paid) (2026-07-02)
+
+When a user upgrades to paid/pro, Grace no longer re-introduces herself — she
+celebrates that they're CONTINUING with her, by name, and reminds them of every
+option. `services/api/src/services/paid-welcome.ts` (tested): `buildPaidWelcome`
+(no self-intro, name via `isEncryptedBlob`-guarded `cleanName`, reminds
+food/photo logging + symptom learning + weight/mood + "text dashboard") +
+`sendPaidWelcomeOnce` (Redis `paid:welcomed:{phone}` SET NX, once per user, best-
+effort, sends on the user's channel). Triggered on the not-paid→paid transition
+from BOTH the admin `PUT /admin/users/:phone` (is_paid/is_pro false→true) and the
+v2 Stripe webhook (`registerStripeWebhookRoutes` now takes `sender`/`redis`/
+`users`; snapshots is_paid before/after to fire only on a genuine transition, not
+renewals). Note: the legacy v1 Supabase checkout path doesn't hit either trigger.
+Tests: paid-welcome (2). 1497 api green.
+
+---
+
 ### Units: enter/read weight & height in any unit (kg/lb/stone, cm/ft-in) (2026-07-02)
 
 Product ask: Grace should understand any unit so users put their own data in

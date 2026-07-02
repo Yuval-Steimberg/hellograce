@@ -3,6 +3,7 @@ import { UpstreamError } from '../errors.js';
 import {
   EmptyOutboundError,
   rewriteCanonicalLinks,
+  ensureLinkScheme,
   sanitizeOutbound,
   type MessageSender,
   type OutboundMessage,
@@ -61,8 +62,10 @@ export class ImessageSender implements MessageSender {
       }
     }
 
-    // Same canonical-link rewrite as Twilio so settings/upgrade links resolve.
+    // Same canonical-link rewrite + scheme-ensuring as Twilio so settings/
+    // upgrade links resolve AND render as tappable links (not bare text).
     body = rewriteCanonicalLinks(body, this.cfg.canonicalWebUrl);
+    body = ensureLinkScheme(body, this.cfg.canonicalWebUrl);
 
     const url = this.cfg.apiUrl ?? DEFAULT_LOOP_SEND_URL;
     // iMessage recipients are phone numbers (E.164) or Apple-ID emails. Strip a

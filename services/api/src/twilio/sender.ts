@@ -30,6 +30,34 @@ export function rewriteCanonicalLinks(text: string, webUrl?: string): string {
     .replace(/\bgraceglp\.com/gi, bareHost);
 }
 
+/**
+ * Make bare links to known Grace hosts clickable by prefixing `https://`.
+ * iMessage / SMS / WhatsApp only auto-link URLs that start with a scheme (or
+ * `www.`), so a bare `grace-admin-silk.vercel.app/settings` renders as plain,
+ * untappable text. Runs on EVERY outbound AFTER rewriteCanonicalLinks, so it
+ * covers both the canonical `graceglp.com` host and the live deployment host,
+ * from any source (LLM, system prompt, deterministic templates). Never
+ * double-prefixes an already-schemed link.
+ */
+export function ensureLinkScheme(text: string, webUrl?: string): string {
+  const hosts = ['graceglp.com'];
+  if (webUrl) {
+    const bare = webUrl.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (bare && !hosts.includes(bare)) hosts.push(bare);
+  }
+  const alt = hosts.map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  // A bare host (optional www., optional path) NOT already preceded by a scheme
+  // slash, an @, a dot (subdomain), or a word char.
+  const re = new RegExp(`(?<![\\w/@.])(?:www\\.)?(?:${alt})(?:/\\S*)?`, 'gi');
+  return text.replace(re, (match) => {
+    if (/^https?:\/\//i.test(match)) return match; // already schemed
+    // Keep trailing sentence punctuation OUTSIDE the URL so it isn't swallowed.
+    const trailing = match.match(/[.,;:!?)]+$/)?.[0] ?? '';
+    const core = trailing ? match.slice(0, match.length - trailing.length) : match;
+    return `https://${core.replace(/^www\./i, '')}${trailing}`;
+  });
+}
+
 export interface OutboundMessage {
   to: string;
   channel: 'whatsapp' | 'sms' | 'imessage';
@@ -266,8 +294,11 @@ export class TwilioSender implements MessageSender {
     }
 
     // Final pass on EVERY outbound (raw + sanitized): point any graceglp.com
-    // link at the running deployment so the link the user taps actually works.
+    // link at the running deployment so the link the user taps actually works,
+    // then ensure it carries an https:// scheme so clients render it as a
+    // tappable link (bare "host.com/settings" is not auto-linked).
     body = rewriteCanonicalLinks(body, this.cfg.canonicalWebUrl);
+    body = ensureLinkScheme(body, this.cfg.canonicalWebUrl);
 
     try {
       const result = await this.client.messages.create({ from, to, body });

@@ -1,5 +1,34 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeOutbound, rewriteCanonicalLinks } from './sender.js';
+import { sanitizeOutbound, rewriteCanonicalLinks, ensureLinkScheme } from './sender.js';
+
+describe('ensureLinkScheme — bare links get https:// so clients auto-link them', () => {
+  const web = 'https://grace-admin-silk.vercel.app';
+  it('prefixes a bare deployment-host link (the production report)', () => {
+    // After rewriteCanonicalLinks, the reported message is a bare host link.
+    const rewritten = 'Set your exact target at grace-admin-silk.vercel.app/settings.';
+    expect(ensureLinkScheme(rewritten, web))
+      .toBe('Set your exact target at https://grace-admin-silk.vercel.app/settings.');
+  });
+  it('prefixes a bare graceglp.com link', () => {
+    expect(ensureLinkScheme('change it at graceglp.com/settings'))
+      .toBe('change it at https://graceglp.com/settings');
+  });
+  it('never double-prefixes an already-schemed link', () => {
+    const s = 'go to https://grace-admin-silk.vercel.app/upgrade?phone=%2B1';
+    expect(ensureLinkScheme(s, web)).toBe(s);
+  });
+  it('keeps trailing sentence punctuation outside the URL', () => {
+    expect(ensureLinkScheme('here: graceglp.com/settings!'))
+      .toBe('here: https://graceglp.com/settings!');
+  });
+  it('handles a bare host with a query string', () => {
+    expect(ensureLinkScheme('upgrade at grace-admin-silk.vercel.app/upgrade?phone=%2B972', web))
+      .toBe('upgrade at https://grace-admin-silk.vercel.app/upgrade?phone=%2B972');
+  });
+  it('leaves non-link text untouched', () => {
+    expect(ensureLinkScheme('Aim for 100g protein today.', web)).toBe('Aim for 100g protein today.');
+  });
+});
 
 describe('rewriteCanonicalLinks — settings link points at the deployment (2026-06-13)', () => {
   const web = 'https://grace-admin-silk.vercel.app';

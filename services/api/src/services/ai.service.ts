@@ -3284,6 +3284,54 @@ CRITICAL RULES:
         params.logger.warn({ userId: params.userId, intent: params.intent }, 'ai.direct.note_leak_stripped');
         text = deleaked;
       }
+
+      // ── GENERAL REPLY-SHAPE GUARD (2026-07-02) ────────────────────────────
+      // The real fix, not another per-phrase strip: if the reply has ANY
+      // structured shape — ≥2 "Label:" breakdowns, a heading, or a list —
+      // regardless of the exact words, regenerate it ONCE as a plain text with a
+      // hard minimal prompt. It validates STRUCTURE, so it catches every wording
+      // and variation, not a specific message kind. Skips log turns (already
+      // scoped) and only adopts the rewrite if it's actually cleaner.
+      if (!isLogTurn && looksStructured(text)) {
+        params.logger.warn(
+          { userId: params.userId, intent: params.intent, preview: text.slice(0, 80) },
+          'ai.direct.structured_regen',
+        );
+        try {
+          const hardSystem =
+            `You are Grace, a warm GLP-1 text companion. Reply to the user's message as ONE natural iMessage: 1 to 3 short sentences of plain prose, like texting a friend. ABSOLUTELY FORBIDDEN: headings, titles, "Label:" breakdowns, bullet points, numbered lists, "Option 1/2", and ANY preamble ("here's", "let's break down", "estimating…", "that sounds like…"). Answer EVERY part of their message directly; for a food give a quick number or range and what to have next if they asked. Just talk to them.`;
+          const regen = await Promise.race([
+            this.deps.llm.generate({
+              messages: [
+                { role: 'system', content: hardSystem },
+                { role: 'user', content: params.userText },
+              ],
+              temperature: 0.6,
+              maxOutputTokens: 320,
+              disableThinking: true,
+            }),
+            new Promise<{ text: string } | null>((resolve) => setTimeout(() => resolve(null), DIRECT_REPLY_TIMEOUT_MS)),
+          ]);
+          let regenText = (regen?.text ?? '').trim();
+          if (regenText) {
+            try {
+              const rf = enforceFormat(regenText, { messageContext: params.intent as MessageContext, userMessage: params.rawUserText });
+              if (rf.text && rf.text.trim().length > 0) regenText = rf.text.trim();
+            } catch { /* keep regenText */ }
+            regenText = stripLeakedNotes(regenText);
+            // Only adopt it if the rewrite is actually clean (not still structured).
+            if (regenText.length > 0 && !looksStructured(regenText)) {
+              text = regenText;
+              params.logger.info({ userId: params.userId, intent: params.intent }, 'ai.direct.structured_regen.applied');
+            }
+          }
+        } catch (err) {
+          params.logger.warn(
+            { err: err instanceof Error ? err.message : String(err) },
+            'ai.direct.structured_regen.error',
+          );
+        }
+      }
     }
 
     let usedSafeFallback = false;
@@ -5851,6 +5899,36 @@ export function mealForLocalHour(hour: number): 'breakfast' | 'lunch' | 'snack' 
  *  the answer to the current meal). */
 export function wantsFullDayPlan(text: string): boolean {
   return /\b(meal\s*plan|whole day|full day|entire day|for the (?:whole |entire )?day|all day|throughout the day|plan (?:my|the) day|breakfast[\s,]+lunch|day'?s worth|each meal|every meal)\b/i.test(text);
+}
+
+/**
+ * TRUE when a reply has a STRUCTURED shape that reads like a report rather than
+ * a text message — regardless of the specific words. Detects structure, not
+ * phrases, so it generalizes to any wording/variation:
+ *   - ≥2 "Capitalized Label:" segments (a breakdown: "Salmon: … Estimate: …")
+ *   - a bullet or numbered list marker
+ *   - a leading multi-word Title-Case heading ending in a colon
+ * Used by the reply-shape guard to trigger a single plain-text regeneration.
+ */
+export function looksStructured(text: string): boolean {
+  const t = (text ?? '').trim();
+  if (t.length === 0) return false;
+  // ≥2 "Label:" segments at a start/sentence/comma/colon boundary. The label is
+  // Capitalized, ≤34 chars, no apostrophe (so "Here's …" / prose isn't counted).
+  const labelHits = (t.match(/(?:^|[.,:!?]\s+)[A-Z][A-Za-z0-9 &/-]{1,34}:\s/g) ?? []).length;
+  if (labelHits >= 2) return true;
+  // Bullet / numbered list markers at a line start.
+  if (/(?:^|\n)\s*(?:[-*•]|\d+[.)])\s/.test(t)) return true;
+  // An inline numbered list item ("… 1. Do this" / "step 2) …").
+  if (/(?:^|[.:]\s)\d+[.)]\s+[A-Z]/.test(t)) return true;
+  // A leading heading/preamble clause ending in a colon ("Estimating Protein in
+  // Your Salmon Meal:", "Salmon with Potatoes and Salad, Protein Estimate:",
+  // "Here's an analysis of your entries:"). Lowercase connector words allowed.
+  if (/^[A-Z][^.!?\n]{4,95}:\s+\S/.test(t)) return true;
+  // A colon that introduces an enumerated list mid-reply ("… broken down into
+  // steps: Before You Go (The Pre-Game) 1."). Catches the truncated-list case.
+  if (/:\s+[A-Z][^.!?\n]{0,90}\b\d+[.)]/.test(t)) return true;
+  return false;
 }
 
 export function splitMultiMealText(text: string): string[] {

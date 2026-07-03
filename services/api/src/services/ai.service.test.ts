@@ -1,6 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone } from './ai.service.js';
+import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone, looksStructured } from './ai.service.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+
+describe('looksStructured — general reply-shape guard (any words/variation)', () => {
+  const STRUCTURED = [
+    "Here's a general idea: Salmon: A typical serving provides protein, Estimate: 25-40 grams, Potatoes: not high.",
+    'Salmon with Potatoes and Salad, Protein Estimate & What to Eat Later Protein Estimate: This depends on size.',
+    'Estimating Protein in Your Salmon Meal: This is a rough estimate as portions vary.',
+    "Here's an analysis of your entries, categorizing them: Dashboard/Feeling Good After Meal.",
+    'For Friday night: Option 1: sheet pan dinner, Option 2: homemade pizza.',
+    "That's a common challenge. Here's a strategy broken down into steps: Before You Go (The Pre-Game) 1.",
+    '- Greek yogurt\n- eggs\n- chicken',
+  ];
+  const PLAIN = [
+    'So glad that sat well. Salmon with potatoes and salad is about 30g protein, and a Greek yogurt later would round it out.',
+    "Totally normal to feel that way. Just fill your plate with the protein and veggies they serve, and you're not being weird.",
+    "You're at about 45g protein today, so eggs or Greek yogurt tonight would get you close to your goal.",
+    'That salmon meal is roughly 25-30g of protein. Maybe some Greek yogurt later if you get peckish.',
+    'Honestly, just eat what they serve and enjoy it. One meal won\'t derail you.',
+  ];
+  for (const s of STRUCTURED) it(`flags structured: "${s.slice(0, 40)}…"`, () => expect(looksStructured(s)).toBe(true));
+  for (const p of PLAIN) it(`passes plain: "${p.slice(0, 40)}…"`, () => expect(looksStructured(p)).toBe(false));
+  it('empty → false', () => expect(looksStructured('')).toBe(false));
+});
 
 describe('time-of-day food scoping', () => {
   it('maps local hours to the right current meal', () => {

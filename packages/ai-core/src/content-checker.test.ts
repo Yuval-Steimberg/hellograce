@@ -101,6 +101,18 @@ describe('checkBannedPhrases', () => {
     expect(v[0]?.code).toBe('banned_phrase');
   });
 
+  // Grounding pass (2026-07-03): injection/dose capability denials, medical-record
+  // deflection, and the false "real-time" claim must all be caught.
+  it('flags injection/dose capability denial and the false real-time claim', () => {
+    expect(checkBannedPhrases("I can't tell you when your next injection is.").length).toBeGreaterThan(0);
+    expect(checkBannedPhrases("I don't have access to your personal medical records or treatment plan.").length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('Yes, I am sure. I have access to real-time information.').length).toBeGreaterThan(0);
+  });
+
+  it('does NOT flag a legitimate grounded injection answer', () => {
+    expect(checkBannedPhrases('Your next Zepbound shot is in 4 days — Saturday, July 4, 2026.')).toHaveLength(0);
+  });
+
   // Regression (2026-06-19): a bare "good morning" got the canned fallback
   // because Gemini's greeting reply ("...what's on your mind?") was banned →
   // regen → fallback, and the fallback itself contained the banned phrase. The

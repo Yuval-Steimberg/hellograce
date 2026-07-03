@@ -536,6 +536,15 @@ describe('detectReasoningRequest — explain-vs-repeat gate (2026-06-03)', () =>
     expect(fb).not.toMatch(/side effect|hair|appetite/i);
   });
 
+  it('explains a SCHEDULE number as the calendar gap, not weight math — production 2026-07-03', async () => {
+    const { getToolAwareFallback } = await import('./orchestrator.js') as any;
+    const schedulePrior = 'Your next Zepbound shot is in 4 days — Saturday, July 4, 2026.';
+    const fb = getToolAwareFallback('general', [], { isReasoningRequest: true, lastAssistantMessage: schedulePrior, userMessage: 'How 4 days?' });
+    expect(fb).toMatch(/4 days/);
+    expect(fb).toMatch(/calendar|shot day|date/i);
+    expect(fb).not.toMatch(/weight|muscle|dose/i);
+  });
+
   it('fires on "can you explain?" after a recommendation', async () => {
     const { detectReasoningRequest } = await import('./orchestrator.js');
     expect(detectReasoningRequest('Can you explain?', recommendationPrior)).toBe(true);

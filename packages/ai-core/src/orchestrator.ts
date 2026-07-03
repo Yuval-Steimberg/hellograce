@@ -510,6 +510,15 @@ export function getToolAwareFallback(
       const n = calM ? `${calM[1]} calories` : 'that';
       return `That ${n} is an estimate from the foods you logged, using typical calories per serving. Portions weren't exact so it's approximate — give me the serving sizes and I'll refine it.`;
     }
+    // Schedule/injection timing (prod failure 2026-07-03: "How 4 days?" after
+    // "next dose in 4 days" → explained with weight/muscle math). If the prior
+    // answer was about a shot/dose/injection day count, explain the CALENDAR gap.
+    if (/\b(shot|injection|dose|jab|pill)\b/i.test(prior) && /\bday/i.test(prior)) {
+      const dM = /\bin (\d+) days?\b/i.exec(prior);
+      return dM
+        ? `Those ${dM[1]} days are simply the gap on the calendar from today to your next scheduled shot day. Want the exact date?`
+        : `That's the calendar gap from today to your next scheduled shot day. Want me to give you the exact date?`;
+    }
     if (prior.length >= 10) {
       return `That comes from your current weight, goal, and the GLP-1 muscle-preservation math — want me to walk you through the numbers?`;
     }

@@ -158,7 +158,7 @@ export function buildInjectionTimingReply(
     if (sched.cadence === 'daily') {
       return `${med ? `${med} is` : 'It\'s'} a daily medication, so you have a ${noun} every day. If you want, tell me the time you usually take it and I'll keep it in mind.`;
     }
-    return `I don't have your ${noun} day saved yet — which day of the week do you take ${med ?? 'it'}? Tell me and I'll keep track of it for you (you can also set it in Settings: ${settingsUrl}).`;
+    return `Which day of the week do you take ${med ?? 'it'}? Tell me and I'll keep track of your ${noun} day so I can always let you know when the next one's coming — you can also set it in Settings: ${settingsUrl}.`;
   }
 
   if (sched.cadence === 'daily') {

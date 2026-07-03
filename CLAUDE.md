@@ -12,10 +12,14 @@ _Also loaded automatically at session start. Update at the end of every session 
 ("Reply-quality war…"). It has the LIVE production config and the current
 debugging state. Do NOT re-derive context or start editing until you've read it.
 
-- **Latest commit on `main`: `a11d09c`** (multi-part: skip no-op food extraction
-  + catch chained-colon breakdowns, PR #170; prior: `b7961e3` meal-time-word fix
-  PR #168; `2f989c3` latency flash-lite+history PR #166; `603dd77` never-drop
-  PR #164; `13b2824` progressive gathering PR #162).
+- **Latest commit on `main`: `a1d3936`** (latency telemetry: break down the
+  direct/multi-part reply into `direct_extract`/`direct_reply`/`direct_regen`,
+  PR #172; prior: `a11d09c` multi-part skip + colon guard PR #170; `b7961e3`
+  meal-time-word fix PR #168; `2f989c3` latency flash-lite+history PR #166).
+- **See latency breakdown:** `GET /admin/latency?window=1h` (Bearer ADMIN_TOKEN)
+  → `by_stage` (avg/p95 per stage incl. `direct_*`), `by_intent`, and
+  `slow_samples[].stage_timings` (per-request split). Backed by
+  `messages.latency_ms` + `messages.stage_timings JSONB`.
 - **PROD CONFIG TO SET (recommended):** `COMPACT_REPLY_MODE=true` is very likely
   OFF — a colon breakdown reply ("Let's break it down: Arguments for a Big
   Dinner:") shipped, which the compact tiny-prompt mode structurally prevents AND

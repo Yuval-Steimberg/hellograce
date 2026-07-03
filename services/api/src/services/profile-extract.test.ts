@@ -37,11 +37,21 @@ describe('mightStateProfileChange (pre-filter)', () => {
     expect(mightStateProfileChange("I really don't like mushrooms")).toBe(true);
   });
 
+  it('fires on present/habitual injection-day statements (memory capture)', () => {
+    expect(mightStateProfileChange('my shot day is Saturday')).toBe(true);
+    expect(mightStateProfileChange('my injection is on Fridays')).toBe(true);
+    expect(mightStateProfileChange('I get my shot on Sundays')).toBe(true);
+    expect(mightStateProfileChange('I take my shot on Saturdays')).toBe(true);
+  });
+
   it('does NOT fire on ordinary food/question/emotion turns', () => {
     expect(mightStateProfileChange('I had 3 eggs for breakfast')).toBe(false);
     expect(mightStateProfileChange('what should I eat for lunch?')).toBe(false);
     expect(mightStateProfileChange('feeling really nauseous today')).toBe(false);
     expect(mightStateProfileChange('thanks, that helps!')).toBe(false);
+    // Not a durable statement — a timing QUESTION, or an unrelated "shot".
+    expect(mightStateProfileChange('when is my next shot?')).toBe(false);
+    expect(mightStateProfileChange('I had a shot of espresso on Saturday')).toBe(false);
   });
 
   it('ignores empty / oversized input', () => {

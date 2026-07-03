@@ -96,6 +96,11 @@ export function mightStateProfileChange(text: string): boolean {
   if (CHANGE_VERB.test(t) && PROFILE_NOUN.test(t)) return true;
   if (/\bmy (?:dose|goal weight|target weight|goal|timezone|time zone|wake[- ]?up time|bed ?time|injection day) (?:is|=|:)\b/i.test(t)) return true;
   if (/\bi (?:now |currently )?(?:inject|take my shot|do my shot) on\b/i.test(t)) return true;
+  // Present/habitual injection-day statements the patterns above miss (still
+  // NEVER past/abandoned — the extractor's own prompt guards that). e.g.
+  // "my shot day is Saturday", "my injection is on Fridays", "I get my shot on Sundays".
+  if (/\bmy (?:shot|injection|jab)(?: day)? (?:is|are) (?:on )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b/i.test(t)) return true;
+  if (/\bi (?:now |currently )?(?:get|have|do) my (?:shot|injection|jab) on\b/i.test(t)) return true;
   if (/\bi (?:really )?(?:don'?t (?:like|eat)|hate|can'?t stand)\b/i.test(t)) return true;
   return false;
 }
@@ -262,7 +267,7 @@ HARD RULES — when unsure, return null. A wrong write corrupts the profile; a m
 - NEVER infer a value that wasn't explicitly stated. Do not guess.
 - dose_mg: only the user's OWN current dose in mg (e.g. "my dose is 5mg now" → 5). Not a dose they're asking about.
 - goal_weight: the user's TARGET weight in lbs ("my goal is 160"). NOT their current weight.
-- injection_day: the weekday they take their weekly shot ("I inject on Fridays now" → "Friday").
+- injection_day: the weekday of their weekly shot, from a PRESENT/habitual statement ("I inject on Fridays now" → "Friday"; "my shot day is Saturday" → "Saturday"; "I get my shot on Sundays" → "Sunday"). NEVER from an abandoned past ("I used to inject Mondays" → null).
 - wake_time/sleep_time/medication_time: a clock time ("I wake at 6 now" → "06:00").
 - timezone: an IANA zone only if clearly stated/derivable ("I moved to California" is NOT enough → null).
 - food_dislikes: foods they say they dislike/won't eat ("I really don't like mushrooms" → ["mushrooms"]). Only NEW ones. NOT allergies phrased as medical ("I'm allergic to…") — leave those to medical handling → null.

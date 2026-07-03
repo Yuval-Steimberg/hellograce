@@ -12,9 +12,9 @@ _Also loaded automatically at session start. Update at the end of every session 
 ("Reply-quality war…"). It has the LIVE production config and the current
 debugging state. Do NOT re-derive context or start editing until you've read it.
 
-- **Latest commit on `main`: `603dd77`** (food-log never-drop for "I ate X …
-  <question>" + hunger acknowledgment, PR #164; prior: `13b2824` progressive
-  context-aware gathering PR #162; `9306d84`; work `113bb80`→`855d8de`).
+- **Latest commit on `main`: `2f989c3`** (latency: flash-lite for extraction
+  passes + history window 24→12, PR #166; prior: `603dd77` food-log never-drop
+  PR #164; `13b2824` progressive context-aware gathering PR #162; `9306d84`).
 - **Live prod config**: `directReplyMode: true`, `geminiFirst: true`,
   `trustGemini: true` → single Gemini call via `runDirectReply`, **regen guards
   OFF**. Reply quality = system prompt + outbound format floor + the new
@@ -29,6 +29,45 @@ debugging state. Do NOT re-derive context or start editing until you've read it.
   per-phrase patches; test after every change; don't break unrelated areas
   (reminders, images, logging). Develop on `claude/system-migration-process-dtkyp3`,
   merge to `main`, no PRs unless asked.
+
+---
+
+### Response latency — analysis + first cuts (2026-07-03, PR #166)
+
+Branch `claude/grace-progressive-data-collection-401n8m` → squash-merged to main
+(`2f989c3`). User asked why some replies are slow. **The live `directReplyMode`
+critical path is SERIAL LLM calls**, not one: for a food/profile message the
+reply waits on, in order — coalesce (2s, `webhook.ts`) → `tryLearnProfile`
+(profile-extract, awaited at `ai.service.ts:3607`) → `extractFood` (awaited
+~`:3055`) → the reply call (`:3259`, soft cap `DIRECT_REPLY_TIMEOUT_MS`=13s,
+provider hard cap `GEN_TIMEOUT_MS`=18s) → an optional 2nd reply call
+(`looksStructured` regen, `:3323`). Worst realistic case (food + profile stmt +
+structured reply) ≈ 43s; typical food ≈ 8s. Multipliers: provider retries
+800/1600/3200ms on 503/429 (`gemini.ts:271`); context cache disabled 10 min on a
+403 (`gemini.ts:123`); big history prompt. **Real per-stage data already exists**
+via `persistLatency(userId, intent, totalMs, stageTimings, …)` — read that before
+tuning further.
+
+**Shipped (latency-only, both env-revertible, graceful fallbacks — no behavior
+change):**
+1. The two SEQUENTIAL structured-JSON extraction passes (`food-extract`,
+   `profile-extract`) now use **`gemini-2.5-flash-lite`** (new env
+   `GEMINI_EXTRACT_MODEL`, default lite; revert = set it to `gemini-2.5-flash`).
+   Caps tightened 9s→5s (food) and 6s→3s (profile) — a slow tail degrades to the
+   existing never-drop / learn-nothing paths. A bad model id auto-falls back to
+   `GEMINI_FALLBACK_MODEL` in the provider, so extraction can't break.
+2. **`CONVERSATION_HISTORY_TURNS` default 24→12** (`env.ts`) — smaller reply
+   prompt, faster generation + fewer input tokens. Raise to 24 to restore.
+
+**Not yet done (proposed follow-ups, higher-risk/behavior trade):** (a) take
+`tryLearnProfile` OFF the critical path (fire-and-forget; the same-turn reply
+would use the pre-update value, next turn fresh) — removes up to 3s from
+profile-ish msgs; (b) confirm `COMPACT_REPLY_MODE`/`LEAN_REPLY_MODE` on so the
+`looksStructured` regen 2nd call rarely fires; (c) verify context caching is
+actually live in prod (grep logs for the `cachedContents` 403 → 10-min disable).
+
+Tests: 1596 api + 654 ai-core green; typecheck clean. **Deploy: standard `fly
+deploy` — no migration.**
 
 ---
 

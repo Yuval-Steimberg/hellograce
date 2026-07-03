@@ -734,8 +734,15 @@ export class Scheduler {
     if (this.deps.memory) {
       try {
         const turns = await this.deps.memory.getRecentTurns(user.phone, 10);
+        // Exclude food logs / food questions from the "follow up on a topic"
+        // context: a proactive reminder's food angle comes from the REAL totals
+        // (yesterdayFood/todayFood), so a past meal must never leak in here and
+        // get framed as today's food ("that salmon sounds like a great start to
+        // the day" — production 2026-07-02). Symptoms/feelings/goals still pass.
+        const FOOD_MSG_RE = /\b(i\s+(?:ate|had|grabbed|made|drank|got)|just\s+(?:ate|had)|for\s+(?:breakfast|lunch|dinner|a\s+snack)|how\s+much\s+protein|how\s+many\s+calories|what\s+should\s+i\s+(?:eat|make|have|cook))\b/i;
         const userMsgs = turns
           .filter((t) => t.role === 'user' && t.content && t.content.trim().length > 1)
+          .filter((t) => !FOOD_MSG_RE.test(t.content))
           .slice(-5)
           .map((t) => t.content.trim().replace(/\s+/g, ' ').slice(0, 140));
         if (userMsgs.length > 0) enriched.conversationContext = userMsgs;

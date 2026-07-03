@@ -659,7 +659,7 @@ export class MessageGenerator {
     // and must still obey DATA ACCURACY (no fabricated numbers/symptoms).
     const convo = (opts?.conversationContext ?? []).filter((m) => m && m.trim().length > 0).slice(-5);
     const CONVO_CONTEXT = convo.length > 0
-      ? `\nRECENT CONVERSATION (the user's own recent messages — most recent last):\n${convo.map((m) => `- "${m.slice(0, 140)}"`).join('\n')}\nIf ONE of these is clearly worth a gentle follow-up (a symptom they mentioned, a goal, something they were working on), you MAY reference it naturally — but only if it genuinely fits, and NEVER invent details beyond what they said. Otherwise ignore it and send a normal reminder.\n`
+      ? `\nRECENT CONVERSATION (the user's own recent messages — most recent last):\n${convo.map((m) => `- "${m.slice(0, 140)}"`).join('\n')}\nYou MAY gently follow up on ONE of these ONLY if it's a symptom, a feeling, a goal, or something they were working on — and only if it genuinely fits. NEVER reference a specific food or meal they mentioned as if it were TODAY's meal, this morning's breakfast, or "a good start to the day" — a meal they logged is in the PAST, not what they're eating now (e.g. do NOT say "that salmon sounds like a great start to the day"). NEVER invent details beyond what they said. If nothing clearly fits, ignore this and send a normal reminder.\n`
       : '';
 
     const base = `Write the next short proactive SMS from Grace to this user. Output ONLY the message text.\n${VARIATION_BLOCK}\n\n${RULES}\n${ANTI_REPEAT}${CONVO_CONTEXT}\n`;

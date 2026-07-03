@@ -4675,6 +4675,25 @@ CRITICAL RULES:
         { userId: input.userId, textPreview: input.text.slice(0, 60) },
         'ai.handle.multi_topic_history_dropped',
       );
+    } else if (
+      // SUBSTANTIVE STANDALONE message (2026-07-02): a full-thought message
+      // (≥8 words) that is NOT a short follow-up and does NOT explicitly refer
+      // back ("earlier", "you said", "that one") stands on its own. Handing it a
+      // deep transcript lets Gemini answer a PREVIOUS, clearer question instead
+      // — production: "I'm eating at my friend's Friday night…" got a salmon
+      // protein estimate from an earlier turn. Keep ONLY the immediately-prior
+      // exchange for tone continuity; drop older topics so they can't bleed in.
+      (() => {
+        const words = input.text.trim().split(/\s+/).filter(Boolean).length;
+        const backRef = /\b(earlier|before|you said|you mentioned|i mentioned|that one|the one|last time|you told me|like i said|as i said|you asked|we talked|the (?:salmon|chicken|meal|dinner|lunch) (?:i|you))\b/i.test(input.text);
+        return words >= 8 && !backRef && !isRecommendationFollowUp(input.text);
+      })()
+    ) {
+      effectiveHistory = history.slice(-2);
+      logger.info(
+        { userId: input.userId, textPreview: input.text.slice(0, 60) },
+        'ai.handle.standalone_history_trimmed',
+      );
     } else if (isolateFoodLog) {
       // Strip all prior Grace replies: the food-log response should NOT be
       // anchored to a prior dinner/recommendation thread. Only user turns are

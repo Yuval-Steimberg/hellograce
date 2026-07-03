@@ -11,6 +11,9 @@ describe('looksStructured — general reply-shape guard (any words/variation)', 
     'For Friday night: Option 1: sheet pan dinner, Option 2: homemade pizza.',
     "That's a common challenge. Here's a strategy broken down into steps: Before You Go (The Pre-Game) 1.",
     '- Greek yogurt\n- eggs\n- chicken',
+    // Prod: chained heading-colons with apostrophe labels ("Let's"/"You're")
+    // that the strict label test misses.
+    "That's a very common dilemma. Let's break it down: Arguments for a Big Dinner: You're probably hungry: Skipping lunch means your body went without fuel.",
   ];
   const PLAIN = [
     'So glad that sat well. Salmon with potatoes and salad is about 30g protein, and a Greek yogurt later would round it out.',

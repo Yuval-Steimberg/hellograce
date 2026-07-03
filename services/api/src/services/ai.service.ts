@@ -152,6 +152,19 @@ function stripLeakedNotes(text: string): string {
 const REFLECTION_MARKER_RE =
   /\b(i feel|i'?m feeling|feeling|struggl\w*|transition|realiz\w*|honestly|it'?s so much|easier not to|tend to|these days|lately|all the time|i think i|i guess|overwhelm\w*|stress\w*|anxious|lonely|bored|sad|frustrat\w*|adjust\w*|routine)\b/i;
 
+// Deterministic signals that the food EXTRACTION LLM pass could actually do
+// something beyond logging a named food: a diary query to answer, or a
+// delete/edit to apply. Used (with namesSpecificFood / foodSpanFromConsumption /
+// pending) to skip the ~1.5s extraction call on a pure recommendation/planning
+// question ("should I eat a big or small dinner?") that has nothing to extract.
+// Conservative: if a delete/edit/query is phrased oddly and misses these, the
+// call simply still runs on the food_log/food_question intents it always did —
+// so the guard can only SKIP a genuine no-op, never drop a real action.
+const FOOD_DIARY_QUERY_RE =
+  /\b(what (?:did|have) i (?:eat|ate|had|log|logged)|what'?s my (?:protein|calorie|calories)|how (?:much|many) (?:protein|calories?) (?:do i|have i|did i|i have|is|are|left|today|so far|remaining)|my (?:protein|calorie|calories) (?:today|so far|total|count|goal|left|remaining)|(?:food|meal) (?:log|diary|summary))\b/i;
+const FOOD_MUTATION_RE =
+  /\b(remove|delete|undo|scratch that|take (?:that|it|the)\b|didn'?t (?:actually |really )?(?:eat|have|mean)|make it|change (?:it|that) to|actually (?:it was|that was|only|just)|correct(?:ion)?|not \d)\b/i;
+
 // Split a multi-part question ("can I drink alcohol AND how much protein AND why
 // is my weight") into its parts so the reply can be told to answer EVERY one.
 // Only fires on a question-shaped message with a conjunction or multiple "?",
@@ -3047,8 +3060,24 @@ CRITICAL RULES:
       // A clear "I ate X" also forces the food path even when the classifier
       // tagged the whole message something else (e.g. it leads with a question),
       // so a real consumption is never skipped before the extractor/backstop run.
-      const foodish = !params.mediaPresent && (params.intent === 'food_log' || params.intent === 'food_question'
-        || pending.length > 0 || foodSpanFromConsumption(params.rawUserText) != null);
+      const consumptionSpanPre = foodSpanFromConsumption(params.rawUserText);
+      // LATENCY: only pay for the (LLM) extraction pass when it could actually DO
+      // something — a specific food to log, a consumption to log, a pending item
+      // to resolve, a diary query to answer, or a delete/edit to apply. A pure
+      // recommendation/planning question ("should I eat a big or small dinner?")
+      // has nothing to extract, so skip the ~1.5s call and let the reply answer
+      // directly. Guards are deterministic, so a delete/edit/query is never
+      // skipped just because it names no food.
+      const foodActionable =
+        namesSpecificFood(params.rawUserText)
+        || consumptionSpanPre != null
+        || pending.length > 0
+        || FOOD_DIARY_QUERY_RE.test(params.rawUserText)
+        || FOOD_MUTATION_RE.test(params.rawUserText);
+      const foodish = !params.mediaPresent
+        && (params.intent === 'food_log' || params.intent === 'food_question'
+            || pending.length > 0 || consumptionSpanPre != null)
+        && foodActionable;
       if (foodish) {
         // Cap the extraction so a slow call can't stack onto the reply call and
         // make the turn look "stuck". On timeout we fall through to the
@@ -5971,6 +6000,13 @@ export function looksStructured(text: string): boolean {
   // Capitalized, ≤34 chars, no apostrophe (so "Here's …" / prose isn't counted).
   const labelHits = (t.match(/(?:^|[.,:!?]\s+)[A-Z][A-Za-z0-9 &/-]{1,34}:\s/g) ?? []).length;
   if (labelHits >= 2) return true;
+  // Chained heading-style colons ("Let's break it down: Arguments for a Big
+  // Dinner: You're probably hungry:") — a breakdown even when the labels contain
+  // apostrophes/words the strict test above skips. ≥2 "word: Capital" segments
+  // reads as a mini-report, not prose. (Prod: this exact shape shipped because
+  // "Let's"/"You're" aren't clean labels.)
+  const headingColons = (t.match(/\w:\s+[A-Z]/g) ?? []).length;
+  if (headingColons >= 2) return true;
   // Bullet / numbered list markers at a line start.
   if (/(?:^|\n)\s*(?:[-*•]|\d+[.)])\s/.test(t)) return true;
   // An inline numbered list item ("… 1. Do this" / "step 2) …").

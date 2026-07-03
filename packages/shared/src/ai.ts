@@ -149,6 +149,13 @@ export interface OrchestratorOutput {
     regen?: number;
     /** Whether thinking was disabled on the initial call. */
     thinkingDisabled?: boolean;
+    // ── Direct-reply path (runDirectReply) stage timings (ms) ──────────────────
+    /** Food/weight structured extraction LLM pass (0 when skipped). */
+    directExtract?: number;
+    /** The single user-facing reply LLM call. */
+    directReply?: number;
+    /** The shape-guard regeneration LLM call (0 when not triggered). */
+    directRegen?: number;
   };
 }
 

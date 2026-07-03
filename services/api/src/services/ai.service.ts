@@ -3032,6 +3032,10 @@ CRITICAL RULES:
     // with the short aggregated summary (correct totals, one line) — not a
     // free-form LLM ramble. Set here, returned before the reply call.
     let earlyReply = '';
+    // Per-stage latency (ms) — surfaced via internalTimings → messages.stage_timings
+    // so /admin/latency can break down a direct/multi-part reply into extract vs
+    // reply vs shape-regen. Measurement only; 0 means the stage didn't run.
+    let extractMs = 0, replyMs = 0, regenMs = 0;
 
     // 1) Logging side-effect — the reply stays pure Gemini, but food/weight is
     //    persisted so totals are correct. Food uses the Nudge-style structured
@@ -3084,6 +3088,7 @@ CRITICAL RULES:
         // never-drop logger (a confident food_log still persists). 5s is ample
         // for the flash-lite JSON pass (typically ~1-2s); a slow tail degrades
         // to the deterministic backstop rather than blocking the reply.
+        const extractStart = Date.now();
         const extraction = await Promise.race<FoodExtraction>([
           extractFood(this.deps.llm, params.logger, params.rawUserText, pending.map((p) => ({ item: p.item }))),
           new Promise<FoodExtraction>((resolve) => setTimeout(() => {
@@ -3091,6 +3096,7 @@ CRITICAL RULES:
             resolve({ ...EMPTY_EXTRACTION });
           }, 5000)),
         ]);
+        extractMs = Date.now() - extractStart;
 
         if (extraction.intent === 'delete' && extraction.edit_ref && params.tools.has('remove_food')) {
           const r = await params.tools.execute({ name: 'remove_food', args: { food: extraction.edit_ref } }).catch(() => null);
@@ -3225,6 +3231,7 @@ CRITICAL RULES:
         toolResults,
         usedRetrieval: false,
         latencyMs: Date.now() - t0,
+        internalTimings: { directExtract: extractMs, directReply: 0, directRegen: 0 },
       };
     }
 
@@ -3293,6 +3300,7 @@ CRITICAL RULES:
       // (foodFallback or a warm generic) fires fast instead of the user waiting
       // out the full upstream ceiling. Fail-open: a slow-but-fine answer is
       // traded for a fast safe one, never silence.
+      const replyStart = Date.now();
       const resp = await Promise.race([
         this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: isLogTurn ? 200 : 500, disableThinking: true }),
         new Promise<{ text: string } | null>((resolve) => setTimeout(() => {
@@ -3300,6 +3308,7 @@ CRITICAL RULES:
           resolve(null);
         }, DIRECT_REPLY_TIMEOUT_MS)),
       ]);
+      replyMs = Date.now() - replyStart;
       text = (resp?.text ?? '').trim();
     } catch (err) {
       params.logger.error({ err: err instanceof Error ? err.message : String(err) }, 'ai.direct.generate.error');
@@ -3358,6 +3367,7 @@ CRITICAL RULES:
         try {
           const hardSystem =
             `You are Grace, a warm GLP-1 text companion. Reply to the user's message as ONE natural iMessage: 1 to 3 short sentences of plain prose, like texting a friend. ABSOLUTELY FORBIDDEN: headings, titles, "Label:" breakdowns, bullet points, numbered lists, "Option 1/2", and ANY preamble ("here's", "let's break down", "estimating…", "that sounds like…"). Answer EVERY part of their message directly; for a food give a quick number or range and what to have next if they asked. Just talk to them.`;
+          const regenStart = Date.now();
           const regen = await Promise.race([
             this.deps.llm.generate({
               messages: [
@@ -3370,6 +3380,7 @@ CRITICAL RULES:
             }),
             new Promise<{ text: string } | null>((resolve) => setTimeout(() => resolve(null), DIRECT_REPLY_TIMEOUT_MS)),
           ]);
+          regenMs = Date.now() - regenStart;
           let regenText = (regen?.text ?? '').trim();
           if (regenText) {
             try {
@@ -3421,7 +3432,7 @@ CRITICAL RULES:
     } catch { /* never block the reply on a checker error */ }
 
     params.logger.info(
-      { userId: params.userId, intent: params.intent, latencyMs: Date.now() - t0, replyLen: text.length, logged: toolResults.length > 0 },
+      { userId: params.userId, intent: params.intent, latencyMs: Date.now() - t0, extractMs, replyMs, regenMs, replyLen: text.length, logged: toolResults.length > 0 },
       'ai.direct.reply',
     );
 
@@ -3433,6 +3444,7 @@ CRITICAL RULES:
       usedRetrieval: false,
       latencyMs: Date.now() - t0,
       usedSafeFallback,
+      internalTimings: { directExtract: extractMs, directReply: replyMs, directRegen: regenMs },
     };
   }
 
@@ -5062,6 +5074,17 @@ CRITICAL RULES:
     // the parallel guards, or the regen path.
     if (result.internalTimings) {
       const it = result.internalTimings;
+      // Direct/multi-part path stages — so /admin/latency shows where a direct
+      // reply's time goes (extract vs reply vs shape-regen), not one opaque blob.
+      if (typeof it.directExtract === 'number' && it.directExtract > 0) {
+        stageTimings['direct_extract'] = it.directExtract;
+      }
+      if (typeof it.directReply === 'number' && it.directReply > 0) {
+        stageTimings['direct_reply'] = it.directReply;
+      }
+      if (typeof it.directRegen === 'number' && it.directRegen > 0) {
+        stageTimings['direct_regen'] = it.directRegen;
+      }
       if (typeof it.tools === 'number' && it.tools > 0) {
         stageTimings['orch_tools'] = it.tools;
       }

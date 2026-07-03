@@ -12,8 +12,9 @@ _Also loaded automatically at session start. Update at the end of every session 
 ("Reply-quality war…"). It has the LIVE production config and the current
 debugging state. Do NOT re-derive context or start editing until you've read it.
 
-- **Latest commit on `main`: `13b2824`** (progressive context-aware gathering,
-  PR #162; prior: `9306d84`, work commits `113bb80`→`855d8de`).
+- **Latest commit on `main`: `603dd77`** (food-log never-drop for "I ate X …
+  <question>" + hunger acknowledgment, PR #164; prior: `13b2824` progressive
+  context-aware gathering PR #162; `9306d84`; work `113bb80`→`855d8de`).
 - **Live prod config**: `directReplyMode: true`, `geminiFirst: true`,
   `trustGemini: true` → single Gemini call via `runDirectReply`, **regen guards
   OFF**. Reply quality = system prompt + outbound format floor + the new
@@ -28,6 +29,49 @@ debugging state. Do NOT re-derive context or start editing until you've read it.
   per-phrase patches; test after every change; don't break unrelated areas
   (reminders, images, logging). Develop on `claude/system-migration-process-dtkyp3`,
   merge to `main`, no PRs unless asked.
+
+---
+
+### Food-log never-drop for "I ate X … <question>" + hunger (2026-07-03, PR #164)
+
+Branch `claude/grace-progressive-data-collection-401n8m` → squash-merged to main
+(`603dd77`). Two prod bugs from real iMessage screenshots.
+
+1. **"I had salmon with potatoes and salad. How much protein is that, and what
+   should I eat later?" was answered but NEVER logged** (dashboard showed only
+   yogurt). Root cause: the single-intent `food-extract` returns `none`/`query`
+   when a consumption message ALSO asks a question, and the classifier tags the
+   whole thing `food_question`, so the existing never-drop (which only fired for
+   `params.intent === 'food_log'`) never ran → silent drop.
+   - **`food-extract.ts` prompt** — a consumption statement ("I had/ate/drank X")
+     is LOGGED even when the same message also asks a question; only food NOT yet
+     eaten stays unlogged. Added the salmon example; scoped the advice/planning
+     bullet so it can't cancel a real intake in the same message.
+   - **`meal-lifecycle.foodSpanFromConsumption(text)`** (NEW, pure, +7 tests) —
+     deterministic backstop: when the message confirms eating AND names a real
+     food, returns JUST the eaten-food span with the trailing question/planning
+     clause sliced off (cut at earliest of first `.`/`!`/`?` or a QUESTION_TAIL_RE
+     clause). Null for pure questions, preference/planning, negated eating,
+     non-food. Requires `mentionsFood`, so the reflection guard still holds.
+   - **`ai.service.runDirectReply`** — (a) `foodish` now also true when
+     `foodSpanFromConsumption` matches, so a consumption forces the food path even
+     if the classifier tagged it otherwise; (b) the old `food_log`-only never-drop
+     `else if` chain became one `else` that logs `consumptionSpan ?? rawText`
+     (never-drop) and only renders the diary-summary for a pure `query` with NO
+     consumption span. logNote now also tells Gemini to still answer the question.
+2. **"I ate yogurt … now I'm a little hungry. Any snack idea?" got a bare snack
+   list** — ignored the hunger. `message-understanding` now recognizes plain
+   hunger ("a little hungry", "still hungry", "starving"; negated hunger excluded
+   via lookbehind) as an APPETITE note, and the multi-part note leads with any
+   feeling OR physical state (hungry/tired/stressed) before answering. +1
+   multi-topic test (the exact yogurt message → food+craving+food_question).
+
+**NOT chased:** the dashboard's double yogurt. `log_food` already has a 60s
+`dedupe_key`, so that's consistent with two separate turns, not a single-message
+double-log; not reproducible from the screenshots → left alone.
+
+Tests: 1596 api + 654 ai-core green; `pnpm -r typecheck` clean. **Deploy: standard
+`fly deploy` — no migration.**
 
 ---
 

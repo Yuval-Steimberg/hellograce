@@ -64,6 +64,14 @@ const EnvSchema = z.object({
    *  even after retries. Kept on the known-good 2.5-flash so any primary
    *  outage / unavailable id / empty-completion always has a working fallback. */
   GEMINI_FALLBACK_MODEL: z.string().default('gemini-2.5-flash'),
+  /** Model for the internal STRUCTURED extraction passes (food-extract,
+   *  profile-extract) — JSON classification, not user-facing prose, so the
+   *  faster/cheaper flash-lite is ideal (same choice the critic + behavioral
+   *  guard already make). Latency-only: if this id is ever unavailable the
+   *  provider's 404 handler falls back to GEMINI_FALLBACK_MODEL automatically,
+   *  so a bad value degrades gracefully rather than breaking extraction.
+   *  Instant revert to the prior behavior: set GEMINI_EXTRACT_MODEL=gemini-2.5-flash. */
+  GEMINI_EXTRACT_MODEL: z.string().default('gemini-2.5-flash-lite'),
 
   RAG_ENABLED: z
     .string()
@@ -170,9 +178,12 @@ const EnvSchema = z.object({
    *  continuity). Default 12 (was 6 — doubled now that the anchoring guards
    *  — relevance check, topic-closer history stripping, "answer THIS message"
    *  focus markers — make a larger window safe). Tunable up to 40 without a
-   *  deploy: more context = better understanding at a small latency/token cost
-   *  (accuracy is prioritized over latency). */
-  CONVERSATION_HISTORY_TURNS: z.coerce.number().int().min(4).max(40).default(24),
+   *  deploy: more context = better understanding at a small latency/token cost.
+   *  Default is 12 — a smaller reply prompt generates faster and costs fewer
+   *  input tokens; raise it (e.g. 24) if long-range context matters more than
+   *  latency for your traffic. Instantly tunable via the env/Fly secret, no code
+   *  change. */
+  CONVERSATION_HISTORY_TURNS: z.coerce.number().int().min(4).max(40).default(12),
 
   /** Master kill switch for the self-improvement / background optimizer crons:
    *  the RLHF prompt optimizer (weekly), behavioral anomaly detector (nightly),

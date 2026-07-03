@@ -3051,13 +3051,15 @@ CRITICAL RULES:
       if (foodish) {
         // Cap the extraction so a slow call can't stack onto the reply call and
         // make the turn look "stuck". On timeout we fall through to the
-        // never-drop logger (a confident food_log still persists).
+        // never-drop logger (a confident food_log still persists). 5s is ample
+        // for the flash-lite JSON pass (typically ~1-2s); a slow tail degrades
+        // to the deterministic backstop rather than blocking the reply.
         const extraction = await Promise.race<FoodExtraction>([
           extractFood(this.deps.llm, params.logger, params.rawUserText, pending.map((p) => ({ item: p.item }))),
           new Promise<FoodExtraction>((resolve) => setTimeout(() => {
             params.logger.warn({ userId: params.userId }, 'food_extract.timeout');
             resolve({ ...EMPTY_EXTRACTION });
-          }, 9000)),
+          }, 5000)),
         ]);
 
         if (extraction.intent === 'delete' && extraction.edit_ref && params.tools.has('remove_food')) {
@@ -3586,7 +3588,7 @@ CRITICAL RULES:
       users.getById(input.userId).catch(() => null),
       conversationPromise,
       users.isNewUser(input.userId).catch(() => false),
-      memory.getRecentTurns(input.userId, this.deps.historyTurns ?? 24).catch(() => [] as ChatTurn[]),
+      memory.getRecentTurns(input.userId, this.deps.historyTurns ?? 12).catch(() => [] as ChatTurn[]),
       flags.toolsEnabled ? this.loadToolSettings() : Promise.resolve({} as Record<string, boolean>),
       mediaPromise,
       users.getTodaysFoodSummary(input.userId).catch(() => ({ protein_g: 0, calories: 0, items: [] })),
@@ -5820,10 +5822,11 @@ CRITICAL RULES:
     };
 
     // Cap the extra call so a slow extraction can't stall the reply; on timeout
-    // we simply learn nothing this turn.
+    // we simply learn nothing this turn (a harmless no-op — the next turn tries
+    // again). 3s is ample for the flash-lite JSON pass.
     const updates = await Promise.race<ProfileUpdates>([
       extractProfileUpdates(this.deps.llm, logger, input.text, current),
-      new Promise<ProfileUpdates>((resolve) => setTimeout(() => resolve({}), 6000)),
+      new Promise<ProfileUpdates>((resolve) => setTimeout(() => resolve({}), 3000)),
     ]).catch(() => ({} as ProfileUpdates));
 
     const fields = Object.keys(updates);

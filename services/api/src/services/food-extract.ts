@@ -16,6 +16,10 @@
 import type { LLMProvider } from '@grace/shared';
 import type { Logger } from 'pino';
 
+/** Model for the structured extraction pass. flash-lite is markedly faster than
+ *  flash for JSON classification; overridable/revertible via GEMINI_EXTRACT_MODEL. */
+const EXTRACT_MODEL = process.env.GEMINI_EXTRACT_MODEL || 'gemini-2.5-flash-lite';
+
 export interface ExtractedFoodItem {
   item: string;
   protein_g: number | null;
@@ -187,6 +191,11 @@ export async function extractFood(
         { role: 'system', content: system },
         { role: 'user', content: userMessage },
       ],
+      // Structured JSON classification (not user-facing prose) → the faster
+      // flash-lite is ideal. Latency-only; a bad/unavailable id falls back to
+      // GEMINI_FALLBACK_MODEL via the provider's 404 handler, so extraction
+      // never breaks. Revert with GEMINI_EXTRACT_MODEL=gemini-2.5-flash.
+      model: EXTRACT_MODEL,
       temperature: 0.1,
       maxOutputTokens: 400,
       responseFormat: 'json',

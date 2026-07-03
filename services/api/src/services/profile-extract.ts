@@ -35,6 +35,11 @@ import type { Logger } from 'pino';
 /** Kill-switch. Enabled by default; set PROFILE_LEARNING_ENABLED=false to disable. */
 export const PROFILE_LEARNING_ENABLED = process.env.PROFILE_LEARNING_ENABLED !== 'false';
 
+/** Model for this structured extraction pass. flash-lite is faster for JSON
+ *  classification; revertible via GEMINI_EXTRACT_MODEL. A bad/unavailable id
+ *  falls back to GEMINI_FALLBACK_MODEL in the provider, so learning never breaks. */
+const EXTRACT_MODEL = process.env.GEMINI_EXTRACT_MODEL || 'gemini-2.5-flash-lite';
+
 /** The subset of user fields we will learn from conversation. All keys are real
  *  `users` columns; values are already normalized to the stored format. */
 export interface ProfileUpdates {
@@ -346,6 +351,7 @@ export async function extractProfileUpdates(
         { role: 'system', content: system },
         { role: 'user', content: userMessage },
       ],
+      model: EXTRACT_MODEL,
       temperature: 0,
       maxOutputTokens: 250,
       responseFormat: 'json',

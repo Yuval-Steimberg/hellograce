@@ -510,6 +510,13 @@ import {
   type ProfileUpdates,
 } from './profile-extract.js';
 import { GRACE_VOICE_ENABLED, GRACE_VOICE_BRIEF, voiceSuffix } from './voice.js';
+import { resolveTemporalContext, buildTemporalContextBlock } from './temporal-context.js';
+import {
+  detectInjectionTimingIntent,
+  computeInjectionSchedule,
+  buildInjectionTimingReply,
+  buildScheduleFactLine,
+} from './medication-schedule.js';
 import {
   detectReminderIntent,
   buildNextReminderReply,
@@ -1201,6 +1208,43 @@ export class AIService {
             this.deps.logger.warn(
               { err: err instanceof Error ? err.message : String(err) },
               'ai.reminder_query.error',
+            );
+            // Fall through to the normal pipeline rather than drop the turn.
+          }
+        }
+      }
+
+      // ── Injection / dose timing → deterministic answer (2026-07-03) ──────
+      // "When is my next injection/dose/shot?", "when was my last shot?", "is
+      // today my shot day?", "how many days until my dose?" — one deterministic,
+      // cadence-aware answer from injection_day + medication, computed with the
+      // user's real timezone. Fixes the prod failure where the SAME fact hit three
+      // paths: a right answer ("in 4 days"), a wrong explanation (weight math), and
+      // a flat denial ("I can't tell you when your next injection is"). Never
+      // denies; if the day is unknown it ASKS. Placed alongside the reminder
+      // intercept so all timing questions resolve deterministically.
+      {
+        const injIntent = detectInjectionTimingIntent(input.text);
+        if (injIntent) {
+          try {
+            const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+            const medName = user?.medication && !isEncryptedBlob(user.medication) ? user.medication : null;
+            const sched = computeInjectionSchedule({
+              medicationType: inferMedicationType(medName),
+              medicationName: medName,
+              injectionDay: user?.injection_day ?? null,
+              timezone: user?.timezone ?? null,
+            });
+            const settingsUrl = 'https://graceglp.com/settings'; // rewritten by TwilioSender
+            const reply = buildInjectionTimingReply(injIntent, sched, medName, settingsUrl);
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info({ userId: input.userId, injIntent, knowsSchedule: sched.knowsSchedule }, 'ai.injection_timing.served');
+            this.persistLatency(input.userId, `injection_${injIntent}`, totalMs, lat.snapshot(), input.text, reply);
+            return { text: reply, confidence: 'high', intent: `injection_${injIntent}`, toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+          } catch (err) {
+            this.deps.logger.warn(
+              { err: err instanceof Error ? err.message : String(err) },
+              'ai.injection_timing.error',
             );
             // Fall through to the normal pipeline rather than drop the turn.
           }
@@ -5459,8 +5503,11 @@ CRITICAL RULES:
     if (diet) facts.push(`They follow a ${diet} diet — never suggest a food that breaks it.`);
     if (opts.dislikes && opts.dislikes.length > 0) facts.push(`They dislike/avoid: ${opts.dislikes.join(', ')} — never suggest these.`);
     const factBlock = facts.length > 0 ? `\n\nWhat you know about them:\n- ${facts.join('\n- ')}` : '';
+    // Even the tiny compact prompt must carry the authoritative date/time, or the
+    // model invents one (prod: "May 14, 2024") and claims real-time access.
+    const temporalBlock = `\n\n${buildTemporalContextBlock(user?.timezone, new Date())}`;
     return (
-      `You are Grace, a warm, concise companion for someone on a GLP-1 medication, texting them over iMessage/WhatsApp. You sound like a caring friend who happens to know nutrition — short, natural, specific, never clinical.${factBlock}\n\n` +
+      `You are Grace, a warm, concise companion for someone on a GLP-1 medication, texting them over iMessage/WhatsApp. You sound like a caring friend who happens to know nutrition — short, natural, specific, never clinical.${factBlock}${temporalBlock}\n\n` +
       `HOW YOU REPLY, every single time:\n` +
       `- Answer their latest message directly. Lead with the answer. 1 to 3 short sentences, like a real text.\n` +
       `- If they said several things in one message, answer ALL of them briefly, in one flowing reply — react to any feeling first, then the rest.\n` +
@@ -5509,32 +5556,19 @@ CRITICAL RULES:
     if (user) {
       lines.push('━━━ THIS USER\'S DATA (background only — do NOT dump into responses) ━━━');
       lines.push('RULE: 1) Answer the user\'s CURRENT message FIRST and ONLY. 2) Only reference data below if the user\'s message is specifically about that topic. 3) NEVER volunteer unrelated facts (injection site when they ask about fatigue, protein when they share emotions, weight when they ask about food). 4) If data is missing, do NOT invent it.');
-      // Time-of-day and weekday awareness — always in user-local timezone, never UTC.
+      // Full temporal grounding — the single authoritative source of the current
+      // date/time for THIS user, so the model can never hallucinate the date
+      // (prod bug: "Today is Tuesday, May 14, 2024") or claim real-time access.
+      // Always user-local; falls back safely on a bad timezone.
       const WEEK_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      let localWeekday = '';
-      let localTodayIdx = new Date().getDay(); // fallback: UTC (used only for injection day)
-      try {
-        const tz = user.timezone || 'America/New_York';
-        const parts = new Intl.DateTimeFormat('en-US', {
-          timeZone: tz, weekday: 'long', hour: '2-digit', hour12: false,
-        }).formatToParts(new Date());
-        localWeekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
-        const hour = parseInt(parts.find((p) => p.type === 'hour')?.value ?? '0', 10);
-        const timeOfDay = hour < 5 ? 'night' : hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night';
-        if (localWeekday) {
-          lines.push(`Today is: ${localWeekday}`);
-          // Use the user-local weekday for all day-of-week calculations so that
-          // midnight-boundary users (e.g. West Coast at 11pm = UTC next day) see the right day.
-          localTodayIdx = WEEK_DAYS.indexOf(localWeekday);
-          if (localTodayIdx === -1) localTodayIdx = new Date().getDay();
-        }
-        lines.push(`Time of day for this user right now: ${timeOfDay}`);
-        // Scope food recs to the current meal, not a whole-day rundown, unless
-        // the user names a meal or asks for a full-day plan (2026-07-02).
-        lines.push('FOOD TIMING: when suggesting what to eat and the user has NOT named a meal or asked for a full-day plan, recommend options for the CURRENT meal that fits the time of day above (morning → breakfast, midday → lunch, evening → dinner, late night → a light snack). Do NOT lay out a full breakfast-lunch-dinner day.');
-      } catch {
-        // Fall back silently if timezone is malformed.
-      }
+      const nowForCtx = new Date();
+      const temporal = resolveTemporalContext(user.timezone, nowForCtx);
+      // Used downstream for day-of-week (e.g. injection day) math.
+      const localTodayIdx = temporal.weekdayIndex >= 0 ? temporal.weekdayIndex : nowForCtx.getDay();
+      lines.push(buildTemporalContextBlock(user.timezone, nowForCtx));
+      // Scope food recs to the current meal, not a whole-day rundown, unless
+      // the user names a meal or asks for a full-day plan (2026-07-02).
+      lines.push('FOOD TIMING: when suggesting what to eat and the user has NOT named a meal or asked for a full-day plan, recommend options for the CURRENT meal that fits the time of day above (morning → breakfast, midday → lunch, evening → dinner, late night → a light snack). Do NOT lay out a full breakfast-lunch-dinner day.');
 
       // Conversation-gap signal — prevents Grace from referencing stale topics
       // or repeating old responses after silence or downtime.
@@ -5575,6 +5609,21 @@ CRITICAL RULES:
           else injStatus = `in ${diff} days (${user.injection_day})`;
         }
         lines.push(`INJECTION DAY STATUS: ${injStatus}`);
+      }
+      // Cadence-aware schedule fact (concrete next/last dates + a hard "never deny"
+      // instruction) so ANY injection/dose-timing phrasing the model handles is
+      // grounded and can't fall back to the capability denial seen in prod.
+      {
+        const schedFact = buildScheduleFactLine(
+          computeInjectionSchedule({
+            medicationType: inferMedicationType(user.medication),
+            medicationName: user.medication,
+            injectionDay: user.injection_day ?? null,
+            timezone: user.timezone ?? null,
+          }, nowForCtx),
+          user.medication,
+        );
+        if (schedFact) lines.push(schedFact);
       }
       if (user.starting_weight) {
         lines.push(`Starting weight: ${user.starting_weight} lbs`);

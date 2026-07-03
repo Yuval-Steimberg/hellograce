@@ -826,6 +826,18 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boo
   { pattern: /\bi (can'?t|cannot) initiate (messages?|texts?|conversations?|reminders?)\b/i, reason: '"I can\'t initiate messages" — capability denial, banned' },
   { pattern: /\binitiate (a )?(messages?|texts?|conversations?) (at a future time|in the future|on my own|proactively)\b/i, reason: '"initiate messages at a future time" — exposes scheduler internals, banned' },
 
+  // Injection / dose / schedule capability denial — Grace KNOWS the user's
+  // injection day + medication (they're in the profile) and computes the next
+  // dose deterministically. Denying it (prod: "I cannot tell you when your next
+  // injection is") is wrong; answer from the schedule or ask for the missing day.
+  { pattern: /\bi (can'?t|cannot|am unable to|am not able to) (tell|say|give)( you)?( when)?( your)?( next)? (injection|shot|dose|dosing)\b/i, reason: 'capability denial about injection/dose timing — Grace computes it from injection_day; answer or ask for the day, never deny' },
+  { pattern: /\bi (don'?t|do not) have access to (your )?(personal )?(medical records?|treatment plan|health records?|medical information)\b/i, reason: '"I don\'t have access to your medical records/treatment plan" — deflection; Grace has the profile (medication, injection day), answer from it' },
+  // False real-time claim — Grace is NOT live; the date/time comes from the
+  // injected context. Claiming "real-time" both lies and, paired with a wrong
+  // date, doubles down on the error (prod: "I have access to real-time information").
+  { pattern: /\bi (have|'ve got) (access to )?real[- ]?time (information|data|access|updates?)\b/i, reason: 'false "real-time information" claim — Grace is not live; use the provided date/time, never claim real-time access' },
+  { pattern: /\bi (can|am able to) access real[- ]?time\b/i, reason: 'false real-time-access claim, banned' },
+
   // Data-access denial — Grace HAS the user's logged data (food, weight, mood,
   // medication, history). Denying access to their own diary/log/data is the
   // cardinal sin (screenshots 2026-06-21: "I cannot access your personal diary",

@@ -108,7 +108,9 @@ describe('buildFoodExtractPrompt', () => {
   it('omits the pending hint when there are none', () => {
     const p = buildFoodExtractPrompt([]);
     expect(p).not.toContain('PENDING ITEMS FROM EARLIER');
-    expect(p).toContain('Advice/planning is NOT logging');
+    expect(p).toContain('Advice/planning about food NOT yet eaten is NOT logging');
+    // A consumption statement must still log even when the same message asks a question.
+    expect(p).toContain('report eaten food AND ask a question');
   });
 
   it('instructs ALWAYS asking for a missing portion (no silent assumption)', () => {

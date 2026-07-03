@@ -476,6 +476,7 @@ import {
   detectMealConsumption,
   detectConsumptionFeedback,
   extractFoodMention,
+  foodSpanFromConsumption,
   isBareConsumptionBackReference,
   mentionsFood,
 } from './meal-lifecycle.js';
@@ -3042,7 +3043,11 @@ CRITICAL RULES:
       const pending = await getPendingFood(this.deps.redis, params.userId).catch(() => []);
       // A food photo is already logged (or deferred to a pending question) in the
       // media branch, so skip text extraction here to avoid double-logging.
-      const foodish = !params.mediaPresent && (params.intent === 'food_log' || params.intent === 'food_question' || pending.length > 0);
+      // A clear "I ate X" also forces the food path even when the classifier
+      // tagged the whole message something else (e.g. it leads with a question),
+      // so a real consumption is never skipped before the extractor/backstop run.
+      const foodish = !params.mediaPresent && (params.intent === 'food_log' || params.intent === 'food_question'
+        || pending.length > 0 || foodSpanFromConsumption(params.rawUserText) != null);
       if (foodish) {
         // Cap the extraction so a slow call can't stack onto the reply call and
         // make the turn look "stuck". On timeout we fall through to the
@@ -3123,21 +3128,33 @@ CRITICAL RULES:
             foodFallback = `Logged ${confirmed.map((i) => i.item).join(', ')}.${total}`;
           }
           if (parts.length > 0) logNote += `\n\n[FOOD — ${parts.join(' ')}]`;
-        } else if (params.intent === 'food_log') {
-          // Never-drop: the classifier is confident this is a food log but the
-          // extractor returned none/query (an LLM hiccup or a misjudgment).
-          // Persist the raw text via log_food's own deterministic estimator.
-          // BUT only for a concise, food-shaped statement — never for an
-          // emotional / reflective paragraph (production 2026-06-21: a summer-
-          // break vent about snacking habits got force-logged + leaked the
-          // internal note). When the extractor said "nothing to log" AND the
-          // message reads as reflection or is long, trust that and don't log.
+        } else {
+          // The extractor didn't return a structured log/edit/delete. Two
+          // deterministic NEVER-DROP backstops before falling through, so real
+          // intake is never silently lost:
+          //   (a) mixed "I ate X … <question>": a consumption statement the
+          //       single-intent extractor misread as query/none because the same
+          //       message also asks something (prod: "I had salmon with potatoes
+          //       and salad. How much protein is that, and what should I eat
+          //       later?" → answered but never logged). foodSpanFromConsumption
+          //       returns just the eaten-food span (question sliced off).
+          //   (b) classic never-drop: the classifier is confident this is a
+          //       food_log but the extractor whiffed — log the raw text via
+          //       log_food's own estimator.
+          // Never fire on an emotional / reflective paragraph (prod 2026-06-21:
+          // a snacking-habits vent got force-logged) — the consumption span is a
+          // targeted food phrase so it only needs the reflection-marker guard;
+          // the raw-text never-drop also guards on length.
+          const consumptionSpan = foodSpanFromConsumption(params.rawUserText);
+          const neverDrop = params.intent === 'food_log';
           const wordCount = params.rawUserText.trim().split(/\s+/).filter(Boolean).length;
-          const looksReflective = REFLECTION_MARKER_RE.test(params.rawUserText) || wordCount > 22;
-          const r = looksReflective
-            ? null
-            : await params.tools.execute({ name: 'log_food', args: { food: params.rawUserText } }).catch(() => null);
-          if (looksReflective) {
+          const looksReflective = REFLECTION_MARKER_RE.test(params.rawUserText)
+            || (!consumptionSpan && wordCount > 22);
+          const foodToLog = looksReflective ? null : (consumptionSpan ?? (neverDrop ? params.rawUserText : null));
+          const r = foodToLog
+            ? await params.tools.execute({ name: 'log_food', args: { food: foodToLog } }).catch(() => null)
+            : null;
+          if (looksReflective && (neverDrop || consumptionSpan)) {
             params.logger.info({ userId: params.userId }, 'ai.direct.never_drop_suppressed_reflection');
           }
           if (r?.ok) {
@@ -3145,18 +3162,19 @@ CRITICAL RULES:
             const out = (r.output ?? {}) as Record<string, unknown>;
             const protein = (out.daily_protein_g ?? out.protein_g) as number | undefined;
             const cal = (out.daily_calories ?? out.calories) as number | undefined;
-            logNote += `\n\n[The user just logged food and it's been recorded.${protein != null ? ` Their running total today is about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''}.` : ''} Acknowledge it warmly and naturally — no template, no bare "Logged."]`;
+            logNote += `\n\n[The user just logged food and it's been recorded.${protein != null ? ` Their running total today is about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''}.` : ''} Acknowledge it warmly and naturally — no template, no bare "Logged." Then still answer any question they asked in the same message.]`;
             foodFallback = `Logged that for you.${protein != null ? ` You're at about ${protein}g protein${cal != null ? ` and ${cal} calories` : ''} today.` : ''}`;
+            if (consumptionSpan) params.logger.info({ userId: params.userId }, 'ai.direct.consumption_backstop_logged');
+          } else if (extraction.intent === 'query' && !consumptionSpan) {
+            // "What have I eaten today" / "how much protein" → short, correct,
+            // deterministic summary (the way it worked before direct mode).
+            try {
+              const summary = await this.deps.users.getTodaysFoodSummary(params.userId);
+              earlyReply = renderDailyFoodSummary(summary.items, Math.round(summary.protein_g), Math.round(summary.calories));
+            } catch { /* fall through to the normal reply */ }
           }
-        } else if (extraction.intent === 'query') {
-          // "What have I eaten today" / "how much protein" → short, correct,
-          // deterministic summary (the way it worked before direct mode).
-          try {
-            const summary = await this.deps.users.getTodaysFoodSummary(params.userId);
-            earlyReply = renderDailyFoodSummary(summary.items, Math.round(summary.protein_g), Math.round(summary.calories));
-          } catch { /* fall through to the normal reply */ }
+          // intent 'none' with no consumption span → no logging; reply answers normally.
         }
-        // intent 'none' (non-food-log) → no logging; the reply answers normally.
       }
     }
 

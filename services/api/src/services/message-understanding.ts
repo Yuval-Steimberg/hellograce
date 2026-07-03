@@ -94,9 +94,13 @@ const EXERCISE_RE =
 const HYDRATION_RE =
   /\b(?:hydrat\w*|dehydrat\w*|(?:drank|drink|drinking|had|having)\s+(?:\w+\s+){0,3}water|water\s+(?:intake|today)|(?:oz|ounces|glasses?|liters?|litres?|bottles?)\s+of\s+water|(?:not|barely|hardly)\s+drink\w*)\b/i;
 
-// Cravings / appetite / food noise.
+// Cravings / appetite / food noise / plain hunger. A stated hunger ("now I'm a
+// little hungry", "still hungry", "starving") is an APPETITE note Grace should
+// acknowledge warmly, not skip straight to a snack list (prod: "I ate yogurt …
+// now I'm a little hungry. Any snack idea?" got a bare list). Negated hunger
+// ("not hungry", "no longer hungry") is excluded.
 const CRAVING_RE =
-  /\b(?:crav\w*|food\s+noise|snack\s+attack|sugar\s+craving|want(?:ing)?\s+(?:something\s+)?(?:sweet|salty|sugar|junk|carbs?|chocolate)|can'?t\s+stop\s+(?:eating|snacking|thinking\s+about\s+food)|keep\s+wanting\s+to\s+eat)\b/i;
+  /\b(?:crav\w*|food\s+noise|snack\s+attack|sugar\s+craving|want(?:ing)?\s+(?:something\s+)?(?:sweet|salty|sugar|junk|carbs?|chocolate)|can'?t\s+stop\s+(?:eating|snacking|thinking\s+about\s+food)|keep\s+wanting\s+to\s+eat|(?<!not\s)(?<!n'?t\s)(?:hungry|hunger|starving|peckish))\b/i;
 
 // Medication / dosing questions (distinct from a bare injection mention).
 const MEDICATION_RE =
@@ -185,7 +189,7 @@ export function analyzeMessage(text: string): MessageUnderstanding {
   if (SLEEP_RE.test(t)) add('sleep', 'a sleep struggle (acknowledge + brief practical guidance)');
   if (EXERCISE_RE.test(t)) add('exercise', 'an exercise / movement note (acknowledge, tie to protein/energy if relevant)');
   if (HYDRATION_RE.test(t)) add('hydration', 'a hydration / water note (acknowledge, encourage)');
-  if (CRAVING_RE.test(t)) add('craving', 'a craving / appetite note (validate, offer one practical strategy)');
+  if (CRAVING_RE.test(t)) add('craving', 'a craving / hunger / appetite note (acknowledge it warmly FIRST — never skip straight to a list — then offer ONE practical, GLP-1-friendly idea)');
   if (APPOINTMENT_RE.test(t)) add('appointment', 'a doctor / appointment mention (offer to help prep questions if useful)');
   if (SOCIAL_RE.test(t)) add('social', 'a social eating / event plan (give practical, non-restrictive strategies)');
   if (REMINDER_RE.test(t)) add('reminder', 'a reminder / scheduling point (Grace IS the interface; explain or point to Settings, never deny the capability)');
@@ -219,6 +223,6 @@ export function buildMultiPartNote(understanding: MessageUnderstanding): string 
   // entries, categorizing them…" (production 2026-07-02). Keep it conversational
   // so Gemini answers like a person, not a report generator.
   return (
-    '\n\nThe user just said a few things in one text. Reply to ALL of it in ONE short, warm message, the way a friend texts back. LEAD WITH THE ANSWER — do NOT open by narrating what you\'re about to do ("let\'s break down", "let\'s discuss", "here\'s how", "estimating protein from…"), do NOT restate/label/analyze their message, and do NOT write a heading. React to any feeling FIRST in a few words, then give each part a direct, specific answer: for a food they named, COMMIT to a rough protein/calorie number or range (don\'t hedge with "it\'s tough to say" — just estimate and say it\'s approximate); for what to eat next, name 1-2 concrete foods. Plain prose only, no lists, no "Option 1/2". Use ONLY what THIS message says; never bring in a food or topic from earlier turns.'
+    '\n\nThe user just said a few things in one text. Reply to ALL of it in ONE short, warm message, the way a friend texts back. LEAD WITH THE ANSWER — do NOT open by narrating what you\'re about to do ("let\'s break down", "let\'s discuss", "here\'s how", "estimating protein from…"), do NOT restate/label/analyze their message, and do NOT write a heading. React to any feeling OR how they say they\'re doing physically (hungry, tired, low energy, stressed) FIRST in a few warm words — never jump straight to a list — then give each part a direct, specific answer: for a food they named, COMMIT to a rough protein/calorie number or range (don\'t hedge with "it\'s tough to say" — just estimate and say it\'s approximate); for what to eat next, name 1-2 concrete foods. Plain prose only, no lists, no "Option 1/2". Use ONLY what THIS message says; never bring in a food or topic from earlier turns.'
   );
 }

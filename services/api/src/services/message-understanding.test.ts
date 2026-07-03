@@ -104,7 +104,7 @@ describe('buildMultiPartNote', () => {
     );
     expect(note.toLowerCase()).toMatch(/specific answer/);
     expect(note.toLowerCase()).toMatch(/don'?t hedge|commit to/);
-    expect(note.toLowerCase()).toMatch(/feeling first|react to any feeling first/);
+    expect(note.toLowerCase()).toMatch(/feeling.*first|react to any feeling/);
   });
 });
 
@@ -177,6 +177,8 @@ describe('multi-topic breadth: all subjects, slang, typos, styles', () => {
     { msg: 'had chicken n rice, took my 2mg dose, feeling kinda queasy', expect: ['food', 'medication', 'symptom'] },
     // hydration + exercise + food idea
     { msg: 'walked 10k steps and drank plenty of water, any snack ideas', expect: ['hydration', 'exercise', 'food_question'] },
+    // food consumption + hunger + food idea (the exact prod yogurt message)
+    { msg: "I ate yogurt with berries after my injection and now I'm a little hungry. Any snack idea?", expect: ['food', 'craving', 'food_question'] },
   ];
   for (const c of BROAD) {
     it(`"${c.msg.slice(0, 44)}…" → ${c.expect.join('+')}`, () => {

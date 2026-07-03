@@ -3,11 +3,43 @@ import {
   detectMealConsumption,
   detectConsumptionFeedback,
   extractFoodMention,
+  foodSpanFromConsumption,
   isConsumptionConfirmed,
   isPreferenceLanguage,
   isBareConsumptionBackReference,
   mentionsFood,
 } from './meal-lifecycle.js';
+
+describe('foodSpanFromConsumption — never-drop backstop for "I ate X … <question>"', () => {
+  it('extracts the eaten meal, slicing off the trailing question (prod: salmon)', () => {
+    expect(
+      foodSpanFromConsumption('I had salmon with potatoes and salad. How much protein is that roughly, and what should I eat later?'),
+    ).toBe('I had salmon with potatoes and salad');
+  });
+  it('handles a mid-sentence question clause with no period', () => {
+    expect(foodSpanFromConsumption('I ate chicken and rice how much protein was that')).toBe('I ate chicken and rice');
+    expect(foodSpanFromConsumption('just had a greek yogurt, any idea what to eat next?')).toBe('just had a greek yogurt');
+  });
+  it('returns null for a PURE question (nothing eaten)', () => {
+    expect(foodSpanFromConsumption('what should I eat later?')).toBeNull();
+    expect(foodSpanFromConsumption('what did I eat today?')).toBeNull();
+    expect(foodSpanFromConsumption('how much protein is in salmon?')).toBeNull();
+  });
+  it('returns null for preference / planning language (never log interest)', () => {
+    expect(foodSpanFromConsumption('salmon sounds good, maybe later')).toBeNull();
+    expect(foodSpanFromConsumption("I think I'll have the salmon")).toBeNull();
+  });
+  it('returns null when a consumption verb names no real food', () => {
+    expect(foodSpanFromConsumption('I had a really rough day, any advice?')).toBeNull();
+    expect(foodSpanFromConsumption('I had a great time at the gym')).toBeNull();
+  });
+  it('is voided by negation ("I did not eat")', () => {
+    expect(foodSpanFromConsumption("I haven't had lunch yet, what should I make?")).toBeNull();
+  });
+  it('keeps a plain consumption statement intact when there is no question', () => {
+    expect(foodSpanFromConsumption('I ate 3 eggs and a banana')).toBe('I ate 3 eggs and a banana');
+  });
+});
 
 describe('detectConsumptionFeedback — follow-up after trying a suggestion', () => {
   // The exact production failure + the spec's example set. General across

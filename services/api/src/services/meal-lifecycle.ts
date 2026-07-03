@@ -212,3 +212,35 @@ export function extractFoodMention(text: string): string | null {
   }
   return w;
 }
+
+// Everything from here on is a QUESTION / planning clause, not the eaten food:
+// "how much protein…", "what should I eat later", "any snack idea", a trailing
+// "?" — so it must be sliced off before the eaten-food span is logged.
+const QUESTION_TAIL_RE =
+  /\b(how\s+(?:much|many)|what\s+(?:should|can|could|do|to|else|would)|is\s+that|are\s+those|any\s+(?:snack|idea|ideas|suggestions?|thoughts?)|should\s+i|and\s+what|and\s+how|what'?s\s+(?:a\s+)?good)\b/i;
+
+/**
+ * When the message reports food the user ALREADY ate AND names a real food,
+ * return JUST the eaten-food span — with any trailing question / planning clause
+ * ("...how much protein is that, and what should I eat later?") sliced off — so a
+ * caller can log it. Returns null when the message isn't a food-consumption
+ * statement (a pure question, preference, or non-food).
+ *
+ * This is the deterministic NEVER-DROP backstop for the "I had X … <question>"
+ * shape: the single-intent LLM extractor can misread the whole message as a
+ * query/none because it also asks something, silently dropping real intake.
+ * Consumption is explicit + food is named, so it can't fire on "what should I
+ * eat?" (nothing eaten) or "that sounds good" (preference).
+ */
+export function foodSpanFromConsumption(text: string): string | null {
+  const t = (text ?? '').trim();
+  if (!isConsumptionConfirmed(t)) return null;
+  // Cut at the EARLIEST of: first sentence end, first '?', first question clause.
+  const idx = (re: RegExp): number => { const m = t.search(re); return m < 0 ? Infinity : m; };
+  const cut = Math.min(idx(/[.!?]/), idx(QUESTION_TAIL_RE));
+  let span = (cut !== Infinity && cut > 0 ? t.slice(0, cut) : t).trim();
+  // Trim a dangling connector/punctuation left by the cut ("… and salad ,").
+  span = span.replace(/[\s,;:.!?]+$/g, '').replace(/\s+(?:and|with|plus|,|&)\s*$/i, '').trim();
+  if (span.length < 2 || !mentionsFood(span)) return null;
+  return span;
+}

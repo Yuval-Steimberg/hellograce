@@ -36,16 +36,32 @@ export interface RedisLike {
  *  activity are the Mifflin-St Jeor inputs (accurate targets); diet powers food
  *  recs; goal_weight is last (nice-to-have for progress framing). */
 export const PROGRESSIVE_SLOTS = [
-  'dietary', 'dislikes', 'goals', 'goal_weight', 'current_weight',
+  'dietary', 'dislikes', 'goals', 'injection_day', 'goal_weight', 'current_weight',
   'sex', 'height', 'age', 'activity', 'wake_sleep',
 ] as const;
 export type ProgressiveSlot = (typeof PROGRESSIVE_SLOTS)[number];
 
+// medication / medication_frequency are OPTIONAL on the shape (only used to
+// decide whether an injection_day ask is even relevant) so existing callers /
+// test fixtures that don't provide them still type-check.
 type ProfileShape = Pick<
   GraceUser,
   'sex' | 'current_weight' | 'height_cm' | 'age' | 'activity_level' | 'dietary_restriction' | 'dietary_pattern'
-  | 'goal_weight' | 'food_dislikes' | 'goals' | 'wake_time'
->;
+  | 'goal_weight' | 'food_dislikes' | 'goals' | 'wake_time' | 'injection_day'
+> & Partial<Pick<GraceUser, 'medication' | 'medication_frequency'>>;
+
+/** Injection day only makes sense for a WEEKLY injectable. A daily pill/injection
+ *  (Rybelsus, Saxenda, Victoza) or an unknown cadence must NEVER be asked which
+ *  day they inject — so we treat the slot as "filled" (skip) for those. */
+function isWeeklyInjectable(user: ProfileShape): boolean {
+  const freq = (user.medication_frequency ?? '').toLowerCase();
+  if (freq === 'daily') return false;
+  if (freq === 'weekly' || freq === 'biweekly') return true;
+  const med = (user.medication ?? '').toLowerCase();
+  if (/rybelsus|saxenda|victoza|liraglutide/.test(med)) return false;
+  if (/ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide/.test(med)) return true;
+  return false; // truly unknown cadence → don't ask (never nag a pill user)
+}
 
 export function isProfileSlotFilled(user: ProfileShape, slot: ProgressiveSlot): boolean {
   switch (slot) {
@@ -59,6 +75,9 @@ export function isProfileSlotFilled(user: ProfileShape, slot: ProgressiveSlot): 
     case 'dislikes': return Array.isArray(user.food_dislikes) && user.food_dislikes.length > 0;
     case 'goals': return Array.isArray(user.goals) && user.goals.length > 0;
     case 'wake_sleep': return !!user.wake_time;
+    // "Filled" (skip) for non-weekly-injectable users so we never ask a pill
+    // user for a shot day; otherwise filled once we know the day.
+    case 'injection_day': return !isWeeklyInjectable(user) || !!user.injection_day;
   }
 }
 
@@ -113,6 +132,57 @@ export function relevantProfileSlot(user: ProfileShape, text: string): Progressi
   return null;
 }
 
+// ── Contextual follow-up gathering (proactive, answer-first) ──────────────────
+// Broad everyday-topic matchers. Unlike relevantProfileSlot (which gates an
+// ASK-FIRST short-circuit, only when Grace genuinely needs the value to answer
+// accurately), these map ordinary conversation topics to the single most useful
+// missing field — so the PROACTIVE follow-up ("...and do you usually take your
+// shot on the same day each week?", asked AFTER Grace answers) feels like a
+// friend's natural curiosity, never a survey.
+const FOOD_TALK_RE =
+  /\b(eat|eating|ate|meal|meals|food|dinner|lunch|breakfast|snack|snacks|recipe|cook(?:ing|ed)?|hungry|hunger|craving|cravings|diet)\b/i;
+const MED_TALK_RE =
+  /\b(shot|inject(?:ion|ing)?|dose|dosing|pen|ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|my med|my medication)\b/i;
+const EXERCISE_TALK_RE =
+  /\b(workout|worked out|working out|work out|exercise|exercising|gym|run|running|jog(?:ging)?|walk(?:ing|ed)?|steps|yoga|pilates|lifting|weights|cardio|hike|hiking)\b/i;
+const PROGRESS_TALK_RE =
+  /\b(progress|goal weight|target weight|how (?:am i|i'?m) doing|on track|plateau|the scale|my weight|losing weight|lost weight)\b/i;
+const SLEEP_TALK_RE =
+  /\b(sleep|slept|sleeping|rest|rested|bed ?time|nap|wake up|woke up|insomnia)\b/i;
+// Never tack a data question onto a symptom / emotionally-heavy turn — that is
+// exactly the "out of nowhere" moment to avoid; those turns are handled by the
+// symptom / emotional paths and are the wrong time to ask for profile data.
+const HEAVY_OR_LOG_RE =
+  /\b(nause\w*|vomit\w*|sick|throw(?:ing)? up|dizzy|pain|hurts?|sore|bruise|swell\w*|cramp\w*|headache|migraine|diarr\w*|constipat\w*|heartburn|sad|depress\w*|anxious|anxiety|cry\w*|crying|hopeless|overwhelm\w*|stressed|struggl\w*)\b/i;
+
+/**
+ * The single most useful MISSING field to gently follow up on, given what the
+ * user is talking about right now — or null when nothing relevant is missing (or
+ * the moment is heavy). Priority follows how personalizing each field is.
+ */
+export function contextualGatherSlot(user: ProfileShape, text: string): ProgressiveSlot | null {
+  const t = (text ?? '').trim();
+  if (!t) return null;
+  if (HEAVY_OR_LOG_RE.test(t)) return null;
+  // Medication talk → the weekly injection day (weekly injectables only).
+  if (MED_TALK_RE.test(t) && !isProfileSlotFilled(user, 'injection_day')) return 'injection_day';
+  // Exercise talk → how active they are day to day (drives calorie needs).
+  if (EXERCISE_TALK_RE.test(t) && !isProfileSlotFilled(user, 'activity')) return 'activity';
+  // Progress / weight talk → a goal weight to frame progress around, else current.
+  if (PROGRESS_TALK_RE.test(t)) {
+    if (!isProfileSlotFilled(user, 'goal_weight')) return 'goal_weight';
+    if (!isProfileSlotFilled(user, 'current_weight')) return 'current_weight';
+  }
+  // Food talk → dislikes then diet, so recommendations never miss.
+  if (FOOD_TALK_RE.test(t)) {
+    if (!isProfileSlotFilled(user, 'dislikes')) return 'dislikes';
+    if (!isProfileSlotFilled(user, 'dietary')) return 'dietary';
+  }
+  // Sleep / rest talk → wake + sleep times, so check-ins land at the right hour.
+  if (SLEEP_TALK_RE.test(t) && !isProfileSlotFilled(user, 'wake_sleep')) return 'wake_sleep';
+  return null;
+}
+
 const GATHER_REASON: Record<ProgressiveSlot, { ask: string; why: string }> = {
   sex: { ask: 'their biological sex (male, female, or other)', why: 'so your protein and hydration needs are right' },
   current_weight: { ask: 'their current weight', why: 'so I can track your progress and set accurate targets' },
@@ -124,6 +194,7 @@ const GATHER_REASON: Record<ProgressiveSlot, { ask: string; why: string }> = {
   dislikes: { ask: 'any foods they really dislike or want to avoid', why: "so I never suggest something you can't stand" },
   goals: { ask: "what they most want help with on this journey (protein, hydration, side effects, staying on track)", why: 'so I can focus on what matters most to you' },
   wake_sleep: { ask: 'what time they usually wake up and go to bed', why: 'so my check-ins land at the right times for you' },
+  injection_day: { ask: 'which day of the week they usually take their shot', why: 'so I can time your injection-day check-ins and side-effect heads-ups' },
 };
 
 /**
@@ -231,6 +302,7 @@ const CLARIFY: Record<ProgressiveSlot, string> = {
   age: "Quick q so your targets are accurate — how old are you?",
   activity: "So I can make this fit you — are you mostly sitting day to day, lightly active, or on the move?",
   wake_sleep: "Quick one so I check in at the right times — when do you usually wake up and head to bed?",
+  injection_day: "One quick thing so I can time your injection-day check-ins — what day do you usually take your shot?",
 };
 export function buildGatherClarify(slot: ProgressiveSlot): string {
   return CLARIFY[slot];

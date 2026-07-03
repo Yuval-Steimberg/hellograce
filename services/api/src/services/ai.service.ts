@@ -508,6 +508,8 @@ import { detectCapabilityQuestion, buildCapabilityReply } from './capability.js'
 import {
   relevantProfileSlot,
   nextMissingProfileSlot,
+  contextualGatherSlot,
+  type ProgressiveSlot,
   buildProfileGatherNote,
   buildGatherClarify,
   parseProfileReply,
@@ -3472,21 +3474,45 @@ CRITICAL RULES:
 
     // Pending answers + relevance-first gathering are handled EARLIER by
     // progressiveGatherGate (so they apply to every answer path). Here we only
-    // do the throttled PROACTIVE ask: on a neutral turn, weave ONE gentle
-    // question to fill the next missing field. Never stacks onto another
-    // intercept's note, a media turn, or an empty message.
+    // do the throttled PROACTIVE ask: weave ONE gentle question to fill a missing
+    // field, preferring one RELEVANT to what the user is talking about. Never
+    // stacks onto another intercept's note, a media turn, or an empty message.
     if (directContextNote || input.media.length > 0 || !input.text.trim()) return directContextNote;
-    if (!gatherSafeTurn(input.text)) return directContextNote;
+    // Never tack a gather question onto a MULTI-TOPIC message — the user asked
+    // for several things; answering all of them is the whole job, and the
+    // multi-part note owns that turn. Mirrors the same guard in the ask-first
+    // progressiveGatherGate (2026-07-02) so gathering never disrupts multi-part.
+    if (analyzeMessage(input.text).hasMultiple) return directContextNote;
 
     const nowMs = Date.now();
+    // Throttle to at most ONE proactive gather per cooldown window so it never
+    // feels like a survey (applies to both contextual and blind asks).
     if (await askedProfileRecently(redis, phone, PROFILE_GATHER_COOLDOWN_HOURS, nowMs)) return directContextNote;
     const user = await this.deps.users.getById(phone).catch(() => null);
     if (!user) return directContextNote;
-    const next = nextMissingProfileSlot(user);
-    if (!next) return directContextNote;
-    await setPendingProfileAsk(redis, phone, next, nowMs);
-    this.deps.logger.info({ userId: phone, slot: next, trigger: 'proactive' }, 'progressive_profile.ask');
-    return directContextNote + buildProfileGatherNote(next);
+
+    // Prefer a slot relevant to THIS turn's topic (medication talk → injection
+    // day, exercise → activity, progress → goal weight, food → dislikes) so the
+    // follow-up reads like a friend's natural curiosity, not a blind next-field
+    // ask. A contextual slot whose next-turn answer has a STRICT parser (weekday
+    // / activity level / wake+sleep times — none can be mis-read as a weight or
+    // number) may weave even on a topical turn; every other slot (incl. the blind
+    // next-missing fallback) only weaves on a NEUTRAL turn to protect the parse
+    // and avoid asking mid-log.
+    const safeTurn = gatherSafeTurn(input.text);
+    const ctx = contextualGatherSlot(user, input.text);
+    const CONTEXTUAL_ANY_TURN = new Set<ProgressiveSlot>(['injection_day', 'activity', 'wake_sleep']);
+    let slot: ProgressiveSlot | null = null;
+    if (ctx && (safeTurn || CONTEXTUAL_ANY_TURN.has(ctx))) slot = ctx;
+    else if (safeTurn) slot = nextMissingProfileSlot(user);
+    if (!slot) return directContextNote;
+
+    await setPendingProfileAsk(redis, phone, slot, nowMs);
+    this.deps.logger.info(
+      { userId: phone, slot, trigger: ctx === slot ? 'contextual' : 'proactive' },
+      'progressive_profile.ask',
+    );
+    return directContextNote + buildProfileGatherNote(slot);
   }
 
   // Full message processing flow: (1) parallel I/O (user profile, history, media

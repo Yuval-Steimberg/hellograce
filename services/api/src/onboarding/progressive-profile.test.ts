@@ -3,6 +3,7 @@ import {
   PROGRESSIVE_SLOTS,
   nextMissingProfileSlot,
   relevantProfileSlot,
+  contextualGatherSlot,
   buildProfileGatherNote,
   parseProfileReply,
   isProfileSlotFilled,
@@ -20,12 +21,17 @@ import {
   type RedisLike,
 } from './progressive-profile.js';
 
-// A user shape with everything missing by default.
+// A user shape with everything missing by default. medication/frequency unset →
+// treated as a non-weekly-injectable, so injection_day reads as "filled" (never
+// asked) unless a fixture opts a weekly med in.
 const empty = {
   sex: null, current_weight: null, height_cm: null, age: null,
   activity_level: null, dietary_restriction: null, dietary_pattern: null, goal_weight: null,
-  food_dislikes: [], goals: [], wake_time: null,
+  food_dislikes: [], goals: [], wake_time: null, injection_day: null,
 } as Parameters<typeof nextMissingProfileSlot>[0];
+
+// A weekly-injectable user (Ozempic) who has NOT set an injection day.
+const weekly = { ...empty, medication: 'Ozempic', medication_frequency: 'weekly' };
 
 describe('nextMissingProfileSlot — priority order', () => {
   it('walks dietary → dislikes → goals → goal_weight → … in priority order', () => {
@@ -84,6 +90,66 @@ describe('relevantProfileSlot — ask the field that makes THIS answer accurate'
   it('returns null once the relevant inputs are all known', () => {
     const full = { ...empty, sex: 'male', current_weight: 180, height_cm: 180, age: 40, activity_level: 'light' };
     expect(relevantProfileSlot(full, 'how much protein should I eat?')).toBeNull();
+  });
+});
+
+describe('injection_day slot — only relevant for weekly injectables', () => {
+  it('is "filled" (never asked) for a non-weekly / unknown-cadence user', () => {
+    expect(isProfileSlotFilled(empty, 'injection_day')).toBe(true); // no med → skip
+    expect(isProfileSlotFilled({ ...empty, medication: 'Rybelsus', medication_frequency: 'daily' }, 'injection_day')).toBe(true);
+  });
+  it('is missing for a weekly injectable with no day set, filled once set', () => {
+    expect(isProfileSlotFilled(weekly, 'injection_day')).toBe(false);
+    expect(isProfileSlotFilled({ ...weekly, injection_day: 'Friday' }, 'injection_day')).toBe(true);
+  });
+  it('infers weekly cadence from the drug name when frequency is unknown', () => {
+    expect(isProfileSlotFilled({ ...empty, medication: 'Mounjaro' }, 'injection_day')).toBe(false);
+  });
+  it('a pill user is never surfaced injection_day by nextMissingProfileSlot', () => {
+    const filled = {
+      ...empty, medication: 'Rybelsus', medication_frequency: 'daily',
+      dietary_pattern: 'vegan', food_dislikes: ['eggs'], goals: ['weight'],
+      goal_weight: 160, current_weight: 180, sex: 'male', height_cm: 180,
+      age: 40, activity_level: 'light', wake_time: '07:00',
+    };
+    expect(nextMissingProfileSlot(filled)).toBeNull();
+  });
+});
+
+describe('contextualGatherSlot — pick the field relevant to the topic', () => {
+  it('medication talk → injection_day (weekly injectable, unknown day)', () => {
+    expect(contextualGatherSlot(weekly, 'my shot was rough this week')).toBe('injection_day');
+    expect(contextualGatherSlot(weekly, 'when do I take my next dose')).toBe('injection_day');
+    // pill user → never ask a shot day
+    expect(contextualGatherSlot({ ...empty, medication: 'Rybelsus', medication_frequency: 'daily' }, 'took my dose today')).toBeNull();
+    // day already known → nothing to gather from med talk
+    expect(contextualGatherSlot({ ...weekly, injection_day: 'Friday' }, 'my shot went fine')).toBeNull();
+  });
+  it('exercise talk → activity when unknown', () => {
+    expect(contextualGatherSlot(empty, 'I went for a run this morning')).toBe('activity');
+    expect(contextualGatherSlot(empty, 'been hitting the gym lately')).toBe('activity');
+    expect(contextualGatherSlot({ ...empty, activity_level: 'moderate' }, 'did a workout')).toBeNull();
+  });
+  it('progress talk → goal_weight then current_weight', () => {
+    expect(contextualGatherSlot(empty, "how am I doing on my weight?")).toBe('goal_weight');
+    expect(contextualGatherSlot({ ...empty, goal_weight: 160 }, 'am I making progress?')).toBe('current_weight');
+  });
+  it('food talk → dislikes then dietary', () => {
+    expect(contextualGatherSlot(empty, "I'm thinking about what to cook tonight")).toBe('dislikes');
+    expect(contextualGatherSlot({ ...empty, food_dislikes: ['eggs'] }, 'planning my meals')).toBe('dietary');
+  });
+  it('sleep talk → wake_sleep when unknown', () => {
+    expect(contextualGatherSlot(empty, "I've been sleeping so badly")).toBe('wake_sleep');
+    expect(contextualGatherSlot({ ...empty, wake_time: '07:00' }, 'barely slept')).toBeNull();
+  });
+  it('NEVER gathers on a symptom / heavy turn (out-of-nowhere guard)', () => {
+    expect(contextualGatherSlot(weekly, "my shot made me so nauseous")).toBeNull();
+    expect(contextualGatherSlot(empty, "I feel so anxious and overwhelmed today")).toBeNull();
+    expect(contextualGatherSlot(empty, "I'm really struggling with this")).toBeNull();
+  });
+  it('returns null on an unrelated / empty message', () => {
+    expect(contextualGatherSlot(empty, 'good morning!')).toBeNull();
+    expect(contextualGatherSlot(empty, '')).toBeNull();
   });
 });
 
@@ -206,7 +272,7 @@ describe('per-slot asked marker + decline detection', () => {
 describe('PROGRESSIVE_SLOTS', () => {
   it('covers the food-rec + goals + accurate-target fields (priority order)', () => {
     expect([...PROGRESSIVE_SLOTS]).toEqual([
-      'dietary', 'dislikes', 'goals', 'goal_weight', 'current_weight',
+      'dietary', 'dislikes', 'goals', 'injection_day', 'goal_weight', 'current_weight',
       'sex', 'height', 'age', 'activity', 'wake_sleep',
     ]);
   });

@@ -8,10 +8,17 @@ import PhoneInput from "@/components/onboarding/PhoneInput";
 import { settingsApi, getSettingsToken, setSettingsToken, clearSettingsToken } from "@/lib/settingsApi";
 import { dashboardApi, type DashboardSummary } from "@/lib/dashboardApi";
 import {
-  Reveal, StatCard, WeightChart, NutritionChart, MoodChart, SymptomPatterns, useGreeting,
+  Reveal, WeightChart, NutritionChart, MoodChart, SymptomPatterns, useGreeting,
 } from "@/components/dashboard/DashboardCharts";
 import { QuickLog } from "@/components/dashboard/QuickLog";
 import { ProgressGallery } from "@/components/dashboard/ProgressGallery";
+import { TodayOverview } from "@/components/dashboard/TodayOverview";
+import { GraceInsightCard } from "@/components/dashboard/GraceInsightCard";
+import { RecentWins } from "@/components/dashboard/RecentWins";
+import { InjectionCard } from "@/components/dashboard/InjectionCard";
+import { TodaysMeals } from "@/components/dashboard/TodaysMeals";
+import { ProfileCompleteness } from "@/components/dashboard/ProfileCompleteness";
+import { DashboardSkeleton, DashboardLoadError } from "@/components/dashboard/DashboardStates";
 import { getWeightUnit, fromLbs, type WeightUnit } from "@/lib/units";
 
 type Stage = "phone" | "code" | "ready";
@@ -26,15 +33,17 @@ export default function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [boot, setBoot] = useState(true);
   const [data, setData] = useState<DashboardSummary | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const s = await dashboardApi.summary();
       setData(s);
+      setLoadError(false);
       setStage("ready");
     } catch (e) {
-      if ((e as { status?: number }).status === 401) { clearSettingsToken(); setStage("phone"); }
-      else toast.error(e instanceof Error ? e.message : "Couldn't load your dashboard");
+      if ((e as { status?: number }).status === 401) { clearSettingsToken(); setStage("phone"); setLoadError(false); }
+      else { setLoadError(true); toast.error(e instanceof Error ? e.message : "Couldn't load your dashboard"); }
     }
   }, []);
 
@@ -63,7 +72,9 @@ export default function Dashboard() {
     } catch (e) { toast.error(e instanceof Error ? e.message : "That code didn't work"); } finally { setBusy(false); }
   };
 
-  const logout = () => { clearSettingsToken(); setData(null); setPhone(""); setCode(""); setStage("phone"); };
+  const logout = () => { clearSettingsToken(); setData(null); setPhone(""); setCode(""); setLoadError(false); setStage("phone"); };
+
+  const hasToken = !!getSettingsToken();
 
   return (
     <div className="min-h-screen bg-secondary/20">
@@ -71,7 +82,11 @@ export default function Dashboard() {
         jsonLd={breadcrumbSchema([{ name: "Home", path: "/" }, { name: "Dashboard", path: "/dashboard" }])} />
 
       {boot ? (
-        <div className="flex min-h-screen items-center justify-center"><p className="text-muted-foreground">Loading…</p></div>
+        hasToken ? <DashboardSkeleton /> : (
+          <div className="flex min-h-screen items-center justify-center"><p className="text-muted-foreground">Loading…</p></div>
+        )
+      ) : loadError ? (
+        <DashboardLoadError onRetry={load} onLogout={logout} />
       ) : stage !== "ready" ? (
         <AuthGate stage={stage} phone={phone} code={code} busy={busy}
           setPhone={setPhone} setCode={setCode} sendCode={sendCode} verify={verify} backToPhone={() => setStage("phone")} />
@@ -128,7 +143,6 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
   const greeting = useGreeting(firstName);
   const w = data.weight;
   const n = data.nutrition;
-  const proteinPct = n.proteinGoal ? Math.min(100, Math.round((n.today.protein / n.proteinGoal) * 100)) : 0;
   // Display weight in the user's chosen unit (data comes back in lbs).
   const wUnit = getWeightUnit();
   const wLabel = wUnit === "kg" ? "kg" : "lb";
@@ -151,12 +165,24 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
         </div>
       </header>
 
-      {/* Hero stats */}
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Reveal delay={0}><StatCard label="Lost so far" tone="clay" value={w.lostLbs != null ? `${wConv(w.lostLbs)} ${wLabel}` : "—"} sub={w.start != null ? `from ${wConv(w.start)} ${wLabel}` : "add starting weight"} /></Reveal>
-        <Reveal delay={0.05}><StatCard label="To goal" value={w.toGoLbs != null ? `${wConv(w.toGoLbs)} ${wLabel}` : "—"} sub={w.goal != null ? `goal ${wConv(w.goal)} ${wLabel}` : "set a goal"} /></Reveal>
-        <Reveal delay={0.1}><StatCard label="Protein today" tone={proteinPct >= 100 ? "sage" : "ink"} value={`${n.today.protein}g`} sub={`of ${n.proteinGoal}g · ${proteinPct}%`} /></Reveal>
-        <Reveal delay={0.15}><StatCard label="Logging streak" tone="sage" value={n.streak > 0 ? `${n.streak} day${n.streak === 1 ? "" : "s"}` : "—"} sub={n.streak > 0 ? "keep it going" : "log a meal today"} /></Reveal>
+      {/* Today overview hero */}
+      <div className="mb-4">
+        <Reveal><TodayOverview data={data} wConv={wConv} wLabel={wLabel} /></Reveal>
+      </div>
+
+      {/* A note from Grace */}
+      <div className="mb-4">
+        <GraceInsightCard data={data} />
+      </div>
+
+      {/* Injection day + medication */}
+      <div className="mb-6">
+        <InjectionCard data={data} />
+      </div>
+
+      {/* Recent wins — encouragement, hidden when there's nothing earned yet */}
+      <div className="mb-4">
+        <Reveal><RecentWins data={data} /></Reveal>
       </div>
 
       {/* Charts grid — two-up from tablet width */}
@@ -170,6 +196,11 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
         <Reveal><SymptomPatterns symptoms={data.symptoms} /></Reveal>
       </div>
 
+      {/* Grace is learning you — profile completeness */}
+      <div className="mt-4">
+        <Reveal><ProfileCompleteness data={data} /></Reveal>
+      </div>
+
       {/* Progress photo gallery — full width */}
       <div className="mt-4">
         <Reveal><ProgressGallery /></Reveal>
@@ -181,19 +212,7 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
         <Reveal delay={0.05}>
           <div className="space-y-4">
             <MoodChart mood={data.mood} />
-            {n.today.items.length > 0 && (
-              <div className="rounded-2xl border border-sand bg-white p-5 shadow-[0_1px_2px_rgba(36,31,27,0.04)]">
-                <h3 className="mb-3 font-serif text-lg text-foreground">Today's meals</h3>
-                <ul className="space-y-2">
-                  {n.today.items.map((it, i) => (
-                    <li key={i} className="flex items-center justify-between text-sm">
-                      <span className="text-foreground/80">{it.food}</span>
-                      <span className="text-muted-foreground">{it.protein}g · {it.calories} kcal</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <TodaysMeals nutrition={n} />
           </div>
         </Reveal>
       </div>

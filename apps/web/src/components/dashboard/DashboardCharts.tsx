@@ -50,11 +50,15 @@ export function WeightChart({ weight, unit = "lbs" }: { weight: DashboardSummary
   const u = unit === "kg" ? "kg" : "lbs";
   const data = weight.series.map((p) => ({ date: p.date, weight: conv(p.weight) }));
   const goal = weight.goal != null ? conv(weight.goal) : null;
+  const current = weight.current != null ? conv(weight.current) : null;
   const hasData = data.length >= 2;
   return (
     <div className={card}>
-      <div className="mb-3 flex items-baseline justify-between">
-        <h3 className="font-serif text-lg text-foreground">Weight</h3>
+      <div className="mb-3 flex items-baseline justify-between gap-2">
+        <div className="flex items-baseline gap-2">
+          <h3 className="font-serif text-lg text-foreground">Weight</h3>
+          {current != null && <span className="text-sm font-medium" style={{ color: CLAY }}>{current} {u}</span>}
+        </div>
         {goal != null && <span className="text-xs text-muted-foreground">Goal {goal} {u}</span>}
       </div>
       {hasData ? (

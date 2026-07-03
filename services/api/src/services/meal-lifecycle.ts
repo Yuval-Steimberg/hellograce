@@ -101,6 +101,26 @@ export function mentionsFood(text: string): boolean {
   return FOOD_MENTION_RE.test(text ?? '');
 }
 
+// Generic meal-TIME / container words that name WHEN or HOW MUCH someone ate,
+// not WHAT — "breakfast", "a big lunch", "dinner", "a snack". On their own these
+// are NOT loggable food (we don't know what the food was). Stripped before the
+// real-food check so "I had breakfast late" logs nothing, but "breakfast burrito"
+// (a real dish) still does.
+const GENERIC_FOOD_WORD_RE =
+  /\b(?:food|meal|meals|dish|plate|bowl|snack|snacks|breakfast|lunch|dinner|brunch|supper|dessert|bite|something|anything|portion|serving|helping)\b/gi;
+
+/**
+ * True when the text names a SPECIFIC food/dish — not merely a meal-time or
+ * container word. "I had salmon" / "breakfast burrito" → true; "I had breakfast
+ * late" / "a big lunch" / "skipped dinner" → false. Used so the logger never
+ * records a bare meal-time word as if it were a food (prod: "I had breakfast
+ * late, skipped lunch…" → "Glad that's logged").
+ */
+export function namesSpecificFood(text: string): boolean {
+  const stripped = (text ?? '').replace(GENERIC_FOOD_WORD_RE, ' ');
+  return FOOD_MENTION_RE.test(stripped);
+}
+
 /** True when the message explicitly confirms the user ate / wants logged. */
 export function isConsumptionConfirmed(text: string): boolean {
   const t = (text ?? '').trim();
@@ -241,6 +261,8 @@ export function foodSpanFromConsumption(text: string): string | null {
   let span = (cut !== Infinity && cut > 0 ? t.slice(0, cut) : t).trim();
   // Trim a dangling connector/punctuation left by the cut ("… and salad ,").
   span = span.replace(/[\s,;:.!?]+$/g, '').replace(/\s+(?:and|with|plus|,|&)\s*$/i, '').trim();
-  if (span.length < 2 || !mentionsFood(span)) return null;
+  // Require a SPECIFIC food, not just a meal-time word ("I had breakfast late"
+  // names no dish → nothing to log).
+  if (span.length < 2 || !namesSpecificFood(span)) return null;
   return span;
 }

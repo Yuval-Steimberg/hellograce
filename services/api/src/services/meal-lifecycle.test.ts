@@ -4,6 +4,7 @@ import {
   detectConsumptionFeedback,
   extractFoodMention,
   foodSpanFromConsumption,
+  namesSpecificFood,
   isConsumptionConfirmed,
   isPreferenceLanguage,
   isBareConsumptionBackReference,
@@ -38,6 +39,23 @@ describe('foodSpanFromConsumption — never-drop backstop for "I ate X … <ques
   });
   it('keeps a plain consumption statement intact when there is no question', () => {
     expect(foodSpanFromConsumption('I ate 3 eggs and a banana')).toBe('I ate 3 eggs and a banana');
+  });
+  it('returns null when only a meal-TIME word is named (prod: breakfast late)', () => {
+    // "I had breakfast late, skipped lunch, big dinner?" names no real dish → nothing to log.
+    expect(foodSpanFromConsumption('I had breakfast late, skipped lunch, should I eat a big dinner or something small')).toBeNull();
+    expect(foodSpanFromConsumption('I had a big lunch today')).toBeNull();
+    expect(foodSpanFromConsumption('grabbed dinner earlier')).toBeNull();
+  });
+});
+
+describe('namesSpecificFood — a real dish vs a bare meal-time word', () => {
+  it('true for an actual food / dish', () => {
+    for (const t of ['salmon', 'I had salmon with potatoes', 'chicken for lunch', 'breakfast burrito', 'a bowl of oatmeal', '3 eggs'])
+      expect(namesSpecificFood(t)).toBe(true);
+  });
+  it('false for a bare meal-time / container word (no dish named)', () => {
+    for (const t of ['breakfast', 'a big lunch', 'dinner', 'I had breakfast late', 'grabbed a snack', 'skipped lunch', 'a big meal'])
+      expect(namesSpecificFood(t)).toBe(false);
   });
 });
 

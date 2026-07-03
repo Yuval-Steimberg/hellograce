@@ -477,6 +477,7 @@ import {
   detectConsumptionFeedback,
   extractFoodMention,
   foodSpanFromConsumption,
+  namesSpecificFood,
   isBareConsumptionBackReference,
   mentionsFood,
 } from './meal-lifecycle.js';
@@ -3068,8 +3069,12 @@ CRITICAL RULES:
           await resolvePendingFood(this.deps.redis, params.userId, extraction.edit_ref).catch(() => {});
           logNote += `\n\n[The user asked to remove "${extraction.edit_ref}" from today's log — it's done. Confirm warmly and briefly.]`;
         } else if (extraction.intent === 'log' || extraction.intent === 'edit') {
-          const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
-          const newPending = extraction.items.filter((i) => i.status === 'pending_portion');
+          // Drop any "item" that is only a meal-TIME / container word with no
+          // named dish ("breakfast", "a big lunch") — we don't know WHAT was
+          // eaten, so it must never be logged or clarified as if it were a food
+          // (prod: "I had breakfast late, skipped lunch…" → "Glad that's logged").
+          const confirmed = extraction.items.filter((i) => i.status === 'confirmed' && namesSpecificFood(i.item));
+          const newPending = extraction.items.filter((i) => i.status === 'pending_portion' && namesSpecificFood(i.item));
           const loggedSummaries: string[] = [];
           let dailyProtein: number | undefined;
           let dailyCal: number | undefined;
@@ -3148,7 +3153,9 @@ CRITICAL RULES:
           // targeted food phrase so it only needs the reflection-marker guard;
           // the raw-text never-drop also guards on length.
           const consumptionSpan = foodSpanFromConsumption(params.rawUserText);
-          const neverDrop = params.intent === 'food_log';
+          // Only never-drop a food_log-classified message that actually names a
+          // specific food — never a bare "I had breakfast late" (no dish).
+          const neverDrop = params.intent === 'food_log' && namesSpecificFood(params.rawUserText);
           const wordCount = params.rawUserText.trim().split(/\s+/).filter(Boolean).length;
           const looksReflective = REFLECTION_MARKER_RE.test(params.rawUserText)
             || (!consumptionSpan && wordCount > 22);

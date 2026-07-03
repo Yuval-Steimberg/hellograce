@@ -12,9 +12,14 @@ _Also loaded automatically at session start. Update at the end of every session 
 ("Reply-quality war…"). It has the LIVE production config and the current
 debugging state. Do NOT re-derive context or start editing until you've read it.
 
-- **Latest commit on `main`: `b7961e3`** (fix: never log a bare meal-time word,
-  PR #168; prior: `2f989c3` latency flash-lite+history PR #166; `603dd77`
-  food-log never-drop PR #164; `13b2824` progressive gathering PR #162).
+- **Latest commit on `main`: `a11d09c`** (multi-part: skip no-op food extraction
+  + catch chained-colon breakdowns, PR #170; prior: `b7961e3` meal-time-word fix
+  PR #168; `2f989c3` latency flash-lite+history PR #166; `603dd77` never-drop
+  PR #164; `13b2824` progressive gathering PR #162).
+- **PROD CONFIG TO SET (recommended):** `COMPACT_REPLY_MODE=true` is very likely
+  OFF — a colon breakdown reply ("Let's break it down: Arguments for a Big
+  Dinner:") shipped, which the compact tiny-prompt mode structurally prevents AND
+  is faster. `fly secrets set --app grace-api COMPACT_REPLY_MODE=true`.
 - **Live prod config**: `directReplyMode: true`, `geminiFirst: true`,
   `trustGemini: true` → single Gemini call via `runDirectReply`, **regen guards
   OFF**. Reply quality = system prompt + outbound format floor + the new
@@ -29,6 +34,25 @@ debugging state. Do NOT re-derive context or start editing until you've read it.
   per-phrase patches; test after every change; don't break unrelated areas
   (reminders, images, logging). Develop on `claude/system-migration-process-dtkyp3`,
   merge to `main`, no PRs unless asked.
+
+---
+
+### Multi-part latency + chained-colon shape guard (2026-07-03, PR #170)
+
+Same "I had breakfast late, skipped lunch… big or small dinner?" turn (false-log
+gone), two new issues: a verbose colon breakdown reply + slow.
+- **LATENCY (the SAFE extraction-skip the user vetted):** new deterministic
+  `foodActionable` gate on the `runDirectReply` food block — the ~1.5s
+  `extractFood` LLM pass runs ONLY when it can act: `namesSpecificFood ||
+  foodSpanFromConsumption || pending || FOOD_DIARY_QUERY_RE || FOOD_MUTATION_RE`.
+  A pure rec/planning question skips it. Conservative: a delete/edit/diary-query
+  is never skipped for lacking a food word (its own regex keeps extraction on),
+  so the gate can only drop a genuine no-op — never a real log/edit/delete/query.
+- **SHAPE:** `looksStructured` missed the reply because its labels had apostrophes
+  ("Let's"/"You're") → only 1 clean `Label:` hit. Added a chained heading-colon
+  check (`>=2` `\w:\s+[A-Z]` segments) so the breakdown is caught + regenerated to
+  plain prose. Root-cause config fix: turn ON `COMPACT_REPLY_MODE`.
+Tests: +1 looksStructured (exact prod colon shape). 1600 api + 654 ai-core green.
 
 ---
 

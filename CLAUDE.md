@@ -6,6 +6,30 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — current state (as of 2026-07-03)
+
+**Before doing anything, read the newest dated section immediately below**
+("Reply-quality war…"). It has the LIVE production config and the current
+debugging state. Do NOT re-derive context or start editing until you've read it.
+
+- **Latest commit on `main`: `9306d84`** (work commits `113bb80`→`855d8de`).
+- **Live prod config**: `directReplyMode: true`, `geminiFirst: true`,
+  `trustGemini: true` → single Gemini call via `runDirectReply`, **regen guards
+  OFF**. Reply quality = system prompt + outbound format floor + the new
+  `looksStructured` shape-regen ONLY.
+- **Always verify what's deployed FIRST**: `curl -s https://grace-api.fly.dev/health`
+  → `version` must equal the commit you expect. Most "the fix didn't work"
+  reports were the fix not deployed. Also check `fly logs | grep startup` for the
+  flag values (`leanReplyMode`, `compactReplyMode`).
+- **Active theme**: reply shape/quality (verbose breakdowns, dropped multi-topic
+  parts, history bleed). The general fix is the shape-regen + `COMPACT_REPLY_MODE`.
+- **Working style the user demands**: GENERAL fixes (catch any wording), NOT
+  per-phrase patches; test after every change; don't break unrelated areas
+  (reminders, images, logging). Develop on `claude/system-migration-process-dtkyp3`,
+  merge to `main`, no PRs unless asked.
+
+---
+
 ### Reply-quality war: multi-topic, shape guard, Nudge-style modes (2026-07-02→03)
 
 Branch `claude/system-migration-process-dtkyp3` (merged to main each commit).

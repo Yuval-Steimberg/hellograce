@@ -4879,6 +4879,21 @@ CRITICAL RULES:
         { userId: input.userId, textPreview: input.text.slice(0, 60) },
         'ai.handle.multi_topic_history_dropped',
       );
+    } else if (this.unifiedReplyPath) {
+      // UNIFIED PATH (consolidation, 2026-07-03): give Gemini the FULL recent
+      // history window (Nudge-style) for maximum accuracy — the [REPLY FOCUS …]
+      // directive + the grounding facts keep it answering the CURRENT message,
+      // so the standalone / food-log / topic-closer bleed-trims below aren't
+      // needed. The multi-topic branch ABOVE is intentionally left in front of
+      // this, so a multi-part message still gets the self-contained [] treatment
+      // that the multi-part work depends on. Flag-gated (default off), so this
+      // never affects the current path; its GENERATION behaviour is validated by
+      // the auto-eval gate before the flag is flipped.
+      effectiveHistory = history;
+      logger.info(
+        { userId: input.userId, turns: history.length, textPreview: input.text.slice(0, 60) },
+        'ai.handle.unified_history_full',
+      );
     } else if (
       // SUBSTANTIVE STANDALONE message (2026-07-02): a full-thought message
       // (≥8 words) that is NOT a short follow-up and does NOT explicitly refer

@@ -12,7 +12,8 @@ _Also loaded automatically at session start. Update at the end of every session 
 ("Reply-quality war…"). It has the LIVE production config and the current
 debugging state. Do NOT re-derive context or start editing until you've read it.
 
-- **Latest commit on `main`: `9306d84`** (work commits `113bb80`→`855d8de`).
+- **Latest commit on `main`: `13b2824`** (progressive context-aware gathering,
+  PR #162; prior: `9306d84`, work commits `113bb80`→`855d8de`).
 - **Live prod config**: `directReplyMode: true`, `geminiFirst: true`,
   `trustGemini: true` → single Gemini call via `runDirectReply`, **regen guards
   OFF**. Reply quality = system prompt + outbound format floor + the new
@@ -27,6 +28,52 @@ debugging state. Do NOT re-derive context or start editing until you've read it.
   per-phrase patches; test after every change; don't break unrelated areas
   (reminders, images, logging). Develop on `claude/system-migration-process-dtkyp3`,
   merge to `main`, no PRs unless asked.
+
+---
+
+### Progressive profiling made CONTEXT-AWARE (2026-07-03, PR #162 merged)
+
+Branch `claude/grace-progressive-data-collection-401n8m` → squash-merged to main
+(`13b2824`). Product ask: Grace should keep learning the user over time by asking
+a natural follow-up RELEVANT to the current topic — like a supportive friend, not
+a survey — never out of nowhere, always after answering the actual message.
+
+The gathering system already existed (ask-first relevance gate
+`progressiveGatherGate`, throttled proactive weave `applyProgressiveProfiling`,
+passive learning `profile-extract.tryLearnProfile`). The gap: the proactive weave
+asked for the **next missing field in blind priority order**, ignoring what the
+user was talking about. This session made the weave **topic-driven**.
+
+- **`onboarding/progressive-profile.ts`** — new pure `contextualGatherSlot(user,
+  text)`: everyday topic → single most useful MISSING field — food→dislikes/diet,
+  medication/shot→injection_day, exercise→activity, progress/weight→goal_weight
+  then current_weight, sleep→wake_sleep. Skips entirely on symptom/heavy turns
+  (`HEAVY_OR_LOG_RE`) — the "out of nowhere" guard. **`injection_day` is now a
+  first-class gatherable slot** (added to `PROGRESSIVE_SLOTS`), FREQUENCY-AWARE
+  via `isWeeklyInjectable` so a daily-pill/unknown-cadence user is NEVER asked a
+  shot day (`isProfileSlotFilled('injection_day')` = filled unless weekly + null).
+  `ProfileShape` gained optional `medication`/`medication_frequency`. Added
+  GATHER_REASON + CLARIFY entries for injection_day.
+- **`ai.service.applyProgressiveProfiling`** — prefers the contextual slot over
+  `nextMissingProfileSlot`. A slot with a STRICT next-turn parser (`injection_day`
+  / `activity` / `wake_sleep` — a weekday/enum/time can't misparse as a weight)
+  may weave on a TOPICAL turn; every other slot (incl. the blind fallback) stays
+  neutral-turn-only (`gatherSafeTurn`) to protect the answer parse. Still throttled
+  1/20h (`PROFILE_GATHER_COOLDOWN_HOURS`), still returns early if another intercept
+  already set `directContextNote`. **Now also skips MULTI-TOPIC messages**
+  (`analyzeMessage().hasMultiple`) — mirrors the ask-first gate so gathering never
+  disrupts the multi-part answer (the user explicitly flagged this).
+
+**Deliberately NOT touched (safety):** the ask-first `relevantProfileSlot`
+short-circuit was left AS-IS — it runs BEFORE the deterministic reminder/symptom/
+weekly-summary intercepts (line ~1123, before ~1144+), so broadening it would risk
+preempting them. All new coverage flows through the non-short-circuiting proactive
+weave on the direct path (line ~2044, AFTER every intercept) → zero ordering risk.
+No schema/DB change ("typical meals / protein habits" have no column; deferred).
+
+Tests: +9 progressive-profile cases (35 total). 1588 api + 654 ai-core green;
+`pnpm -r typecheck` clean. Flag: `PROGRESSIVE_PROFILE_ENABLED` (default on) +
+`directReplyMode` (on in prod). **Deploy: standard `fly deploy` — no migration.**
 
 ---
 

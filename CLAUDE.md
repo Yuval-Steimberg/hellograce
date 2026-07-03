@@ -6,6 +6,143 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+### Reply-quality war: multi-topic, shape guard, Nudge-style modes (2026-07-02→03)
+
+Branch `claude/system-migration-process-dtkyp3` (merged to main each commit).
+A long production-debugging thread driven by real iMessage screenshots. Root
+theme: **Grace's chat replies were verbose, mis-shaped (headings/breakdowns/
+lists), dropped parts of multi-topic messages, and bled stale history.** Many
+fixes were "patches for one phrasing"; the session converged on GENERAL,
+structure-based fixes. **Latest commit `855d8de`.**
+
+**CRITICAL production config (confirmed from `fly logs | grep startup`):**
+`directReplyMode: true`, `geminiFirst: true`, `trustGemini: true` →
+**the reply is a SINGLE Gemini call via `runDirectReply` AND the regeneration
+guards (relevance/behavioral/quality) are OFF.** So reply quality relies ONLY
+on: the system prompt + the deterministic outbound format floor + the NEW
+shape-regen. There is no automatic "regenerate a bad reply" unless we add it.
+`runDirectReply` (`ai.service.ts` ~2979) is the live path — edits gated on
+`this.directReplyMode` DO apply in prod. (Earlier confusion: env DEFAULT is
+false, but the prod Fly secret sets it true.)
+
+**`/health` now returns the deployed commit** (`routes/health.ts` +
+Dockerfile `ARG GIT_COMMIT`). Deploy with
+`--build-arg GIT_COMMIT=$(git rev-parse --short HEAD)`; verify with
+`curl …/health` → `version` must equal your commit. **Most "your fix didn't
+work" reports were the fix not being deployed** — always confirm `/health`
+version + the `startup` log flags BEFORE concluding a fix failed.
+
+**Multi-topic messages (the biggest thread).** `services/api/src/services/
+message-understanding.ts` — `analyzeMessage(text)` deterministically splits a
+message into topic kinds (food, food_question, symptom, progress_question,
+question, emotion, injection, medication, weight, sleep, exercise, hydration,
+craving, appointment, social, reminder, gratitude); `hasMultiple` = ≥2 kinds.
+Broadened to all subjects + slang/typos ("I'm nervous", "stressing me out",
+"had chicken n rice", `naus\w*`, "drank all my water"). `buildMultiPartNote` is
+a SINGLE plain-language instruction (NOT an enumerated "Parts to cover: 1)…2)…"
+block — that structure made Gemini reply "Here's an analysis of your entries,
+categorizing them…"). In `ai.service.handleMessageInner`: `isMultiTopic =
+analyzeMessage(input.text).hasMultiple`; when true, the single-intent direct
+short-circuits (`handleFoodQuestionDirect`, knowledge/emotional/etc.) are
+SKIPPED so the message routes through `runDirectReply` where the multi-part
+note is appended and every part is answered.
+
+**History-bleed fixes (Gemini answered a STALE message).** In `runDirectReply`
+`effectiveHistory` logic: multi-topic → `[]` (no history); pure food log →
+micro-prompt, no history; food log → user-turns only; **SUBSTANTIVE STANDALONE**
+message (≥8 words, not a short follow-up, no back-reference like "earlier"/"you
+said"/"the salmon I…") → `history.slice(-2)` (keep only the immediately-prior
+exchange). This stopped "I'm eating at my friend's Friday night…" from getting
+a salmon-protein answer from an earlier turn. Default window
+`CONVERSATION_HISTORY_TURNS`=12.
+
+**GENERAL reply-shape guard (the real fix, not per-phrase).** `looksStructured(text)`
+(exported from `ai.service.ts`, unit-tested) returns true for ANY report shape
+regardless of words: ≥2 `Label:` segments, bullet/numbered lists, an inline
+numbered item, a leading heading clause ending in a colon, or a mid-reply colon
+introducing an enumerated list (incl. truncated "…steps: … 1."). When true (and
+not a log turn), `runDirectReply` REGENERATES once with a hard minimal prompt
+(1–3 plain sentences, no headings/lists/labels/preamble, answer every part,
+give a number for foods) and adopts it only if the rewrite is clean. This is the
+"catch any variation" solution the user demanded after per-phrase strips failed.
+
+**New reply-mode flags (all default false, flip via `fly secrets`):**
+- `LEAN_REPLY_MODE` — strips the analytical BACKGROUND blocks from
+  `buildPersonalisedPrompt` (dashboard PROGRESS SNAPSHOT, learned SIDE-EFFECT
+  PATTERNS, foods-logged-today enumeration) that Gemini was "categorizing".
+  Shared by both orchestrator + direct paths.
+- `COMPACT_REPLY_MODE` — swaps the big personalised prompt for a TINY Nudge-style
+  one (`buildCompactReplyPrompt`: name/med/today's totals/diet + hard style
+  rules). A small prompt can't produce breakdown essays. Not used for a new
+  user's first message. **Nudge's whole trick = a tight prompt + one call;**
+  Grace's big prompt is why replies sprawled.
+
+**Format-enforcer (`packages/ai-core/src/format-enforcer.ts`, runs on EVERY
+outbound via `sanitizeOutbound`):** fixed the length-cap HOLE (a run-on whose
+only early period is a short opener now hard-caps instead of shipping the whole
+essay); broadened the opener-strip class ("let's break down/dive/discuss",
+"that sounds like a delicious meal", "here's a general idea/breakdown",
+leading gerund headings "Estimating Protein in Your…:", "this is a rough
+estimate…, but" hedge) + strips CHAINED openers (3 passes); `labelColonRe`
+prefix broadened to `,`/`:` so comma/colon-chained labels flatten.
+
+**Other fixes this session:**
+- Onboarding completion (`onboarding-flow.ts buildSignupCompleteReply`): NO
+  payment link (trial link comes later via Day-2 reminder + paywall), explains
+  the dashboard option; kept UNDER the 420-char outbound cap (it was truncating
+  the dashboard line).
+- Clickable links: `twilio/sender.ts ensureLinkScheme(text, webUrl)` prepends
+  `https://` to bare Grace-host links (iMessage only auto-links schemed URLs).
+  Applied in all 3 senders after `rewriteCanonicalLinks`.
+- Complete user delete: `UserService.purgeUserData(phone)` — deletes EVERY child
+  table (incl. `symptom_episodes`, `progress_photos`, `check_ins` by user_id OR
+  phone for NULL-phone mood rows) + evicts user/today-food/known-facts caches.
+  Wired into admin delete + GDPR delete. (Bug: deleted users still showed data on
+  the dashboard.)
+- Quiet re-engagement: opted-out (`paused`) users get ONE warm "I'm still here"
+  hello after `REENGAGE_QUIET_AFTER_HOURS` (24h) silence, throttled by
+  `REENGAGE_QUIET_MIN_GAP_HOURS` (72h). `scheduler.reengageQuietOptedOut` +
+  `quiet-reengagement.ts` + `users.listPausedUsers()`.
+- Time-of-day food recs: `handleFoodQuestionDirect` scopes to the current meal
+  from the user's local hour (`localHourForTimezone`/`mealForLocalHour`/
+  `wantsFullDayPlan`) unless a meal is named or a full-day plan is asked.
+- Progressive-profiling gate (`progressive-profile.ts relevantProfileSlot`):
+  `TARGET_QUESTION_RE` tightened to real "how much should I eat / my target"
+  questions + `FOOD_CONTENT_RE` guard, so a factual "how much protein IS that"
+  is answered directly, never interrupted with an activity-level ask. The gate
+  is also SKIPPED entirely for multi-topic messages.
+- Morning reminder content (`scheduler.enrichGenerateOpts` + `message-generator`
+  `CONVO_CONTEXT`): food logs/questions are FILTERED OUT of the "follow up on a
+  topic" conversationContext (a reminder's food angle comes from the REAL totals),
+  and the generator is told never to frame a logged past meal as today's food /
+  "a good start to the day". (Bug: 7:15 AM reminder said "that salmon sounds like
+  a great start to the day".) Reminder TIMING is separately governed by
+  `wake_time` + `timezone` — a wrong-hour reminder is almost always the timezone
+  defaulting to `America/New_York` instead of the user's real zone.
+- Regression net: the 5 production screenshots are permanent scored cases in
+  `auto-eval/regression-scenarios.ts` (multipart feeling+food, no-essay,
+  no-meta-analysis, progressive-not-out-of-nowhere, no-history-bleed). Run via
+  `POST /admin/regression/run` (Bearer ADMIN_TOKEN) — several minutes (33
+  scenarios × Gemini).
+
+**Deploy (user does this on their Mac):**
+```
+git pull origin main && fly deploy --app grace-api --config services/api/fly.toml \
+  --no-cache --build-arg GIT_COMMIT=$(git rev-parse --short HEAD)
+curl -s https://grace-api.fly.dev/health   # version must match HEAD
+```
+
+**Open / next steps:** (1) Confirm `COMPACT_REPLY_MODE=true` is actually set +
+deployed (a heading in a reply means it's OFF). (2) The durable end-state is the
+consolidation: make the single lean/compact path the default, delete the per-turn
+notes, keep only safety+logging+format floor+shape-regen, gated by the regression
+net. (3) If shape-regen + compact still leak, re-enable the relevance guard
+(Option B) behind a flag — but `trustGemini` currently disables all regen. (4)
+Verify user timezone is `Asia/Jerusalem` for the test number (+972…) if morning
+reminders land at the wrong local hour.
+
+---
+
 ### In-chat onboarding is now the DEFAULT — no more web quiz (2026-07-02)
 
 Product: "no more web quizzes." The live entry is iMessage-first ("Start with

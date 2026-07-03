@@ -165,6 +165,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       leanReplyMode: env.LEAN_REPLY_MODE,
       compactReplyMode: env.COMPACT_REPLY_MODE,
       progressiveProfile: env.PROGRESSIVE_PROFILE_ENABLED,
+      unifiedReplyPath: env.UNIFIED_REPLY_PATH,
     },
   });
   logger.info(

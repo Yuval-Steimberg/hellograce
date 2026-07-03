@@ -681,6 +681,10 @@ export interface AIServiceDeps {
      *  (relevance-first). Defaults false here so unit tests are unaffected;
      *  server.ts passes env.PROGRESSIVE_PROFILE_ENABLED (default true). */
     progressiveProfile?: boolean;
+    /** UNIFIED_REPLY_PATH (2026-07-03). Consolidation flag — one grounded reply
+     *  prompt instead of the compact/lean/personalised split. Default false;
+     *  only selects the final prompt (upstream intercepts unaffected). */
+    unifiedReplyPath?: boolean;
   };
   /** Production issue capture — Layer 4 of defense-in-depth. Every regen
    *  fire and safe-fallback fire is captured (fire-and-forget) so we can
@@ -779,6 +783,12 @@ export class AIService {
    *  essays possible). Default false. */
   private get compactReplyMode(): boolean {
     return this.deps.guards?.compactReplyMode ?? false;
+  }
+
+  /** UNIFIED REPLY PATH — one grounded prompt (compact style + always-present
+   *  grounding facts). Default false; consolidation flag. */
+  private get unifiedReplyPath(): boolean {
+    return this.deps.guards?.unifiedReplyPath ?? false;
   }
 
   private get progressiveProfile(): boolean {
@@ -4698,7 +4708,15 @@ CRITICAL RULES:
     // personalised prompt for a tiny "Nudge-style" one so Gemini can't produce
     // heading/breakdown essays — the real fix for reply SHAPE. Not used for a
     // brand-new user's very first message (that welcome wants the full warmth).
-    const systemPrompt = (this.compactReplyMode && !isNew)
+    //
+    // UNIFIED_REPLY_PATH (consolidation, 2026-07-03): forces the RICH,
+    // fully-grounded personalised prompt — Gemini gets ALL the data (date/time,
+    // injection schedule, today's totals, known facts, memory, dashboard
+    // signals, learned patterns) plus the warm Grace voice + anti-essay style
+    // rules. Accuracy comes from data; friendliness + no-sprawl come from the
+    // style rules — not from starving the model. So the unified path disables
+    // the data-starved compact prompt.
+    const systemPrompt = (this.compactReplyMode && !isNew && !this.unifiedReplyPath)
       ? this.buildCompactReplyPrompt(user, { todaysFood, dietaryRestriction, dislikes: cleanFoodDislikes })
       : this.buildPersonalisedPrompt(user, isNew, {
           todaysFood,

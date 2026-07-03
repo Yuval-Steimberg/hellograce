@@ -294,6 +294,14 @@ const EnvSchema = z.object({
    *  Default false; `fly secrets set COMPACT_REPLY_MODE=true` to A/B against the
    *  regression net. */
   COMPACT_REPLY_MODE: z.coerce.boolean().default(false),
+  /** UNIFIED_REPLY_PATH (2026-07-03). The consolidation flag: when true, the
+   *  reply uses ONE grounded prompt (compact Nudge-style tight style + the
+   *  always-present grounding facts: date/time, injection schedule, today's
+   *  totals) instead of choosing between the compact / lean / personalised
+   *  builders. Default false — flip ONLY after the regression + auto-eval gate
+   *  passes. The upstream intercepts (reminders, image analysis, multi-part,
+   *  safety) are UNAFFECTED by this flag; it only selects the final prompt. */
+  UNIFIED_REPLY_PATH: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

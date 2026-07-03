@@ -12,9 +12,9 @@ _Also loaded automatically at session start. Update at the end of every session 
 ("Reply-quality war…"). It has the LIVE production config and the current
 debugging state. Do NOT re-derive context or start editing until you've read it.
 
-- **Latest commit on `main`: `2f989c3`** (latency: flash-lite for extraction
-  passes + history window 24→12, PR #166; prior: `603dd77` food-log never-drop
-  PR #164; `13b2824` progressive context-aware gathering PR #162; `9306d84`).
+- **Latest commit on `main`: `b7961e3`** (fix: never log a bare meal-time word,
+  PR #168; prior: `2f989c3` latency flash-lite+history PR #166; `603dd77`
+  food-log never-drop PR #164; `13b2824` progressive gathering PR #162).
 - **Live prod config**: `directReplyMode: true`, `geminiFirst: true`,
   `trustGemini: true` → single Gemini call via `runDirectReply`, **regen guards
   OFF**. Reply quality = system prompt + outbound format floor + the new
@@ -29,6 +29,33 @@ debugging state. Do NOT re-derive context or start editing until you've read it.
   per-phrase patches; test after every change; don't break unrelated areas
   (reminders, images, logging). Develop on `claude/system-migration-process-dtkyp3`,
   merge to `main`, no PRs unless asked.
+
+---
+
+### Fix: bare meal-time word logged as food (2026-07-03, PR #168)
+
+Regression from the never-drop work (PR #164): "I had breakfast late, skipped
+lunch, and now I'm not sure if I should eat a big dinner or something small" →
+"Glad that's logged" — the extractor logged the meal-TIME word "breakfast" as a
+food, derailing the multi-part answer. Meal-time/container words (breakfast/
+lunch/dinner/snack/a big meal) name WHEN/how-much, not WHAT → nothing to log.
+New `meal-lifecycle.namesSpecificFood(text)` (strips generic words, then checks
+`FOOD_MENTION_RE` → "breakfast burrito" true, "I had breakfast late" false).
+Applied in `runDirectReply` to filter BOTH confirmed + pending extracted items,
+to the never-drop raw-text path, and inside `foodSpanFromConsumption`; plus a
+food-extract prompt rule. Salmon case still logs. +3 tests; 1599 api + 654
+ai-core green. **Deploy: standard `fly deploy` — no migration.**
+
+**Multi-part latency (open, user-requested):** the multi-part path skips the
+single-intent short-circuits → `runDirectReply` with `history=[]` + the plain
+multi-part note, then a single flash reply. For a food-shaped multi-part it also
+runs `extractFood` (now flash-lite) SERIALLY first. Proposed safe cut (not yet
+done): skip the `extractFood` LLM call when the message names no specific food
+AND isn't a consumption/diary-query (`!namesSpecificFood && !foodSpanFromConsumption
+&& no pending && not a "what did I eat" query`) → saves ~1.5s with zero accuracy
+loss (nothing to log anyway). Bigger option: run extract concurrently with the
+reply (log becomes a pure side-effect; reply loses same-turn "logged X"
+confirmation).
 
 ---
 

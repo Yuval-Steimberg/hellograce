@@ -17,6 +17,7 @@ import { GraceInsightCard } from "@/components/dashboard/GraceInsightCard";
 import { RecentWins } from "@/components/dashboard/RecentWins";
 import { InjectionCard } from "@/components/dashboard/InjectionCard";
 import { HydrationCard } from "@/components/dashboard/HydrationCard";
+import { WeeklyReview } from "@/components/dashboard/WeeklyReview";
 import { TodaysMeals } from "@/components/dashboard/TodaysMeals";
 import { ProfileCompleteness } from "@/components/dashboard/ProfileCompleteness";
 import { DashboardSkeleton, DashboardLoadError } from "@/components/dashboard/DashboardStates";
@@ -184,6 +185,11 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
       {/* Recent wins — encouragement, hidden when there's nothing earned yet */}
       <div className="mb-4">
         <Reveal><RecentWins data={data} /></Reveal>
+      </div>
+
+      {/* This week — averages + weight change + plateau signal + hedged insight */}
+      <div className="mb-4">
+        <Reveal><WeeklyReview data={data} /></Reveal>
       </div>
 
       {/* Charts grid — two-up from tablet width */}

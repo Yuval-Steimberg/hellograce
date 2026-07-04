@@ -144,6 +144,28 @@ describe('gatherWeeklySummary', () => {
     expect(data.injectionDay).toBe('Sunday');
   });
 
+  it('includes hydration consistency when the water dep is present', async () => {
+    const data = await gatherWeeklySummary(
+      makeDeps({
+        getDailyWaterHistory: async () => [
+          { day: '2026-06-18', oz: 70 },
+          { day: '2026-06-17', oz: 0 },
+          { day: '2026-06-16', oz: 50 },
+        ],
+      }),
+      user,
+      now,
+    );
+    expect(data.waterDaysLogged).toBe(2);
+    expect(renderWeeklySummary(data)).toMatch(/logged water on 2 of 7 days/);
+  });
+
+  it('omits hydration when the water dep is absent (back-compat)', async () => {
+    const data = await gatherWeeklySummary(makeDeps(), user, now);
+    expect(data.waterDaysLogged).toBeNull();
+    expect(renderWeeklySummary(data)).not.toMatch(/logged water/);
+  });
+
   it('includes an active side-effect flag inside the window', async () => {
     const data = await gatherWeeklySummary(
       makeDeps(),

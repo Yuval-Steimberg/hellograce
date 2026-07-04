@@ -138,6 +138,10 @@ export interface WeeklySummaryData {
   doseMg: number | null;
   injectionDay: string | null;
   sideEffect: string | null;
+  /** Days water was logged in the window, and the window size. Null when we
+   *  couldn't read hydration (dep absent / table not migrated). */
+  waterDaysLogged: number | null;
+  waterDaysWindow: number;
 }
 
 /** Minimal surface of UserService the summary needs (kept narrow for testing). */
@@ -154,6 +158,12 @@ export interface WeeklySummaryDeps {
     userId: string,
     limit?: number,
   ): Promise<Array<{ type: string; mood_score: number | null; created_at: Date }>>;
+  /** Optional: per-user-day water totals. When absent, the summary simply omits
+   *  the hydration line (keeps existing callers/tests working unchanged). */
+  getDailyWaterHistory?(
+    userId: string,
+    days?: number,
+  ): Promise<Array<{ day: string; oz: number }>>;
 }
 
 const WEEK_MS = 7 * 24 * 3_600_000;
@@ -196,6 +206,8 @@ export async function gatherWeeklySummary(
     doseMg: user.dose_mg ?? null,
     injectionDay: user.injection_day ?? null,
     sideEffect: null,
+    waterDaysLogged: null,
+    waterDaysWindow: daysWindow,
   };
 
   // Protein / calories
@@ -238,6 +250,15 @@ export async function gatherWeeklySummary(
       data.avgMood = Math.round((moods.reduce((s, m) => s + m, 0) / moods.length) * 10) / 10;
     }
   } catch { /* best-effort */ }
+
+  // Hydration consistency (optional dep — omitted when unavailable)
+  if (deps.getDailyWaterHistory) {
+    try {
+      const water = await deps.getDailyWaterHistory(user.phone, daysWindow);
+      const logged = water.filter((d) => d.oz > 0).length;
+      if (water.length > 0) data.waterDaysLogged = logged;
+    } catch { /* best-effort */ }
+  }
 
   // Active side-effect flag (only the current one is persisted, qualitatively)
   if (user.side_effect_flow) {
@@ -316,6 +337,11 @@ export function renderWeeklySummary(data: WeeklySummaryData): string {
 
   if (hasMood) {
     sentences.push(`Mood's averaged around ${data.avgMood} out of 10.`);
+  }
+
+  // Hydration consistency — one short line, only when there's real water data.
+  if (data.waterDaysLogged != null && data.waterDaysLogged > 0) {
+    sentences.push(`You logged water on ${data.waterDaysLogged} of ${data.waterDaysWindow} days.`);
   }
 
   // Medication / dose / injection day — one combined sentence.

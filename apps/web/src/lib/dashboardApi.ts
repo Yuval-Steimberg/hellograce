@@ -47,6 +47,18 @@ export interface DashboardSummary {
     goalMax: number;
     history: Array<{ day: string; oz: number }>;
   };
+  weekly: {
+    avgProtein: number | null;
+    proteinGoal: number | null;
+    daysProteinLogged: number;
+    avgOz: number | null;
+    daysWaterLogged: number;
+    daysWaterAtGoal: number;
+    waterDaysWindow: number;
+    weightDeltaLbs: number | null;
+    plateau: { stalled: boolean; days: number; deltaLbs: number } | null;
+    insight: string | null;
+  };
   mood: { series: Array<{ date: string; score: number }> };
   symptoms: {
     patterns: Array<{ symptom: string; count: number; typicalTiming: string | null; topRemedy: string | null }>;

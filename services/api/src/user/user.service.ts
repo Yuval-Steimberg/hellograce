@@ -3,6 +3,7 @@ import { encryptField, decryptField, hashField, isEncryptionEnabled, isEncrypted
 import type { TodayFoodCacheService } from '../cache/today-food-cache.js';
 import { USER_DAY_CTE, userDayExpr, isCurrentUserDay } from '../nutrition/logging-window.js';
 import { deriveMissingTargets } from '../nutrition/derive-targets.js';
+import { getDailyWaterHistory as getDailyWaterHistoryQuery } from '../services/water-log.js';
 
 export interface GraceUser {
   id: string;
@@ -590,6 +591,13 @@ export class UserService {
     const targets = deriveMissingTargets(user);
     if (Object.keys(targets).length === 0) return;
     await this.update(userId, targets);
+  }
+
+  /** Per-user-day water totals (oz) for the last N days — thin wrapper over the
+   *  water-log query so callers with a UserService (e.g. the weekly summary) can
+   *  read hydration history without plumbing the pool. Best-effort ([] on error). */
+  async getDailyWaterHistory(userId: string, days = 7): Promise<Array<{ day: string; oz: number }>> {
+    return getDailyWaterHistoryQuery(this.pool, userId, days);
   }
 
   /** Log a mood score (1-10) from the dashboard (stored like the log_mood tool). */

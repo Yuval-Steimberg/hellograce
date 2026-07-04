@@ -26,6 +26,7 @@ import {
 import { kgToLbs } from '../nutrition/units.js';
 import { getTodaysWaterOz, getDailyWaterHistory, logWater } from '../services/water-log.js';
 import { WATER_GOAL_MIN_OZ, WATER_GOAL_MAX_OZ } from '../nutrition/water.js';
+import { computeWeeklyStats } from '../services/weekly-insights.js';
 
 /**
  * Grace user dashboard API (2026-07-02).
@@ -170,6 +171,15 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
         // Oldest → newest so the UI reads left-to-right; last 7 days.
         history: [...waterHist].reverse().map((d) => ({ day: d.day, oz: d.oz })),
       },
+      // Weekly rollup: averages + this-week weight change + plateau signal + one
+      // hedged, non-causal insight. Pure derivation from data already fetched.
+      weekly: computeWeeklyStats({
+        proteinHistory7: proteinHist.slice(0, 7).map((d) => ({ day: d.day, protein: Math.round(d.protein_g), itemCount: d.item_count })),
+        weightSeries,
+        waterHistory: waterHist.map((d) => ({ day: d.day, oz: d.oz })),
+        proteinGoal,
+        waterGoalMin: WATER_GOAL_MIN_OZ,
+      }),
       mood: { series: moodSeries },
       symptoms: {
         patterns: summarizeSymptoms(episodes),

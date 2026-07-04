@@ -6,45 +6,80 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 ADMIN DASHBOARD — cohorts, funnel, analytics, group messaging (2026-07-04, branch `claude/grace-admin-dashboard-z7xajj`)
+## 👉 READ FIRST — admin dashboard + onboarding/trial fixes (2026-07-04, MERGED to `main`)
 
-Admin-only build. **No user-facing pipeline / reply / scheduler / Stripe / onboarding
-code was touched** — 12 files, all admin-scoped (verify: `git diff --stat
-origin/claude/grace-admin-dashboard-z7xajj..HEAD`). 1674 api + 657 ai-core tests
-green; all packages typecheck + build clean. Analytics + campaign SQL validated
-end-to-end against a real local Postgres (incl. the un-migrated degraded path).
+Two PRs merged to `main` this session (branch `claude/grace-admin-dashboard-z7xajj`).
+**Latest `main` HEAD `f51c9c0`.** All API-side; **NOT deployed by me** — the user
+deploys `grace-api` on their Mac (`fly deploy … --no-cache --build-arg
+GIT_COMMIT=$(git rev-parse --short HEAD)`, verify `/health` == HEAD). The admin
+**web** auto-deploys on Vercel; the API does NOT. 1687 api + 657 ai-core tests
+green; all packages typecheck + build clean.
 
-**Backend (new, read-only unless noted):**
-- `services/api/src/services/admin-analytics.ts` — 30+ whitelisted cohort predicates
-  over an enriched CTE (users + per-user message/food/photo aggregates); unifies the
-  trial/paid/active/onboarded definitions previously duplicated across
-  `/admin/metrics` + `/admin/business`. Schema-probes `progress_photos` /
-  `subscription_status` / `onboarding_state` and degrades to 0 when absent.
+**BEFORE Campaigns works in prod: apply migration `20260704000001_admin_campaigns.sql`
+in Supabase.** For live MRR: `grace-api` needs `STRIPE_SECRET_KEY` (else MRR shows
+"Estimated"). No other env/migration changes.
+
+### PR #199 — Admin dashboard (cohorts, funnel, analytics, live MRR, group messaging)
+Admin-only; **no user-facing reply/scheduler/onboarding/Stripe-subscription code
+touched**. Analytics + campaign SQL validated end-to-end against a real local
+Postgres (incl. the un-migrated degraded path).
+- `services/api/src/services/admin-analytics.ts` (read-only) — 30+ whitelisted
+  cohort predicates over an enriched CTE (users + per-user message/food/photo
+  aggregates); unifies the trial/paid/active/onboarded definitions previously
+  duplicated across `/admin/metrics` + `/admin/business`. Schema-probes
+  `progress_photos`/`subscription_status`/`onboarding_state`, degrades to 0 when
+  absent. Endpoints: `GET /admin/cohorts`, `/admin/cohorts/:key/users`,
+  `/admin/funnel`, `/admin/analytics`.
 - `services/api/src/services/admin-campaigns.ts` — cohort/ad-hoc group messaging.
-  Excludes paused (opt-out) / blocked / inactive; requires `confirm`; audience cap
+  Excludes paused (opt-out)/blocked/inactive; requires `confirm`; cap
   `MAX_AUDIENCE=5000`; content guard blocks medical/dose advice; per-recipient
-  delivery status; dedupe via UNIQUE(campaign_id,phone); logs to conversation +
-  audit. Sends only through `deps.sender` (same transport as the per-user send).
-- `routes/admin.ts` (additive routes only): `GET /admin/cohorts`,
-  `/admin/cohorts/:key/users`, `/admin/funnel`, `/admin/analytics`; `POST
-  /admin/campaigns/{preview,send,draft}`, `POST /admin/campaigns/:id/send`,
-  `GET /admin/campaigns[/:id]`. All behind the existing Bearer `/admin/*` hook.
-- **Migration `20260704000001_admin_campaigns.sql`** — additive: `admin_campaigns`
-  + `admin_campaign_recipients` (RLS default-deny). **Apply before using Campaigns**;
-  everything degrades gracefully (best-effort) until it's applied.
+  status; dedupe via `UNIQUE(campaign_id,phone)`; logs to conversation + audit;
+  sends only through `deps.sender`. **`enhanceMessage()`** rewrites a draft in
+  Grace's voice via `deps.llm` then RE-RUNS `checkCampaignMessage` on the output
+  (AI can't introduce medical/dose content). Endpoints: `POST
+  /admin/campaigns/{preview,send,draft,enhance}`, `POST /admin/campaigns/:id/send`,
+  `GET /admin/campaigns[/:id]`.
+- **Live MRR:** `stripe.service.getStripeMrr()` sums normalized-monthly amounts
+  from active/trialing/past_due Stripe subs (cached 5min, capped, best-effort);
+  `/admin/business` returns it with `mrr_source: 'stripe'|'estimated'`, falls back
+  to count × configured-price estimate. Business page labels live vs estimated.
+- **Frontend:** nav entries **Cohorts** (`/admin/cohorts`), **Growth & Funnel**
+  (`/admin/growth`), **Campaigns** (`/admin/campaigns`); shared
+  `components/admin/CohortUsersPanel.tsx` (drill-down → reuses `UserDrawer`); Users
+  page gained a cohort filter dropdown; client methods in `lib/api.ts`.
+- **Honest data gaps (surfaced as "not tracked", not faked):** website visits,
+  dashboard opens, voice usage — need event instrumentation (pixel / event table).
+  Everything else (onboarding/trial/paid/activity/food/reminder cohorts,
+  DAU/WAU/MAU, conversion/churn, drop-off) is real.
 
-**Frontend:** new nav entries **Cohorts** (`/admin/cohorts`), **Growth & Funnel**
-(`/admin/growth`), **Campaigns** (`/admin/campaigns`); shared
-`components/admin/CohortUsersPanel.tsx` (drill-down → reuses `UserDrawer`); Users
-page gained a cohort filter dropdown. Client methods added to `lib/api.ts`.
-
-**Honest data gaps (surfaced as "not tracked", not faked):** website visits,
-dashboard opens, voice usage — need event instrumentation (a pixel / event table)
-before they can appear. Everything else (onboarding/trial/paid/activity/food/
-reminder cohorts, DAU/WAU/MAU, conversion/churn, drop-off) is real.
-
-**Not deployed by me.** No reply-path change, so the food/reply work below is
-unaffected.
+### PR #200 — Onboarding + trial fixes (from a Nudge-style review of 4 failures)
+Audited Grace against 4 reported onboarding/trial failures; **#2 was already
+prevented, fixed the other 3.** Isolated to the trial intercept + onboarding flow.
+- **#2 "repeats/fabricates answers" — ALREADY PREVENTED (no change).** The next
+  onboarding question is built deterministically from slot + name only
+  (`onboarding-flow.ts` `fallbackQuestion`) and NEVER echoes a prior answer, so
+  Grace can't invent "Mondays it is". Skips answered slots; LLM-normalizes before
+  re-asking.
+- **#4 trial-length inconsistency ("told 7 days, cut at 3") — FIXED.** New
+  `services/api/src/services/trial-info.ts` holds `TRIAL_DAYS=3` as the SINGLE
+  source of truth — `webhook.ts isAccessAllowed` imports it, so the access gate and
+  what Grace SAYS can't drift. Deterministic intercept in `ai.service.handleMessage`
+  (right after the reminder intercept) answers "how long is my trial / when does it
+  end / how many days left / when am I charged" from `trial_start + TRIAL_DAYS` —
+  never an LLM guess (`detectTrialQuestion` + `buildTrialReply`).
+- **#3 ignores emotional disclosures in onboarding — FIXED.** `detectEmotionalDisclosure`
+  + `buildEmotionalAck` (onboarding-flow.ts): a loaded disclosure ("9 months, lost
+  zero and actually gained") gets one warm, validating, NON-medical line prepended
+  to the next question — acknowledged without derailing the slot flow. LLM ack only
+  runs when there's something to acknowledge (fast common path unchanged).
+- **#1 day-1 activation — FIXED the free half.** `buildSignupCompleteReply` now
+  invites the FIRST food log (the action that retained the one real customer)
+  instead of pointing at a question. The proactive half already existed — the day
+  1–3 `journey` messages (`message-generator.ts`) are already activation-focused
+  ("text me your next meal and I'll log it") — verified, left unchanged.
+- **Open / not verified live:** the LLM-generated emotional-ack *tone* couldn't be
+  exercised in CI (no Gemini key) — detection/wiring/fallback/safety are tested;
+  worth a quick live look after deploy.
 
 ---
 

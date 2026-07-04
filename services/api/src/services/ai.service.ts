@@ -2998,9 +2998,11 @@ CRITICAL RULES:
       this.deps.memory.ensureConversation(userId).catch(() => `fallback-${userId}`),
     ]);
 
-    // ONE clean food logger (side-effect). Never asks, never holds pending, never drops.
-    const foodNote = await this.logFoodUnified(input).catch(() => null);
-    const todaysFood = foodNote
+    // Nudge-style food step (side-effect): a SPECIFIC item with an amount is
+    // logged; a missing/vague amount is NOT logged — we ask ONE portion question
+    // (stored so the next turn resolves it, no loop). Accurate logging, not eager.
+    const food = await this.foodStepUnified(input).catch(() => null);
+    const todaysFood = food && food.logged.length > 0
       ? await this.deps.users.getTodaysFoodSummary(userId).catch(() => todaysFoodPre)
       : todaysFoodPre;
 
@@ -3010,9 +3012,15 @@ CRITICAL RULES:
       .filter(Boolean);
 
     let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd });
-    if (foodNote) {
+    if (food?.removed) {
+      systemPrompt += `\n\n[REMOVED from today's log: ${food.removed}. Confirm warmly in one short line. Do NOT mention their injection or the date.]`;
+    }
+    if (food && food.logged.length > 0) {
       const totalP = Math.round(todaysFood.protein_g);
-      systemPrompt += `\n\n[JUST LOGGED for them: ${foodNote}${totalP > 0 ? ` (running total ~${totalP}g protein today)` : ''}. In your reply, warmly name back ONLY what they logged in THIS message — do NOT recite their whole day's diary or earlier meals unless they asked. A bare "thanks", "got it", "noted", or "thanks for letting me know" is WRONG — say the food back. Only mention the running total if they asked. Then answer anything else they asked in the same message. Do NOT mention their injection or the date.]`;
+      systemPrompt += `\n\n[JUST LOGGED (only what they said in THIS message): ${food.logged.join(', ')}${totalP > 0 ? ` (running total ~${totalP}g protein today)` : ''}. Warmly name back ONLY these items in a few words. Do NOT recite their whole day's diary or earlier meals, and do NOT mention their injection or the date. Only give the running total if they asked. Then answer anything else they asked.]`;
+    }
+    if (food && food.pending.length > 0) {
+      systemPrompt += `\n\n[NEEDS A PORTION before it can be logged: ${food.pending.join(', ')}. Do NOT say it's logged, do NOT give it a protein/calorie number, do NOT add it to any total. Ask ONE short, casual question about how much (e.g. "how much chicken — a few oz or a full breast?"), covering all of those items in that one question, then stop.]`;
     }
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
@@ -3028,24 +3036,58 @@ CRITICAL RULES:
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
     const totalMs = Date.now() - t0;
-    this.persistLatency(userId, foodNote ? 'unified_food' : 'unified', totalMs, lat.snapshot(), input.text, reply);
-    return { text: reply, confidence: 'high', intent: foodNote ? 'food_log' : 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+    const didLog = !!food && (food.logged.length > 0 || !!food.removed);
+    this.persistLatency(userId, didLog ? 'unified_food' : 'unified', totalMs, lat.snapshot(), input.text, reply);
+    return { text: reply, confidence: 'high', intent: didLog ? 'food_log' : 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
   }
 
   /**
-   * The ONE food logger for the unified path. Logs every eaten food once, with a
-   * standard-portion estimate for any missing amount — never asks "how much",
-   * never holds pending, never drops. Groups per meal (a delimited multi-meal
-   * message → one entry per meal; a single meal → one entry). Returns a short
-   * note of what was logged, or null when there's nothing to log (a preference,
-   * plan, question, or non-food).
+   * The food step for the unified path — the Nudge model. ONE structured
+   * extraction (`extractFood`, already ported from Nudge) decides what's real:
+   * a SPECIFIC item with an amount is logged; an item with a missing/vague
+   * amount is NOT logged and comes back as `pending` (the caller asks ONE
+   * portion question and we store it, so the next-turn answer resolves it with
+   * no loop). A pure question / planning / non-food returns null (the grounded
+   * reply reads the snapshot). This replaces the old eager logger that guessed a
+   * portion for everything — accurate logging, not "log it all and hope."
+   *
+   * Returns { logged, pending, removed } or null when there's nothing to do.
    */
-  private async logFoodUnified(input: InboundMessage): Promise<string | null> {
+  private async foodStepUnified(
+    input: InboundMessage,
+  ): Promise<{ logged: string[]; pending: string[]; removed: string | null } | null> {
     const text = input.text.trim();
     if (!text) return null;
     if (detectMealConsumption(text) === 'preference') return null; // interest ≠ eaten
-    const span = foodSpanFromConsumption(text);
-    if (!namesSpecificFood(text) && !span) return null; // no real food named
+
+    const pending = await getPendingFood(this.deps.redis, input.userId).catch(
+      () => [] as Awaited<ReturnType<typeof getPendingFood>>,
+    );
+    // Cheap gate: only pay for the extraction LLM call when the message could
+    // actually be about food (names food / states eating) or there's a pending
+    // item a portion answer might resolve. A pure "how are you" skips it.
+    const foodish = namesSpecificFood(text) || !!foodSpanFromConsumption(text) || FOOD_MUTATION_RE.test(text) || FOOD_DIARY_QUERY_RE.test(text);
+    if (!foodish && pending.length === 0) return null;
+
+    const extraction = await extractFood(
+      this.deps.llm,
+      this.deps.logger,
+      text,
+      pending.map((p) => ({ item: p.item })),
+    ).catch(() => ({ ...EMPTY_EXTRACTION }));
+
+    // Query / advice / planning / non-food → let the grounded reply handle it
+    // (it reads the authoritative snapshot for "what did I eat / my total").
+    if (extraction.intent === 'none' || extraction.intent === 'query') return null;
+
+    if (extraction.intent === 'delete' && extraction.edit_ref) {
+      try {
+        const rm = makeRemoveFoodTool({ pool: this.deps.pool, logger: this.deps.logger, userId: input.userId });
+        await rm.execute({ food: extraction.edit_ref });
+      } catch { /* best-effort */ }
+      await resolvePendingFood(this.deps.redis, input.userId, extraction.edit_ref).catch(() => {});
+      return { logged: [], pending: [], removed: extraction.edit_ref };
+    }
 
     const logFood = makeLogFoodTool({
       pool: this.deps.pool,
@@ -3057,23 +3099,36 @@ CRITICAL RULES:
       users: this.deps.users,
     });
 
-    // One entry per meal: a delimited multi-meal message splits; otherwise the
-    // whole stated meal (clean consumption span) is a single entry.
-    const meals = splitMultiMealText(text);
-    const units = meals.length >= 2 ? meals.filter((m) => namesSpecificFood(m)) : [span ?? text];
-
+    const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
+    const newPending = extraction.items.filter((i) => i.status === 'pending_portion');
     const logged: string[] = [];
-    for (const unit of units) {
-      const r = (await logFood.execute({ food: unit }).catch(() => null)) as Record<string, unknown> | null;
-      if (r && r.ok !== false) {
-        const name = (r.food as string | undefined) ?? unit;
-        const p = r.protein_g as number | undefined;
-        logged.push(`${name}${p != null ? ` (~${p}g protein)` : ''}`);
-      }
+    for (const it of confirmed) {
+      const args: Record<string, unknown> = { food: it.item };
+      if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
+      const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
+      if (r && r.ok !== false) logged.push(it.item);
     }
-    if (logged.length === 0) return null;
-    this.deps.logger.info({ userId: input.userId, count: logged.length }, 'ai.unified_food.logged');
-    return logged.join('; ');
+
+    // Clear/resolve pending state so a portion answer never re-asks.
+    if (extraction.intent === 'edit') {
+      await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+    } else {
+      for (const it of confirmed) await resolvePendingFood(this.deps.redis, input.userId, it.item).catch(() => {});
+    }
+    if (newPending.length > 0) {
+      await addPendingFood(
+        this.deps.redis,
+        input.userId,
+        newPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question })),
+      ).catch(() => {});
+    }
+
+    if (logged.length === 0 && newPending.length === 0) return null;
+    this.deps.logger.info(
+      { userId: input.userId, logged: logged.length, pending: newPending.length },
+      'ai.unified_food.step',
+    );
+    return { logged, pending: newPending.map((i) => i.item), removed: null };
   }
 
   /**
@@ -5783,6 +5838,7 @@ CRITICAL RULES:
       `- DON'T VOLUNTEER UNRELATED FACTS (critical): the facts above are background for YOU, not things to recite. NEVER open with or tack on their injection day, next shot, dose, medication, the date, or their running totals unless their message is specifically asking about that exact thing. If they log food or ask a food question, do NOT mention their injection or the date. React to what they actually said and nothing else.\n` +
       `- Answer their latest message directly, using what you already know above. Lead with the answer. 1 to 3 short sentences, like a real text.\n` +
       `- If they told you they ATE something, acknowledge it warmly by name in a few words, then move on. If the SAME message also asks a question (a snack idea, what to eat next, a number), you MUST answer that question in the same reply — acknowledging the food is never a substitute for answering. Never bounce a question back.\n` +
+      `- FOOD ACCURACY: only treat a food as logged when a bracket note above says JUST LOGGED. If a note says NEEDS A PORTION, do NOT claim it's logged and do NOT give it a number — ask ONE short casual question about the amount and stop. Advice/planning ("what should I eat", "is X ok", "thinking about Y") is NOT eating — just answer it, never ask a portion. Never recite their running total or diary unless they explicitly ask.\n` +
       `- NEVER ask them for information you already have above, or for anything that doesn't change your answer (never ask "what kind of injection", "what are your dietary needs", etc.). The ONLY thing you may ask is a single portion question when a food genuinely needs a rough amount to log.\n` +
       `- If they said several things in one message, answer ALL of them briefly in one flowing reply — react to any feeling first, then the rest.\n` +
       `- NEVER open with narration or preamble ("that's a good question", "it's smart to…", "let's break down", "to give you the best ideas I need…", "estimating protein from…"). Just give the answer.\n` +

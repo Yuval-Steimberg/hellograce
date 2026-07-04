@@ -3041,28 +3041,37 @@ CRITICAL RULES:
       .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
       .filter(Boolean);
 
-    let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, userText: input.text });
-    if (food?.removed) {
-      systemPrompt += `\n\n[REMOVED from today's log: ${food.removed}. Confirm warmly in one short line. Do NOT mention their injection or the date.]`;
-    }
+    const isFoodTurn = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
+
+    // Food notes (what was logged with a clear amount / what needs an amount).
+    let foodNotes = '';
+    if (food?.removed) foodNotes += `\n\n[REMOVED from today's log: ${food.removed} — confirm warmly in one short line.]`;
     if (food && food.logged.length > 0) {
       const totalP = Math.round(todaysFood.protein_g);
-      systemPrompt += `\n\n[JUST LOGGED (only what they said in THIS message): ${food.logged.join(', ')}${totalP > 0 ? ` (running total ~${totalP}g protein today)` : ''}. Warmly name back ONLY these items in a few words. Do NOT recite their whole day's diary or earlier meals, and do NOT mention their injection or the date. Only give the running total if they asked. Then answer anything else they asked.]`;
+      foodNotes += `\n\n[LOGGED (clear amounts, from THIS message): ${food.logged.join(', ')}${totalP > 0 ? ` — about ${totalP}g protein today` : ''}. Name these back warmly in a few words.]`;
     }
-    // CLARIFY PENDING PORTION — Nudge's note verbatim in intent: a food with no
-    // amount is NOT logged; ack it warmly and ask the one portion question.
     if (food && food.pending.length > 0) {
-      systemPrompt += `\n\n[CLARIFY PENDING PORTION: the user mentioned ${food.pending.join(', ')} without an amount. Your reply MUST acknowledge it warmly AND ask ONE short casual question for the amount so it can be logged (e.g. "how much chicken — a few oz or a full breast?"). Do NOT claim it's logged or counted yet, and do NOT give it a number.]`;
+      foodNotes += `\n\n[NEEDS AN AMOUNT before it can be logged: ${food.pending.join(', ')}. Do NOT claim it's logged and do NOT give it a number — ask ONE short casual portion question (e.g. "how much chicken and rice — a few oz and about a cup?").]`;
     }
 
-    // On a FOOD turn, send NO history. A message like "ate yogurt with berries,
-    // any snack idea?" is self-contained — the log-note says what was logged and
-    // the message carries the question. History is pure BLEED risk here: flash
-    // reads old turns (a prior injection question, earlier meals) and produces a
-    // "two distinct parts… Part 1…" breakdown answering the WHOLE thread instead
-    // of the current message (prod 2026-07-04 PM). Non-food chat keeps history
-    // for continuity, guarded by the relevance judge below.
-    const isFoodTurn = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
+    // PROMPT SELECTION. A FOOD turn uses a TIGHT confirm-or-ask prompt (not the
+    // big grounded prompt) so the reply is exactly what the user wants: log the
+    // clear amounts, ask for the unclear ones, in one or two short sentences —
+    // never a nutrition breakdown / "Part 1…" essay (which the big prompt + a
+    // verbose model kept producing). Non-food chat uses the full Nudge prompt.
+    const nm = user?.first_name && !isEncryptedBlob(user.first_name) ? user.first_name.trim() : null;
+    let systemPrompt: string;
+    if (isFoodTurn) {
+      systemPrompt =
+        `You are Grace${nm ? `, texting ${nm}` : ''} — a warm GLP-1 companion. They just told you what they ate.${foodNotes}\n\n` +
+        `Reply in ONE or TWO short warm sentences, like a quick text from a friend. Confirm what you logged BY NAME (include the rough protein ONLY if a note gives it), and if any food still needs an amount, ask ONE short casual portion question. If their message ALSO asks something (a snack idea, what to eat next), answer that briefly too. HARD RULES: never a nutrition breakdown, never "here's a breakdown"/"Part 1"/"Part 2", no lists, no headings, no education about vitamins / muscle / "high-quality protein" / "balanced meal", no recap of earlier meals, no injection or date.` +
+        (GRACE_VOICE_ENABLED ? GRACE_VOICE_BRIEF : '');
+    } else {
+      systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, userText: input.text });
+    }
+
+    // On a FOOD turn, send NO history (the message + notes are self-contained;
+    // history is pure bleed risk). Non-food chat keeps history for continuity.
     const effHistory = isFoodTurn ? [] : history;
     const baseMessages = (sys: string): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> => [
       { role: 'system', content: sys },
@@ -3070,7 +3079,7 @@ CRITICAL RULES:
       { role: 'user', content: input.text },
     ];
 
-    const isFoodTurnNow = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
+    const isFoodTurnNow = isFoodTurn;
     this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded', logged: food?.logged.length ?? 0, pending: food?.pending.length ?? 0 }, 'ai.reply.path');
 
     // Every unified LLM call is timeout-BOUNDED. Without this a slow/retrying
@@ -6552,7 +6561,7 @@ const UNIFIED_DENIAL_RE = /\b(as an ai|i'?m an ai|i am an ai|i'?m just an ai|i (
 // A history-bleed / meta-breakdown reply — flash reading the whole thread and
 // answering it as "Part 1 / Part 2" instead of the current message. Deterministic
 // so it's caught even when the relevance judge (flash, lenient) passes it.
-const UNIFIED_BREAKDOWN_RE = /\b(part 1\b|part 2\b|two (?:distinct )?parts|distinct parts to your|let'?s break (?:them|it|this|these|your)|break (?:it|this|them) down|here'?s a breakdown|breaking (?:it|this|them) down)\b/i;
+const UNIFIED_BREAKDOWN_RE = /\b(part 1\b|part 2\b|two (?:distinct )?parts|distinct parts to your|let'?s break (?:them|it|this|these|your)|break (?:it|this|them) down|here (?:is|'?s) a (?:quick |brief )?breakdown|breakdown of (?:the |your )?(?:nutrition|what|meal)|breaking (?:it|this|them) down)\b/i;
 
 // Hard per-call timeout for the unified reply generations. Keeps a turn from
 // running long enough to blow past the webhook in-flight lock's wait budget

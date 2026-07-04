@@ -40,6 +40,7 @@ import {
   inferFrequencyFromMedication,
 } from '../services/profile-extract.js';
 import { parseTimezone, timezoneFromPhone } from '../services/timezone-parse.js';
+import { deriveMissingTargets } from '../nutrition/derive-targets.js';
 import { detectOnboardingSideQuestion, buildSideAnswer } from '../services/capability.js';
 
 export type SlotId =
@@ -84,6 +85,9 @@ type FlowUser = Pick<
   | 'height_cm'
   | 'age'
   | 'activity_level'
+  | 'primary_goal'
+  | 'protein_goal_grams'
+  | 'calorie_goal_kcal'
   | 'dietary_restriction'
   | 'dietary_pattern'
   | 'trial_start'
@@ -909,6 +913,26 @@ export async function runOnboardingTurn(params: {
     if (Object.keys(updates).length > 0) {
       await users.update(u.phone, updates);
       u = { ...u, ...updates } as FlowUser;
+
+      // Personalize the protein/calorie targets as soon as onboarding learns the
+      // inputs (weight/goal/body metrics). The calculators already existed but
+      // only ran on the deprecated web onboard route, so SMS-onboarded users
+      // (now the default) silently fell back to a generic ~80g. FILL-IF-MISSING
+      // — never clobbers a value the user set in Settings. Best-effort: a
+      // failure here must never derail the flow.
+      try {
+        const targets = deriveMissingTargets(u);
+        if (Object.keys(targets).length > 0) {
+          await users.update(u.phone, targets as Partial<GraceUser>);
+          u = { ...u, ...targets } as FlowUser;
+          logger.info({ phone: u.phone, ...targets }, 'onboarding.targets.personalized');
+        }
+      } catch (err) {
+        logger.warn(
+          { err: err instanceof Error ? err.message : String(err), phone: u.phone },
+          'onboarding.targets.skipped',
+        );
+      }
     }
 
     // Advance.

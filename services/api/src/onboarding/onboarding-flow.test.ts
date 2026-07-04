@@ -117,6 +117,50 @@ function makeWriter() {
   return { users, calls };
 }
 
+describe('runOnboardingTurn — personalizes nutrition targets when weight is learned', () => {
+  it('writes a personalized protein target after the current-weight gapfill', async () => {
+    const { users, calls } = makeWriter();
+    await runOnboardingTurn({
+      user: user({
+        trial_start: new Date(),
+        onboarding_state: 'in_progress',
+        onboarding_last_slot: 'current_weight',
+        goal_weight: 160,
+        current_weight: null,
+        primary_goal: 'fat_loss',
+        protein_goal_grams: null,
+        calorie_goal_kcal: null,
+      }),
+      text: '200 lbs',
+      mode: 'gapfill',
+      users,
+      logger,
+    });
+    const targetWrite = calls.find((c) => 'protein_goal_grams' in c);
+    expect(targetWrite).toBeTruthy();
+    expect(targetWrite!.protein_goal_grams as number).toBeGreaterThan(150);
+  });
+
+  it('does not overwrite a protein target the user already has', async () => {
+    const { users, calls } = makeWriter();
+    await runOnboardingTurn({
+      user: user({
+        trial_start: new Date(),
+        onboarding_state: 'in_progress',
+        onboarding_last_slot: 'current_weight',
+        current_weight: null,
+        primary_goal: 'fat_loss',
+        protein_goal_grams: 115,
+      }),
+      text: '200 lbs',
+      mode: 'gapfill',
+      users,
+      logger,
+    });
+    expect(calls.find((c) => 'protein_goal_grams' in c)).toBeUndefined();
+  });
+});
+
 function user(partial: Record<string, unknown> = {}): any {
   return {
     phone: '+15551230000',

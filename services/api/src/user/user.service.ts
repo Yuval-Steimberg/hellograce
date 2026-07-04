@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import { encryptField, decryptField, hashField, isEncryptionEnabled, isEncryptedBlob } from '../crypto/field-encrypt.js';
 import type { TodayFoodCacheService } from '../cache/today-food-cache.js';
 import { USER_DAY_CTE, userDayExpr, isCurrentUserDay } from '../nutrition/logging-window.js';
+import { deriveMissingTargets } from '../nutrition/derive-targets.js';
 
 export interface GraceUser {
   id: string;
@@ -572,6 +573,23 @@ export class UserService {
     await this.pool.query(`INSERT INTO weight_logs (user_id, weight) VALUES ($1, $2)`, [userId, weight]);
     await this.pool.query(`UPDATE users SET current_weight = $2 WHERE phone = $1`, [userId, weight]).catch(() => undefined);
     this.invalidate(userId);
+    // A first real weight lets us personalize the protein/calorie target if the
+    // user doesn't have one yet. Best-effort, fill-if-missing.
+    await this.ensureNutritionTargets(userId).catch(() => undefined);
+  }
+
+  /**
+   * Fill-if-missing personalized protein/calorie targets from the user's current
+   * profile (weight/goal/body metrics). Safe to call after any weight or profile
+   * change — it never overwrites a target the user already has (Settings owns
+   * explicit edits), and no-ops when there's nothing to fill. Best-effort.
+   */
+  async ensureNutritionTargets(userId: string): Promise<void> {
+    const user = await this.getByPhone(userId);
+    if (!user) return;
+    const targets = deriveMissingTargets(user);
+    if (Object.keys(targets).length === 0) return;
+    await this.update(userId, targets);
   }
 
   /** Log a mood score (1-10) from the dashboard (stored like the log_mood tool). */

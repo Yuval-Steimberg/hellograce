@@ -512,6 +512,7 @@ import {
 import { GRACE_VOICE_ENABLED, GRACE_VOICE_BRIEF, voiceSuffix } from './voice.js';
 import { resolveTemporalContext, buildTemporalContextBlock } from './temporal-context.js';
 import { buildNudgeSystemPrompt } from './nudge-prompt.js';
+import { extractNudgeFoodLog } from './nudge-food.js';
 import {
   detectInjectionTimingIntent,
   computeInjectionSchedule,
@@ -3020,9 +3021,6 @@ CRITICAL RULES:
       const totalP = Math.round(todaysFood.protein_g);
       systemPrompt += `\n\n[JUST LOGGED (only what they said in THIS message): ${food.logged.join(', ')}${totalP > 0 ? ` (running total ~${totalP}g protein today)` : ''}. Warmly name back ONLY these items in a few words. Do NOT recite their whole day's diary or earlier meals, and do NOT mention their injection or the date. Only give the running total if they asked. Then answer anything else they asked.]`;
     }
-    if (food && food.pending.length > 0) {
-      systemPrompt += `\n\n[NEEDS A PORTION before it can be logged: ${food.pending.join(', ')}. Do NOT say it's logged, do NOT give it a protein/calorie number, do NOT add it to any total. Ask ONE short, casual question about how much (e.g. "how much chicken — a few oz or a full breast?"), covering all of those items in that one question, then stop.]`;
-    }
 
     // On a FOOD turn, drop Grace's own past assistant replies from the history we
     // send. Flash mimics its own prior turns, so a thread full of an earlier bad
@@ -3030,7 +3028,7 @@ CRITICAL RULES:
     // it regenerate that same shape no matter what the system prompt says. The
     // user's own turns stay (they carry real context); the action note carries
     // what to confirm. Non-food turns keep full history for continuity.
-    const isFoodTurn = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
+    const isFoodTurn = !!food && (food.logged.length > 0 || !!food.removed);
     const effHistory = isFoodTurn ? history.filter((h) => h.role === 'user') : history;
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemPrompt },
@@ -3038,12 +3036,12 @@ CRITICAL RULES:
       { role: 'user', content: input.text },
     ];
 
-    this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded', logged: food?.logged.length ?? 0, pending: food?.pending.length ?? 0 }, 'ai.reply.path');
+    this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded', logged: food?.logged.length ?? 0 }, 'ai.reply.path');
     // disableThinking is REQUIRED: gemini-2.5-flash counts thinking tokens against
     // maxOutputTokens, so with the full Nudge system prompt it spent the budget on
     // reasoning and returned only the opener ("Okay, I understand.") before the cap.
     // Nudge's model is non-reasoning; match that. (runDirectReply already does this.)
-    const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 600, skipCache: true, disableThinking: true });
+    const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true });
     const formatted = enforceFormat(resp.text ?? '', { userMessage: input.text });
     const reply = formatted.text.trim() || 'I’m here — tell me a little more?';
 
@@ -3056,68 +3054,25 @@ CRITICAL RULES:
   }
 
   /**
-   * The food step for the unified path — the Nudge model. ONE structured
-   * extraction (`extractFood`, already ported from Nudge) decides what's real:
-   * a SPECIFIC item with an amount is logged; an item with a missing/vague
-   * amount is NOT logged and comes back as `pending` (the caller asks ONE
-   * portion question and we store it, so the next-turn answer resolves it with
-   * no loop). A pure question / planning / non-food returns null (the grounded
-   * reply reads the snapshot). This replaces the old eager logger that guessed a
-   * portion for everything — accurate logging, not "log it all and hope."
+   * The food step for the unified path — a FAITHFUL port of Nudge's
+   * extractFoodLog. One message → one food summary. A specific meal is logged
+   * with an estimate (Nudge logs "chicken and rice" at a standard serving); a
+   * GENERIC category/restaurant ("pizza", "McDonald's") or a HEDGED portion
+   * ("some tofu") returns nulls → nothing logged, and the Nudge reply prompt
+   * asks. Plans / questions / non-food also return nulls (the reply answers).
+   * Grace's log_food does the DB write + macro estimate, exactly as Nudge's
+   * snapshot update does.
    *
-   * Returns { logged, pending, removed } or null when there's nothing to do.
+   * Returns { logged } (a one-item array of the food phrase) or null.
    */
   private async foodStepUnified(
     input: InboundMessage,
-  ): Promise<{ logged: string[]; pending: string[]; removed: string | null } | null> {
+  ): Promise<{ logged: string[]; removed: string | null } | null> {
     const text = input.text.trim();
     if (!text) return null;
-    if (detectMealConsumption(text) === 'preference') return null; // interest ≠ eaten
 
-    const pending = await getPendingFood(this.deps.redis, input.userId).catch(
-      () => [] as Awaited<ReturnType<typeof getPendingFood>>,
-    );
-    // Cheap gate: only pay for the extraction LLM call when the message could
-    // actually be about food (names food / states eating) or there's a pending
-    // item a portion answer might resolve. A pure "how are you" skips it.
-    const foodish = namesSpecificFood(text) || !!foodSpanFromConsumption(text) || FOOD_MUTATION_RE.test(text) || FOOD_DIARY_QUERY_RE.test(text);
-    if (!foodish && pending.length === 0) return null;
-
-    const extraction = await extractFood(
-      this.deps.llm,
-      this.deps.logger,
-      text,
-      pending.map((p) => ({ item: p.item })),
-    ).catch(() => ({ ...EMPTY_EXTRACTION }));
-
-    // A pure diary/total QUERY → let the grounded reply read the snapshot.
-    if (extraction.intent === 'query') return null;
-
-    if (extraction.intent === 'delete' && extraction.edit_ref) {
-      try {
-        const rm = makeRemoveFoodTool({ pool: this.deps.pool, logger: this.deps.logger, userId: input.userId });
-        await rm.execute({ food: extraction.edit_ref });
-      } catch { /* best-effort */ }
-      await resolvePendingFood(this.deps.redis, input.userId, extraction.edit_ref).catch(() => {});
-      return { logged: [], pending: [], removed: extraction.edit_ref };
-    }
-
-    // DETERMINISTIC BACKSTOP: flash-lite routinely mislabels a plainly-reported
-    // meal as planning (intent none). When it does, parse the report ourselves so
-    // a stated meal ALWAYS logs the portioned items and asks for the rest — never
-    // silently drops to a "sounds like a plan" chat reply. A genuine question /
-    // planning / non-food still returns null here.
-    let confirmed: Array<{ item: string; protein_g?: number | null; calories?: number | null }>;
-    let newPending: Array<{ item: string; clarify_question: string | null }>;
-    if (extraction.intent === 'none') {
-      const reported = parseReportedMeal(text);
-      if (!reported) return null;
-      confirmed = reported.confirmed.map((item) => ({ item }));
-      newPending = reported.pending.map((item) => ({ item, clarify_question: null }));
-    } else {
-      confirmed = extraction.items.filter((i) => i.status === 'confirmed');
-      newPending = extraction.items.filter((i) => i.status === 'pending_portion');
-    }
+    const fx = await extractNudgeFoodLog(this.deps.llm, this.deps.logger, text);
+    if (!fx.foods) return null; // generic / vague / planning / non-food → reply handles it
 
     const logFood = makeLogFoodTool({
       pool: this.deps.pool,
@@ -3128,35 +3083,12 @@ CRITICAL RULES:
       ...(this.deps.usda ? { usda: this.deps.usda } : {}),
       users: this.deps.users,
     });
-
-    const logged: string[] = [];
-    for (const it of confirmed) {
-      const args: Record<string, unknown> = { food: it.item };
-      if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
-      const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
-      if (r && r.ok !== false) logged.push(it.item);
-    }
-
-    // Clear/resolve pending state so a portion answer never re-asks.
-    if (extraction.intent === 'edit') {
-      await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
-    } else {
-      for (const it of confirmed) await resolvePendingFood(this.deps.redis, input.userId, it.item).catch(() => {});
-    }
-    if (newPending.length > 0) {
-      await addPendingFood(
-        this.deps.redis,
-        input.userId,
-        newPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question })),
-      ).catch(() => {});
-    }
-
-    if (logged.length === 0 && newPending.length === 0) return null;
-    this.deps.logger.info(
-      { userId: input.userId, logged: logged.length, pending: newPending.length },
-      'ai.unified_food.step',
-    );
-    return { logged, pending: newPending.map((i) => i.item), removed: null };
+    const args: Record<string, unknown> = { food: fx.foods };
+    if (fx.protein_g != null && fx.calories != null) { args.protein_g = fx.protein_g; args.calories = fx.calories; }
+    const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
+    if (!r || r.ok === false) return null;
+    this.deps.logger.info({ userId: input.userId, foods: fx.foods }, 'ai.unified_food.logged');
+    return { logged: [fx.foods], removed: null };
   }
 
   /**
@@ -6490,52 +6422,6 @@ export function splitMultiMealText(text: string): string[] {
     return true;
   });
   return segments.length >= 2 ? segments : [];
-}
-
-const MEAL_PLANNING_RE = /\b(i'?m going to|going to have|gonna|thinking of|thinking about|planning to|plan to|might have|might get|maybe|considering|should i|what should i|what about|i'?ll have|i will have|i'?ll make|i'?ll go with|i'?ll grab|what do you|any (idea|ideas|suggestion)|recommend|suggest)\b/i;
-// A concrete portion: a digit, a number word, a serving unit, or an inherently
-// single-serving item. "2 eggs" / "a cup of rice" / "a banana" → confirmed;
-// "chicken and rice" / "some yogurt" → no match → pending (ask the amount).
-const MEAL_PORTION_RE = /(\d|\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|half|dozen|couple|few|cup|cups|oz|ounce|ounces|slice|slices|bowl|bowls|piece|pieces|scoop|scoops|can|cans|glass|handful|tbsp|tsp|tablespoon|teaspoon|gram|grams|serving|servings|plate|plates|palm|banana|apple|orange|pear|peach)\b)/i;
-const MEAL_LABEL_STRIP_RE = /\b(for|at|this|in the)?\s*(breakfast|lunch|dinner|snack|brunch|supper|morning|afternoon|evening|tonight|today)\b/gi;
-// A hedged amount ("some", "a bit of", "a little") always means pending, even
-// when a stray number word would otherwise read as a portion.
-const MEAL_HEDGE_RE = /\b(some|a bit of|a little|little bit of|a few|a handful of|a couple of|a couple|a tiny bit of|small amount of)\b/i;
-
-function stripMealLabels(s: string): string {
-  return s
-    .replace(MEAL_LABEL_STRIP_RE, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/^[\s,;:.\-]+|[\s,;:.\-]+$/g, '')
-    .trim();
-}
-
-/**
- * Deterministic backstop for the Nudge food model: parse a plainly-REPORTED
- * meal into portioned (confirmed) vs amount-missing (pending) foods WITHOUT an
- * LLM, so a stated meal always logs/asks even when the flash-lite extractor
- * misfires. gemini-2.5-flash-lite frequently mislabels "2 eggs for breakfast.
- * For lunch chicken and rice" (and even "I ate …") as planning → intent none →
- * nothing logged, no question, and the turn falls back to poisoned history.
- * Returns null for a question, explicit planning, preference, or when no real
- * food is named (those are not a report to log).
- */
-export function parseReportedMeal(text: string): { confirmed: string[]; pending: string[] } | null {
-  const t = (text ?? '').trim();
-  if (!t || t.includes('?')) return null;
-  if (MEAL_PLANNING_RE.test(t)) return null;
-  if (detectMealConsumption(t) === 'preference') return null;
-  const meals = splitMultiMealText(t);
-  const units = (meals.length >= 2 ? meals : [t])
-    .map(stripMealLabels)
-    .filter((u) => u.length > 0 && namesSpecificFood(u));
-  if (units.length === 0) return null;
-  const confirmed: string[] = [];
-  const pending: string[] = [];
-  for (const u of units) {
-    (MEAL_PORTION_RE.test(u) && !MEAL_HEDGE_RE.test(u) ? confirmed : pending).push(u);
-  }
-  return { confirmed, pending };
 }
 
 // Render durable facts as a compact, grouped, scannable block.

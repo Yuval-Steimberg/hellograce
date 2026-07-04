@@ -113,6 +113,13 @@ describe('buildFoodExtractPrompt', () => {
     expect(p).toContain('report eaten food AND ask a question');
   });
 
+  it('treats "X for breakfast / for lunch" (no eat-verb) as a LOG, not a plan', () => {
+    const p = buildFoodExtractPrompt([]);
+    expect(p).toContain('ASSIGNS foods to meals');
+    expect(p).toContain('2 eggs for breakfast. For lunch chicken and rice');
+    expect(p).toContain('ONLY planning');
+  });
+
   it('instructs ALWAYS asking for a missing portion (no silent assumption)', () => {
     const p = buildFoodExtractPrompt([]);
     expect(p).toContain('ALWAYS ask for the portion when the amount is missing');

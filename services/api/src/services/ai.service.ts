@@ -512,7 +512,7 @@ import {
 import { GRACE_VOICE_ENABLED, GRACE_VOICE_BRIEF, voiceSuffix } from './voice.js';
 import { resolveTemporalContext, buildTemporalContextBlock } from './temporal-context.js';
 import { buildNudgeSystemPrompt } from './nudge-prompt.js';
-import { extractNudgeFoodLog } from './nudge-food.js';
+import { judgeReplyAddressesMessage, isMealAdviceOrPlanningTurn } from './nudge-relevance.js';
 import {
   detectInjectionTimingIntent,
   computeInjectionSchedule,
@@ -3000,10 +3000,10 @@ CRITICAL RULES:
       this.deps.memory.ensureConversation(userId).catch(() => `fallback-${userId}`),
     ]);
 
-    // Nudge-style food step (side-effect): a SPECIFIC item with an amount is
-    // logged; a missing/vague amount is NOT logged — we ask ONE portion question
-    // (stored so the next turn resolves it, no loop). Accurate logging, not eager.
-    const food = await this.foodStepUnified(input).catch(() => null);
+    // Nudge food step (extractFoodItems + planning guard): a specific meal logs
+    // with an estimate; a hedged/generic mention comes back pending → we ask ONE
+    // portion question via the CLARIFY note; advice/planning never logs.
+    const food = await this.foodStepUnified(input, history).catch(() => null);
     const todaysFood = food && food.logged.length > 0
       ? await this.deps.users.getTodaysFoodSummary(userId).catch(() => todaysFoodPre)
       : todaysFoodPre;
@@ -3021,29 +3021,42 @@ CRITICAL RULES:
       const totalP = Math.round(todaysFood.protein_g);
       systemPrompt += `\n\n[JUST LOGGED (only what they said in THIS message): ${food.logged.join(', ')}${totalP > 0 ? ` (running total ~${totalP}g protein today)` : ''}. Warmly name back ONLY these items in a few words. Do NOT recite their whole day's diary or earlier meals, and do NOT mention their injection or the date. Only give the running total if they asked. Then answer anything else they asked.]`;
     }
+    // CLARIFY PENDING PORTION — Nudge's note verbatim in intent: a food with no
+    // amount is NOT logged; ack it warmly and ask the one portion question.
+    if (food && food.pending.length > 0) {
+      systemPrompt += `\n\n[CLARIFY PENDING PORTION: the user mentioned ${food.pending.join(', ')} without an amount. Your reply MUST acknowledge it warmly AND ask ONE short casual question for the amount so it can be logged (e.g. "how much chicken — a few oz or a full breast?"). Do NOT claim it's logged or counted yet, and do NOT give it a number.]`;
+    }
 
-    // On a FOOD turn, drop Grace's own past assistant replies from the history we
-    // send. Flash mimics its own prior turns, so a thread full of an earlier bad
-    // reply ("So far today you've eaten … your next injection is tomorrow") makes
-    // it regenerate that same shape no matter what the system prompt says. The
-    // user's own turns stay (they carry real context); the action note carries
-    // what to confirm. Non-food turns keep full history for continuity.
-    const isFoodTurn = !!food && (food.logged.length > 0 || !!food.removed);
+    // On a FOOD turn, drop Grace's own past assistant replies from the history —
+    // flash mimics its own prior turns and a poisoned thread makes it regenerate
+    // the same shape. The user's turns + the action note carry the real context.
+    const isFoodTurn = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
     const effHistory = isFoodTurn ? history.filter((h) => h.role === 'user') : history;
-    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
-      { role: 'system', content: systemPrompt },
+    const baseMessages = (sys: string): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> => [
+      { role: 'system', content: sys },
       ...effHistory.map((h) => ({ role: h.role, content: h.content })),
       { role: 'user', content: input.text },
     ];
 
-    this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded', logged: food?.logged.length ?? 0 }, 'ai.reply.path');
+    this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded', logged: food?.logged.length ?? 0, pending: food?.pending.length ?? 0 }, 'ai.reply.path');
     // disableThinking is REQUIRED: gemini-2.5-flash counts thinking tokens against
-    // maxOutputTokens, so with the full Nudge system prompt it spent the budget on
-    // reasoning and returned only the opener ("Okay, I understand.") before the cap.
-    // Nudge's model is non-reasoning; match that. (runDirectReply already does this.)
-    const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true });
-    const formatted = enforceFormat(resp.text ?? '', { userMessage: input.text });
-    const reply = formatted.text.trim() || 'I’m here — tell me a little more?';
+    // maxOutputTokens; Nudge's model is non-reasoning. temp 0.8 / 500 tokens.
+    const resp = await this.deps.llm.generate({ messages: baseMessages(systemPrompt), temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true });
+    let reply = enforceFormat(resp.text ?? '', { userMessage: input.text }).text.trim();
+
+    // RELEVANCE JUDGE (Nudge): if the draft changed the subject / answered an
+    // older message instead of the latest, regenerate ONCE with a focused
+    // override. This is Nudge's anti-bleed guard. Fails open.
+    const addresses = await judgeReplyAddressesMessage(this.deps.llm, this.deps.logger, input.text, reply || '(empty)');
+    if (!addresses) {
+      this.deps.logger.info({ userId }, 'ai.unified.relevance_regen');
+      const focused = systemPrompt +
+        `\n\nCRITICAL OVERRIDE: your previous draft did not respond to the user's most recent message. They just said: "${input.text.replace(/"/g, "'")}". Reply directly to THAT — answer their question or acknowledge what they shared. Do NOT change the subject or reply to an earlier message.`;
+      const retry = await this.deps.llm.generate({ messages: baseMessages(focused), temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true }).catch(() => null);
+      const retryText = retry ? enforceFormat(retry.text ?? '', { userMessage: input.text }).text.trim() : '';
+      if (retryText) reply = retryText;
+    }
+    if (!reply) reply = 'I’m here — tell me a little more?';
 
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
@@ -3054,25 +3067,49 @@ CRITICAL RULES:
   }
 
   /**
-   * The food step for the unified path — a FAITHFUL port of Nudge's
-   * extractFoodLog. One message → one food summary. A specific meal is logged
-   * with an estimate (Nudge logs "chicken and rice" at a standard serving); a
-   * GENERIC category/restaurant ("pizza", "McDonald's") or a HEDGED portion
-   * ("some tofu") returns nulls → nothing logged, and the Nudge reply prompt
-   * asks. Plans / questions / non-food also return nulls (the reply answers).
-   * Grace's log_food does the DB write + macro estimate, exactly as Nudge's
-   * snapshot update does.
+   * The food step for the unified path — Nudge's handler food flow
+   * (extractFoodItems V2 + advice/planning guard + apply). A specific meal is
+   * logged with an estimate; a hedged/generic mention (no amount) comes back
+   * PENDING so the reply asks the one portion question (stored so the next-turn
+   * answer resolves it, no loop); a delete removes; advice/planning/question/
+   * non-food returns null (the reply answers from the snapshot). Mirrors
+   * Nudge's isMealAdviceOrPlanningTurn strip + applyFoodExtract.
    *
-   * Returns { logged } (a one-item array of the food phrase) or null.
+   * Returns { logged, pending, removed } or null.
    */
   private async foodStepUnified(
     input: InboundMessage,
-  ): Promise<{ logged: string[]; removed: string | null } | null> {
+    history: ChatTurn[],
+  ): Promise<{ logged: string[]; pending: string[]; removed: string | null } | null> {
     const text = input.text.trim();
     if (!text) return null;
+    // Nudge's advice/planning guard: "what should I eat" / a bare "salmon" after
+    // Grace asked what she has in mind is discussion, never a log.
+    if (isMealAdviceOrPlanningTurn(text, history)) return null;
 
-    const fx = await extractNudgeFoodLog(this.deps.llm, this.deps.logger, text);
-    if (!fx.foods) return null; // generic / vague / planning / non-food → reply handles it
+    const pending = await getPendingFood(this.deps.redis, input.userId).catch(
+      () => [] as Awaited<ReturnType<typeof getPendingFood>>,
+    );
+    const foodish = namesSpecificFood(text) || !!foodSpanFromConsumption(text) || FOOD_MUTATION_RE.test(text) || FOOD_DIARY_QUERY_RE.test(text);
+    if (!foodish && pending.length === 0) return null;
+
+    const extraction = await extractFood(
+      this.deps.llm,
+      this.deps.logger,
+      text,
+      pending.map((p) => ({ item: p.item })),
+    ).catch(() => ({ ...EMPTY_EXTRACTION }));
+
+    if (extraction.intent === 'none' || extraction.intent === 'query') return null;
+
+    if (extraction.intent === 'delete' && extraction.edit_ref) {
+      try {
+        const rm = makeRemoveFoodTool({ pool: this.deps.pool, logger: this.deps.logger, userId: input.userId });
+        await rm.execute({ food: extraction.edit_ref });
+      } catch { /* best-effort */ }
+      await resolvePendingFood(this.deps.redis, input.userId, extraction.edit_ref).catch(() => {});
+      return { logged: [], pending: [], removed: extraction.edit_ref };
+    }
 
     const logFood = makeLogFoodTool({
       pool: this.deps.pool,
@@ -3083,12 +3120,33 @@ CRITICAL RULES:
       ...(this.deps.usda ? { usda: this.deps.usda } : {}),
       users: this.deps.users,
     });
-    const args: Record<string, unknown> = { food: fx.foods };
-    if (fx.protein_g != null && fx.calories != null) { args.protein_g = fx.protein_g; args.calories = fx.calories; }
-    const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
-    if (!r || r.ok === false) return null;
-    this.deps.logger.info({ userId: input.userId, foods: fx.foods }, 'ai.unified_food.logged');
-    return { logged: [fx.foods], removed: null };
+
+    const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
+    const newPending = extraction.items.filter((i) => i.status === 'pending_portion');
+    const logged: string[] = [];
+    for (const it of confirmed) {
+      const args: Record<string, unknown> = { food: it.item };
+      if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
+      const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
+      if (r && r.ok !== false) logged.push(it.item);
+    }
+
+    if (extraction.intent === 'edit') {
+      await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+    } else {
+      for (const it of confirmed) await resolvePendingFood(this.deps.redis, input.userId, it.item).catch(() => {});
+    }
+    if (newPending.length > 0) {
+      await addPendingFood(
+        this.deps.redis,
+        input.userId,
+        newPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question })),
+      ).catch(() => {});
+    }
+
+    if (logged.length === 0 && newPending.length === 0) return null;
+    this.deps.logger.info({ userId: input.userId, logged: logged.length, pending: newPending.length }, 'ai.unified_food.step');
+    return { logged, pending: newPending.map((i) => i.item), removed: null };
   }
 
   /**

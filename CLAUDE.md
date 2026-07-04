@@ -6,6 +6,56 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — reply-path root cause found (2026-07-04 PM)
+
+**THE BUG behind "I turned the flag off but replies are still bad":** a Zod
+footgun. `z.coerce.boolean()` does `Boolean(value)`, so the STRING `"false"`
+(and `"0"`/`"off"`) is truthy → the flag turned **ON** when set to `"false"`.
+`fly secrets set UNIFIED_REPLY_PATH=false` silently PINNED it on. So every "bad"
+reply the user saw was the **unified/grounded path** (flag stuck on) — they were
+NEVER actually on the compact path. **Fixed** (`config/env.ts`): all 12
+`z.coerce.boolean()` flags now use a `boolish()` parser (only `true/1/yes/on` →
+true; `false/0/off/''` → false). +4 regression tests (`config/env.test.ts`).
+After deploy, `UNIFIED_REPLY_PATH=false` (or `fly secrets unset`) genuinely
+turns it off; `=true` keeps it on.
+
+**Two more grounded-path bugs fixed** (`ai.service.ts buildGroundedPrompt` +
+`runUnifiedReply`): (1) the prompt embedded a VERBATIM reply example
+(`"Nice, yogurt with berries is a solid start"`) → Gemini copied it word-for-word
+and dropped the user's "any snack idea?" question. Removed the example; made
+"answer the question in the same reply" a hard rule. (2) Weak food ack ("Thanks
+for letting me know") → the just-logged note now carries the running total and
+forbids bare thanks/got-it/noted. (3) Added Nudge's **LATEST MESSAGE RULE** to
+the grounded prompt (reply to the FINAL message; drop older topics unless the
+latest refers back) — fixes "answers the wrong last message / not following the
+conversation."
+
+**Nudge architecture (studied from the user's uploaded source
+`handle-inbound-sms/index.ts`):** ONE system prompt + ONE Chat Completions call
+(`max_tokens 500, temp 0.8`, messages = `[system, ...24 history turns, latest]`).
+Header comment: *"NO regex intercepts, NO canned replies, NO post-generation
+verifiers, NO state-machine flows. The LLM owns the reply end-to-end. Operational
+safety only."* ALL behavior (food-log bans, symptom triage, dose deferral,
+settings redirects, tone/length) lives as RULES INSIDE that one prompt. Food
+logging is a SEPARATE extraction pass that updates a "today snapshot"; the reply
+call just READS the authoritative snapshot (totals/diary) — logging and reply
+text are decoupled. **Grace's `runUnifiedReply` is already this exact shape.**
+
+**IMPORTANT — the unified mega-bypass drops "the rest".** `runUnifiedReply`
+(flag on) BYPASSES the ~20 intercepts (reminders, symptom-intelligence, water,
+weekly-summary, settings redirects, meal-preference) + the 7 food layers. The
+user's standing constraint is "response generation is the problem, DON'T touch
+the rest" — so making the unified bypass the permanent default would drop
+reminders/symptom/etc. The compact path (flag OFF, `runDirectReply`) is ALSO
+one Gemini call for a normal message, but KEEPS the intercepts for the special
+cases — so it honors "don't touch the rest" AND is Nudge-like for chat. Current
+recommendation: deploy the footgun fix, run with `UNIFIED_REPLY_PATH=false`
+(now actually off), verify the compact path. Grounded-path fixes protect the
+unified path too if kept on. Branch: `claude/grace-dashboard-redesign-366yjj`
+(commit `55f7ac3`). 1652 api + 657 ai-core green; no migration.
+
+---
+
 ## 👉 READ FIRST — current state (as of 2026-07-04)
 
 **Before doing anything, read the newest dated section immediately below**

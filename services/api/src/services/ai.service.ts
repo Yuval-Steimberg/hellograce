@@ -3011,7 +3011,7 @@ CRITICAL RULES:
       .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
       .filter(Boolean);
 
-    let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd });
+    let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, userText: input.text });
     if (food?.removed) {
       systemPrompt += `\n\n[REMOVED from today's log: ${food.removed}. Confirm warmly in one short line. Do NOT mention their injection or the date.]`;
     }
@@ -4931,7 +4931,7 @@ CRITICAL RULES:
     // at the big personalised prompt, which reintroduced "that's a good
     // question… what kind of injection did you have?" — corrected here.)
     const systemPrompt = (this.unifiedReplyPath && !isNew)
-      ? this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes: cleanFoodDislikes, knownFacts, memoryMd })
+      ? this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes: cleanFoodDislikes, knownFacts, memoryMd, userText: input.text })
       : (this.compactReplyMode && !isNew)
       ? this.buildCompactReplyPrompt(user, { todaysFood, dietaryRestriction, dislikes: cleanFoodDislikes })
       : this.buildPersonalisedPrompt(user, isNew, {
@@ -5789,38 +5789,54 @@ CRITICAL RULES:
       dislikes?: string[];
       knownFacts?: Array<{ fact: string }>;
       memoryMd?: string | null;
+      /** The user's current message — used to include ONLY the facts relevant to
+       *  it. Flash models recite any fact you hand them, so an irrelevant fact in
+       *  the prompt (injection schedule, full diary) gets dumped as the reply.
+       *  Gating by relevance makes recitation structurally impossible. */
+      userText?: string;
     },
   ): string {
     const now = new Date();
     const name = user?.first_name && !isEncryptedBlob(user.first_name) ? user.first_name.trim() : null;
     const med = user?.medication && !isEncryptedBlob(user.medication) ? user.medication.trim() : null;
+    const q = (opts.userText ?? '').toLowerCase();
+    // Relevance gates: only surface a fact the model would otherwise recite when
+    // the message is actually about it.
+    const asksSchedule = /\b(inject|injection|shot|jab|dose|dosing|pen|next|when|schedule|due|today|tomorrow|day)\b/.test(q) && /\b(inject|injection|shot|jab|dose|dosing|pen|med|ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide)\b/.test(q);
+    const asksDiaryOrTotal = FOOD_DIARY_QUERY_RE.test(q) || /\b(protein|calorie|cals|kcal|total|how much have i|goal|left|remaining|so far)\b/.test(q);
     const facts: string[] = [];
     if (name) facts.push(`Their name is ${name}.`);
     if (med) facts.push(`They're on ${med}.`);
-    // Injection schedule (cadence-aware, real dates) so timing questions are grounded.
-    const sched = buildScheduleFactLine(
-      computeInjectionSchedule({
-        medicationType: inferMedicationType(med),
-        medicationName: med,
-        injectionDay: user?.injection_day ?? null,
-        timezone: user?.timezone ?? null,
-      }, now),
-      med,
-    );
-    if (sched) facts.push(sched);
-    // Today's food — the ITEMS plus totals, so "what did I eat" + acknowledging a
-    // just-logged meal work, and protein/calorie answers are grounded.
+    // Injection schedule — grounded ONLY when they're asking about timing, so a
+    // food/chat message can't have the schedule recited at it.
+    if (asksSchedule) {
+      const sched = buildScheduleFactLine(
+        computeInjectionSchedule({
+          medicationType: inferMedicationType(med),
+          medicationName: med,
+          injectionDay: user?.injection_day ?? null,
+          timezone: user?.timezone ?? null,
+        }, now),
+        med,
+      );
+      if (sched) facts.push(sched);
+    }
+    // Today's food — the full ITEM list is included ONLY for a diary/total query;
+    // otherwise it's omitted entirely (the JUST-LOGGED note handles a fresh log),
+    // so the model can't recite the whole day at a plain message.
     const f = opts.todaysFood;
     const items = (f?.items ?? []).filter(Boolean);
-    if (items.length > 0) {
-      facts.push(`Today's diary so far (ONLY recite this if they ask what they ate / their total): ${items.slice(0, 12).join(', ')}${items.length > 12 ? ', and more' : ''} — about ${Math.round(f!.protein_g)}g protein${f!.calories > 0 ? ` and ${Math.round(f!.calories)} calories` : ''}.`);
-    } else {
-      facts.push(`No food logged yet today (only mention if relevant).`);
+    if (asksDiaryOrTotal) {
+      if (items.length > 0) {
+        facts.push(`Today's diary: ${items.slice(0, 12).join(', ')}${items.length > 12 ? ', and more' : ''} — about ${Math.round(f!.protein_g)}g protein${f!.calories > 0 ? ` and ${Math.round(f!.calories)} calories` : ''}.`);
+      } else {
+        facts.push(`Nothing logged yet today.`);
+      }
+      const pg = user?.protein_goal_grams;
+      if (pg) facts.push(`Their protein goal is ${pg}g/day.`);
+      const cg = user?.calorie_goal_kcal;
+      if (cg) facts.push(`Their calorie goal is ${cg}/day.`);
     }
-    const pg = user?.protein_goal_grams;
-    if (pg) facts.push(`Their protein goal is ${pg}g/day.`);
-    const cg = user?.calorie_goal_kcal;
-    if (cg) facts.push(`Their calorie goal is ${cg}/day.`);
     const diet = opts.dietaryRestriction?.label;
     if (diet) facts.push(`They follow a ${diet} diet — never suggest a food that breaks it.`);
     if (opts.dislikes && opts.dislikes.length > 0) facts.push(`They dislike/avoid: ${opts.dislikes.join(', ')} — never suggest these.`);

@@ -3039,7 +3039,11 @@ CRITICAL RULES:
     ];
 
     this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded', logged: food?.logged.length ?? 0, pending: food?.pending.length ?? 0 }, 'ai.reply.path');
-    const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500, skipCache: true });
+    // disableThinking is REQUIRED: gemini-2.5-flash counts thinking tokens against
+    // maxOutputTokens, so with the full Nudge system prompt it spent the budget on
+    // reasoning and returned only the opener ("Okay, I understand.") before the cap.
+    // Nudge's model is non-reasoning; match that. (runDirectReply already does this.)
+    const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 600, skipCache: true, disableThinking: true });
     const formatted = enforceFormat(resp.text ?? '', { userMessage: input.text });
     const reply = formatted.text.trim() || 'I’m here — tell me a little more?';
 

@@ -3023,9 +3023,17 @@ CRITICAL RULES:
       systemPrompt += `\n\n[NEEDS A PORTION before it can be logged: ${food.pending.join(', ')}. Do NOT say it's logged, do NOT give it a protein/calorie number, do NOT add it to any total. Ask ONE short, casual question about how much (e.g. "how much chicken — a few oz or a full breast?"), covering all of those items in that one question, then stop.]`;
     }
 
+    // On a FOOD turn, drop Grace's own past assistant replies from the history we
+    // send. Flash mimics its own prior turns, so a thread full of an earlier bad
+    // reply ("So far today you've eaten … your next injection is tomorrow") makes
+    // it regenerate that same shape no matter what the system prompt says. The
+    // user's own turns stay (they carry real context); the action note carries
+    // what to confirm. Non-food turns keep full history for continuity.
+    const isFoodTurn = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
+    const effHistory = isFoodTurn ? history.filter((h) => h.role === 'user') : history;
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: systemPrompt },
-      ...history.map((h) => ({ role: h.role, content: h.content })),
+      ...effHistory.map((h) => ({ role: h.role, content: h.content })),
       { role: 'user', content: input.text },
     ];
 

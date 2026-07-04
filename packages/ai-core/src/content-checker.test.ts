@@ -113,6 +113,24 @@ describe('checkBannedPhrases', () => {
     expect(checkBannedPhrases('Your next Zepbound shot is in 4 days — Saturday, July 4, 2026.')).toHaveLength(0);
   });
 
+  // Safety backstop (2026-07-04): Grace's OUTBOUND must never carry reconstitution,
+  // unit-dosing, or stacking instructions. The deterministic refusal bypasses this
+  // check, so only INSTRUCTIONAL forms are flagged — a refusal is never caught.
+  it('flags unsafe DIY-injectable / stacking INSTRUCTIONS', () => {
+    expect(checkBannedPhrases('Add 2 ml of bacteriostatic water to the vial.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('To reconstitute your peptide, swirl gently.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('Draw up 20 units and inject.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases('Yes, you can safely stack tirzepatide with retatrutide.').length).toBeGreaterThan(0);
+    expect(checkBannedPhrases("It's safe to stack them.").length).toBeGreaterThan(0);
+  });
+
+  it('does NOT flag the safe refusal (which mentions reconstitution/stacking)', () => {
+    const refusal =
+      "I can't guide mixing, reconstitution, dosing math, stacking, or research peptides. " +
+      "That's genuinely one for a licensed clinician.";
+    expect(checkBannedPhrases(refusal)).toHaveLength(0);
+  });
+
   // Regression (2026-06-19): a bare "good morning" got the canned fallback
   // because Gemini's greeting reply ("...what's on your mind?") was banned →
   // regen → fallback, and the fallback itself contained the banned phrase. The

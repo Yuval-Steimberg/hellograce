@@ -817,6 +817,18 @@ const BANNED_PHRASES: Array<{ pattern: RegExp; reason: string; acuteExempt?: boo
   { pattern: /\b(this|it)\s+(is|'s)\s+(probably|likely|most\s+likely|definitely)\s+(hypoglycemi\w*|low blood sugar|hyperglycemi\w*|dehydration|pancreatitis)\b/i, reason: 'presents a possibility as a diagnosis — use hedged language' },
   { pattern: /\b(sounds\s+like|likely|probably|most\s+likely)\s+(hypoglycemia|pancreatitis|dehydration|gallstones|hyperglycemia|a\s+gallbladder\s+attack)\b/i, reason: 'definitive diagnosis word from symptoms — hedge it' },
 
+  // Unsafe DIY-injectable / research-peptide INSTRUCTION — Grace tracks approved
+  // medications + symptoms and defers vial prep / dosing math / stacking to a
+  // licensed clinician. She must NEVER emit reconstitution, unit-dosing, or
+  // stacking instructions. The deterministic refusal (safety/peptide-safety.ts)
+  // bypasses this check; these patterns target INSTRUCTIONAL forms only, so a
+  // refusal (which mentions "reconstitution"/"stacking") is never flagged.
+  { pattern: /\badd\s+[\d.]+\s*(ml|milliliters?|cc)\s+of\s+(bacteriostatic|bac|sterile)\s+water\b/i, reason: 'reconstitution instruction (BAC-water math) — Grace never guides vial prep; defer to a clinician' },
+  { pattern: /\b(to reconstitute|reconstitute it|reconstitute your|reconstitute the)\b/i, reason: 'reconstitution instruction — Grace never guides mixing a vial; defer to a clinician' },
+  { pattern: /\b(draw|pull)\s+up\s+[\d.]+\s*(units?|iu)\b/i, reason: 'DIY unit-dosing instruction — Grace never gives dosing math; defer to a clinician' },
+  { pattern: /\byou\s+can\s+(safely\s+)?stack\b/i, reason: 'endorses stacking compounds — unsafe; defer to a clinician' },
+  { pattern: /\b(it'?s|it is|that'?s|you'?re|you are)\s+(safe|fine|ok(?:ay)?)\s+to\s+stack\b/i, reason: 'endorses stacking compounds — unsafe; defer to a clinician' },
+
   // Reminder/capability denial — Grace DOES send scheduled reminders. Exposing a
   // platform/LLM limitation contradicts the product and confuses the user.
   // Explain the schedule + redirect to Settings instead (2026-06-15).

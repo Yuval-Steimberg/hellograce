@@ -548,6 +548,7 @@ import {
   isGatherDecline,
 } from '../onboarding/progressive-profile.js';
 import { detectHypoglycemiaWarning, mightBeHypoSymptom, isWhatShouldIDo } from '../safety/hypoglycemia-warning.js';
+import { detectPeptideSafety } from '../safety/peptide-safety.js';
 import {
   detectSummaryRequest,
   mightBeSummaryRequest,
@@ -901,6 +902,30 @@ export class AIService {
           text: hypo.response!,
           confidence: 'high',
           intent: 'safety_hypoglycemia',
+          toolResults: [],
+          usedRetrieval: false,
+          latencyMs: totalMs,
+        };
+      }
+    }
+
+    // ── Unsafe DIY-injectable / research-peptide guardrail — deterministic,
+    // both flag states. Requests to reconstitute/mix a vial, do dosing/unit math,
+    // stack compounds, or source/use research peptides get a warm refusal that
+    // still offers the safe in-scope help (track what you take + how you feel +
+    // questions for a clinician). Runs before the food/orchestrator paths so it
+    // can NEVER be logged or answered by the LLM. Scoped so balanced-plate food
+    // talk ("combine protein with carbs") and ordinary dose tracking pass through.
+    {
+      const peptide = detectPeptideSafety(input.text);
+      if (peptide.flagged) {
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId: input.userId, matched: peptide.matched }, 'ai.peptide_safety.served');
+        this.persistLatency(input.userId, 'safety_peptide', totalMs, lat.snapshot(), input.text, peptide.response!);
+        return {
+          text: peptide.response!,
+          confidence: 'high',
+          intent: 'safety_peptide',
           toolResults: [],
           usedRetrieval: false,
           latencyMs: totalMs,

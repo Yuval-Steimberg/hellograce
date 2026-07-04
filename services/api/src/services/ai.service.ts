@@ -3066,37 +3066,46 @@ CRITICAL RULES:
       { role: 'user', content: input.text },
     ];
 
+    const isFoodTurnNow = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
     this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded', logged: food?.logged.length ?? 0, pending: food?.pending.length ?? 0 }, 'ai.reply.path');
-    // disableThinking is REQUIRED: gemini-2.5-flash counts thinking tokens against
-    // maxOutputTokens; Nudge's model is non-reasoning. temp 0.8 / 500 tokens.
-    const resp = await this.deps.llm.generate({ messages: baseMessages(systemPrompt), temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true });
-    let reply = enforceFormat(resp.text ?? '', { userMessage: input.text }).text.trim();
 
-    // RELEVANCE JUDGE (Nudge): if the draft changed the subject / answered an
-    // older message instead of the latest, regenerate ONCE with a focused
-    // override. This is Nudge's anti-bleed guard. Fails open.
-    const addresses = await judgeReplyAddressesMessage(this.deps.llm, this.deps.logger, input.text, reply || '(empty)');
-    if (!addresses) {
-      this.deps.logger.info({ userId }, 'ai.unified.relevance_regen');
-      const focused = systemPrompt +
-        `\n\nCRITICAL OVERRIDE: your previous draft did not respond to the user's most recent message. They just said: "${input.text.replace(/"/g, "'")}". Reply directly to THAT — answer their question or acknowledge what they shared. Do NOT change the subject or reply to an earlier message.`;
-      const retry = await this.deps.llm.generate({ messages: baseMessages(focused), temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true }).catch(() => null);
-      const retryText = retry ? enforceFormat(retry.text ?? '', { userMessage: input.text }).text.trim() : '';
-      if (retryText) reply = retryText;
+    // Every unified LLM call is timeout-BOUNDED. Without this a slow/retrying
+    // turn ran 15-30s, blew past the webhook in-flight lock's wait budget, and
+    // the lock "proceeded without it" → two pipelines for the same user collided
+    // → replies got mismatched to the wrong message and double-sent (the exact
+    // chaos in the 2026-07-04 PM screenshots). temp 0.8 / 500 / thinking off.
+    const gen = async (sys: string): Promise<string> => {
+      const r = await Promise.race([
+        this.deps.llm.generate({ messages: baseMessages(sys), temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true }),
+        new Promise<{ text: string } | null>((res) => setTimeout(() => res(null), UNIFIED_GEN_TIMEOUT_MS)),
+      ]).catch(() => null);
+      return r ? enforceFormat(r.text ?? '', { userMessage: input.text }).text.trim() : '';
+    };
+
+    let reply = await gen(systemPrompt);
+
+    // RELEVANCE JUDGE (Nudge's anti-bleed) — but ONLY on non-food chat. A food
+    // turn's log-note already pins the reply to the current message, so skipping
+    // the judge there removes an LLM call from the most common turn (keeping the
+    // turn fast enough to never trip the lock). Fails open.
+    if (reply && !isFoodTurnNow) {
+      const addresses = await judgeReplyAddressesMessage(this.deps.llm, this.deps.logger, input.text, reply);
+      if (!addresses) {
+        this.deps.logger.info({ userId }, 'ai.unified.relevance_regen');
+        const retryText = await gen(systemPrompt +
+          `\n\nCRITICAL OVERRIDE: your previous draft did not respond to the user's most recent message. They just said: "${input.text.replace(/"/g, "'")}". Reply directly to THAT — answer their question or acknowledge what they shared. Do NOT change the subject or reply to an earlier message.`);
+        if (retryText) reply = retryText;
+      }
     }
 
-    // CAPABILITY-DENIAL guard: never ship "as an AI", "I don't have access",
-    // "I can't provide medical advice", "check your device/look it up online".
-    // These are false (the facts are in the prompt) and break trust. Regenerate
-    // once with a hard grounding override; deterministic date/injection intercepts
-    // above already cover the two most common ones, so this is the safety net.
-    if (UNIFIED_DENIAL_RE.test(reply)) {
+    // CAPABILITY-DENIAL safety net (rare — the deterministic date/injection
+    // intercepts above cover the common cases). Regenerate once if the reply
+    // still claims to be an AI / lack access.
+    if (reply && UNIFIED_DENIAL_RE.test(reply)) {
       this.deps.logger.info({ userId }, 'ai.unified.denial_regen');
-      const grounded = systemPrompt +
-        `\n\nHARD OVERRIDE: your previous draft wrongly claimed you're an AI or lack access to information you DO have. You are Grace, their companion — never say "as an AI", "I don't have access", "I can't provide medical advice", or "check your device". You have their date, schedule, and profile in the facts above. Answer their message warmly and directly using those facts.`;
-      const retry2 = await this.deps.llm.generate({ messages: baseMessages(grounded), temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true }).catch(() => null);
-      const retry2Text = retry2 ? enforceFormat(retry2.text ?? '', { userMessage: input.text }).text.trim() : '';
-      if (retry2Text && !UNIFIED_DENIAL_RE.test(retry2Text)) reply = retry2Text;
+      const retry2 = await gen(systemPrompt +
+        `\n\nHARD OVERRIDE: never say "as an AI", "I don't have access", "I can't provide medical advice", or "check your device". You are Grace and you HAVE their date, schedule, and profile in the facts above. Answer warmly and directly using those facts.`);
+      if (retry2 && !UNIFIED_DENIAL_RE.test(retry2)) reply = retry2;
     }
     if (!reply) reply = 'I’m here — tell me a little more?';
 
@@ -6520,7 +6529,13 @@ const DATE_QUESTION_RE = /^\s*(what(?:'?s| is)?\s+(?:the\s+)?(?:date|day)(?:\s+(
 
 // Capability-denial / AI-disclosure phrasing Grace must never ship — false and
 // trust-breaking (the facts are in the prompt). Triggers a grounded regen.
-const UNIFIED_DENIAL_RE = /\b(as an ai|i'?m an ai|i am an ai|i'?m just an ai|i (?:do not|don'?t) have access|i (?:cannot|can'?t) (?:provide|give) (?:medical|specific)|(?:don'?t|do not) have a concept of|check your (?:device|phone|calendar)|look it up online|i (?:don'?t|do not) have (?:real-?time|personal)|access to (?:the current date|real-?time))\b/i;
+const UNIFIED_DENIAL_RE = /\b(as an ai|i'?m an ai|i am an ai|i'?m just an ai|i (?:do not|don'?t) have access|i (?:cannot|can'?t) (?:provide|give) (?:medical|specific)|(?:don'?t|do not) have a concept of|check your (?:device|phone|calendar)|look it up online|i (?:don'?t|do not) have (?:real-?time|personal)|access to (?:the current date|real-?time)|large language model)\b/i;
+
+// Hard per-call timeout for the unified reply generations. Keeps a turn from
+// running long enough to blow past the webhook in-flight lock's wait budget
+// (which, once exceeded, lets a second pipeline run concurrently for the same
+// user and mismatches replies to messages).
+const UNIFIED_GEN_TIMEOUT_MS = 11_000;
 
 export function answerDateQuestion(text: string, timezone: string | null): string | null {
   const t = (text ?? '').trim();

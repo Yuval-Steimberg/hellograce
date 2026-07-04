@@ -1007,9 +1007,16 @@ export async function coalesceMessages(redis: Redis, phone: string, text: string
   return parts.join(' ').trim() || text;
 }
 
-// In-flight lock retry budget: 15 × 1s ≈ 15s of waiting, comfortably longer
-// than a slow AI turn (p99 ~10s) and shorter than the 30s lock TTL.
-const INFLIGHT_MAX_ATTEMPTS = 15;
+// In-flight lock retry budget: must be ALMOST the 30s lock TTL, not half of it.
+// The bug (2026-07-04 PM): budget was 15s while the lock TTL is 30s, so when a
+// slow turn (the unified path could fire 3-6 serial LLM calls) held the lock
+// past 15s, the NEXT message gave up waiting and "proceeded without the lock" —
+// running a SECOND pipeline concurrently for the same user. The two pipelines
+// then mismatched replies to messages and double-sent (raw "I am a large
+// language model" denials answering the wrong message). Waiting ~28s (just under
+// the 30s TTL) means a normally-finishing turn releases the lock and the waiter
+// acquires it cleanly; only a genuinely hung turn (TTL expires) falls through.
+const INFLIGHT_MAX_ATTEMPTS = 28;
 const INFLIGHT_RETRY_MS = 1000;
 
 /**

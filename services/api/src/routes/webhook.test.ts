@@ -137,7 +137,7 @@ describe('acquireInflightSlot', () => {
 
     const events: string[] = [];
     const pending = acquireInflightSlot(redis as never, key, (e) => events.push(e));
-    await vi.advanceTimersByTimeAsync(16_000); // > 15 × 1s budget
+    await vi.advanceTimersByTimeAsync(30_000); // > 28 × 1s budget
     expect(await pending).toBe('busy');
     expect(events).toEqual(['waiting', 'skip']);
   });

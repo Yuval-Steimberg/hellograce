@@ -3000,6 +3000,34 @@ CRITICAL RULES:
       this.deps.memory.ensureConversation(userId).catch(() => `fallback-${userId}`),
     ]);
 
+    // ── DETERMINISTIC GROUNDING (correctness) ──────────────────────────────
+    // The unified path trusts the model for date + injection timing, but flash
+    // DENIES them even when the facts are in the prompt ("I don't have access to
+    // the current date", "I cannot provide medical advice… I am an AI" — both
+    // seen in prod). These are facts we compute exactly, so answer them
+    // deterministically and never let the model deny a capability.
+    const medNow = user?.medication && !isEncryptedBlob(user.medication) ? user.medication.trim() : null;
+    const injIntent = detectInjectionTimingIntent(input.text);
+    if (injIntent && user) {
+      const sched = computeInjectionSchedule(
+        { medicationType: inferMedicationType(medNow), medicationName: medNow, injectionDay: user.injection_day ?? null, timezone: user.timezone ?? null },
+        new Date(),
+      );
+      const dj = buildInjectionTimingReply(injIntent, sched, medNow, 'https://graceglp.com/settings');
+      const rep = enforceFormat(dj, { userMessage: input.text }).text.trim() || dj;
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: rep }).catch(() => {});
+      this.deps.logger.info({ userId, injIntent }, 'ai.unified.injection_timing');
+      return { text: rep, confidence: 'high', intent: 'reminder', toolResults: [], usedRetrieval: false, latencyMs: Date.now() - t0 };
+    }
+    const dateReply = answerDateQuestion(input.text, user?.timezone ?? null);
+    if (dateReply) {
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: dateReply }).catch(() => {});
+      this.deps.logger.info({ userId }, 'ai.unified.date_answer');
+      return { text: dateReply, confidence: 'high', intent: 'chat', toolResults: [], usedRetrieval: false, latencyMs: Date.now() - t0 };
+    }
+
     // Nudge food step (extractFoodItems + planning guard): a specific meal logs
     // with an estimate; a hedged/generic mention comes back pending → we ask ONE
     // portion question via the CLARIFY note; advice/planning never logs.
@@ -3056,6 +3084,20 @@ CRITICAL RULES:
       const retryText = retry ? enforceFormat(retry.text ?? '', { userMessage: input.text }).text.trim() : '';
       if (retryText) reply = retryText;
     }
+
+    // CAPABILITY-DENIAL guard: never ship "as an AI", "I don't have access",
+    // "I can't provide medical advice", "check your device/look it up online".
+    // These are false (the facts are in the prompt) and break trust. Regenerate
+    // once with a hard grounding override; deterministic date/injection intercepts
+    // above already cover the two most common ones, so this is the safety net.
+    if (UNIFIED_DENIAL_RE.test(reply)) {
+      this.deps.logger.info({ userId }, 'ai.unified.denial_regen');
+      const grounded = systemPrompt +
+        `\n\nHARD OVERRIDE: your previous draft wrongly claimed you're an AI or lack access to information you DO have. You are Grace, their companion — never say "as an AI", "I don't have access", "I can't provide medical advice", or "check your device". You have their date, schedule, and profile in the facts above. Answer their message warmly and directly using those facts.`;
+      const retry2 = await this.deps.llm.generate({ messages: baseMessages(grounded), temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true }).catch(() => null);
+      const retry2Text = retry2 ? enforceFormat(retry2.text ?? '', { userMessage: input.text }).text.trim() : '';
+      if (retry2Text && !UNIFIED_DENIAL_RE.test(retry2Text)) reply = retry2Text;
+    }
     if (!reply) reply = 'I’m here — tell me a little more?';
 
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
@@ -3100,7 +3142,7 @@ CRITICAL RULES:
       pending.map((p) => ({ item: p.item })),
     ).catch(() => ({ ...EMPTY_EXTRACTION }));
 
-    if (extraction.intent === 'none' || extraction.intent === 'query') return null;
+    if (extraction.intent === 'query') return null;
 
     if (extraction.intent === 'delete' && extraction.edit_ref) {
       try {
@@ -3120,6 +3162,21 @@ CRITICAL RULES:
       ...(this.deps.usda ? { usda: this.deps.usda } : {}),
       users: this.deps.users,
     });
+
+    // NEVER-DROP BACKSTOP: the flash-lite extractor frequently returns `none`
+    // for a clearly-reported meal ("I ate 2 eggs and chicken and rice"), which
+    // silently loses the log AND makes the turn look non-food (history bleed).
+    // A DEFINITE consumption span (foodSpanFromConsumption: "I ate/had X" +
+    // named food, planning/preference already voided) is logged with a standard
+    // estimate — this is the #1 customer complaint (a reported meal not tracked).
+    if (extraction.intent === 'none') {
+      const span = foodSpanFromConsumption(text);
+      if (!span) return null;
+      const r = (await logFood.execute({ food: span }).catch(() => null)) as Record<string, unknown> | null;
+      if (!r || r.ok === false) return null;
+      this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_logged');
+      return { logged: [span], pending: [], removed: null };
+    }
 
     const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
     const newPending = extraction.items.filter((i) => i.status === 'pending_portion');
@@ -6453,6 +6510,23 @@ export function looksStructured(text: string): boolean {
   // steps: Before You Go (The Pre-Game) 1."). Catches the truncated-list case.
   if (/:\s+[A-Z][^.!?\n]{0,90}\b\d+[.)]/.test(t)) return true;
   return false;
+}
+
+// A PURE date/day question ("what's the date today", "what day is it"). Anchored
+// so "what should I eat today" never matches. Answered deterministically from the
+// authoritative temporal context — the model denies the date even when it's in
+// the prompt (prod: "I don't have access to the current date. As an AI…").
+const DATE_QUESTION_RE = /^\s*(what(?:'?s| is)?\s+(?:the\s+)?(?:date|day)(?:\s+(?:today|now|is\s+it))?|what\s+day\s+is\s+it(?:\s+today)?|what\s+date\s+is\s+it(?:\s+today)?|today'?s\s+date|current\s+date|what(?:'?s| is)?\s+today'?s\s+date)\s*\??\s*$/i;
+
+// Capability-denial / AI-disclosure phrasing Grace must never ship — false and
+// trust-breaking (the facts are in the prompt). Triggers a grounded regen.
+const UNIFIED_DENIAL_RE = /\b(as an ai|i'?m an ai|i am an ai|i'?m just an ai|i (?:do not|don'?t) have access|i (?:cannot|can'?t) (?:provide|give) (?:medical|specific)|(?:don'?t|do not) have a concept of|check your (?:device|phone|calendar)|look it up online|i (?:don'?t|do not) have (?:real-?time|personal)|access to (?:the current date|real-?time))\b/i;
+
+export function answerDateQuestion(text: string, timezone: string | null): string | null {
+  const t = (text ?? '').trim();
+  if (!DATE_QUESTION_RE.test(t)) return null;
+  const tc = resolveTemporalContext(timezone, new Date());
+  return `Today is ${tc.humanDate}.`;
 }
 
 export function splitMultiMealText(text: string): string[] {

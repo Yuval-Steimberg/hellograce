@@ -1,6 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone, looksStructured } from './ai.service.js';
+import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone, looksStructured, answerDateQuestion } from './ai.service.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+
+describe('answerDateQuestion — deterministic date (flash denies it otherwise)', () => {
+  it('answers a pure date/day question with the real local date', () => {
+    for (const q of ['What is the date today', "what's the date", 'what day is it', "what is today's date", 'current date']) {
+      const r = answerDateQuestion(q, 'Asia/Jerusalem');
+      expect(r).toBeTruthy();
+      expect(r).toMatch(/^Today is \w+, \w+ \d{1,2}, \d{4}\.$/);
+    }
+  });
+  it('does NOT fire on food/other questions that merely contain "today"', () => {
+    expect(answerDateQuestion('what should I eat today', 'UTC')).toBeNull();
+    expect(answerDateQuestion('what did I eat today', 'UTC')).toBeNull();
+    expect(answerDateQuestion('is today my injection day', 'UTC')).toBeNull();
+    expect(answerDateQuestion('what is my time zone', 'UTC')).toBeNull();
+    expect(answerDateQuestion('any snack idea', 'UTC')).toBeNull();
+  });
+});
 
 describe('looksStructured — general reply-shape guard (any words/variation)', () => {
   const STRUCTURED = [

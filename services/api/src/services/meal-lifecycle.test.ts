@@ -21,6 +21,14 @@ describe('foodSpanFromConsumption — never-drop backstop for "I ate X … <ques
     expect(foodSpanFromConsumption('I ate chicken and rice how much protein was that')).toBe('I ate chicken and rice');
     expect(foodSpanFromConsumption('just had a greek yogurt, any idea what to eat next?')).toBe('just had a greek yogurt');
   });
+  it('slices off trailing state/context clauses (prod 2026-07-04: yogurt + injection + hunger)', () => {
+    expect(foodSpanFromConsumption('I ate yogurt with berries after my injection and now I’m a little hungry. Any snack idea?'))
+      .toBe('I ate yogurt with berries');
+    expect(foodSpanFromConsumption('I ate chicken and now I’m full')).toBe('I ate chicken');
+    expect(foodSpanFromConsumption('I had a protein shake after my workout')).toBe('I had a protein shake');
+    // Must NOT over-cut a real food phrase:
+    expect(foodSpanFromConsumption('I ate chicken with rice')).toBe('I ate chicken with rice');
+  });
   it('returns null for a PURE question (nothing eaten)', () => {
     expect(foodSpanFromConsumption('what should I eat later?')).toBeNull();
     expect(foodSpanFromConsumption('what did I eat today?')).toBeNull();

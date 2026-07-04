@@ -3162,8 +3162,22 @@ CRITICAL RULES:
           // named dish ("breakfast", "a big lunch") — we don't know WHAT was
           // eaten, so it must never be logged or clarified as if it were a food
           // (prod: "I had breakfast late, skipped lunch…" → "Glad that's logged").
-          const confirmed = extraction.items.filter((i) => i.status === 'confirmed' && namesSpecificFood(i.item));
-          const newPending = extraction.items.filter((i) => i.status === 'pending_portion' && namesSpecificFood(i.item));
+          // A definite CONSUMPTION ("I ate yogurt with berries") is already eaten,
+          // so it must be LOGGED with a standard-portion estimate — never held as
+          // pending_portion waiting for a "how much?" that makes no sense for a
+          // finished meal. Production 2026-07-04: "I ate yogurt with berries …
+          // any snack idea?" → the extractor marked BOTH items pending, the
+          // multi-part reply answered the snack question, and the yogurt was
+          // silently never logged (dashboard stayed empty). When the message is a
+          // definite consumption, promote every specific item to confirmed.
+          const isDefiniteConsumption = consumptionSpanPre != null;
+          const specificItems = extraction.items.filter((i) => namesSpecificFood(i.item));
+          const confirmed = isDefiniteConsumption
+            ? specificItems
+            : specificItems.filter((i) => i.status === 'confirmed');
+          const newPending = isDefiniteConsumption
+            ? []
+            : specificItems.filter((i) => i.status === 'pending_portion');
           const loggedSummaries: string[] = [];
           let dailyProtein: number | undefined;
           let dailyCal: number | undefined;

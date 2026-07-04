@@ -239,6 +239,15 @@ export function extractFoodMention(text: string): string | null {
 const QUESTION_TAIL_RE =
   /\b(how\s+(?:much|many)|what\s+(?:should|can|could|do|to|else|would)|is\s+that|are\s+those|any\s+(?:snack|idea|ideas|suggestions?|thoughts?)|should\s+i|and\s+what|and\s+how|what'?s\s+(?:a\s+)?good)\b/i;
 
+// Trailing NON-food state/context clauses that follow the eaten food in the same
+// sentence (no period between them), e.g. "I ate yogurt with berries after my
+// injection and now I'm a little hungry". These are not part of the meal and
+// must be sliced off so only the eaten food is logged. Scoped tightly ("and now",
+// "now i'm", "after my <injection/shot/dose/workout>") so it never cuts a real
+// food phrase like "chicken with rice".
+const CONSUMPTION_TAIL_RE =
+  /\b(?:and\s+now\b|now\s+i'?m\b|after\s+my\s+(?:injection|shot|jab|dose|workout|run|exercise))/i;
+
 /**
  * When the message reports food the user ALREADY ate AND names a real food,
  * return JUST the eaten-food span — with any trailing question / planning clause
@@ -257,7 +266,7 @@ export function foodSpanFromConsumption(text: string): string | null {
   if (!isConsumptionConfirmed(t)) return null;
   // Cut at the EARLIEST of: first sentence end, first '?', first question clause.
   const idx = (re: RegExp): number => { const m = t.search(re); return m < 0 ? Infinity : m; };
-  const cut = Math.min(idx(/[.!?]/), idx(QUESTION_TAIL_RE));
+  const cut = Math.min(idx(/[.!?]/), idx(QUESTION_TAIL_RE), idx(CONSUMPTION_TAIL_RE));
   let span = (cut !== Infinity && cut > 0 ? t.slice(0, cut) : t).trim();
   // Trim a dangling connector/punctuation left by the cut ("… and salad ,").
   span = span.replace(/[\s,;:.!?]+$/g, '').replace(/\s+(?:and|with|plus|,|&)\s*$/i, '').trim();

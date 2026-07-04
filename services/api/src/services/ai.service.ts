@@ -566,6 +566,7 @@ import {
   localDayOfWeek,
 } from './symptom-intelligence.js';
 import { detectDashboardRequest, buildDashboardLinkReply } from './dashboard-link.js';
+import { detectFoodReset, buildFoodResetReply } from './food-reset.js';
 import { weightProgress, loggingStreak, summarizeSymptoms } from './dashboard-data.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -902,6 +903,27 @@ export class AIService {
           usedRetrieval: false,
           latencyMs: totalMs,
         };
+      }
+    }
+
+    // ── Reset today's food log (2026-07-04) — deterministic, both flag states.
+    // "reset my food log", "clear today's food", "start over" → delete every
+    // food_logs row in the user's current logging day and confirm they're back
+    // to 0. Gives the user control when totals are wrong / accumulated (the
+    // fix for a ballooned running total). Runs BEFORE the unified branch and
+    // the food-logging paths so a reset is never misread as a food log. Scoped
+    // so a single-item "remove the pizza" delete never wipes the whole day.
+    if (detectFoodReset(input.text)) {
+      try {
+        const deleted = await this.deps.users.clearTodaysFood(input.userId);
+        const reply = buildFoodResetReply(deleted);
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId: input.userId, deleted }, 'ai.food_reset.served');
+        this.persistLatency(input.userId, 'food_reset', totalMs, lat.snapshot(), input.text, reply);
+        return { text: reply, confidence: 'high', intent: 'food_reset', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      } catch (err) {
+        this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.food_reset.error');
+        // Fall through rather than drop the turn.
       }
     }
 

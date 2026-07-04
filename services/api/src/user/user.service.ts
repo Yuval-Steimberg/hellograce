@@ -678,6 +678,32 @@ export class UserService {
   }
 
   /**
+   * Delete every food_logs row in the user's CURRENT logging day (local
+   * calendar day). Used by the "reset today's food" chat command so a user can
+   * zero out today's totals — e.g. after a wrong estimate or accumulated
+   * mis-logs — and start clean. Only today's rows are removed; prior days are
+   * untouched. Returns the number of rows deleted. Invalidates the today-food
+   * cache so the next read reflects the empty day immediately.
+   */
+  async clearTodaysFood(userId: string): Promise<number> {
+    const { rowCount } = await this.pool.query(
+      `${USER_DAY_CTE}
+       DELETE FROM food_logs fl
+       USING user_tz
+       WHERE fl.user_id = $1
+         AND ${isCurrentUserDay('fl.created_at')}`,
+      [userId],
+    );
+    this.invalidateTodaysFoodCache(userId);
+    if (this.todayFoodCache) {
+      const u = await this.getById(userId).catch(() => null);
+      const tz = u?.timezone ?? 'UTC';
+      void this.todayFoodCache.set(userId, tz, { protein_g: 0, calories: 0, items: [], items_detailed: [] }, u?.wake_time ?? null).catch(() => undefined);
+    }
+    return rowCount ?? 0;
+  }
+
+  /**
    * Get per-day protein/calorie totals for the last N days, including TODAY
    * as the rightmost entry. Each "day" is the user's personal logging day —
    * wake_time to the next wake_time (see nutrition/logging-window.ts), the same

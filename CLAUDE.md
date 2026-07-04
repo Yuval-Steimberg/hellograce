@@ -8,12 +8,16 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ## 👉 READ FIRST — unified food logging is DETERMINISTIC now + intercepts ported (2026-07-04 EOD)
 
-**Merged to `main` via PR #192 (squash `19c9560`).** Branch
-`claude/grace-dashboard-redesign-366yjj`. 1662 api tests green; all packages
-typecheck clean. No migration. **Not deployed by me** — the user deploys on their
-Mac (`fly deploy … --no-cache --build-arg GIT_COMMIT=$(git rev-parse --short HEAD)`,
-verify `/health` version == HEAD) and activates with `fly secrets set --app
-grace-api UNIFIED_REPLY_PATH=true`.
+**Merged to `main` — latest HEAD `f634ed8`.** Chain of PRs this session: #192
+(`19c9560`, deterministic food + ported intercepts) → #193 (docs) → #194
+(`71c9cf5`, reset command) → #195 (`49348f6`, portion precision) → #196
+(`f634ed8`, scope the ask). Branch `claude/grace-dashboard-redesign-366yjj`. 1674
+api tests green; all packages typecheck clean. No migration. **Not deployed by
+me** — the user deploys on their Mac (`fly deploy … --no-cache --build-arg
+GIT_COMMIT=$(git rev-parse --short HEAD)`, verify `/health` version == HEAD `f634ed8`)
+and activates with `fly secrets set --app grace-api UNIFIED_REPLY_PATH=true`.
+(The user CONFIRMED the deterministic food fix + reset command working live after
+deploying `71c9cf5`; portion precision + scoping ship on the next deploy.)
 
 **THE #1-COMPLAINT FIX — the "669g" hallucination.** Prod screenshot (`IMG_6655`):
 "ate yogurt with berries" → *"I've got that logged along with your **669g** of

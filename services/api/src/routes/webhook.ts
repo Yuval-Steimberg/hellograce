@@ -18,6 +18,10 @@ import { classifyMessage as classifySafety, classifySymptomCategory } from '../s
 import { recordSymptom, shouldEscalate, clearStack } from '../safety/symptom-stack.js';
 import { getCrisisResourcesForUser, buildSafetyResponse } from '../safety/crisis-resources.js';
 import { tryHandleSettings, isBareSettingsFieldReply, tryHandleSettingsFollowUp } from '../services/settings-flow.js';
+// Single source of truth for the trial length — shared with trial-info.ts so the
+// access gate and what Grace SAYS about the trial can never disagree (the "told
+// 7 days, cut at 3" churn was exactly that kind of drift).
+import { TRIAL_DAYS } from '../services/trial-info.js';
 import { runOnboardingTurn } from '../onboarding/onboarding-flow.js';
 
 const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
@@ -750,8 +754,6 @@ function headerStr(h: string | string[] | undefined): string | undefined {
   if (Array.isArray(h)) return h[0];
   return h ?? undefined;
 }
-
-const TRIAL_DAYS = 3;
 
 export function isAccessAllowed(user: { is_paid: boolean; is_pro: boolean; trial_start: Date | null }): boolean {
   if (user.is_paid || user.is_pro) return true;

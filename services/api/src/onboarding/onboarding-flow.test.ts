@@ -11,6 +11,7 @@ import {
   extractAllFields,
   parseDislikes,
   understandSlotWithLlm,
+  detectEmotionalDisclosure,
 } from './onboarding-flow.js';
 
 describe('buildSignupCompleteReply — warm, zero-pressure, no payment link', () => {
@@ -25,6 +26,44 @@ describe('buildSignupCompleteReply — warm, zero-pressure, no payment link', ()
     const r = buildSignupCompleteReply('Sam');
     expect(r).toMatch(/all set/i);
     expect(r).not.toMatch(/trial|upgrade|http/i);
+  });
+  it('invites the FIRST food log (activation), not just "text me anytime"', () => {
+    const r = buildSignupCompleteReply('Sam');
+    expect(r.toLowerCase()).toMatch(/ate|eat|meal|protein/); // a concrete first action
+    expect(r.length).toBeLessThan(420); // stays under the outbound cap
+  });
+});
+
+describe('detectEmotionalDisclosure', () => {
+  it('flags painful lack-of-progress and distress', () => {
+    expect(detectEmotionalDisclosure('Zepbound 7.5mg 9 months, lost zero and actually gained')).toBe(true);
+    expect(detectEmotionalDisclosure("I'm so frustrated, this isn't working")).toBe(true);
+    expect(detectEmotionalDisclosure('honestly I feel like a failure')).toBe(true);
+    expect(detectEmotionalDisclosure("I've been stuck at a plateau for months")).toBe(true);
+  });
+  it('does NOT fire on neutral slot answers or good news', () => {
+    expect(detectEmotionalDisclosure('Mounjaro')).toBe(false);
+    expect(detectEmotionalDisclosure('Tuesday')).toBe(false);
+    expect(detectEmotionalDisclosure('I lost 20 lbs and feel great')).toBe(false);
+    expect(detectEmotionalDisclosure('Sarah')).toBe(false);
+  });
+});
+
+describe('runOnboardingTurn — acknowledges an emotional disclosure before moving on', () => {
+  it('prepends a warm ack, still stores the answer and asks the next slot', async () => {
+    const { users, calls } = makeWriter();
+    const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'medication' });
+    const res = await runOnboardingTurn({
+      user: u,
+      text: 'Zepbound but honestly 9 months and I lost zero and actually gained',
+      mode: 'signup',
+      users,
+      logger,
+    });
+    // Acknowledged (fallback ack, no LLM) AND advanced (medication stored).
+    expect(res.reply.toLowerCase()).toMatch(/thank you|not on your own|matters/);
+    expect(calls.some((c) => 'medication' in c)).toBe(true);
+    expect(calls).toContainEqual({ onboarding_last_slot: 'injection_day' });
   });
 });
 
@@ -501,7 +540,7 @@ describe('CRITICAL onboarding fixes — skip understanding, side-questions, welc
   it('the signup-complete message is a strong, inviting welcome (no repeated self-intro)', () => {
     const r = buildSignupCompleteReply('Yuval', 'https://x/upgrade?phone=1');
     expect(r.toLowerCase()).toMatch(/all set/);
-    expect(r.toLowerCase()).toMatch(/what should i eat/); // a concrete starter prompt
+    expect(r.toLowerCase()).toMatch(/ate|eat|meal|protein/); // a concrete first-action starter (log a meal)
     expect(r.toLowerCase()).toMatch(/dashboard/); // explains the dashboard option
     expect(r).not.toMatch(/http/i); // no payment link at completion — trial isn't a sales ask
     expect(r).not.toMatch(/I'?m Grace/i); // no redundant re-introduction

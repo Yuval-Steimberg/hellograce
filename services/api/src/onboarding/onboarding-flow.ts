@@ -646,10 +646,71 @@ export async function buildOnboardingNudge(
  */
 export function buildSignupCompleteReply(firstName: string | null, _upgradeUrl?: string): string {
   const greet = firstName ? `, ${firstName}` : '';
-  // Keep this UNDER the outbound 420-char format cap (it truncates at the last
-  // sentence boundary) so the dashboard line is never cut off. Two short
-  // sentences: start texting + the dashboard option.
-  return `Perfect, you're all set${greet} 🎉 Text me anytime — meals, protein, side effects, cravings, injection days, or just to stay on track. Try "What should I eat today?" to start. And text "dashboard" anytime to open your progress app (weight, meals, protein, charts, and photos, all in one place).`;
+  // ACTIVATION over instruction: the users who stick are the ones who DO something
+  // in the first minutes (our one real customer started logging food right after
+  // onboarding). So the completion message invites the first LOG — a concrete
+  // action — not just "text me anytime". Kept UNDER the 420-char outbound cap so
+  // the dashboard line is never truncated.
+  return `Perfect, you're all set${greet} 🎉 Easiest way to start: text me what you ate today — even just one meal — and I'll tally the protein for you. You can also ask me anything or log how you're feeling. And text "dashboard" anytime for your progress app (weight, meals, protein, charts, photos).`;
+}
+
+// ── Emotional disclosures during onboarding ──────────────────────────────────
+//
+// Onboarding is a slot machine, but people volunteer painful things in it
+// ("Zepbound 9 months, lost zero and actually gained"). Marching straight to the
+// next question wastes a real "friend who's in your corner" moment and reads as
+// not listening. detectEmotionalDisclosure flags a loaded disclosure; when found
+// we prepend ONE warm, validating line to the next question — acknowledging it
+// without derailing the flow or giving medical advice.
+
+const NEGATIVE_PROGRESS_RE =
+  /\b(lost (nothing|zero|0|no weight)|haven'?t lost|not losing|no (weight )?loss|gained (weight|it back)?|actually gain|going up|stuck|plateau\w*|not work\w*|isn'?t work\w*|doesn'?t work|no results|nothing'?s? (changed|happening))\b/i;
+const EMOTION_DISTRESS_RE =
+  /\b(frustrat\w*|discourag\w*|defeat\w*|hopeless|giving up|give up|failing|failure|scared|terrified|afraid|worried|anxious|depress\w*|exhaust\w*|miserable|struggl\w*|hate (my|this)|ashamed|embarrass\w*|alone|hopeless|crying|breaking down|so hard|really hard|had enough|fed up|desperate)\b/i;
+
+/**
+ * True when the user's onboarding reply carries an emotionally-loaded disclosure
+ * that deserves acknowledgment (a struggle, fear, or lack of progress) — not a
+ * neutral slot answer. Conservative: a positive report ("lost 20 lbs, feeling
+ * great") does not match.
+ */
+export function detectEmotionalDisclosure(text: string): boolean {
+  const t = (text ?? '').trim();
+  if (t.length < 6) return false;
+  return NEGATIVE_PROGRESS_RE.test(t) || EMOTION_DISTRESS_RE.test(t);
+}
+
+const EMOTIONAL_ACK_FALLBACK = "Thank you for telling me that — it genuinely matters, and you're not on your own with it anymore. 🧡";
+
+/**
+ * A single warm, validating sentence acknowledging an emotional disclosure. LLM
+ * when available (adapts to what they said), deterministic fallback otherwise.
+ * NEVER medical advice, dosing, or a fix — just acknowledgment. Always short.
+ */
+export async function buildEmotionalAck(
+  text: string,
+  llm: LLMProvider | undefined,
+  opts: { logger?: Logger } = {},
+): Promise<string> {
+  if (!llm) return EMOTIONAL_ACK_FALLBACK;
+  try {
+    const system = `You are Grace, a warm GLP-1 text companion. The user just shared something emotionally hard while signing up. Write ONE short sentence (max ~160 chars) that gently ACKNOWLEDGES what they said and lets them feel heard and not alone.
+Rules: validating and human, like a caring friend. NO medical advice, NO dosing, NO diagnosis, NO false promises, do NOT try to fix it or explain the medication — only acknowledge the feeling. At most one emoji. Plain text, output just the sentence.`;
+    const resp = await Promise.race([
+      llm.generate({
+        messages: [{ role: 'system', content: system }, { role: 'user', content: text }],
+        temperature: 0.7,
+        maxOutputTokens: 70,
+        disableThinking: true,
+      }),
+      new Promise<{ text: string }>((r) => setTimeout(() => r({ text: '' }), 3500)),
+    ]);
+    const out = (resp.text ?? '').trim().replace(/^["']|["']$/g, '');
+    if (out && /[A-Za-z]{3,}/.test(out)) return out.slice(0, 200);
+  } catch (err) {
+    opts.logger?.warn({ err: err instanceof Error ? err.message : String(err) }, 'onboarding.emotional_ack.failed');
+  }
+  return EMOTIONAL_ACK_FALLBACK;
 }
 
 /**
@@ -808,6 +869,15 @@ export async function runOnboardingTurn(params: {
     // side === 'skip' on a skippable slot falls through — SKIP_RE in the parser
     // marks it skipped and the flow advances.
 
+    // Emotional disclosure woven into an onboarding reply (e.g. "9 months, lost
+    // zero and actually gained") gets a warm acknowledgment BEFORE we move on, so
+    // the flow never reads as "not listening". Computed once here; prepended to
+    // whatever we return next (re-ask, next question, or completion). Only pays
+    // for the LLM call when there's genuinely something to acknowledge.
+    const emotionalPrefix = detectEmotionalDisclosure(text)
+      ? (await buildEmotionalAck(text, llm, { logger })) + ' '
+      : '';
+
     // Understand the reply: the current slot's answer (primary) PLUS any other
     // profile facts the message volunteered (multi-field, validated). A chatty
     // "I'm on ozempic once a week and want to get to 120kg" fills several slots
@@ -831,7 +901,7 @@ export async function runOnboardingTurn(params: {
     const understoodCurrent = parsed.ok || Object.keys(multi).length > 0;
     if (!understoodCurrent) {
       const q = fallbackQuestion(slot, null, true);
-      return { reply: q, completed: false };
+      return { reply: emotionalPrefix + q, completed: false };
     }
 
     const updates: Partial<GraceUser> = { ...multi };
@@ -865,14 +935,14 @@ export async function runOnboardingTurn(params: {
         await users.update(u.phone, finish);
         logger.info({ phone: u.phone, mode }, 'onboarding.completed');
         return {
-          reply: buildSignupCompleteReply(u.first_name ?? null, params.upgradeUrl),
+          reply: emotionalPrefix + buildSignupCompleteReply(u.first_name ?? null, params.upgradeUrl),
           completed: true,
         };
       }
       await users.update(u.phone, { onboarding_state: 'complete', onboarding_last_slot: null } as Partial<GraceUser>);
       logger.info({ phone: u.phone, mode }, 'onboarding.completed');
       return {
-        reply: `All set 🧡 Text me anytime — meals, protein, side effects, or just to check in. Try "What should I eat today?" to start. And text "dashboard" anytime to open your progress app (weight, meals, protein, charts, and photos, all in one place).`,
+        reply: emotionalPrefix + `All set 🧡 Text me anytime — meals, protein, side effects, or just to check in. Try "What should I eat today?" to start. And text "dashboard" anytime to open your progress app (weight, meals, protein, charts, and photos, all in one place).`,
         completed: true,
       };
     }
@@ -881,7 +951,7 @@ export async function runOnboardingTurn(params: {
     // Pass the name so the medication question (asked right after we learn it)
     // can warmly greet — every other question ignores the name (stays name-free).
     const q = fallbackQuestion(next, u.first_name ?? null, false);
-    return { reply: q, completed: false };
+    return { reply: emotionalPrefix + q, completed: false };
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : String(err), phone: user.phone }, 'onboarding.turn.error');
     return { reply: `Sorry, I got a bit tangled there — could you say that once more?`, completed: false };

@@ -527,6 +527,7 @@ import {
   wasReminderOffer,
   buildReminderKeptReply,
 } from './reminder-service.js';
+import { detectTrialQuestion, buildTrialReply } from './trial-info.js';
 import { detectHealthConcern } from '../safety/health-concern.js';
 import { detectCapabilityQuestion, buildCapabilityReply } from './capability.js';
 import {
@@ -1262,6 +1263,40 @@ export class AIService {
             this.deps.logger.warn(
               { err: err instanceof Error ? err.message : String(err) },
               'ai.reminder_query.error',
+            );
+            // Fall through to the normal pipeline rather than drop the turn.
+          }
+        }
+      }
+
+      // ── Trial length / billing timing → deterministic answer ──────────────
+      // "How long is my trial?", "when does it end?", "how many days left?",
+      // "when do I get charged?" — answered from trial_start + TRIAL_DAYS, never
+      // an LLM guess. Fixes the prod churn where a user was told "7 days" but was
+      // cut off at 3 (a broken promise, not a price objection). The trial length
+      // is correctness-critical, so — like the "next reminder" fact — we ALWAYS
+      // return the exact deterministic answer, even in directReplyMode.
+      {
+        const trialIntent = detectTrialQuestion(input.text);
+        if (trialIntent) {
+          try {
+            const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+            const reply = buildTrialReply(user ?? {}, trialIntent);
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info({ userId: input.userId, trialIntent }, 'ai.trial_query.served');
+            this.persistLatency(input.userId, `trial_${trialIntent}`, totalMs, lat.snapshot(), input.text, reply);
+            return {
+              text: reply,
+              confidence: 'high',
+              intent: `trial_${trialIntent}`,
+              toolResults: [],
+              usedRetrieval: false,
+              latencyMs: totalMs,
+            };
+          } catch (err) {
+            this.deps.logger.warn(
+              { err: err instanceof Error ? err.message : String(err) },
+              'ai.trial_query.error',
             );
             // Fall through to the normal pipeline rather than drop the turn.
           }

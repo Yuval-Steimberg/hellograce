@@ -4318,9 +4318,17 @@ CRITICAL RULES:
       // fabricate a macro estimate for "a small snack" (the production bug:
       // eggs were dropped and the snack was logged as a guessed "snack plate").
       if (meals.length >= 2) {
-        const vagueMeals = meals.filter((m) => detectVagueFood(m, undefined, { requireQuantity: true }).vague);
-        const clearMeals = meals.filter((m) => !detectVagueFood(m, undefined, { requireQuantity: true }).vague);
-        if (clearMeals.length >= 1 && vagueMeals.length >= 1) {
+        // A meal is "vague" (worth asking about) ONLY when it names NO specific
+        // food ("a small snack", "some food"). A meal that names real food — even
+        // without a quantity ("chicken and rice") — is CLEAR and gets logged with
+        // a standard estimate, never dropped or turned into a phantom "snack"
+        // question (prod 2026-07-04: "2 eggs for breakfast. For lunch chicken and
+        // rice" logged only the eggs and asked "what was the snack?"). Every named
+        // meal is logged deterministically here and we RETURN, so nothing depends
+        // on a downstream path that may not re-log it under directReplyMode.
+        const clearMeals = meals.filter((m) => namesSpecificFood(m));
+        const vagueMeals = meals.filter((m) => !namesSpecificFood(m));
+        if (clearMeals.length >= 1) {
           const clearText = clearMeals.join('. ');
           const est = estimateMultiItemFood(clearText);
           if (est && est.items.length > 0) {
@@ -4331,17 +4339,19 @@ CRITICAL RULES:
             const macros = est.calories > 0
               ? `about ${est.protein_g}g protein and ${est.calories} calories`
               : `about ${est.protein_g}g protein`;
-            const vagueItem = findVagueAddOnItem(input.text) ?? 'snack';
             const totalsClause = totals && totals.goal > 0 ? ` You're at ${totals.dailyProtein}g/${totals.goal}g today.` : '';
-            const reply = `Got it — ${list}. Roughly ${macros}.${totalsClause} What was the ${vagueItem}, so I can log that too?`;
+            // Only ask when a meal genuinely named no food.
+            const reply = vagueMeals.length >= 1
+              ? `Got it — ${list}. Roughly ${macros}.${totalsClause} What was the ${findVagueAddOnItem(input.text) ?? 'other one'}, so I can log that too?`
+              : `Got it — ${list}. Roughly ${macros}.${totalsClause}`.trim();
             this.deps.logger.info(
               { userId: input.userId, clearMeals: clearMeals.length, vagueMeals: vagueMeals.length },
-              'ai.handle.multi_meal_partial_vague',
+              'ai.handle.multi_meal_logged',
             );
             void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'user', content: input.text })
-              .catch((err) => this.deps.logger.warn({ err }, 'multi_meal_partial.append_user.failed'));
+              .catch((err) => this.deps.logger.warn({ err }, 'multi_meal.append_user.failed'));
             void this.deps.memory.appendTurn({ userId: input.userId, conversationId, role: 'assistant', content: reply })
-              .catch((err) => this.deps.logger.warn({ err }, 'multi_meal_partial.append_assistant.failed'));
+              .catch((err) => this.deps.logger.warn({ err }, 'multi_meal.append_assistant.failed'));
             return {
               text: reply,
               intent: 'food_log',

@@ -3172,12 +3172,29 @@ CRITICAL RULES:
           // definite consumption, promote every specific item to confirmed.
           const isDefiniteConsumption = consumptionSpanPre != null;
           const specificItems = extraction.items.filter((i) => namesSpecificFood(i.item));
-          const confirmed = isDefiniteConsumption
+          let confirmed = isDefiniteConsumption
             ? specificItems
             : specificItems.filter((i) => i.status === 'confirmed');
           const newPending = isDefiniteConsumption
             ? []
             : specificItems.filter((i) => i.status === 'pending_portion');
+          // A single stated meal ("yogurt with berries") is ONE meal, not one row
+          // per ingredient — collapse its items into a single log entry so the
+          // dashboard shows one meal with combined macros (prod 2026-07-04: yogurt
+          // + berries showed as 2 separate meals). Guarded to a SINGLE-meal message
+          // (splitMultiMealText ≤ 1) so a genuine multi-meal log ("eggs for
+          // breakfast, chicken for lunch") still logs each meal separately.
+          if (isDefiniteConsumption && confirmed.length > 1 && splitMultiMealText(params.rawUserText).length <= 1) {
+            const allP = confirmed.every((i) => i.protein_g != null);
+            const allC = confirmed.every((i) => i.calories != null);
+            confirmed = [{
+              item: confirmed.map((i) => i.item).join(', '),
+              protein_g: allP ? confirmed.reduce((s, i) => s + (i.protein_g ?? 0), 0) : null,
+              calories: allC ? confirmed.reduce((s, i) => s + (i.calories ?? 0), 0) : null,
+              status: 'confirmed',
+              clarify_question: null,
+            }];
+          }
           const loggedSummaries: string[] = [];
           let dailyProtein: number | undefined;
           let dailyCal: number | undefined;

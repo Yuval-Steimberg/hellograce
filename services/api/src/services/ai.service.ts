@@ -472,7 +472,7 @@ import type { TopicTrackerService } from './topic-tracker.service.js';
 import type { UsdaFoodService } from './usda-food.service.js';
 import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
-import { detectVagueFood, findVagueAddOnItem } from '../safety/vague-food.js';
+import { detectVagueFood, findVagueAddOnItem, hasExplicitQuantity } from '../safety/vague-food.js';
 import { shouldDiscloseEstimate, estimateNote } from '../nutrition/estimate-note.js';
 import { USER_DAY_CTE, isCurrentUserDay } from '../nutrition/logging-window.js';
 import {
@@ -567,6 +567,7 @@ import {
 } from './symptom-intelligence.js';
 import { detectDashboardRequest, buildDashboardLinkReply } from './dashboard-link.js';
 import { detectFoodReset, buildFoodResetReply } from './food-reset.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion } from './food-portion.js';
 import { weightProgress, loggingStreak, summarizeSymptoms } from './dashboard-data.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -3170,14 +3171,26 @@ CRITICAL RULES:
       const seed = `${userId}|${input.text}`;
       const parts: string[] = [];
       if (food.removed) parts.push(`Done — took ${food.removed} off today's log.`);
-      const confirm = formatFoodReply({
-        loggedItems: food.logged,
-        loggedProtein: food.logged.length > 0 ? todaysFood.protein_g : null,
-        loggedCalories: food.logged.length > 0 ? todaysFood.calories : null,
-        pendingFoods: food.pending,
-        seed,
-      });
-      if (confirm) parts.push(confirm);
+      // Logged items → deterministic confirmation with the exact day total.
+      if (food.logged.length > 0) {
+        const confirm = formatFoodReply({
+          loggedItems: food.logged,
+          loggedProtein: todaysFood.protein_g,
+          loggedCalories: todaysFood.calories,
+          pendingFoods: [],
+          seed,
+        });
+        if (confirm) parts.push(confirm);
+      }
+      // Pending items → the precise "usual amount, confirm/correct" question
+      // built by foodStepUnified (states the standard serving, asks before
+      // logging). Falls back to formatFoodReply's generic portion ask.
+      if (food.pending.length > 0) {
+        parts.push(
+          food.clarify ||
+            formatFoodReply({ loggedItems: [], pendingFoods: food.pending, seed }),
+        );
+      }
       let reply = parts.join(' ').trim() || 'Got it.';
 
       // Side question (a suggestion asked alongside the meal) → answer JUST that,
@@ -3287,7 +3300,7 @@ CRITICAL RULES:
   private async foodStepUnified(
     input: InboundMessage,
     history: ChatTurn[],
-  ): Promise<{ logged: string[]; pending: string[]; removed: string | null } | null> {
+  ): Promise<{ logged: string[]; pending: string[]; removed: string | null; clarify?: string | null } | null> {
     const text = input.text.trim();
     if (!text) return null;
     // Nudge's advice/planning guard: "what should I eat" / a bare "salmon" after
@@ -3299,6 +3312,36 @@ CRITICAL RULES:
     );
     const foodish = namesSpecificFood(text) || !!foodSpanFromConsumption(text) || FOOD_MUTATION_RE.test(text) || FOOD_DIARY_QUERY_RE.test(text);
     if (!foodish && pending.length === 0) return null;
+
+    // PRECISION: only an EXPLICIT amount/portion/size (a number, a unit, a
+    // single-serving article, or a size word) is precise enough to log. Without
+    // one we ASK (stating the usual serving) and log only after the user answers
+    // — never a silent default-serving estimate (the product ask 2026-07-04).
+    const quantified = hasExplicitQuantity(text);
+
+    const logFood = makeLogFoodTool({
+      pool: this.deps.pool,
+      llm: this.deps.llm,
+      logger: this.deps.logger,
+      userId: input.userId,
+      source: 'text',
+      ...(this.deps.usda ? { usda: this.deps.usda } : {}),
+      users: this.deps.users,
+    });
+
+    // AFFIRMATION of a proposed standard portion ("yes", "that's about right")
+    // when we're awaiting one → log the pending item(s) at the standard estimate.
+    if (pending.length > 0 && isPortionAffirmation(text)) {
+      const logged: string[] = [];
+      for (const p of pending) {
+        const r = (await logFood.execute({ food: p.item }).catch(() => null)) as Record<string, unknown> | null;
+        if (r && r.ok !== false) logged.push(p.item);
+      }
+      await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+      if (logged.length === 0) return null;
+      this.deps.logger.info({ userId: input.userId, logged: logged.length }, 'ai.unified_food.affirm_logged');
+      return { logged, pending: [], removed: null };
+    }
 
     const extraction = await extractFood(
       this.deps.llm,
@@ -3321,25 +3364,19 @@ CRITICAL RULES:
       return { logged: [], pending: [], removed: extraction.edit_ref };
     }
 
-    const logFood = makeLogFoodTool({
-      pool: this.deps.pool,
-      llm: this.deps.llm,
-      logger: this.deps.logger,
-      userId: input.userId,
-      source: 'text',
-      ...(this.deps.usda ? { usda: this.deps.usda } : {}),
-      users: this.deps.users,
-    });
-
-    // NEVER-DROP BACKSTOP: the flash-lite extractor frequently returns `none`
-    // for a clearly-reported meal ("I ate 2 eggs and chicken and rice"), which
-    // silently loses the log AND makes the turn look non-food (history bleed).
-    // A DEFINITE consumption span (foodSpanFromConsumption: "I ate/had X" +
-    // named food, planning/preference already voided) is logged with a standard
-    // estimate — this is the #1 customer complaint (a reported meal not tracked).
+    // NEVER-DROP BACKSTOP: the extractor sometimes returns `none` for a clearly
+    // reported meal ("I ate 2 eggs and chicken and rice"). With an explicit
+    // amount we log the span; WITHOUT one we ask for the portion instead of
+    // logging a guess (precision rule).
     if (extraction.intent === 'none') {
       const span = foodSpanFromConsumption(text);
       if (!span) return null;
+      if (!quantified) {
+        await addPendingFood(this.deps.redis, input.userId, [{ item: span, clarify_question: null }]).catch(() => {});
+        const clarify = buildPortionConfirmQuestion([{ item: span, protein_g: null }]);
+        this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_needs_portion');
+        return { logged: [], pending: [span], removed: null, clarify };
+      }
       const r = (await logFood.execute({ food: span }).catch(() => null)) as Record<string, unknown> | null;
       if (!r || r.ok === false) return null;
       this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_logged');
@@ -3347,31 +3384,58 @@ CRITICAL RULES:
     }
 
     const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
-    const newPending = extraction.items.filter((i) => i.status === 'pending_portion');
-    const logged: string[] = [];
-    for (const it of confirmed) {
-      const args: Record<string, unknown> = { food: it.item };
-      if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
-      const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
-      if (r && r.ok !== false) logged.push(it.item);
+    const extractorPending = extraction.items.filter((i) => i.status === 'pending_portion');
+
+    // PRECISION GATE: with NO explicit amount in the message, do NOT log the
+    // confirmed items — ask the user to confirm/correct the standard portion
+    // first (using the extractor's per-item estimate for the "usual amount").
+    // With an explicit amount, log as normal.
+    let logged: string[] = [];
+    let downgraded: Array<{ item: string; protein_g: number | null }> = [];
+    if (!quantified && confirmed.length > 0) {
+      downgraded = confirmed.map((i) => ({ item: i.item, protein_g: i.protein_g ?? null }));
+    } else {
+      for (const it of confirmed) {
+        const args: Record<string, unknown> = { food: it.item };
+        if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
+        const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
+        if (r && r.ok !== false) logged.push(it.item);
+      }
     }
 
-    if (extraction.intent === 'edit') {
+    if (extraction.intent === 'edit' && logged.length > 0) {
       await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
     } else {
-      for (const it of confirmed) await resolvePendingFood(this.deps.redis, input.userId, it.item).catch(() => {});
-    }
-    if (newPending.length > 0) {
-      await addPendingFood(
-        this.deps.redis,
-        input.userId,
-        newPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question })),
-      ).catch(() => {});
+      for (const it of logged) await resolvePendingFood(this.deps.redis, input.userId, it).catch(() => {});
     }
 
-    if (logged.length === 0 && newPending.length === 0) return null;
-    this.deps.logger.info({ userId: input.userId, logged: logged.length, pending: newPending.length }, 'ai.unified_food.step');
-    return { logged, pending: newPending.map((i) => i.item), removed: null };
+    // Everything awaiting a portion: the extractor's own pending items PLUS the
+    // confirmed items we downgraded for lacking an explicit amount.
+    const pendingItems = [
+      ...downgraded.map((d) => ({ item: d.item, clarify_question: null as string | null })),
+      ...extractorPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question })),
+    ];
+    if (pendingItems.length > 0) {
+      await addPendingFood(this.deps.redis, input.userId, pendingItems).catch(() => {});
+    }
+
+    if (logged.length === 0 && pendingItems.length === 0) return null;
+
+    // Build the ONE portion question (usual amount + confirm/correct) for the
+    // items awaiting a portion — used verbatim by runUnifiedReply so the number
+    // is never invented.
+    const clarify = pendingItems.length > 0
+      ? buildPortionConfirmQuestion([
+          ...downgraded,
+          ...extractorPending.map((i) => ({ item: i.item, protein_g: i.protein_g ?? null })),
+        ])
+      : null;
+
+    this.deps.logger.info(
+      { userId: input.userId, logged: logged.length, pending: pendingItems.length, downgraded: downgraded.length },
+      'ai.unified_food.step',
+    );
+    return { logged, pending: pendingItems.map((i) => i.item), removed: null, clarify };
   }
 
   /**

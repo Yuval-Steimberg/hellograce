@@ -64,6 +64,30 @@ progress" / "the app" → `detectDashboardRequest` → link to `<PUBLIC_WEB_URL>
 (host rewritten by TwilioSender). First open = phone + 6-digit code (same session
 token unlocks BOTH dashboard and Settings). Settings the same way ("settings").
 
+**FOLLOW-UPS shipped after the deploy (all merged to `main`, unified path):**
+- **"reset today's food" command** (PR #194, `food-reset.ts` + `UserService.clearTodaysFood`):
+  "reset my food log" / "clear today's food" / "start over" → deletes today's
+  `food_logs` rows (prior days untouched) + invalidates cache → "Done — cleared
+  today's food log. You're back to 0g…". Deterministic intercept in `handleMessage`
+  BEFORE the unified branch (works in both flag states). Scoped so "remove the
+  pizza" (single delete) never wipes the day. Added because a day of testing had
+  accumulated ~50 yogurt logs → 687g (the total was REAL/deterministic, not a bug —
+  the estimate/window/dedup are all correct; the user needed a way to zero out).
+- **PORTION PRECISION** (`food-portion.ts` + `foodStepUnified` rewrite, `hasExplicitQuantity`
+  gate): the product ask "log clear amounts, ASK when the amount isn't precise —
+  don't estimate a default serving." Now in `foodStepUnified`: if the message has
+  NO explicit amount (`hasExplicitQuantity` false — no number/unit/size/article),
+  the extractor's confirmed items are NOT logged; they're downgraded to PENDING
+  with `buildPortionConfirmQuestion` ("Before I log the yogurt with berries,
+  roughly how much — a standard serving is about 18g protein? …or say 'that's
+  about right'…"). The user's reply resolves it: a real amount ("a cup") logs via
+  the extractor; an affirmation ("that's about right" → `isPortionAffirmation`)
+  logs the pending item at the standard estimate. So a portion-less "I ate yogurt
+  with berries" now ASKS first and logs accurately after — never a silent 18g
+  guess. The never-drop backstop also asks when unquantified. NOTE: this is a
+  deliberate behavior change toward MORE asking (the team previously only asked
+  for high-variance proteins); it's what the user explicitly requested.
+
 ---
 
 ## 👉 READ FIRST — reply-path root cause found (2026-07-04 PM)

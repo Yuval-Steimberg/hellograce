@@ -3000,6 +3000,52 @@ CRITICAL RULES:
       this.deps.memory.ensureConversation(userId).catch(() => `fallback-${userId}`),
     ]);
 
+    // ── Progressive gather gate (2026-06-28) ───────────────────────────────
+    // Keep learning the user so every reply is specific to them. Ask-first
+    // returns ONE warm question (short-circuit); a gather answer rewrites
+    // input.text to the replayed original question so the rest of this path
+    // answers it, now personalized. Reply-path agnostic — must run here too.
+    if (this.progressiveProfile) {
+      const gate = await this.progressiveGatherGate(input).catch(() => ({} as { reply?: string; text?: string }));
+      if (gate.reply) {
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: gate.reply }).catch(() => {});
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId }, 'ai.unified.progressive_gather.ask_first');
+        this.persistLatency(userId, 'profile_gather', totalMs, lat.snapshot(), input.text, gate.reply);
+        return { text: gate.reply, confidence: 'high', intent: 'profile_gather', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      }
+      if (gate.text) input = { ...input, text: gate.text };
+    }
+
+    // ── Reminder questions → deterministic answer (2026-06-15) ──────────────
+    // "When is my next reminder?" / "remind me at 3pm?" answered from the
+    // user's ACTUAL reminder config — never the LLM (which leaked capability
+    // denials). Grace explains the schedule + redirects changes to Settings;
+    // she never denies sending reminders. Returned deterministically (the
+    // "next" answer is a precise schedule fact Gemini must not reword).
+    {
+      const reminderIntent = detectReminderIntent(input.text);
+      if (reminderIntent) {
+        try {
+          const settingsUrl = 'https://graceglp.com/settings'; // rewritten by TwilioSender
+          const reply = reminderIntent === 'change'
+            ? buildReminderChangeReply(settingsUrl)
+            : reminderIntent === 'explain'
+              ? buildReminderExplainReply(user ?? {}, settingsUrl)
+              : buildNextReminderReply(user ?? {}, settingsUrl);
+          void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+          void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+          const totalMs = Date.now() - t0;
+          this.deps.logger.info({ userId, reminderIntent }, 'ai.unified.reminder_query.served');
+          this.persistLatency(userId, `reminder_${reminderIntent}`, totalMs, lat.snapshot(), input.text, reply);
+          return { text: reply, confidence: 'high', intent: `reminder_${reminderIntent}`, toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+        } catch (err) {
+          this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.unified.reminder_query.error');
+        }
+      }
+    }
+
     // ── DETERMINISTIC GROUNDING (correctness) ──────────────────────────────
     // The unified path trusts the model for date + injection timing, but flash
     // DENIES them even when the facts are in the prompt ("I don't have access to
@@ -3028,6 +3074,51 @@ CRITICAL RULES:
       return { text: dateReply, confidence: 'high', intent: 'chat', toolResults: [], usedRetrieval: false, latencyMs: Date.now() - t0 };
     }
 
+    // ── Dashboard link (2026-07-02) ────────────────────────────────────────
+    // "Show me my progress / charts / the app" → hand the user their web
+    // dashboard link. Deterministic so Grace never implies there's no app and
+    // a "see my progress" request is never misread as a food log or summary.
+    if (detectDashboardRequest(input.text)) {
+      const reply = buildDashboardLinkReply(); // host rewritten by TwilioSender
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+      const totalMs = Date.now() - t0;
+      this.deps.logger.info({ userId }, 'ai.unified.dashboard_link.served');
+      this.persistLatency(userId, 'dashboard_link', totalMs, lat.snapshot(), input.text, reply);
+      return { text: reply, confidence: 'high', intent: 'dashboard_link', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+    }
+
+    // ── Weekly / recent-history summary → grounded in REAL data (2026-06-18)
+    // "Summarize my last week" / "recap my week for my doctor" answered from
+    // the user's ACTUAL last-7-days logs, never a single-day total or a generic
+    // fallback. Runs BEFORE the food step so food words in a recap can't log.
+    if (mightBeSummaryRequest(input.text)) {
+      let recentContext: string | undefined;
+      if (!detectSummaryRequest(input.text)) {
+        recentContext = history.slice(-6).map((m) => m.content).join(' • ');
+      }
+      if (detectSummaryRequest(input.text, recentContext) && user) {
+        try {
+          const data = await gatherWeeklySummary(this.deps.users, user);
+          const grounded = renderWeeklySummary(data);
+          const warmed = await this.warmlyRephrase(
+            grounded,
+            "This is a recap of the user's week to share with their doctor. Keep it CONCISE — about the same length, a few short sentences that must stay well under 400 characters so it's never cut off. Do NOT open with a preamble ('Okay, here's...'), a title/header, or a 'Hi Doctor' letter format — just give the recap directly in warm prose. Keep the closing offer to turn it into questions for the doctor.",
+            grounded,
+          );
+          const reply = warmed.length > 415 ? grounded : warmed;
+          void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+          void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+          const totalMs = Date.now() - t0;
+          this.deps.logger.info({ userId, daysLogged: data.daysLogged }, 'ai.unified.weekly_summary.served');
+          this.persistLatency(userId, 'weekly_summary', totalMs, lat.snapshot(), input.text, reply);
+          return { text: reply, confidence: 'high', intent: 'weekly_summary', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+        } catch (err) {
+          this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.unified.weekly_summary.error');
+        }
+      }
+    }
+
     // Nudge food step (extractFoodItems + planning guard): a specific meal logs
     // with an estimate; a hedged/generic mention comes back pending → we ask ONE
     // portion question via the CLARIFY note; advice/planning never logs.
@@ -3042,45 +3133,68 @@ CRITICAL RULES:
       .filter(Boolean);
 
     const isFoodTurn = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
-
-    // Food notes (what was logged with a clear amount / what needs an amount).
-    let foodNotes = '';
-    if (food?.removed) foodNotes += `\n\n[REMOVED from today's log: ${food.removed} — confirm warmly in one short line.]`;
-    if (food && food.logged.length > 0) {
-      const totalP = Math.round(todaysFood.protein_g);
-      foodNotes += `\n\n[LOGGED (clear amounts, from THIS message): ${food.logged.join(', ')}${totalP > 0 ? ` — about ${totalP}g protein today` : ''}. Name these back warmly in a few words.]`;
-    }
-    if (food && food.pending.length > 0) {
-      foodNotes += `\n\n[NEEDS AN AMOUNT before it can be logged: ${food.pending.join(', ')}. Do NOT claim it's logged and do NOT give it a number — ask ONE short casual portion question (e.g. "how much chicken and rice — a few oz and about a cup?").]`;
-    }
-
-    // PROMPT SELECTION. A FOOD turn uses a TIGHT confirm-or-ask prompt (not the
-    // big grounded prompt) so the reply is exactly what the user wants: log the
-    // clear amounts, ask for the unclear ones, in one or two short sentences —
-    // never a nutrition breakdown / "Part 1…" essay (which the big prompt + a
-    // verbose model kept producing). Non-food chat uses the full Nudge prompt.
     const nm = user?.first_name && !isEncryptedBlob(user.first_name) ? user.first_name.trim() : null;
-    let systemPrompt: string;
-    if (isFoodTurn) {
-      systemPrompt =
-        `You are Grace${nm ? `, texting ${nm}` : ''} — a warm GLP-1 companion. They just told you what they ate.${foodNotes}\n\n` +
-        `Reply in ONE or TWO short warm sentences, like a quick text from a friend. Confirm what you logged BY NAME (include the rough protein ONLY if a note gives it), and if any food still needs an amount, ask ONE short casual portion question. If their message ALSO asks something (a snack idea, what to eat next), answer that briefly too. HARD RULES: never a nutrition breakdown, never "here's a breakdown"/"Part 1"/"Part 2", no lists, no headings, no education about vitamins / muscle / "high-quality protein" / "balanced meal", no recap of earlier meals, no injection or date.` +
-        (GRACE_VOICE_ENABLED ? GRACE_VOICE_BRIEF : '');
-    } else {
-      systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, userText: input.text });
+
+    // ── DETERMINISTIC FOOD CONFIRMATION (the #1 complaint fix) ─────────────
+    // The food confirmation is built by code, NOT the LLM: the exact protein
+    // number comes from the authoritative day total, and "logged" is only
+    // claimed for items actually logged (pending items get a portion question,
+    // never a number). This kills the prod bug where the model HALLUCINATED a
+    // running total ("...along with your 669g of protein") and falsely claimed
+    // a pending item was logged. The LLM is used ONLY to answer a genuine side
+    // question ("...any snack idea?"), and even then it's forbidden to mention
+    // logging, grams, or totals — so it can never invent a number.
+    if (isFoodTurn && food) {
+      const seed = `${userId}|${input.text}`;
+      const parts: string[] = [];
+      if (food.removed) parts.push(`Done — took ${food.removed} off today's log.`);
+      const confirm = formatFoodReply({
+        loggedItems: food.logged,
+        loggedProtein: food.logged.length > 0 ? todaysFood.protein_g : null,
+        loggedCalories: food.logged.length > 0 ? todaysFood.calories : null,
+        pendingFoods: food.pending,
+        seed,
+      });
+      if (confirm) parts.push(confirm);
+      let reply = parts.join(' ').trim() || 'Got it.';
+
+      // Side question (a suggestion asked alongside the meal) → answer JUST that,
+      // with NO number and NO log claim, then append to the deterministic confirm.
+      if (UNIFIED_FOOD_SIDE_Q_RE.test(input.text)) {
+        const sideSys =
+          `You are Grace${nm ? `, texting ${nm}` : ''} — a warm GLP-1 companion. The user told you what they ate (already handled and confirmed separately) AND asked for a suggestion. Answer ONLY their suggestion request, in ONE short warm sentence with a concrete idea or two. HARD RULES: do NOT mention logging, tracking, protein, grams, calories, or any total; do NOT restate what they ate; no lists, no breakdown, no headings.`;
+        const side = await Promise.race([
+          this.deps.llm.generate({ messages: [{ role: 'system', content: sideSys }, { role: 'user', content: input.text }], temperature: 0.8, maxOutputTokens: 200, skipCache: true, disableThinking: true }),
+          new Promise<{ text: string } | null>((res) => setTimeout(() => res(null), UNIFIED_GEN_TIMEOUT_MS)),
+        ]).catch(() => null);
+        const sideText = side ? enforceFormat(side.text ?? '', { userMessage: input.text }).text.trim() : '';
+        // Guard: even the side answer must not smuggle a protein number or log claim.
+        if (sideText && !/\b\d+\s*(?:g|grams|cal|calories|kcal)\b/i.test(sideText) && !/\blog(?:ged|ging)?\b/i.test(sideText)) {
+          reply = `${reply} ${sideText}`.trim();
+        }
+      }
+
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+      const totalMs = Date.now() - t0;
+      const didLog = food.logged.length > 0 || !!food.removed;
+      this.deps.logger.info({ userId, logged: food.logged.length, pending: food.pending.length, removed: !!food.removed }, 'ai.unified.food_deterministic');
+      this.persistLatency(userId, didLog ? 'unified_food' : 'unified', totalMs, lat.snapshot(), input.text, reply);
+      return { text: reply, confidence: 'high', intent: didLog ? 'food_log' : 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
     }
 
-    // On a FOOD turn, send NO history (the message + notes are self-contained;
-    // history is pure bleed risk). Non-food chat keeps history for continuity.
-    const effHistory = isFoodTurn ? [] : history;
+    // Non-food chat uses the full Nudge grounded prompt.
+    const systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, userText: input.text });
+
+    // Non-food chat keeps history for continuity.
+    const effHistory = history;
     const baseMessages = (sys: string): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> => [
       { role: 'system', content: sys },
       ...effHistory.map((h) => ({ role: h.role, content: h.content })),
       { role: 'user', content: input.text },
     ];
 
-    const isFoodTurnNow = isFoodTurn;
-    this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded', logged: food?.logged.length ?? 0, pending: food?.pending.length ?? 0 }, 'ai.reply.path');
+    this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded' }, 'ai.reply.path');
 
     // Every unified LLM call is timeout-BOUNDED. Without this a slow/retrying
     // turn ran 15-30s, blew past the webhook in-flight lock's wait budget, and
@@ -3097,11 +3211,9 @@ CRITICAL RULES:
 
     let reply = await gen(systemPrompt);
 
-    // RELEVANCE JUDGE (Nudge's anti-bleed) — but ONLY on non-food chat. A food
-    // turn's log-note already pins the reply to the current message, so skipping
-    // the judge there removes an LLM call from the most common turn (keeping the
-    // turn fast enough to never trip the lock). Fails open.
-    if (reply && !isFoodTurnNow) {
+    // RELEVANCE JUDGE (Nudge's anti-bleed) on the non-food chat reply. Food
+    // turns are handled deterministically above and never reach here. Fails open.
+    if (reply) {
       const addresses = await judgeReplyAddressesMessage(this.deps.llm, this.deps.logger, input.text, reply);
       if (!addresses) {
         this.deps.logger.info({ userId }, 'ai.unified.relevance_regen');
@@ -3111,10 +3223,9 @@ CRITICAL RULES:
       }
     }
 
-    // BREAKDOWN / BLEED catcher (deterministic — runs on EVERY turn, incl. food
-    // turns where the judge is skipped). A "two distinct parts… Part 1…" reply is
-    // answering the whole thread, not the current message. Regenerate answering
-    // ONLY the latest message.
+    // BREAKDOWN / BLEED catcher (deterministic). A "two distinct parts… Part 1…"
+    // reply is answering the whole thread, not the current message. Regenerate
+    // answering ONLY the latest message.
     if (reply && UNIFIED_BREAKDOWN_RE.test(reply)) {
       this.deps.logger.info({ userId }, 'ai.unified.breakdown_regen');
       const focused = await gen(systemPrompt +
@@ -3136,9 +3247,8 @@ CRITICAL RULES:
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
     const totalMs = Date.now() - t0;
-    const didLog = !!food && (food.logged.length > 0 || !!food.removed);
-    this.persistLatency(userId, didLog ? 'unified_food' : 'unified', totalMs, lat.snapshot(), input.text, reply);
-    return { text: reply, confidence: 'high', intent: didLog ? 'food_log' : 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+    this.persistLatency(userId, 'unified', totalMs, lat.snapshot(), input.text, reply);
+    return { text: reply, confidence: 'high', intent: 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
   }
 
   /**
@@ -6561,13 +6671,20 @@ const UNIFIED_DENIAL_RE = /\b(as an ai|i'?m an ai|i am an ai|i'?m just an ai|i (
 // A history-bleed / meta-breakdown reply — flash reading the whole thread and
 // answering it as "Part 1 / Part 2" instead of the current message. Deterministic
 // so it's caught even when the relevance judge (flash, lenient) passes it.
-const UNIFIED_BREAKDOWN_RE = /\b(part 1\b|part 2\b|two (?:distinct )?parts|distinct parts to your|let'?s break (?:them|it|this|these|your)|break (?:it|this|them) down|here (?:is|'?s) a (?:quick |brief )?breakdown|breakdown of (?:the |your )?(?:nutrition|what|meal)|breaking (?:it|this|them) down)\b/i;
+const UNIFIED_BREAKDOWN_RE = /(\bpart 1\b|\bpart 2\b|two (?:distinct )?parts|distinct parts to your|let'?s break (?:them|it|this|these|your)|\bbreak (?:it|this|them) down|here (?:is|'?s) (?:a|the|my) (?:quick |brief |detailed )?breakdown|breakdown of (?:how|the |your )?(?:i |nutrition|what|meal|that)|breaking (?:it|this|them) down|\b\d\.\s+(?:the\s+)?[A-Z])/i;
 
 // Hard per-call timeout for the unified reply generations. Keeps a turn from
 // running long enough to blow past the webhook in-flight lock's wait budget
 // (which, once exceeded, lets a second pipeline run concurrently for the same
 // user and mismatches replies to messages).
 const UNIFIED_GEN_TIMEOUT_MS = 11_000;
+
+// A food turn that ALSO asks for a suggestion ("...any snack idea?", "what
+// should I eat next?"). The food confirmation is built DETERMINISTICALLY (exact
+// protein number, honest logged/pending claim); this side question is the ONLY
+// part the model answers — and it's told to never emit a number or a log claim,
+// so a hallucinated total (the "669g" prod bug) can't ship.
+const UNIFIED_FOOD_SIDE_Q_RE = /\b(snack idea|snack ideas|meal idea|any idea|any ideas|ideas for|what should i (?:eat|have|snack)|what (?:can|could) i (?:eat|have|snack)|what to eat|what else (?:should|can|could)|what next|something (?:else )?to eat|recommend|suggestion|suggest|what for (?:breakfast|lunch|dinner|snack))\b/i;
 
 export function answerDateQuestion(text: string, timezone: string | null): string | null {
   const t = (text ?? '').trim();

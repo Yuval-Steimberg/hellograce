@@ -6,6 +6,66 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — unified food logging is DETERMINISTIC now + intercepts ported (2026-07-04 EOD)
+
+**Merged to `main` via PR #192 (squash `19c9560`).** Branch
+`claude/grace-dashboard-redesign-366yjj`. 1662 api tests green; all packages
+typecheck clean. No migration. **Not deployed by me** — the user deploys on their
+Mac (`fly deploy … --no-cache --build-arg GIT_COMMIT=$(git rev-parse --short HEAD)`,
+verify `/health` version == HEAD) and activates with `fly secrets set --app
+grace-api UNIFIED_REPLY_PATH=true`.
+
+**THE #1-COMPLAINT FIX — the "669g" hallucination.** Prod screenshot (`IMG_6655`):
+"ate yogurt with berries" → *"I've got that logged along with your **669g** of
+protein"*, but the next turn "how much protein today" → *"12 grams"*. The 669g was
+a **hallucination** — the unified food turn was letting the LLM WRITE the
+confirmation (incl. the protein number), and the model invented a total AND falsely
+claimed a *pending* item was logged. Models are unreliable at repeating/withholding
+exact numbers. **Fix (`runUnifiedReply`, ai.service.ts ~3135): the food
+confirmation is now built DETERMINISTICALLY by `formatFoodReply` (already
+unit-tested) and RETURNS EARLY — the LLM never generates it.** The exact protein
+number = the authoritative day total (`getTodaysFoodSummary`); "logged" is claimed
+ONLY for items actually logged; a pending item gets a portion question with NO
+number. The LLM is used ONLY to answer a genuine side question
+(`UNIFIED_FOOD_SIDE_Q_RE`: "…any snack idea?"), and is FORBIDDEN to mention
+logging/grams/totals — with a post-guard that drops a side answer that smuggles a
+number or "log" in. So the 669g class is now structurally impossible. Also
+broadened `UNIFIED_BREAKDOWN_RE` to catch "here is **the/my** breakdown" and
+numbered "1. The Eggs" enumerations (the "How 51g?" essay in `IMG_6656`).
+Consequence: on a food turn the unified path now runs the tight food block →
+early-return; the grounded-prompt/judge/breakdown/denial tail below only runs for
+NON-food chat (its `isFoodTurn`/`didLog` branches were simplified away).
+
+**PORTED the deterministic intercepts the unified branch was BYPASSING** (they run
+in `handleMessageInner` AFTER the unified branch at line ~915, so flag-on skipped
+them). Now mirrored INSIDE `runUnifiedReply` right after the data load:
+progressive-gather gate (ask-first + replay), reminder intent (`detectReminderIntent`
+→ next/explain/change via reminder-service, never denies capability), dashboard
+link (`detectDashboardRequest` → `buildDashboardLinkReply`), and weekly summary
+(`detectSummaryRequest` → `gatherWeeklySummary`/`renderWeeklySummary`, warmed).
+Injection-timing + date intercepts were already there.
+
+**VERIFIED unaffected (they run in `webhook.ts` BEFORE `deps.ai.handleMessage` at
+line ~649, so the unified branch never reaches them):** settings (`tryHandleSettings`),
+onboarding (`runOnboardingTurn`), natural opt-out (`detectNaturalOptOut`),
+frequency-change redirect, and the paid/after-payment welcome (fires on the Stripe
+webhook + admin PUT, not the chat path). So settings + dashboard + onboarding +
+payment all still work "as before" with the flag on.
+
+**STILL BYPASSED under the flag (deliberately not ported — out of the user's
+explicit ask + adds latency to the lean path):** the note-only **symptom-intelligence**
+recall/record (the differentiator memory stops compounding when the flag is on).
+If the user wants the flag ON as the permanent default, port the symptom
+record + `buildSymptomRecallNote` into `runUnifiedReply` next. In prod the flag is
+DEFAULT OFF, so nothing is bypassed until deliberately flipped.
+
+**How the user reaches the dashboard via messages:** text "dashboard" / "show my
+progress" / "the app" → `detectDashboardRequest` → link to `<PUBLIC_WEB_URL>/dashboard`
+(host rewritten by TwilioSender). First open = phone + 6-digit code (same session
+token unlocks BOTH dashboard and Settings). Settings the same way ("settings").
+
+---
+
 ## 👉 READ FIRST — reply-path root cause found (2026-07-04 PM)
 
 **THE BUG behind "I turned the flag off but replies are still bad":** a Zod

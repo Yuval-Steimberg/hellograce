@@ -1,6 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { isPortionAffirmation, buildPortionConfirmQuestion } from './food-portion.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood } from './food-portion.js';
 import { hasExplicitQuantity } from '../safety/vague-food.js';
+
+describe('isPortionSensitiveFood — only ask when the portion swings the macros', () => {
+  it('is TRUE for portion-variable foods', () => {
+    for (const f of ['yogurt with berries', 'chicken', 'rice', 'pasta', 'oatmeal', 'a bowl of cereal', 'cheese', 'almonds', 'smoothie', 'beef and rice']) {
+      expect(isPortionSensitiveFood(f), f).toBe(true);
+    }
+  });
+  it('is FALSE for obvious / low-variance foods (just log)', () => {
+    for (const f of ['apple', 'banana', 'toast', 'a boiled egg', 'orange', 'protein bar', 'a granola bar']) {
+      expect(isPortionSensitiveFood(f), f).toBe(false);
+    }
+  });
+});
 
 describe('isPortionAffirmation', () => {
   it('accepts confirmations of the proposed standard portion', () => {

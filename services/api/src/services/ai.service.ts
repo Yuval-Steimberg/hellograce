@@ -567,7 +567,7 @@ import {
 } from './symptom-intelligence.js';
 import { detectDashboardRequest, buildDashboardLinkReply } from './dashboard-link.js';
 import { detectFoodReset, buildFoodResetReply } from './food-reset.js';
-import { isPortionAffirmation, buildPortionConfirmQuestion } from './food-portion.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood } from './food-portion.js';
 import { weightProgress, loggingStreak, summarizeSymptoms } from './dashboard-data.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -3371,7 +3371,9 @@ CRITICAL RULES:
     if (extraction.intent === 'none') {
       const span = foodSpanFromConsumption(text);
       if (!span) return null;
-      if (!quantified) {
+      // Ask for a portion ONLY when it's a portion-sensitive food with no amount
+      // (yogurt, rice, chicken…). An obvious food logs with the estimate.
+      if (!quantified && isPortionSensitiveFood(span)) {
         await addPendingFood(this.deps.redis, input.userId, [{ item: span, clarify_question: null }]).catch(() => {});
         const clarify = buildPortionConfirmQuestion([{ item: span, protein_g: null }]);
         this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_needs_portion');
@@ -3386,20 +3388,24 @@ CRITICAL RULES:
     const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
     const extractorPending = extraction.items.filter((i) => i.status === 'pending_portion');
 
-    // PRECISION GATE: with NO explicit amount in the message, do NOT log the
-    // confirmed items — ask the user to confirm/correct the standard portion
-    // first (using the extractor's per-item estimate for the "usual amount").
-    // With an explicit amount, log as normal.
-    let logged: string[] = [];
-    let downgraded: Array<{ item: string; protein_g: number | null }> = [];
-    if (!quantified && confirmed.length > 0) {
-      downgraded = confirmed.map((i) => ({ item: i.item, protein_g: i.protein_g ?? null }));
-    } else {
-      for (const it of confirmed) {
-        const args: Record<string, unknown> = { food: it.item };
-        if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
-        const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
-        if (r && r.ok !== false) logged.push(it.item);
+    // PRECISION GATE (scoped — don't over-ask): with NO explicit amount, a
+    // PORTION-SENSITIVE food (yogurt, rice, chicken…) is NOT logged at a default
+    // guess — ask to confirm/correct the standard portion first. An OBVIOUS /
+    // low-variance food (an apple, toast, a banana) logs with the estimate. With
+    // an explicit amount, everything logs as normal.
+    const logged: string[] = [];
+    const downgraded: Array<{ item: string; protein_g: number | null }> = [];
+    const logConfirmed = async (it: { item: string; protein_g: number | null; calories: number | null }): Promise<void> => {
+      const args: Record<string, unknown> = { food: it.item };
+      if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
+      const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
+      if (r && r.ok !== false) logged.push(it.item);
+    };
+    for (const it of confirmed) {
+      if (!quantified && isPortionSensitiveFood(it.item)) {
+        downgraded.push({ item: it.item, protein_g: it.protein_g ?? null });
+      } else {
+        await logConfirmed(it);
       }
     }
 

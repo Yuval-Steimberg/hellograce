@@ -84,9 +84,14 @@ token unlocks BOTH dashboard and Settings). Settings the same way ("settings").
   the extractor; an affirmation ("that's about right" → `isPortionAffirmation`)
   logs the pending item at the standard estimate. So a portion-less "I ate yogurt
   with berries" now ASKS first and logs accurately after — never a silent 18g
-  guess. The never-drop backstop also asks when unquantified. NOTE: this is a
-  deliberate behavior change toward MORE asking (the team previously only asked
-  for high-variance proteins); it's what the user explicitly requested.
+  guess. The never-drop backstop also asks when unquantified. **SCOPED so Grace
+  doesn't over-ask (`isPortionSensitiveFood`, PR #196):** the portion ask fires
+  ONLY for foods whose serving swings the macros — proteins (chicken/beef/fish/
+  tofu…), variable carbs (rice/pasta/oatmeal/potato…), dairy/fats (yogurt/cheese/
+  nuts…), and mixed dishes (soup/smoothie/salad/bowl…). An OBVIOUS / low-variance
+  food (an apple, a banana, toast, a boiled egg, a granola bar) logs with the
+  estimate — no clarification. So "I ate yogurt with berries" asks, but "an apple"
+  just logs.
 
 ---
 

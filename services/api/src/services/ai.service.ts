@@ -3055,11 +3055,15 @@ CRITICAL RULES:
       systemPrompt += `\n\n[CLARIFY PENDING PORTION: the user mentioned ${food.pending.join(', ')} without an amount. Your reply MUST acknowledge it warmly AND ask ONE short casual question for the amount so it can be logged (e.g. "how much chicken — a few oz or a full breast?"). Do NOT claim it's logged or counted yet, and do NOT give it a number.]`;
     }
 
-    // On a FOOD turn, drop Grace's own past assistant replies from the history —
-    // flash mimics its own prior turns and a poisoned thread makes it regenerate
-    // the same shape. The user's turns + the action note carry the real context.
+    // On a FOOD turn, send NO history. A message like "ate yogurt with berries,
+    // any snack idea?" is self-contained — the log-note says what was logged and
+    // the message carries the question. History is pure BLEED risk here: flash
+    // reads old turns (a prior injection question, earlier meals) and produces a
+    // "two distinct parts… Part 1…" breakdown answering the WHOLE thread instead
+    // of the current message (prod 2026-07-04 PM). Non-food chat keeps history
+    // for continuity, guarded by the relevance judge below.
     const isFoodTurn = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
-    const effHistory = isFoodTurn ? history.filter((h) => h.role === 'user') : history;
+    const effHistory = isFoodTurn ? [] : history;
     const baseMessages = (sys: string): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> => [
       { role: 'system', content: sys },
       ...effHistory.map((h) => ({ role: h.role, content: h.content })),
@@ -3096,6 +3100,17 @@ CRITICAL RULES:
           `\n\nCRITICAL OVERRIDE: your previous draft did not respond to the user's most recent message. They just said: "${input.text.replace(/"/g, "'")}". Reply directly to THAT — answer their question or acknowledge what they shared. Do NOT change the subject or reply to an earlier message.`);
         if (retryText) reply = retryText;
       }
+    }
+
+    // BREAKDOWN / BLEED catcher (deterministic — runs on EVERY turn, incl. food
+    // turns where the judge is skipped). A "two distinct parts… Part 1…" reply is
+    // answering the whole thread, not the current message. Regenerate answering
+    // ONLY the latest message.
+    if (reply && UNIFIED_BREAKDOWN_RE.test(reply)) {
+      this.deps.logger.info({ userId }, 'ai.unified.breakdown_regen');
+      const focused = await gen(systemPrompt +
+        `\n\nHARD OVERRIDE: reply ONLY to the user's last message: "${input.text.replace(/"/g, "'")}". Answer just that — one or two short sentences, plain prose. Do NOT break their message into parts, do NOT summarize the conversation, do NOT mention earlier meals or an injection unless THIS message asks about them.`);
+      if (focused && !UNIFIED_BREAKDOWN_RE.test(focused)) reply = focused;
     }
 
     // CAPABILITY-DENIAL safety net (rare — the deterministic date/injection
@@ -6533,6 +6548,11 @@ const DATE_QUESTION_RE = /^\s*(what(?:'?s| is)?\s+(?:the\s+)?(?:date|day)(?:\s+(
 // Capability-denial / AI-disclosure phrasing Grace must never ship — false and
 // trust-breaking (the facts are in the prompt). Triggers a grounded regen.
 const UNIFIED_DENIAL_RE = /\b(as an ai|i'?m an ai|i am an ai|i'?m just an ai|i (?:do not|don'?t) have access|i (?:cannot|can'?t) (?:provide|give) (?:medical|specific)|(?:don'?t|do not) have a concept of|check your (?:device|phone|calendar)|look it up online|i (?:don'?t|do not) have (?:real-?time|personal)|access to (?:the current date|real-?time)|large language model)\b/i;
+
+// A history-bleed / meta-breakdown reply — flash reading the whole thread and
+// answering it as "Part 1 / Part 2" instead of the current message. Deterministic
+// so it's caught even when the relevance judge (flash, lenient) passes it.
+const UNIFIED_BREAKDOWN_RE = /\b(part 1\b|part 2\b|two (?:distinct )?parts|distinct parts to your|let'?s break (?:them|it|this|these|your)|break (?:it|this|them) down|here'?s a breakdown|breaking (?:it|this|them) down)\b/i;
 
 // Hard per-call timeout for the unified reply generations. Keeps a turn from
 // running long enough to blow past the webhook in-flight lock's wait budget

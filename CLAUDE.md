@@ -6,40 +6,121 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 READ FIRST — current state (as of 2026-07-03)
+## 👉 READ FIRST — current state (as of 2026-07-04)
 
 **Before doing anything, read the newest dated section immediately below**
-("Reply-quality war…"). It has the LIVE production config and the current
-debugging state. Do NOT re-derive context or start editing until you've read it.
+("Reply grounding + consolidation + food-sync…"). It has the LIVE production
+config and the current state. Do NOT re-derive context or start editing until
+you've read it.
 
-- **Latest commit on `main`: `a1d3936`** (latency telemetry: break down the
-  direct/multi-part reply into `direct_extract`/`direct_reply`/`direct_regen`,
-  PR #172; prior: `a11d09c` multi-part skip + colon guard PR #170; `b7961e3`
-  meal-time-word fix PR #168; `2f989c3` latency flash-lite+history PR #166).
-- **See latency breakdown:** `GET /admin/latency?window=1h` (Bearer ADMIN_TOKEN)
-  → `by_stage` (avg/p95 per stage incl. `direct_*`), `by_intent`, and
-  `slow_samples[].stage_timings` (per-request split). Backed by
-  `messages.latency_ms` + `messages.stage_timings JSONB`.
-- **PROD CONFIG TO SET (recommended):** `COMPACT_REPLY_MODE=true` is very likely
-  OFF — a colon breakdown reply ("Let's break it down: Arguments for a Big
-  Dinner:") shipped, which the compact tiny-prompt mode structurally prevents AND
-  is faster. `fly secrets set --app grace-api COMPACT_REPLY_MODE=true`.
-- **Live prod config**: `directReplyMode: true`, `geminiFirst: true`,
-  `trustGemini: true` → single Gemini call via `runDirectReply`, **regen guards
-  OFF**. Reply quality = system prompt + outbound format floor + the new
-  `looksStructured` shape-regen ONLY.
-- **Always verify what's deployed FIRST**: `curl -s https://grace-api.fly.dev/health`
-  → `version` must equal the commit you expect. Most "the fix didn't work"
-  reports were the fix not deployed. Also check `fly logs | grep startup` for the
-  flag values (`leanReplyMode`, `compactReplyMode`).
-- **Active theme**: reply shape/quality (verbose breakdowns, dropped multi-topic
-  parts, history bleed). The general fix is the shape-regen + `COMPACT_REPLY_MODE`.
+- **Latest commit on `main`: `a3f6a4f`** (UNIFIED_REPLY_PATH → lean grounded
+  prompt; prior: `3b766b6` food-drop fix, `71070b4` consolidation step 2,
+  `8694110` step 1, `2a4f57f`/`5a09f0e`/`7eb167e`/`fb052b7` grounding A–K,
+  `1883033` dashboard redesign PR #174). **Merged directly to main via git
+  fast-forward** (GitHub MCP was down); local `main` was on a STALE unrelated
+  lineage — always `git reset --hard origin/main` before deploying.
+- **Live prod config** (from `fly logs | grep startup`): `directReplyMode: true`,
+  `geminiFirst: true`, `trustGemini: true`, `compactReplyMode: true`, guards OFF.
+  So the live reply = single Gemini call via `runDirectReply` + the COMPACT
+  prompt (`buildCompactReplyPrompt`). **`UNIFIED_REPLY_PATH` defaults OFF** — the
+  consolidation is dormant until deliberately flipped after an eval/A-B.
+- **Grounding is LIVE and verified by real iMessages** (date, injection, dose,
+  multi-part all correct). The two production screenshots (injection denial +
+  "May 14, 2024" hallucination) are FIXED.
+- **DEPLOY = `fly deploy --app grace-api --config services/api/fly.toml
+  --no-cache --build-arg GIT_COMMIT=$(git rev-parse --short HEAD)`.** The API is
+  NOT auto-deployed (web/dashboard auto-deploys on Vercel). Verify with `curl -s
+  https://grace-api.fly.dev/health` → `version` must equal HEAD. Most "the fix
+  didn't work" reports were the fix not deployed. **No DB migration needed for
+  any grounding/food-sync work — all code-only.**
+- **Diagnosing prod from a laptop**: admin API is reachable with the ADMIN_TOKEN
+  (`GET /admin/users/%2B<phone>/food-logs` returns `{items,...}` — NOT an array,
+  so `jq '.items'`). `fly logs --app grace-api | grep -iE "food_extract|ai.direct
+  .reply|forced_log_food|injection_timing"`. The cloud session usually CANNOT
+  reach `grace-api.fly.dev` (HTTP 000) or run auto-eval (no GEMINI_API_KEY) — the
+  USER runs live evals + prod curls on their Mac.
 - **Working style the user demands**: GENERAL fixes (catch any wording), NOT
-  per-phrase patches; test after every change; don't break unrelated areas
-  (reminders, images, logging). Develop on `claude/system-migration-process-dtkyp3`,
-  merge to `main`, no PRs unless asked.
+  per-phrase patches; test after every change (full `pnpm --filter @grace/api
+  test` + `pnpm -r build` so ai-core `dist` is fresh — stale dist = phantom test
+  failures); don't break unrelated areas (reminders, images, multi-part, logging);
+  merge to `main`, no PRs unless asked. The user compares Grace to Nudge and
+  wants the Nudge model: ONE lean prompt + ALL data + full history + one call.
 
 ---
+
+### Reply grounding + consolidation + food-sync + dashboard (2026-07-04)
+
+Big session. Four workstreams, all on `main` (HEAD `a3f6a4f`), deployed.
+
+**1. Premium dashboard redesign (PR #174, merged, live on Vercel).** Reworked
+the user progress dashboard (`apps/web/src/pages/Dashboard.tsx` + new
+`components/dashboard/*`: `TodayOverview`, `GraceInsightCard`, `RecentWins`,
+`InjectionCard`, `TodaysMeals`, `ProfileCompleteness`, `DashboardStates` + pure
+`lib/dashboard-insights.ts`). Progress rings, a "note from Grace", client-derived
+injection countdown, wins, profile-completeness meter, skeleton/error states.
+Dashboard-only; no backend touched. All derivations are client-side from the
+existing `/dashboard/summary`.
+
+**2. Reply grounding (Domains A–K) — LIVE, fixes 2 prod screenshots.** Root
+principle: *any fact the model can't know (date, schedule, what the user told us)
+must be computed deterministically, injected into EVERY prompt, and answered by a
+deterministic layer — never guessed; one question must not hit three code paths.*
+- **A — temporal truth** (`services/api/src/services/temporal-context.ts`,
+  9 tests): full authoritative local date/time/next-7-days, tz+DST-safe, injected
+  into BOTH prompt builders (compact had NO date → hallucinated "May 14, 2024").
+  `content-checker` bans the false "real-time" claim.
+- **B — schedule truth** (`services/api/src/services/medication-schedule.ts`,
+  28 tests): ONE cadence-aware engine (`computeInjectionSchedule` +
+  `detectInjectionTimingIntent` + `buildInjectionTimingReply` +
+  `buildScheduleFactLine`) for weekly injectables AND daily pills. Deterministic
+  intercept in `handleMessage` (next/last/is-today/days-until) — never denies,
+  asks for the day if unknown. `content-checker` bans injection/dose/record
+  capability-denial. Fixes "I cannot tell you when your next injection is."
+- **C — memory** (`profile-extract.mightStateProfileChange` broadened): captures
+  present-tense injection-day statements ("my shot day is Saturday") into the
+  profile via the EXISTING `tryLearnProfile`/`extractProfileUpdates` (kept the
+  abandoned-fact guard). Explicit change commands still confirm via the webhook.
+- **F — topic-aware reasoning** (`orchestrator.getToolAwareFallback`): "How 4
+  days?" after a shot answer explains the CALENDAR gap, not weight math.
+- **G/I — no-denial + profile reads**: existing "as an AI" ban + new injection/
+  record/real-time bans; profile reads grounded by prompt facts.
+- **H — profile-thin**: compact prompt now asks for a missing number, never
+  invents. **J — onboarding audit**: read-only, NO gap — in-chat onboarding
+  correctly captures name/med/freq/injection_day/timezone(→IANA)/wake-sleep/diet.
+- Regression lock: `services/api/src/services/grounding-replay.test.ts` (9) replays
+  Uri's exact transcript. Verified live: "next injection"→real date, "today"→real
+  date, "How 4 days?"→calendar, multi-part preserved.
+
+**3. Food-sync fix (`3b766b6`) — the yogurt-not-logged bug.** Prod: "I ate yogurt
+with berries … any snack idea?" was acknowledged but the dashboard's Today's
+meals stayed empty. Confirmed from logs (`food_extract.done intent=log items=2
+pending=2, logged=false`): the extractor marked both items `pending_portion`, so
+`runDirectReply` logged nothing and the multi-part reply answered the snack
+question. **Fix (`runDirectReply` food block ~3165): a DEFINITE consumption
+(`foodSpanFromConsumption` matches) promotes every specific item to CONFIRMED and
+logs it with a standard-portion estimate — a finished meal is never held pending.**
+Plus `meal-lifecycle.foodSpanFromConsumption` now slices trailing state clauses
+(`CONSUMPTION_TAIL_RE`: "…after my injection and now I'm hungry" → "I ate yogurt
+with berries"), guarded against over-cutting. Sync architecture verified: chat
+`log_food` and dashboard both read the same `food_logs` via `getTodaysFoodSummary`.
+
+**4. Consolidation — `UNIFIED_REPLY_PATH` (env, default OFF).** The "one lean
+grounded path" toward the Nudge model. **Key lesson (a mistake I corrected):**
+step 1 first pointed the flag at the big `buildPersonalisedPrompt` (2,500-line
+instruction pile) → replies regressed to hedging + "what kind of injection did
+you have?" — the exact behaviour compact exists to prevent. **Corrected: new
+`buildGroundedPrompt` = the compact prompt's TIGHT rules + ALL data (name, med,
+schedule fact, today's LOGGED food ITEMS + totals, goals, diet, dislikes, known
+facts, memory.md, temporal block) + FULL history (step 2 widened history under
+the flag) + one call.** Rules: answer from what it knows, acknowledge a stated
+meal by name, NEVER ask for info it already has. Flag OFF = compact path
+(byte-identical, proven excellent). Flag ON = the grounded/Nudge path — needs a
+live A/B before trusting (I can't run Gemini in-session). To A/B:
+`fly secrets set --app grace-api UNIFIED_REPLY_PATH=true` (rollback `=false`,
+no redeploy). **The compact path (flag OFF) already ships Nudge-quality replies;
+consolidation is optional cleanup, not required.**
+
+Tests: 1648 api + 657 ai-core green; typecheck clean. No migration.
 
 ### Multi-part latency + chained-colon shape guard (2026-07-03, PR #170)
 

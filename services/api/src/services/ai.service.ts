@@ -3149,6 +3149,9 @@ CRITICAL RULES:
       this.deps.logger,
       text,
       pending.map((p) => ({ item: p.item })),
+      // STRONG model for the unified path (Nudge runs its extractor on a full
+      // flash model, not lite) — flash-lite mislabels reported meals as `none`.
+      'gemini-2.5-flash',
     ).catch(() => ({ ...EMPTY_EXTRACTION }));
 
     if (extraction.intent === 'query') return null;

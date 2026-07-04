@@ -67,7 +67,7 @@ Hard rules:
 - Plain water / black coffee / plain tea / diet soda → intent="none".
 - CONFIRMED requires a concrete portion: a number + unit/item ("3 eggs", "4 oz chicken", "half cup rice", "200g salmon", "two slices", "a cup of pasta"), OR an inherently single-serving item ("a banana", "an apple", "a slice of toast"). Then status="confirmed" with realistic protein_g/calories.
 - A food named WITHOUT an amount ("had pasta", "ate chicken", "had a burger", "some rice", "a bit of tofu", a bare restaurant/cuisine) → status="pending_portion", numbers null, with a SHORT friendly clarify_question that suggests an easy ballpark ("roughly how much chicken — a palm-sized piece or so?"). ALWAYS ask for the portion when the amount is missing — do NOT silently assume a serving size. This is the default for any bare food mention.
-- Standard portion references for CONFIRMED items: egg≈6g/70cal, slice bread≈3g/80cal, oz cooked chicken≈7g/45cal, cup greek yogurt≈17g/130cal, scoop whey≈24g/120cal, cup milk≈8g/120cal, oz cheese≈7g/110cal, tbsp peanut butter≈4g/95cal, cup cooked rice≈4g/200cal, cup cooked pasta≈8g/220cal, banana≈1g/105cal, cup berries≈1g/70cal. Round protein to nearest 5g, calories to nearest 10.
+- Standard portion references for CONFIRMED items: egg≈6g/70cal, slice bread≈3g/80cal, oz cooked chicken≈7g/45cal, cup greek yogurt≈17g/130cal, scoop whey≈24g/120cal, cup milk≈8g/120cal, oz cheese≈7g/110cal, tbsp peanut butter≈4g/95cal, cup cooked rice≈4g/200cal, cup cooked pasta≈8g/220cal, banana≈1g/105cal, cup berries≈1g/70cal. ROUNDING (Nudge rule): protein — if ≥5g round to the nearest 5g; if between 1g and 4g keep it as the integer (NEVER round a real protein value down to 0); only use 0 when the food genuinely has ~0g protein (water, black coffee, plain soda, hard candy). Calories: round to nearest 10.
 - Each vague food is ONE pending item with its own clarify_question; the app combines multiple into a single friendly question. Never re-ask a pending item already resolved by this message.
 
 Output ONLY the JSON object.${pendingHint}`;
@@ -185,6 +185,12 @@ export async function extractFood(
   logger: Logger,
   userMessage: string,
   pendingItems: Array<{ item: string }>,
+  // Optional model override. The unified (Nudge) path passes the STRONG model
+  // (gemini-2.5-flash): Nudge runs its extractor on gemini-3-flash, and the weak
+  // flash-lite default routinely mislabels a plainly-reported meal as `none`
+  // ("I ate 2 eggs and chicken and rice" → nothing logged). Accuracy > latency
+  // for the food log — the #1 customer complaint.
+  modelOverride?: string,
 ): Promise<FoodExtraction> {
   try {
     const system = buildFoodExtractPrompt(pendingItems);
@@ -197,7 +203,7 @@ export async function extractFood(
       // flash-lite is ideal. Latency-only; a bad/unavailable id falls back to
       // GEMINI_FALLBACK_MODEL via the provider's 404 handler, so extraction
       // never breaks. Revert with GEMINI_EXTRACT_MODEL=gemini-2.5-flash.
-      model: EXTRACT_MODEL,
+      model: modelOverride || EXTRACT_MODEL,
       temperature: 0.1,
       maxOutputTokens: 400,
       responseFormat: 'json',

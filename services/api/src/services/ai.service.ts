@@ -4723,14 +4723,16 @@ CRITICAL RULES:
     // heading/breakdown essays — the real fix for reply SHAPE. Not used for a
     // brand-new user's very first message (that welcome wants the full warmth).
     //
-    // UNIFIED_REPLY_PATH (consolidation, 2026-07-03): forces the RICH,
-    // fully-grounded personalised prompt — Gemini gets ALL the data (date/time,
-    // injection schedule, today's totals, known facts, memory, dashboard
-    // signals, learned patterns) plus the warm Grace voice + anti-essay style
-    // rules. Accuracy comes from data; friendliness + no-sprawl come from the
-    // style rules — not from starving the model. So the unified path disables
-    // the data-starved compact prompt.
-    const systemPrompt = (this.compactReplyMode && !isNew && !this.unifiedReplyPath)
+    // UNIFIED_REPLY_PATH (consolidation, 2026-07-04): ONE lean grounded prompt —
+    // the compact prompt's tight Nudge-style rules (no preamble, no hedging, no
+    // asking for info it already has) PLUS all the grounding data (date/time,
+    // injection schedule, today's LOGGED food items + totals, goals, diet,
+    // memory). Accuracy from data, brevity from the rules. (Earlier this pointed
+    // at the big personalised prompt, which reintroduced "that's a good
+    // question… what kind of injection did you have?" — corrected here.)
+    const systemPrompt = (this.unifiedReplyPath && !isNew)
+      ? this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes: cleanFoodDislikes, knownFacts, memoryMd })
+      : (this.compactReplyMode && !isNew)
       ? this.buildCompactReplyPrompt(user, { todaysFood, dietaryRestriction, dislikes: cleanFoodDislikes })
       : this.buildPersonalisedPrompt(user, isNew, {
           todaysFood,
@@ -5563,6 +5565,83 @@ CRITICAL RULES:
       `- For a food, commit to a rough number or range ("about 25-30g protein") — don't hedge with "it's tough to say".\n` +
       `- If they ask for a personal number you don't have (their goal weight, protein target, calorie target, etc.), ask for the one missing detail instead of inventing a figure. Never make up a date, a schedule, or a number.\n` +
       `- Don't restate, quote, label, or analyze their message. Don't add nutrition facts they didn't ask for. No em dashes.\n` +
+      `- If they mention a serious/worsening symptom, be warm and supportive and suggest checking with their doctor; never give dosing or medical advice.` +
+      (GRACE_VOICE_ENABLED ? GRACE_VOICE_BRIEF : '')
+    );
+  }
+
+  /**
+   * UNIFIED grounded reply prompt (the "one lean path", 2026-07-04). The REAL
+   * consolidation target: the compact prompt's TIGHT Nudge-style rules — so the
+   * model never hedges, adds preamble, or asks for info it already has — PLUS
+   * ALL the grounding data (date/time, injection schedule, today's LOGGED food
+   * items + totals, goals, diet, dislikes, learned facts). Accuracy comes from
+   * the data; brevity + no-sprawl come from the rules. This replaces the mistake
+   * of pointing UNIFIED_REPLY_PATH at the big personalised prompt (which caused
+   * "That's a good question… what kind of injection did you have?" — the exact
+   * hedging/ask-for-info behaviour the compact prompt exists to prevent).
+   */
+  private buildGroundedPrompt(
+    user: (ReturnType<UserService['getById']> extends Promise<infer T> ? T : never),
+    opts: {
+      todaysFood?: { protein_g: number; calories: number; items: string[] };
+      dietaryRestriction?: DietaryRestriction | null;
+      dislikes?: string[];
+      knownFacts?: Array<{ fact: string; category: string; confidence: string }>;
+      memoryMd?: string | null;
+    },
+  ): string {
+    const now = new Date();
+    const name = user?.first_name && !isEncryptedBlob(user.first_name) ? user.first_name.trim() : null;
+    const med = user?.medication && !isEncryptedBlob(user.medication) ? user.medication.trim() : null;
+    const facts: string[] = [];
+    if (name) facts.push(`Their name is ${name}.`);
+    if (med) facts.push(`They're on ${med}.`);
+    // Injection schedule (cadence-aware, real dates) so timing questions are grounded.
+    const sched = buildScheduleFactLine(
+      computeInjectionSchedule({
+        medicationType: inferMedicationType(med),
+        medicationName: med,
+        injectionDay: user?.injection_day ?? null,
+        timezone: user?.timezone ?? null,
+      }, now),
+      med,
+    );
+    if (sched) facts.push(sched);
+    // Today's food — the ITEMS plus totals, so "what did I eat" + acknowledging a
+    // just-logged meal work, and protein/calorie answers are grounded.
+    const f = opts.todaysFood;
+    const items = (f?.items ?? []).filter(Boolean);
+    if (items.length > 0) {
+      facts.push(`Today they've logged: ${items.slice(0, 12).join(', ')}${items.length > 12 ? ', and more' : ''} — about ${Math.round(f!.protein_g)}g protein${f!.calories > 0 ? ` and ${Math.round(f!.calories)} calories` : ''} so far.`);
+    } else {
+      facts.push(`They haven't logged any food yet today.`);
+    }
+    const pg = user?.protein_goal_grams;
+    if (pg) facts.push(`Their protein goal is ${pg}g/day.`);
+    const cg = user?.calorie_goal_kcal;
+    if (cg) facts.push(`Their calorie goal is ${cg}/day.`);
+    const diet = opts.dietaryRestriction?.label;
+    if (diet) facts.push(`They follow a ${diet} diet — never suggest a food that breaks it.`);
+    if (opts.dislikes && opts.dislikes.length > 0) facts.push(`They dislike/avoid: ${opts.dislikes.join(', ')} — never suggest these.`);
+    if (opts.knownFacts && opts.knownFacts.length > 0) {
+      facts.push(`Also known about them: ${opts.knownFacts.slice(0, 6).map((k) => k.fact).join('; ')}.`);
+    }
+    const factBlock = `\n\nWhat you know about them (use ONLY what's relevant to their message — don't dump it):\n- ${facts.join('\n- ')}`;
+    const temporalBlock = `\n\n${buildTemporalContextBlock(user?.timezone, now)}`;
+    const memoryBlock = opts.memoryMd && opts.memoryMd.trim() ? `\n\nWhat you remember about them:\n${opts.memoryMd.trim().slice(0, 1200)}` : '';
+
+    return (
+      `You are Grace, a warm, concise companion for someone on a GLP-1 medication, texting them over iMessage/WhatsApp. You sound like a caring friend who happens to know nutrition — short, natural, specific, never clinical.${factBlock}${memoryBlock}${temporalBlock}\n\n` +
+      `HOW YOU REPLY, every single time:\n` +
+      `- Answer their latest message directly, using what you already know above. Lead with the answer. 1 to 3 short sentences, like a real text.\n` +
+      `- If they told you they ATE something, acknowledge it warmly BY NAME (e.g. "Nice, yogurt with berries is a solid start"). If they asked a question, ANSWER it — never bounce it back.\n` +
+      `- NEVER ask them for information you already have above, or for anything that doesn't change your answer (never ask "what kind of injection", "what are your dietary needs", etc.). The ONLY thing you may ask is a single portion question when a food genuinely needs a rough amount to log.\n` +
+      `- If they said several things in one message, answer ALL of them briefly in one flowing reply — react to any feeling first, then the rest.\n` +
+      `- NEVER open with narration or preamble ("that's a good question", "it's smart to…", "let's break down", "to give you the best ideas I need…", "estimating protein from…"). Just give the answer.\n` +
+      `- NEVER use headings, titles, bullet points, numbered lists, or "Label:" breakdowns. Plain sentences only. No em dashes.\n` +
+      `- For a food, commit to a rough number or range ("about 25-30g protein"). For a date / schedule / next-shot / dose question, use the facts above — never guess a date, never say you can't tell them, never claim real-time access.\n` +
+      `- If they ask for a personal number you truly don't have, ask for the one missing detail instead of inventing it.\n` +
       `- If they mention a serious/worsening symptom, be warm and supportive and suggest checking with their doctor; never give dosing or medical advice.` +
       (GRACE_VOICE_ENABLED ? GRACE_VOICE_BRIEF : '')
     );

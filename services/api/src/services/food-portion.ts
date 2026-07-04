@@ -75,11 +75,8 @@ export function buildPortionConfirmQuestion(
   if (named.length === 0) return '';
   if (named.length === 1) {
     const it = named[0]!;
-    const p = it.protein_g != null && it.protein_g > 0
-      ? ` — a standard serving is about ${Math.round(it.protein_g)}g protein`
-      : '';
-    return `Before I log the ${it.item}, roughly how much did you have${p}? Tell me the amount (a cup, ~6 oz, a handful) or say "that's about right" and I'll log it accurately.`;
+    return `Yum, ${it.item} 🙌 About how much did you have — roughly a cup, a handful, or one of those small containers? Or just say "that's about right" and I'll log a standard serving.`;
   }
   const list = named.map((i) => i.item).join(' and ');
-  return `Before I log the ${list}, roughly how much of each did you have? Give me the amounts (a cup, ~6 oz, a handful) or say "that's about right" for a standard serving and I'll log it accurately.`;
+  return `Nice — ${list} 🙌 About how much of each did you have? A rough amount (a cup, a handful) works, or say "that's about right" for a standard serving.`;
 }

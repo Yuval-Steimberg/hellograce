@@ -3169,9 +3169,11 @@ CRITICAL RULES:
     // logging, grams, or totals — so it can never invent a number.
     if (isFoodTurn && food) {
       const seed = `${userId}|${input.text}`;
+      // ── DETERMINISTIC SAFE REPLY (the fallback) ──────────────────────────
+      // Exact numbers, honest logged/pending claim. This is what ships if the
+      // warm LLM phrasing below can't be trusted.
       const parts: string[] = [];
       if (food.removed) parts.push(`Done — took ${food.removed} off today's log.`);
-      // Logged items → deterministic confirmation with the exact day total.
       if (food.logged.length > 0) {
         const confirm = formatFoodReply({
           loggedItems: food.logged,
@@ -3182,32 +3184,42 @@ CRITICAL RULES:
         });
         if (confirm) parts.push(confirm);
       }
-      // Pending items → the precise "usual amount, confirm/correct" question
-      // built by foodStepUnified (states the standard serving, asks before
-      // logging). Falls back to formatFoodReply's generic portion ask.
       if (food.pending.length > 0) {
-        parts.push(
-          food.clarify ||
-            formatFoodReply({ loggedItems: [], pendingFoods: food.pending, seed }),
-        );
+        parts.push(food.clarify || formatFoodReply({ loggedItems: [], pendingFoods: food.pending, seed }));
       }
-      let reply = parts.join(' ').trim() || 'Got it.';
+      const safeReply = parts.join(' ').trim() || 'Got it.';
 
-      // Side question (a suggestion asked alongside the meal) → answer JUST that,
-      // with NO number and NO log claim, then append to the deterministic confirm.
-      if (UNIFIED_FOOD_SIDE_Q_RE.test(input.text)) {
-        const sideSys =
-          `You are Grace${nm ? `, texting ${nm}` : ''} — a warm GLP-1 companion. The user told you what they ate (already handled and confirmed separately) AND asked for a suggestion. Answer ONLY their suggestion request, in ONE short warm sentence with a concrete idea or two. HARD RULES: do NOT mention logging, tracking, protein, grams, calories, or any total; do NOT restate what they ate; no lists, no breakdown, no headings.`;
-        const side = await Promise.race([
-          this.deps.llm.generate({ messages: [{ role: 'system', content: sideSys }, { role: 'user', content: input.text }], temperature: 0.8, maxOutputTokens: 200, skipCache: true, disableThinking: true }),
-          new Promise<{ text: string } | null>((res) => setTimeout(() => res(null), UNIFIED_GEN_TIMEOUT_MS)),
-        ]).catch(() => null);
-        const sideText = side ? enforceFormat(side.text ?? '', { userMessage: input.text }).text.trim() : '';
-        // Guard: even the side answer must not smuggle a protein number or log claim.
-        if (sideText && !/\b\d+\s*(?:g|grams|cal|calories|kcal)\b/i.test(sideText) && !/\blog(?:ged|ging)?\b/i.test(sideText)) {
-          reply = `${reply} ${sideText}`.trim();
-        }
-      }
+      // ── WARM PHRASING (LLM), NUMBER-GUARDED ──────────────────────────────
+      // The user wants Grace warm + casual on food turns (not a rigid template).
+      // So the LLM re-phrases the SAME facts warmly — but it may ONLY use the
+      // numbers that appear in the safe deterministic reply, and on a pending
+      // turn it may NOT claim anything was logged. If the draft violates either
+      // guard (an invented total like the "669g" bug, or a false "logged"), we
+      // ship the safe reply instead. Warmth when we can trust it, safety always.
+      const totalP = food.logged.length > 0 ? Math.round(todaysFood.protein_g) : null;
+      const facts: string[] = [];
+      if (food.removed) facts.push(`- You just took "${food.removed}" off today's log — confirm that casually.`);
+      if (food.logged.length > 0) facts.push(`- You just logged: ${food.logged.join(', ')}. Their running protein total for today is now ${totalP}g. You may mention that total warmly. The ONLY protein number you may write is ${totalP}g.`);
+      if (food.pending.length > 0) facts.push(`- You still need the PORTION for: ${food.pending.join(', ')} before you can log it. Ask ONE short, casual "how much" question (a cup, a handful, a small container). Do NOT say it's logged and do NOT invent a protein number.`);
+      if (UNIFIED_FOOD_SIDE_Q_RE.test(input.text)) facts.push(`- They also asked for a suggestion — answer it in a few warm words.`);
+      const warmSys =
+        `You are Grace${nm ? `, texting ${nm}` : ''} — a warm, upbeat GLP-1 companion who texts like a supportive friend. Reply to what they just ate in ONE or TWO short, casual sentences with a little personality (a "yum", "nice", "love that", a light comment about their day is great).\n\nFACTS — use ONLY these, never invent a number:\n${facts.join('\n')}\n\nHARD RULES: never write any protein/calorie number other than the one in the facts; on a pending item never claim it's logged; no lists, no headings, no "breakdown"/"Part 1", no lecture about vitamins / muscle / "high-quality protein". Just a warm, human text.`;
+      const warm = await Promise.race([
+        this.deps.llm.generate({ messages: [{ role: 'system', content: warmSys }, { role: 'user', content: input.text }], temperature: 0.85, maxOutputTokens: 220, skipCache: true, disableThinking: true }),
+        new Promise<{ text: string } | null>((res) => setTimeout(() => res(null), UNIFIED_GEN_TIMEOUT_MS)),
+      ]).catch(() => null);
+      const warmText = warm ? enforceFormat(warm.text ?? '', { userMessage: input.text }).text.trim() : '';
+
+      // GUARD the warm draft: (a) every gram/calorie number it uses must appear
+      // in the safe reply's number set; (b) a pending-only turn must not claim a
+      // log. On any violation, ship the safe reply.
+      const allowed = new Set((safeReply.match(/\d+/g) ?? []).map((n) => n));
+      const warmNums = warmText.match(/\b(\d+)\s*(?:g|grams|cal|calories|kcal)\b/gi) ?? [];
+      const numOk = warmNums.every((m) => allowed.has((m.match(/\d+/) ?? ['x'])[0]!));
+      const falseLogged = food.logged.length === 0 && !food.removed &&
+        /\b(i'?ve logged|logged (?:it|that|your|the)|added (?:it|that|the)|got (?:it|that) (?:down|logged)|you'?re (?:now )?at \d+\s*g)\b/i.test(warmText);
+      const reply = (warmText && numOk && !falseLogged) ? warmText : safeReply;
+      if (reply === safeReply && warmText) this.deps.logger.info({ userId, numOk, falseLogged }, 'ai.unified.food_warm_rejected');
 
       void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
       void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});

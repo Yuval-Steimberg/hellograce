@@ -29,10 +29,10 @@ describe('isPortionAffirmation', () => {
 });
 
 describe('buildPortionConfirmQuestion', () => {
-  it('states the usual amount + protein for a single item and asks to confirm', () => {
+  it('asks the portion warmly and offers the standard-serving shortcut', () => {
     const q = buildPortionConfirmQuestion([{ item: 'yogurt with berries', protein_g: 18 }]);
-    expect(q).toMatch(/before i log the yogurt with berries/i);
-    expect(q).toMatch(/about 18g protein/i);
+    expect(q).toMatch(/yogurt with berries/i);
+    expect(q).toMatch(/how much/i);
     expect(q).toMatch(/that'?s about right/i);
   });
   it('handles multiple items and a missing estimate', () => {

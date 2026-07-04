@@ -96,6 +96,21 @@ token unlocks BOTH dashboard and Settings). Settings the same way ("settings").
   food (an apple, a banana, toast, a boiled egg, a granola bar) logs with the
   estimate — no clarification. So "I ate yogurt with berries" asks, but "an apple"
   just logs.
+- **WARM food replies, NUMBER-GUARDED (PR #198)** — the user showed a NUDGE
+  screenshot (+662 number, NOT Grace) as the target tone ("Yum, yogurt with
+  berries is such a classic… Nice, that adds about 10g to your day, a great light
+  choice for a Saturday!") and asked for Grace to be that friendly/casual. The
+  deterministic food confirmation was safe but robotic. Fix (`runUnifiedReply`
+  food block): the LLM now re-phrases the SAME facts WARMLY, but the draft is
+  GUARDED — (a) every gram/calorie number it uses must appear in the safe
+  deterministic reply's number set (`allowed`), and (b) a pending-only turn must
+  not claim a log. On any violation it ships the deterministic `safeReply`
+  (formatFoodReply / buildPortionConfirmQuestion, now also warmed up). So warmth
+  when trustable, the exact number always — the 669g class stays impossible. This
+  is the Nudge model (LLM owns the reply, reads the authoritative snapshot) with a
+  number guard bolted on. `buildPortionConfirmQuestion` reworded warm ("Yum,
+  {food} 🙌 About how much — a cup, a handful, or one of those small containers?
+  Or say 'that's about right'…"), no longer leads with grams.
 
 ---
 

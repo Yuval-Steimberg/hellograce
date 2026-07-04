@@ -41,6 +41,12 @@ export interface DashboardSummary {
     history: Array<{ day: string; protein: number; calories: number; itemCount: number }>;
     streak: number;
   };
+  hydration: {
+    today: number;
+    goalMin: number;
+    goalMax: number;
+    history: Array<{ day: string; oz: number }>;
+  };
   mood: { series: Array<{ date: string; score: number }> };
   symptoms: {
     patterns: Array<{ symptom: string; count: number; typicalTiming: string | null; topRemedy: string | null }>;
@@ -78,6 +84,12 @@ export const dashboardApi = {
 
   logMood: (score: number) =>
     call<{ ok: boolean }>("/dashboard/mood", { method: "POST", auth: true, body: JSON.stringify({ score }) }),
+
+  logWater: (oz: number) =>
+    call<{ ok: boolean; today: number; goalMin: number; goalMax: number }>(
+      "/dashboard/water",
+      { method: "POST", auth: true, body: JSON.stringify({ oz }) },
+    ),
 
   logSymptom: (symptom: string, remedy?: string) =>
     call<{ ok: boolean; symptom: string; pattern: DashboardSummary["symptoms"]["patterns"][number] | null }>(

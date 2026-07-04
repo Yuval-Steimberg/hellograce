@@ -15,7 +15,7 @@ const activeChip = "rounded-full border border-primary bg-primary px-4 py-2 text
 const input = "h-12 w-full rounded-xl border border-sand bg-white px-4 text-base text-foreground outline-none focus:border-primary transition-colors";
 const primaryBtn = "h-12 rounded-full bg-primary px-6 font-medium text-white disabled:opacity-50";
 
-type Tab = "weight" | "food" | "symptom" | "mood" | "photo";
+type Tab = "weight" | "food" | "water" | "symptom" | "mood" | "photo";
 
 export function QuickLog({ onLogged }: { onLogged: () => void }) {
   const [tab, setTab] = useState<Tab>("weight");
@@ -26,6 +26,7 @@ export function QuickLog({ onLogged }: { onLogged: () => void }) {
   const [symptom, setSymptom] = useState<string>("");
   const [remedy, setRemedy] = useState("");
   const [mood, setMood] = useState(6);
+  const [water, setWater] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const done = (msg: string) => { toast.success(msg); onLogged(); };
@@ -67,6 +68,13 @@ export function QuickLog({ onLogged }: { onLogged: () => void }) {
     catch (e) { toast.error(e instanceof Error ? e.message : "Couldn't log that"); } finally { setBusy(false); }
   };
 
+  const submitWater = async (oz: number) => {
+    if (!(oz > 0)) { toast.error("Enter how many ounces"); return; }
+    setBusy(true);
+    try { const r = await dashboardApi.logWater(oz); setWater(""); done(`Logged — ${r.today} oz today`); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "Couldn't log that"); } finally { setBusy(false); }
+  };
+
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     setBusy(true);
@@ -80,7 +88,7 @@ export function QuickLog({ onLogged }: { onLogged: () => void }) {
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
   };
 
-  const tabs: Array<[Tab, string]> = [["weight", "Weight"], ["food", "Meal"], ["symptom", "Symptom"], ["mood", "Mood"], ["photo", "Photo"]];
+  const tabs: Array<[Tab, string]> = [["weight", "Weight"], ["food", "Meal"], ["water", "Water"], ["symptom", "Symptom"], ["mood", "Mood"], ["photo", "Photo"]];
 
   return (
     <div className="rounded-2xl border border-sand bg-white p-5 shadow-[0_1px_2px_rgba(36,31,27,0.04)]">
@@ -112,6 +120,22 @@ export function QuickLog({ onLogged }: { onLogged: () => void }) {
             <div className="flex gap-3">
               <input className={input} placeholder="e.g. grilled chicken and rice" value={food} onChange={(e) => setFood(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitFood()} />
               <button className={primaryBtn} disabled={busy} onClick={submitFood}>{busy ? "…" : "Log"}</button>
+            </div>
+          )}
+
+          {tab === "water" && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {([["Glass", 8], ["Bottle", 16], ["Large", 24]] as const).map(([label, oz]) => (
+                  <button key={label} onClick={() => submitWater(oz)} disabled={busy} className={chip}>
+                    +{oz} oz <span className="text-muted-foreground">{label}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-3">
+                <input className={input} type="number" inputMode="numeric" placeholder="Ounces" value={water} onChange={(e) => setWater(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submitWater(Number(water))} />
+                <button className={primaryBtn} disabled={busy} onClick={() => submitWater(Number(water))}>{busy ? "…" : "Log"}</button>
+              </div>
             </div>
           )}
 

@@ -16,6 +16,7 @@ import { TodayOverview } from "@/components/dashboard/TodayOverview";
 import { GraceInsightCard } from "@/components/dashboard/GraceInsightCard";
 import { RecentWins } from "@/components/dashboard/RecentWins";
 import { InjectionCard } from "@/components/dashboard/InjectionCard";
+import { HydrationCard } from "@/components/dashboard/HydrationCard";
 import { TodaysMeals } from "@/components/dashboard/TodaysMeals";
 import { ProfileCompleteness } from "@/components/dashboard/ProfileCompleteness";
 import { DashboardSkeleton, DashboardLoadError } from "@/components/dashboard/DashboardStates";
@@ -189,6 +190,11 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
       <div className="grid gap-4 md:grid-cols-2">
         <Reveal><WeightChart weight={w} unit={wUnit} /></Reveal>
         <Reveal delay={0.05}><NutritionChart nutrition={n} /></Reveal>
+      </div>
+
+      {/* Fluids — surfaces the water already tracked in chat + the Water tab */}
+      <div className="mt-4">
+        <Reveal><HydrationCard data={data} /></Reveal>
       </div>
 
       {/* Symptom intelligence — the differentiator, full width */}

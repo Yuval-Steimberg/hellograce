@@ -24,6 +24,8 @@ import {
   summarizeSymptoms,
 } from '../services/dashboard-data.js';
 import { kgToLbs } from '../nutrition/units.js';
+import { getTodaysWaterOz, getDailyWaterHistory, logWater } from '../services/water-log.js';
+import { WATER_GOAL_MIN_OZ, WATER_GOAL_MAX_OZ } from '../nutrition/water.js';
 
 /**
  * Grace user dashboard API (2026-07-02).
@@ -99,12 +101,14 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
     const user = await deps.users.getByPhone(phone);
     if (!user) throw new UnauthorizedError('Account not found');
 
-    const [weightRows, proteinHist, todayFood, moodRows, symptomRows] = await Promise.all([
+    const [weightRows, proteinHist, todayFood, moodRows, symptomRows, waterToday, waterHist] = await Promise.all([
       deps.users.getWeightHistory(phone, 90).catch(() => []),
       deps.users.getDailyProteinHistory(phone, 30).catch(() => [] as Array<{ day: string; protein_g: number; calories: number; item_count: number }>),
       deps.users.getTodaysFoodSummary(phone).catch(() => ({ protein_g: 0, calories: 0, items: [] as string[], items_detailed: [] as Array<{ food: string; protein_g: number; calories: number; logged_at: string }> })),
       deps.users.getMoodHistory(phone, 30).catch(() => [] as Array<{ mood_score: number; created_at: Date }>),
       deps.users.getRecentSymptomEpisodes(phone, 80).catch(() => [] as Array<{ symptom: string; days_since_injection: number | null; dose_mg: number | null; remedy_helped: string | null; created_at: Date }>),
+      getTodaysWaterOz(deps.pool, phone).catch(() => null),
+      getDailyWaterHistory(deps.pool, phone, 7).catch(() => [] as Array<{ day: string; oz: number }>),
     ]);
 
     const episodes = symptomRows.map(toEpisode);
@@ -159,6 +163,13 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
         })),
         streak: loggingStreak(proteinHist),
       },
+      hydration: {
+        today: waterToday ?? 0,
+        goalMin: WATER_GOAL_MIN_OZ,
+        goalMax: WATER_GOAL_MAX_OZ,
+        // Oldest → newest so the UI reads left-to-right; last 7 days.
+        history: [...waterHist].reverse().map((d) => ({ day: d.day, oz: d.oz })),
+      },
       mood: { series: moodSeries },
       symptoms: {
         patterns: summarizeSymptoms(episodes),
@@ -198,6 +209,21 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
     await deps.users.logMoodEntry(phone, parsed.data.score);
     deps.logger.info({ phone, score: parsed.data.score }, 'dashboard.mood.logged');
     return { ok: true };
+  });
+
+  // ── POST /dashboard/water — log fluids (oz) ─────────────────────────────────
+  // Dashboard twin of the chat water log. Uses the same deterministic logWater
+  // insert (dedupe + wake-day total) so chat and dashboard stay in sync, then
+  // returns today's total so the card updates without a full reload.
+  app.post('/dashboard/water', async (req) => {
+    const phone = await requireVerifiedPhone(req);
+    const parsed = z.object({ oz: z.number().positive().max(400) }).safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('Enter how many ounces of water to log.');
+    const oz = Math.round(parsed.data.oz);
+    await logWater(deps.pool, deps.logger, phone, oz, `${oz} oz (dashboard)`).catch(() => null);
+    const today = (await getTodaysWaterOz(deps.pool, phone).catch(() => null)) ?? 0;
+    deps.logger.info({ phone, oz: parsed.data.oz, today }, 'dashboard.water.logged');
+    return { ok: true, today, goalMin: WATER_GOAL_MIN_OZ, goalMax: WATER_GOAL_MAX_OZ };
   });
 
   // ── POST /dashboard/symptom — log a symptom (+ optional remedy that helped) ─

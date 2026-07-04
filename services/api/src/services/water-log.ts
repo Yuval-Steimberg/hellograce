@@ -11,7 +11,7 @@
 import { createHash } from 'crypto';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
-import { USER_DAY_CTE, isCurrentUserDay } from '../nutrition/logging-window.js';
+import { USER_DAY_CTE, userDayExpr, isCurrentUserDay } from '../nutrition/logging-window.js';
 import { WATER_GOAL_MIN_OZ, WATER_GOAL_MAX_OZ } from '../nutrition/water.js';
 
 /** Sum of today's water (oz) over the user's wake-time logging day. Returns
@@ -29,6 +29,35 @@ export async function getTodaysWaterOz(pool: Pool, userId: string): Promise<numb
     return Math.round(Number(rows[0]?.total_oz ?? 0));
   } catch {
     return null;
+  }
+}
+
+/** Per-user-day water totals (oz) for the last N days, most recent first. Uses
+ *  the same wake-time logging window as protein history so "today" lines up
+ *  across food + water. Returns [] on any error (incl. table not migrated) so
+ *  callers degrade gracefully — never crashes a request. */
+export async function getDailyWaterHistory(
+  pool: Pool,
+  userId: string,
+  days = 7,
+): Promise<Array<{ day: string; oz: number }>> {
+  const safeDays = Math.max(1, Math.min(30, Math.floor(days)));
+  try {
+    const { rows } = await pool.query<{ day: string; oz: number }>(
+      `${USER_DAY_CTE}
+       SELECT ${userDayExpr('w.created_at')}::text AS day,
+              COALESCE(SUM(w.oz), 0)::int AS oz
+       FROM water_logs w, user_tz
+       WHERE w.user_id = $1
+         AND ${userDayExpr('w.created_at')}
+             >= ${userDayExpr('now()')} - ($2::int - 1)
+       GROUP BY day
+       ORDER BY day DESC`,
+      [userId, safeDays],
+    );
+    return rows.map((r) => ({ day: r.day, oz: Number(r.oz) }));
+  } catch {
+    return [];
   }
 }
 

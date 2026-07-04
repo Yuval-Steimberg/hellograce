@@ -1,5 +1,25 @@
 import { z } from 'zod';
 
+/**
+ * Environment booleans, parsed the way an operator expects.
+ *
+ * `z.coerce.boolean()` is a footgun: it does `Boolean(value)`, so the STRING
+ * "false" (and "0", "no", "off") is truthy → the flag turns ON when you set it
+ * to "false". That silently pinned UNIFIED_REPLY_PATH on in production even after
+ * `fly secrets set UNIFIED_REPLY_PATH=false`. This parser only treats the usual
+ * affirmative tokens as true; everything else (incl. "false"/"0"/"off"/"") is
+ * false. Unset → the provided default.
+ */
+const boolish = (def: boolean) =>
+  z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === '') return def;
+      const s = v.trim().toLowerCase();
+      return s === 'true' || s === '1' || s === 'yes' || s === 'on';
+    });
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3001),
@@ -134,7 +154,7 @@ const EnvSchema = z.object({
    *  embedding matches a seeded FAQ entry above the threshold bypass the
    *  full LLM pipeline and return the canonical response (~50ms vs ~1500ms).
    *  Default OFF until verified in production. */
-  FAQ_CACHE_ENABLED: z.coerce.boolean().default(false),
+  FAQ_CACHE_ENABLED: boolish(false),
   FAQ_CACHE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.92),
 
   /** Crisis-resource localization gate (2026-06-06 coverage audit, Area 6).
@@ -144,7 +164,7 @@ const EnvSchema = z.object({
    *
    *  PRE-LAUNCH GATE: do NOT set TRUE until clinical + legal review of every
    *  entry in COUNTRY_MAP is signed off. See docs/PRE_LAUNCH_GATES.md. */
-  CRISIS_RESOURCES_REVIEWED: z.coerce.boolean().default(false),
+  CRISIS_RESOURCES_REVIEWED: boolish(false),
 
   /** Phase 5: USDA FoodData Central API key. When unset, log_food falls back
    *  to the legacy LLM-only macro estimate. Free signup at
@@ -192,7 +212,7 @@ const EnvSchema = z.object({
    *  daily personalization engine are NOT affected (those are core product, not
    *  optimizers). Default true (preserves documented behavior); set to false to
    *  pause all optimizer activity without a code change. */
-  OPTIMIZERS_ENABLED: z.coerce.boolean().default(true),
+  OPTIMIZERS_ENABLED: boolish(true),
 
   /** TRUST GEMINI mode (2026-06-04 architecture refactor).
    *
@@ -215,14 +235,14 @@ const EnvSchema = z.object({
    *  test the lean pipeline in production.
    *
    *  When false, granular flags below can still disable individual layers. */
-  TRUST_GEMINI: z.coerce.boolean().default(false),
+  TRUST_GEMINI: boolish(false),
 
   /** Individual guard toggles. Set to false to disable a specific layer
    *  without flipping the whole pipeline. Composes with TRUST_GEMINI —
    *  if TRUST_GEMINI=true, these are all forced to false regardless. */
-  BEHAVIORAL_GUARD_ENABLED: z.coerce.boolean().default(true),
-  RELEVANCE_CHECK_ENABLED: z.coerce.boolean().default(true),
-  QUALITY_GUARD_STRICT: z.coerce.boolean().default(true),
+  BEHAVIORAL_GUARD_ENABLED: boolish(true),
+  RELEVANCE_CHECK_ENABLED: boolish(true),
+  QUALITY_GUARD_STRICT: boolish(true),
 
   /** GEMINI-FIRST quality mode (2026-06-19 response-quality parity pass).
    *
@@ -253,7 +273,7 @@ const EnvSchema = z.object({
    *  Trade-off accepted by the spec: +1-2s latency for a real, contextual
    *  answer. Default ON; flip to false (env, no deploy) to restore the
    *  latency-first shortcuts instantly. */
-  GEMINI_FIRST: z.coerce.boolean().default(true),
+  GEMINI_FIRST: boolish(true),
 
   /** DIRECT REPLY MODE (2026-06-19 "work exactly like the competitor") — the
    *  full Nudge generation model. When true, the user-facing reply is produced
@@ -278,7 +298,7 @@ const EnvSchema = z.object({
    *  default again; it generates every reply via Gemini under TRUST_GEMINI +
    *  GEMINI_FIRST but keeps the guards that prevent those regressions. Flip to
    *  true (fly secrets set DIRECT_REPLY_MODE=true) only to A/B the lean path. */
-  DIRECT_REPLY_MODE: z.coerce.boolean().default(false),
+  DIRECT_REPLY_MODE: boolish(false),
   /** LEAN_REPLY_MODE (2026-07-02). Strips the analytical BACKGROUND blocks from
    *  the shared reply prompt (dashboard PROGRESS SNAPSHOT, learned SIDE-EFFECT
    *  PATTERNS, foods-logged-today enumeration) — the labeled "data" lines Gemini
@@ -286,14 +306,14 @@ const EnvSchema = z.object({
    *  Applies to BOTH the orchestrator and direct paths (they share
    *  buildPersonalisedPrompt). Default false; flip with
    *  `fly secrets set LEAN_REPLY_MODE=true` to A/B against the regression net. */
-  LEAN_REPLY_MODE: z.coerce.boolean().default(false),
+  LEAN_REPLY_MODE: boolish(false),
   /** COMPACT_REPLY_MODE (2026-07-02, the "Nudge" model). Swaps the big
    *  personalised reply prompt for a TINY one so Gemini can't produce
    *  heading/breakdown/preamble essays — the reply-SHAPE fix at the source.
    *  Crisis safety + food logging + the format floor run around it, unchanged.
    *  Default false; `fly secrets set COMPACT_REPLY_MODE=true` to A/B against the
    *  regression net. */
-  COMPACT_REPLY_MODE: z.coerce.boolean().default(false),
+  COMPACT_REPLY_MODE: boolish(false),
   /** UNIFIED_REPLY_PATH (2026-07-03). The consolidation flag: when true, the
    *  reply uses ONE grounded prompt (compact Nudge-style tight style + the
    *  always-present grounding facts: date/time, injection schedule, today's
@@ -301,7 +321,7 @@ const EnvSchema = z.object({
    *  builders. Default false — flip ONLY after the regression + auto-eval gate
    *  passes. The upstream intercepts (reminders, image analysis, multi-part,
    *  safety) are UNAFFECTED by this flag; it only selects the final prompt. */
-  UNIFIED_REPLY_PATH: z.coerce.boolean().default(false),
+  UNIFIED_REPLY_PATH: boolish(false),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

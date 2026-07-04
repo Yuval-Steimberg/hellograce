@@ -903,6 +903,25 @@ export class AIService {
       }
     }
 
+    // ── UNIFIED (Nudge) PATH — ONE clean path, gated by UNIFIED_REPLY_PATH ──
+    // Safety (crisis 988/911 + hypoglycemia) has run above and always stays. When
+    // the flag is on, everything else — the fast-path, the ~20 intercepts, and the
+    // 7 overlapping food layers — is BYPASSED in favour of a single clean path:
+    // log every eaten food once (never ask, never drop), then ONE grounded Gemini
+    // call with all the data + full history. Flag-off (default) keeps the entire
+    // existing pipeline byte-identical, so production is untouched until you flip.
+    if (this.unifiedReplyPath) {
+      try {
+        return await this.runUnifiedReply(input, t0, lat);
+      } catch (err) {
+        this.deps.logger.error(
+          { err: err instanceof Error ? err.message : String(err), userId: input.userId },
+          'ai.unified_reply.error',
+        );
+        // Never drop the turn — fall through to the existing pipeline on any error.
+      }
+    }
+
     // Fast-path: pure greetings, brief positive feelings, thanks, brief acks
     // get a deterministic warm reply with zero LLM call — ~50-150ms total
     // instead of ~2-4s. Skipped when media is attached (photo/voice always
@@ -2956,6 +2975,104 @@ CRITICAL RULES:
       return sentences.slice(0, config.maxSentencesOnTrim).join(' ').trim();
     }
     return candidate.trim();
+  }
+
+  // ── UNIFIED (Nudge) PATH ─────────────────────────────────────────────────
+  /**
+   * The single clean reply path (gated by UNIFIED_REPLY_PATH). Logs any eaten
+   * food ONCE via logFoodUnified (never asks, never drops), then makes ONE
+   * grounded Gemini call with all the data + full history. No intercepts, no
+   * overlapping food layers. Media turns delegate to the existing pipeline.
+   */
+  private async runUnifiedReply(input: InboundMessage, t0: number, lat: LatencyTracker): Promise<OrchestratorOutput> {
+    const userId = input.userId;
+    // Images / voice keep the existing media pipeline for now.
+    if (input.media.length > 0) return this.handleMessageInner(input, t0, lat);
+
+    const [user, todaysFoodPre, knownFacts, memoryMd, history, conversationId] = await Promise.all([
+      this.deps.users.getByPhone(userId).catch(() => null),
+      this.deps.users.getTodaysFoodSummary(userId).catch(() => ({ protein_g: 0, calories: 0, items: [] as string[] })),
+      this.deps.users.getKnownFacts(userId, 8).catch(() => [] as Array<{ fact: string }>),
+      this.deps.memoryMd ? this.deps.memoryMd.get(userId).catch(() => null) : Promise.resolve(null),
+      this.deps.memory.getRecentTurns(userId, this.deps.historyTurns ?? 12).catch(() => [] as ChatTurn[]),
+      this.deps.memory.ensureConversation(userId).catch(() => `fallback-${userId}`),
+    ]);
+
+    // ONE clean food logger (side-effect). Never asks, never holds pending, never drops.
+    const foodNote = await this.logFoodUnified(input).catch(() => null);
+    const todaysFood = foodNote
+      ? await this.deps.users.getTodaysFoodSummary(userId).catch(() => todaysFoodPre)
+      : todaysFoodPre;
+
+    const dietaryRestriction = effectiveDietaryRestriction(user);
+    const dislikes = (user?.food_dislikes ?? [])
+      .map((d) => d.replace(/^(i\s+(don'?t|do\s+not|hate|can'?t\s+stand|dislike)\s+(like\s+)?|no\s+|avoid\s+)/i, '').trim())
+      .filter(Boolean);
+
+    let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd });
+    if (foodNote) {
+      systemPrompt += `\n\n[JUST LOGGED for them: ${foodNote}. Acknowledge it warmly by name in one short line, then answer anything else they asked in the same message.]`;
+    }
+
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: systemPrompt },
+      ...history.map((h) => ({ role: h.role, content: h.content })),
+      { role: 'user', content: input.text },
+    ];
+
+    const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500 });
+    const formatted = enforceFormat(resp.text ?? '', { userMessage: input.text });
+    const reply = formatted.text.trim() || 'I’m here — tell me a little more?';
+
+    void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+    void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+    const totalMs = Date.now() - t0;
+    this.persistLatency(userId, foodNote ? 'unified_food' : 'unified', totalMs, lat.snapshot(), input.text, reply);
+    return { text: reply, confidence: 'high', intent: foodNote ? 'food_log' : 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+  }
+
+  /**
+   * The ONE food logger for the unified path. Logs every eaten food once, with a
+   * standard-portion estimate for any missing amount — never asks "how much",
+   * never holds pending, never drops. Groups per meal (a delimited multi-meal
+   * message → one entry per meal; a single meal → one entry). Returns a short
+   * note of what was logged, or null when there's nothing to log (a preference,
+   * plan, question, or non-food).
+   */
+  private async logFoodUnified(input: InboundMessage): Promise<string | null> {
+    const text = input.text.trim();
+    if (!text) return null;
+    if (detectMealConsumption(text) === 'preference') return null; // interest ≠ eaten
+    const span = foodSpanFromConsumption(text);
+    if (!namesSpecificFood(text) && !span) return null; // no real food named
+
+    const logFood = makeLogFoodTool({
+      pool: this.deps.pool,
+      llm: this.deps.llm,
+      logger: this.deps.logger,
+      userId: input.userId,
+      source: 'text',
+      ...(this.deps.usda ? { usda: this.deps.usda } : {}),
+      users: this.deps.users,
+    });
+
+    // One entry per meal: a delimited multi-meal message splits; otherwise the
+    // whole stated meal (clean consumption span) is a single entry.
+    const meals = splitMultiMealText(text);
+    const units = meals.length >= 2 ? meals.filter((m) => namesSpecificFood(m)) : [span ?? text];
+
+    const logged: string[] = [];
+    for (const unit of units) {
+      const r = (await logFood.execute({ food: unit }).catch(() => null)) as Record<string, unknown> | null;
+      if (r && r.ok !== false) {
+        const name = (r.food as string | undefined) ?? unit;
+        const p = r.protein_g as number | undefined;
+        logged.push(`${name}${p != null ? ` (~${p}g protein)` : ''}`);
+      }
+    }
+    if (logged.length === 0) return null;
+    this.deps.logger.info({ userId: input.userId, count: logged.length }, 'ai.unified_food.logged');
+    return logged.join('; ');
   }
 
   /**
@@ -5614,7 +5731,7 @@ CRITICAL RULES:
       todaysFood?: { protein_g: number; calories: number; items: string[] };
       dietaryRestriction?: DietaryRestriction | null;
       dislikes?: string[];
-      knownFacts?: Array<{ fact: string; category: string; confidence: string }>;
+      knownFacts?: Array<{ fact: string }>;
       memoryMd?: string | null;
     },
   ): string {

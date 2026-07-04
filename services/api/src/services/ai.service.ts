@@ -511,6 +511,7 @@ import {
 } from './profile-extract.js';
 import { GRACE_VOICE_ENABLED, GRACE_VOICE_BRIEF, voiceSuffix } from './voice.js';
 import { resolveTemporalContext, buildTemporalContextBlock } from './temporal-context.js';
+import { buildNudgeSystemPrompt } from './nudge-prompt.js';
 import {
   detectInjectionTimingIntent,
   computeInjectionSchedule,
@@ -5821,11 +5822,24 @@ CRITICAL RULES:
     // the message is actually about it.
     const asksSchedule = /\b(inject|injection|shot|jab|dose|dosing|pen|next|when|schedule|due|today|tomorrow|day)\b/.test(q) && /\b(inject|injection|shot|jab|dose|dosing|pen|med|ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide)\b/.test(q);
     const asksDiaryOrTotal = FOOD_DIARY_QUERY_RE.test(q) || /\b(protein|calorie|cals|kcal|total|how much have i|goal|left|remaining|so far)\b/.test(q);
-    const facts: string[] = [];
-    if (name) facts.push(`Their name is ${name}.`);
-    if (med) facts.push(`They're on ${med}.`);
-    // Injection schedule — grounded ONLY when they're asking about timing, so a
-    // food/chat message can't have the schedule recited at it.
+    // Profile block — always-safe grounding (never the schedule or diary, which
+    // are the recitation-prone snapshot lines gated below).
+    const profileFacts: string[] = [];
+    if (name) profileFacts.push(`Name: ${name}`);
+    if (med) profileFacts.push(`Medication: ${med}`);
+    const diet = opts.dietaryRestriction?.label;
+    if (diet) profileFacts.push(`Dietary style: ${diet} — never suggest a food that breaks it`);
+    if (opts.dislikes && opts.dislikes.length > 0) profileFacts.push(`Food dislikes/avoids (never suggest): ${opts.dislikes.join(', ')}`);
+    if (user?.protein_goal_grams) profileFacts.push(`Daily protein goal: ${user.protein_goal_grams}g`);
+    if (user?.calorie_goal_kcal) profileFacts.push(`Daily calorie goal: ${user.calorie_goal_kcal}`);
+    if (opts.knownFacts && opts.knownFacts.length > 0) profileFacts.push(`Also known: ${opts.knownFacts.slice(0, 6).map((k) => k.fact).join('; ')}`);
+    const profileBlock = profileFacts.length ? `WHAT YOU KNOW ABOUT THIS USER (background — do not recite):\n${profileFacts.map((f) => `- ${f}`).join('\n')}` : '';
+
+    // Today-snapshot — RELEVANCE-GATED. The injection schedule is present only
+    // when the message asks about timing; the food diary + totals only when it
+    // asks about the diary/total. So a plain food/chat message has neither in the
+    // prompt and flash cannot recite them.
+    const snap: string[] = [];
     if (asksSchedule) {
       const sched = buildScheduleFactLine(
         computeInjectionSchedule({
@@ -5836,60 +5850,28 @@ CRITICAL RULES:
         }, now),
         med,
       );
-      if (sched) facts.push(sched);
+      if (sched) snap.push(sched);
     }
-    // Today's food — the full ITEM list is included ONLY for a diary/total query;
-    // otherwise it's omitted entirely (the JUST-LOGGED note handles a fresh log),
-    // so the model can't recite the whole day at a plain message.
-    const f = opts.todaysFood;
-    const items = (f?.items ?? []).filter(Boolean);
     if (asksDiaryOrTotal) {
+      const f = opts.todaysFood;
+      const items = (f?.items ?? []).filter(Boolean);
       if (items.length > 0) {
-        facts.push(`Today's diary: ${items.slice(0, 12).join(', ')}${items.length > 12 ? ', and more' : ''} — about ${Math.round(f!.protein_g)}g protein${f!.calories > 0 ? ` and ${Math.round(f!.calories)} calories` : ''}.`);
+        snap.push(`Diary today (the complete, authoritative list): ${items.slice(0, 12).join(', ')}${items.length > 12 ? ', and more' : ''}.`);
+        snap.push(`Totals today: about ${Math.round(f!.protein_g)}g protein${f!.calories > 0 ? ` and ${Math.round(f!.calories)} calories` : ''}${user?.protein_goal_grams ? ` of a ${user.protein_goal_grams}g protein goal` : ''}.`);
       } else {
-        facts.push(`Nothing logged yet today.`);
+        snap.push(`Nothing logged yet today.`);
       }
-      const pg = user?.protein_goal_grams;
-      if (pg) facts.push(`Their protein goal is ${pg}g/day.`);
-      const cg = user?.calorie_goal_kcal;
-      if (cg) facts.push(`Their calorie goal is ${cg}/day.`);
     }
-    const diet = opts.dietaryRestriction?.label;
-    if (diet) facts.push(`They follow a ${diet} diet — never suggest a food that breaks it.`);
-    if (opts.dislikes && opts.dislikes.length > 0) facts.push(`They dislike/avoid: ${opts.dislikes.join(', ')} — never suggest these.`);
-    if (opts.knownFacts && opts.knownFacts.length > 0) {
-      facts.push(`Also known about them: ${opts.knownFacts.slice(0, 6).map((k) => k.fact).join('; ')}.`);
-    }
-    const factBlock = `\n\nWhat you know about them (use ONLY what's relevant to their message — don't dump it):\n- ${facts.join('\n- ')}`;
-    const temporalBlock = `\n\n${buildTemporalContextBlock(user?.timezone, now)}`;
-    const memoryBlock = opts.memoryMd && opts.memoryMd.trim() ? `\n\nWhat you remember about them:\n${opts.memoryMd.trim().slice(0, 1200)}` : '';
+    const todaySnapshot = snap.length ? `TRUE FOR THEM TODAY:\n${snap.map((s) => `- ${s}`).join('\n')}` : '';
 
-    return (
-      `You are Grace, a warm, concise companion for someone on a GLP-1 medication, texting them over iMessage/WhatsApp. You sound like a caring friend who happens to know nutrition — short, natural, specific, never clinical.${factBlock}${memoryBlock}${temporalBlock}\n\n` +
-      `HOW YOU REPLY, every single time:\n` +
-      `- LATEST MESSAGE FIRST (highest priority): reply to their FINAL message only. Earlier messages are context, not open tasks. If the final message changes topic, drop the older topic completely — do NOT answer both. Only pull from earlier turns when the final message clearly refers back ("that", "it", "the one you said", "more"). A reply that answers an older message instead of the latest one is wrong.\n` +
-      `- DON'T VOLUNTEER UNRELATED FACTS (critical): the facts above are background for YOU, not things to recite. NEVER open with or tack on their injection day, next shot, dose, medication, the date, or their running totals unless their message is specifically asking about that exact thing. If they log food or ask a food question, do NOT mention their injection or the date. React to what they actually said and nothing else.\n` +
-      `- Answer their latest message directly, using what you already know above. Lead with the answer. 1 to 3 short sentences, like a real text.\n` +
-      `- If they told you they ATE something, acknowledge it warmly by name in a few words, then move on. If the SAME message also asks a question (a snack idea, what to eat next, a number), you MUST answer that question in the same reply — acknowledging the food is never a substitute for answering. Never bounce a question back.\n` +
-      `- FOOD — how you handle any meal they report (this is a hard rule):\n` +
-      `   • A SPECIFIC food WITH an amount ("2 eggs", "6 oz chicken", "a cup of rice", "a banana", "cheese pizza, 2 slices") counts as eaten — a warm brief ack is enough ("nice, solid protein"). Don't recite their day's total unless they ask.\n` +
-      `   • A food with NO amount, or a bare category/restaurant ("chicken and rice", "had some yogurt", "had pizza", "a burger", "McDonald's") is NOT logged yet — do NOT claim it's logged and do NOT give it a protein/calorie number. Ask ONE short casual question for the amount/kind ("how much chicken and rice — a few oz and about a cup?" / "nice, what'd you get at McDonald's?") and stop.\n` +
-      `   • "2 eggs for breakfast, chicken and rice for lunch" (or "this morning", "at lunch") is REPORTING what they ate, NOT a plan — handle each food by the two rules above (ack the eggs, ask the chicken/rice amount). Never answer a reported meal with "sounds like a plan".\n` +
-      `   • It is ONLY planning when they ask what they SHOULD eat, whether a food is good/ok, or say they're thinking of / going to have / might have something — then just answer, and never ask a portion.\n` +
-      `   • If a bracket note above says JUST LOGGED or NEEDS A PORTION, follow it exactly.\n` +
-      `- NEVER ask them for information you already have above, or for anything that doesn't change your answer (never ask "what kind of injection", "what are your dietary needs", etc.). The ONLY thing you may ask is a single portion question when a food genuinely needs a rough amount to log.\n` +
-      `- If they said several things in one message, answer ALL of them briefly in one flowing reply — react to any feeling first, then the rest.\n` +
-      `- NEVER open with narration or preamble ("that's a good question", "it's smart to…", "let's break down", "to give you the best ideas I need…", "estimating protein from…"). Just give the answer.\n` +
-      `- NEVER use headings, titles, bullet points, numbered lists, or "Label:" breakdowns. Plain sentences only. No em dashes.\n` +
-      `- For a food, commit to a rough number or range ("about 25-30g protein"). For a date / schedule / next-shot / dose question, use the facts above — never guess a date, never say you can't tell them, never claim real-time access.\n` +
-      `- If they ask for a personal number you truly don't have, ask for the one missing detail instead of inventing it.\n` +
-      `- SETTINGS: if they want to CHANGE a saved profile field (protein/calorie goal, weight, height, medication, dose, injection day, wake/sleep time, name, diet, allergies, food dislikes, reminder/check-in timing), you CANNOT save it from chat — never say you saved, updated, noted, or will remember it. Acknowledge in one line and point them to https://graceglp.com/settings. (Removing/fixing a food already logged today is the exception — just say you'll leave it out of today's total, no link.)\n` +
-      `- REMINDERS: you DO send scheduled check-ins and reminders — never say you can't send reminders or message them later. Answer a reminder question from the schedule facts above; to change reminder times, point them to https://graceglp.com/settings.\n` +
-      `- MEDICAL: never state a dose in mg, never call a dose the "next step", never compare which GLP-1 is better for them, never clear a drug/alcohol/supplement combo as safe for them — that's their prescriber's or pharmacist's call. Share general info warmly, then defer in one line.\n` +
-      `- SYMPTOMS: don't diagnose a named condition or guess a treatment. Name what it commonly is, give 1-2 safe practical things, and say when to call their doctor. For a clear emergency (chest pain, trouble breathing, fainting, severe belly pain, blood) tell them to get help now.\n` +
-      `- You CAN receive and look at photos (meals, the scale, an injection pen, a selfie) — never say you can't see images. You're a wellness companion, not a general assistant: no timers, alarms, emails, or web lookups — if asked, decline warmly in one line and redirect to what you can help with.` +
-      (GRACE_VOICE_ENABLED ? GRACE_VOICE_BRIEF : '')
-    );
+    const memoryBlock = opts.memoryMd && opts.memoryMd.trim() ? `WHAT YOU REMEMBER ABOUT THEM:\n${opts.memoryMd.trim().slice(0, 1200)}` : '';
+
+    return buildNudgeSystemPrompt({
+      profileBlock,
+      todaySnapshot,
+      temporalBlock: buildTemporalContextBlock(user?.timezone, now),
+      memoryBlock,
+    }) + (GRACE_VOICE_ENABLED ? GRACE_VOICE_BRIEF : '');
   }
 
   private buildPersonalisedPrompt(

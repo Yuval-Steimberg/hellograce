@@ -76,7 +76,7 @@ export class GeminiProvider implements LLMProvider {
       parts: [{ text: m.content }],
     }));
 
-    if (this.cache) {
+    if (this.cache && !req.skipCache) {
       const cacheKey = hashRequest(req);
       const cached = await this.cache.get<LLMResponse>('llm', cacheKey).catch(() => null);
       if (cached) {

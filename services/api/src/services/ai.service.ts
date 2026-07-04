@@ -3029,7 +3029,8 @@ CRITICAL RULES:
       { role: 'user', content: input.text },
     ];
 
-    const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500 });
+    this.deps.logger.info({ userId, path: 'unified', prompt: 'grounded', logged: food?.logged.length ?? 0, pending: food?.pending.length ?? 0 }, 'ai.reply.path');
+    const resp = await this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: 500, skipCache: true });
     const formatted = enforceFormat(resp.text ?? '', { userMessage: input.text });
     const reply = formatted.text.trim() || 'I’m here — tell me a little more?';
 
@@ -3560,7 +3561,7 @@ CRITICAL RULES:
       // traded for a fast safe one, never silence.
       const replyStart = Date.now();
       const resp = await Promise.race([
-        this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: isLogTurn ? 200 : 500, disableThinking: true }),
+        this.deps.llm.generate({ messages, temperature: 0.8, maxOutputTokens: isLogTurn ? 200 : 500, disableThinking: true, skipCache: true }),
         new Promise<{ text: string } | null>((resolve) => setTimeout(() => {
           params.logger.warn({ userId: params.userId, intent: params.intent }, 'ai.direct.generate.timeout');
           resolve(null);
@@ -5197,6 +5198,14 @@ CRITICAL RULES:
     }
 
     lat.mark('orchestrator');
+    // Definitive path telemetry — logs EXACTLY which reply path + prompt builder
+    // generated this turn, so "nothing changed after deploy" can be diagnosed
+    // from one log line instead of inference.
+    const promptKind = (this.unifiedReplyPath && !isNew) ? 'grounded' : (this.compactReplyMode && !isNew) ? 'compact' : 'personalised';
+    this.deps.logger.info(
+      { userId: input.userId, path: this.directReplyMode ? 'direct' : 'orchestrator', prompt: promptKind, unifiedReplyPath: this.unifiedReplyPath, isNew, intent: intentClass.type },
+      'ai.reply.path',
+    );
     let result: OrchestratorOutput;
     if (this.directReplyMode) {
       // DIRECT REPLY (competitor-style): one Gemini call on [system + history +

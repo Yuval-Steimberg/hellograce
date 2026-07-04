@@ -215,6 +215,13 @@ export interface LLMRequest {
   model?: string;
   /** Disable thinking/reasoning tokens to reduce cost on simple messages. */
   disableThinking?: boolean;
+  /** Skip the LLM response cache for this request. MUST be set on user-facing
+   *  reply generations: at temperature > 0 a warm reply should be fresh every
+   *  turn, and caching it (30-min TTL, keyed on the prompt) makes the SAME
+   *  message return a byte-identical stale reply — which also masks a deploy of
+   *  new prompt/behaviour. Deterministic extraction/classification calls
+   *  (temp 0, structured) SHOULD stay cached. */
+  skipCache?: boolean;
   /** Structured-output schema. When set, the provider forces JSON output
    *  matching this schema (Gemini's responseSchema). Eliminates malformed
    *  output and lets the caller trust the parsed shape. Supersedes

@@ -6,6 +6,48 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 ADMIN DASHBOARD — cohorts, funnel, analytics, group messaging (2026-07-04, branch `claude/grace-admin-dashboard-z7xajj`)
+
+Admin-only build. **No user-facing pipeline / reply / scheduler / Stripe / onboarding
+code was touched** — 12 files, all admin-scoped (verify: `git diff --stat
+origin/claude/grace-admin-dashboard-z7xajj..HEAD`). 1674 api + 657 ai-core tests
+green; all packages typecheck + build clean. Analytics + campaign SQL validated
+end-to-end against a real local Postgres (incl. the un-migrated degraded path).
+
+**Backend (new, read-only unless noted):**
+- `services/api/src/services/admin-analytics.ts` — 30+ whitelisted cohort predicates
+  over an enriched CTE (users + per-user message/food/photo aggregates); unifies the
+  trial/paid/active/onboarded definitions previously duplicated across
+  `/admin/metrics` + `/admin/business`. Schema-probes `progress_photos` /
+  `subscription_status` / `onboarding_state` and degrades to 0 when absent.
+- `services/api/src/services/admin-campaigns.ts` — cohort/ad-hoc group messaging.
+  Excludes paused (opt-out) / blocked / inactive; requires `confirm`; audience cap
+  `MAX_AUDIENCE=5000`; content guard blocks medical/dose advice; per-recipient
+  delivery status; dedupe via UNIQUE(campaign_id,phone); logs to conversation +
+  audit. Sends only through `deps.sender` (same transport as the per-user send).
+- `routes/admin.ts` (additive routes only): `GET /admin/cohorts`,
+  `/admin/cohorts/:key/users`, `/admin/funnel`, `/admin/analytics`; `POST
+  /admin/campaigns/{preview,send,draft}`, `POST /admin/campaigns/:id/send`,
+  `GET /admin/campaigns[/:id]`. All behind the existing Bearer `/admin/*` hook.
+- **Migration `20260704000001_admin_campaigns.sql`** — additive: `admin_campaigns`
+  + `admin_campaign_recipients` (RLS default-deny). **Apply before using Campaigns**;
+  everything degrades gracefully (best-effort) until it's applied.
+
+**Frontend:** new nav entries **Cohorts** (`/admin/cohorts`), **Growth & Funnel**
+(`/admin/growth`), **Campaigns** (`/admin/campaigns`); shared
+`components/admin/CohortUsersPanel.tsx` (drill-down → reuses `UserDrawer`); Users
+page gained a cohort filter dropdown. Client methods added to `lib/api.ts`.
+
+**Honest data gaps (surfaced as "not tracked", not faked):** website visits,
+dashboard opens, voice usage — need event instrumentation (a pixel / event table)
+before they can appear. Everything else (onboarding/trial/paid/activity/food/
+reminder cohorts, DAU/WAU/MAU, conversion/churn, drop-off) is real.
+
+**Not deployed by me.** No reply-path change, so the food/reply work below is
+unaffected.
+
+---
+
 ## 👉 READ FIRST — unified food logging is DETERMINISTIC now + intercepts ported (2026-07-04 EOD)
 
 **Merged to `main` — latest HEAD `f634ed8`.** Chain of PRs this session: #192

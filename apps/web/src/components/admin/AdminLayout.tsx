@@ -28,12 +28,18 @@ import {
   Target,
   Microscope,
   ScrollText,
+  Layers,
+  Gauge,
+  Megaphone,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/admin', label: 'Metrics', icon: BarChart3, end: true },
   { to: '/admin/conversations', label: 'Conversations', icon: MessageSquare, end: false },
   { to: '/admin/users', label: 'Users', icon: Users, end: false },
+  { to: '/admin/cohorts', label: 'Cohorts', icon: Layers, end: false },
+  { to: '/admin/growth', label: 'Growth & Funnel', icon: Gauge, end: false },
+  { to: '/admin/campaigns', label: 'Campaigns', icon: Megaphone, end: false },
   { to: '/admin/feedback', label: 'RLHF Feedback', icon: ThumbsUp, end: false },
   { to: '/admin/prompts', label: 'Prompt Manager', icon: FileText, end: false },
   { to: '/admin/tools', label: 'Tool Settings', icon: Wrench, end: false },

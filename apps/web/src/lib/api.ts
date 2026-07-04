@@ -59,6 +59,118 @@ export interface Metrics {
   user_stats: UserStats;
 }
 
+// ─── Admin analytics (cohorts / funnel / overview) ────────────────────────────
+
+export type CohortGroup =
+  | 'lifecycle' | 'onboarding' | 'trial' | 'payment' | 'activity' | 'engagement' | 'profile';
+
+export interface CohortCount {
+  key: string;
+  label: string;
+  group: CohortGroup;
+  description: string;
+  count: number;
+  pct: number;
+}
+export interface CohortCountsResult {
+  total: number;
+  generated_at: string;
+  cohorts: CohortCount[];
+}
+export interface CohortUserRow {
+  phone: string;
+  first_name: string | null;
+  medication: string | null;
+  is_paid: boolean;
+  is_pro: boolean;
+  paused: boolean;
+  blocked: boolean;
+  injection_day: string | null;
+  onboarding_state: string | null;
+  trial_start: string | null;
+  last_reply_at: string | null;
+  created_at: string;
+  msgs_total: number;
+  food_total: number;
+  channel: string | null;
+}
+export interface CohortUsersResult {
+  key: string;
+  label: string;
+  total: number;
+  users: CohortUserRow[];
+}
+export interface FunnelStep {
+  key: string;
+  label: string;
+  count: number;
+  from_prev_pct: number | null;
+  drop_pct: number | null;
+  of_total_pct: number;
+  cohort_key: string | null;
+  tracked: boolean;
+}
+export interface FunnelResult {
+  generated_at: string;
+  steps: FunnelStep[];
+  note: string;
+}
+export interface CampaignPreview {
+  cohort_key: string | null;
+  matched: number;
+  eligible_count: number;
+  excluded_count: number;
+  excluded_breakdown: { paused: number; blocked: number; inactive: number };
+  sample: string[];
+  over_cap: boolean;
+  cap: number;
+}
+export interface CampaignSummary {
+  id: number;
+  actor: string;
+  cohort_key: string | null;
+  cohort_label: string | null;
+  message: string;
+  channel: string | null;
+  status: string;
+  audience_size: number;
+  sent_count: number;
+  failed_count: number;
+  skipped_count: number;
+  note: string | null;
+  created_at: string;
+  sent_at: string | null;
+}
+export interface CampaignDetail extends CampaignSummary {
+  recipients: { phone: string; status: string; error: string | null; sent_at: string | null }[];
+}
+export interface CampaignSendResult {
+  campaign_id: number;
+  audience_size: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  status: string;
+}
+
+export interface AnalyticsOverview {
+  generated_at: string;
+  users: { total: number; new_today: number; new_7d: number; new_30d: number };
+  active: { dau: number; wau: number; mau: number; series: { date: string; count: number }[] };
+  rates: {
+    onboarding_completion_pct: number;
+    trial_start_pct: number;
+    trial_conversion_pct: number;
+    paid_conversion_pct: number;
+    churn_pct: number;
+    reminders_enabled_pct: number;
+  };
+  averages: { messages_per_user: number; food_logs_per_user: number };
+  missing_onboarding_fields: { field: string; count: number }[];
+  dropoff_slots: { slot: string; count: number }[];
+  tracking: { website_visits: boolean; dashboard_opens: boolean; voice_usage: boolean };
+}
+
 export interface Conversation {
   id: string;
   user_id: string;
@@ -248,7 +360,11 @@ export interface StripeEvent {
 }
 
 export interface BusinessData {
-  totals: { users: number; paid: number; pro: number; trial_active: number; mrr: number; conversion_pct: number };
+  totals: {
+    users: number; paid: number; pro: number; trial_active: number; mrr: number;
+    mrr_source?: 'stripe' | 'estimated'; mrr_currency?: string | null; active_subscriptions?: number | null;
+    conversion_pct: number;
+  };
   active: { active_7d: number; active_30d: number };
   weekly_signups: { week: string; count: number }[];
   retention: { cohort: string; signed_up: number; retained: number; pct: number }[];
@@ -406,6 +522,35 @@ export interface AutoEvalProgressEvent {
 
 export const api = {
   metrics: () => apiFetch<Metrics>('/admin/metrics'),
+
+  // Admin analytics (cohorts / funnel / business overview)
+  cohorts: () => apiFetch<CohortCountsResult>('/admin/cohorts'),
+  cohortUsers: (key: string, opts?: { limit?: number; offset?: number; search?: string }) => {
+    const p = new URLSearchParams();
+    if (opts?.limit) p.set('limit', String(opts.limit));
+    if (opts?.offset) p.set('offset', String(opts.offset));
+    if (opts?.search) p.set('search', opts.search);
+    const qs = p.toString();
+    return apiFetch<CohortUsersResult>(`/admin/cohorts/${encodeURIComponent(key)}/users${qs ? `?${qs}` : ''}`);
+  },
+  funnel: () => apiFetch<FunnelResult>('/admin/funnel'),
+  analytics: () => apiFetch<AnalyticsOverview>('/admin/analytics'),
+
+  // Admin group messaging (campaigns)
+  campaigns: {
+    preview: (body: { cohort_key?: string; phones?: string[] }) =>
+      apiFetch<CampaignPreview>('/admin/campaigns/preview', { method: 'POST', body: JSON.stringify(body) }),
+    send: (body: { cohort_key?: string; cohort_label?: string; phones?: string[]; message: string; channel?: string; note?: string; confirm: true }) =>
+      apiFetch<CampaignSendResult>('/admin/campaigns/send', { method: 'POST', body: JSON.stringify(body) }),
+    draft: (body: { cohort_key?: string; cohort_label?: string; message: string; channel?: string; note?: string }) =>
+      apiFetch<{ id: number }>('/admin/campaigns/draft', { method: 'POST', body: JSON.stringify(body) }),
+    enhance: (body: { message: string; tone?: 'warm' | 'concise' | 'motivating' | 'friendly'; audience_label?: string }) =>
+      apiFetch<{ enhanced: string }>('/admin/campaigns/enhance', { method: 'POST', body: JSON.stringify(body) }),
+    list: (limit = 50) => apiFetch<{ campaigns: CampaignSummary[] }>(`/admin/campaigns?limit=${limit}`),
+    get: (id: number) => apiFetch<CampaignDetail>(`/admin/campaigns/${id}`),
+    sendDraft: (id: number) =>
+      apiFetch<CampaignSendResult>(`/admin/campaigns/${id}/send`, { method: 'POST', body: JSON.stringify({ confirm: true }) }),
+  },
 
   conversations: () => apiFetch<{ conversations: Conversation[] }>('/admin/conversations'),
 

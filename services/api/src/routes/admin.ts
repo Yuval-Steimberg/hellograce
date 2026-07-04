@@ -16,6 +16,7 @@ import {
   syncSubscriptionToDb,
   reactivateSubscription,
   changePlan,
+  getStripeMrr,
 } from '../services/stripe.service.js';
 import type { Cache } from '../cache/cache.js';
 import type { LLMProvider } from '@grace/shared';
@@ -23,6 +24,24 @@ import type { PromptOptimizer } from '../scheduler/prompt-optimizer.js';
 import type { MessageTemplatesService } from '../services/message-templates.service.js';
 import type { BanditService } from '../services/bandit.service.js';
 import { sendPaidWelcomeOnce } from '../services/paid-welcome.js';
+import {
+  cohortCounts,
+  cohortUsers,
+  funnel as computeFunnel,
+  analyticsOverview,
+  isValidCohort,
+} from '../services/admin-analytics.js';
+import {
+  previewCampaign,
+  sendCampaign,
+  saveDraft as saveCampaignDraft,
+  listCampaigns,
+  getCampaign,
+  enhanceMessage,
+} from '../services/admin-campaigns.js';
+
+/** Max phones accepted in an ad-hoc campaign phone list (payload guard). */
+const MAX_CAMPAIGN_PHONES = 5000;
 
 export interface AdminDeps {
   pool: Pool;
@@ -2670,13 +2689,24 @@ Banned phrases must be exact lowercase substrings from Grace's actual response. 
     const trialTotal = trialConverted + parseInt(u.trial_active, 10) +
       (totalPaid - trialConverted > 0 ? totalPaid - trialConverted : 0);
 
+    // MRR: prefer the LIVE figure summed from active Stripe subscriptions;
+    // fall back to the count × configured-price estimate when Stripe is off or
+    // the call fails. mrr_source tells the UI which one it's showing.
+    const estimatedMrr = parseFloat(
+      ((parseInt(u.paid, 10) * STANDARD_PRICE) + (parseInt(u.pro, 10) * PRO_PRICE)).toFixed(2),
+    );
+    const liveMrr = await getStripeMrr().catch(() => null);
+
     return {
       totals: {
         users: parseInt(u.total, 10),
         paid: parseInt(u.paid, 10),
         pro: parseInt(u.pro, 10),
         trial_active: parseInt(u.trial_active, 10),
-        mrr: parseFloat(((parseInt(u.paid, 10) * STANDARD_PRICE) + (parseInt(u.pro, 10) * PRO_PRICE)).toFixed(2)),
+        mrr: liveMrr ? liveMrr.mrr : estimatedMrr,
+        mrr_source: liveMrr ? 'stripe' : 'estimated',
+        mrr_currency: liveMrr?.currency ?? null,
+        active_subscriptions: liveMrr?.active_subscriptions ?? null,
         conversion_pct: trialTotal > 0 ? Math.round((trialConverted / trialTotal) * 100) : 0,
       },
       active: {
@@ -2693,6 +2723,201 @@ Banned phrases must be exact lowercase substrings from Grace's actual response. 
           : 0,
       })),
     };
+  });
+
+  // ─── Cohorts / funnel / analytics (read-only) ────────────────────────────────
+  //
+  // New in the admin-dashboard build. All handlers are pure reads over
+  // deps.pool via services/admin-analytics.ts — no writes, no effect on the
+  // user-facing pipeline. Cohort keys are whitelisted (isValidCohort) so the
+  // :key path segment can never reach SQL as free text.
+
+  app.get('/admin/cohorts', async () => {
+    return cohortCounts(deps.pool);
+  });
+
+  app.get('/admin/cohorts/:key/users', async (req) => {
+    const { key } = req.params as { key: string };
+    if (!isValidCohort(key)) throw new ValidationError(`Unknown cohort: ${key}`);
+    const q = req.query as Record<string, string>;
+    return cohortUsers(deps.pool, key, {
+      limit: q.limit ? Number(q.limit) : 100,
+      offset: q.offset ? Number(q.offset) : 0,
+      search: q.search,
+    });
+  });
+
+  app.get('/admin/funnel', async () => {
+    return computeFunnel(deps.pool);
+  });
+
+  app.get('/admin/analytics', async () => {
+    return analyticsOverview(deps.pool);
+  });
+
+  // ─── Campaigns / group messaging ─────────────────────────────────────────────
+  //
+  // Send one admin-authored message to a cohort (or explicit phone list). Every
+  // send goes through deps.sender (same transport as the per-user send). Opt-out
+  // (paused), blocked, and inactive users are excluded; sends are de-duped;
+  // sending requires confirm=true; audience is capped; the message is content-
+  // guarded against medical/dosing advice; and everything is logged + audited.
+
+  const CampaignAudienceSchema = z.object({
+    cohort_key: z.string().max(60).optional(),
+    phones: z.array(z.string().min(3).max(30)).max(MAX_CAMPAIGN_PHONES).optional(),
+  });
+
+  app.post('/admin/campaigns/preview', async (req) => {
+    const parsed = CampaignAudienceSchema.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError(parsed.error.message);
+    if (parsed.data.cohort_key && !isValidCohort(parsed.data.cohort_key)) {
+      throw new ValidationError(`Unknown cohort: ${parsed.data.cohort_key}`);
+    }
+    return previewCampaign(deps.pool, { cohortKey: parsed.data.cohort_key, phones: parsed.data.phones });
+  });
+
+  const CampaignSendSchema = z.object({
+    cohort_key: z.string().max(60).optional(),
+    cohort_label: z.string().max(120).optional(),
+    phones: z.array(z.string().min(3).max(30)).max(MAX_CAMPAIGN_PHONES).optional(),
+    message: z.string().trim().min(1).max(1500),
+    channel: z.enum(['whatsapp', 'sms', 'imessage']).optional(),
+    note: z.string().max(500).optional(),
+    confirm: z.literal(true),
+  });
+
+  app.post('/admin/campaigns/send', async (req) => {
+    if (!deps.sender) throw new ValidationError('No message sender configured.');
+    const parsed = CampaignSendSchema.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError(parsed.error.message);
+    const d = parsed.data;
+    if (d.cohort_key && !isValidCohort(d.cohort_key)) throw new ValidationError(`Unknown cohort: ${d.cohort_key}`);
+    let result;
+    try {
+      result = await sendCampaign(
+        { pool: deps.pool, sender: deps.sender, memory: deps.memory },
+        {
+          actor: actorOf(req),
+          cohortKey: d.cohort_key,
+          cohortLabel: d.cohort_label ?? d.cohort_key ?? null,
+          phones: d.phones,
+          message: d.message,
+          channel: d.channel ?? null,
+          note: d.note ?? null,
+          confirm: true,
+        },
+      );
+    } catch (err) {
+      throw new ValidationError(err instanceof Error ? err.message : 'Campaign send failed');
+    }
+    void auditLogFull(deps.pool, {
+      action: 'admin.campaign_send',
+      ip: req.ip,
+      actor: actorOf(req),
+      details: {
+        campaign_id: result.campaign_id,
+        cohort_key: d.cohort_key ?? null,
+        audience_size: result.audience_size,
+        sent: result.sent,
+        failed: result.failed,
+        skipped: result.skipped,
+      },
+    });
+    return result;
+  });
+
+  const CampaignDraftSchema = z.object({
+    cohort_key: z.string().max(60).optional(),
+    cohort_label: z.string().max(120).optional(),
+    message: z.string().trim().min(1).max(1500),
+    channel: z.enum(['whatsapp', 'sms', 'imessage']).optional(),
+    note: z.string().max(500).optional(),
+  });
+
+  const CampaignEnhanceSchema = z.object({
+    message: z.string().trim().min(1).max(1500),
+    tone: z.enum(['warm', 'concise', 'motivating', 'friendly']).optional(),
+    audience_label: z.string().max(120).optional(),
+  });
+
+  app.post('/admin/campaigns/enhance', async (req) => {
+    if (!deps.llm) throw new ValidationError('AI is not configured (no LLM provider).');
+    const parsed = CampaignEnhanceSchema.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError(parsed.error.message);
+    try {
+      return await enhanceMessage(deps.llm, parsed.data.message, {
+        tone: parsed.data.tone,
+        audienceLabel: parsed.data.audience_label,
+      });
+    } catch (err) {
+      throw new ValidationError(err instanceof Error ? err.message : 'Enhance failed');
+    }
+  });
+
+  app.post('/admin/campaigns/draft', async (req) => {
+    const parsed = CampaignDraftSchema.safeParse(req.body);
+    if (!parsed.success) throw new ValidationError(parsed.error.message);
+    try {
+      return await saveCampaignDraft(deps.pool, {
+        actor: actorOf(req),
+        cohortKey: parsed.data.cohort_key ?? null,
+        cohortLabel: parsed.data.cohort_label ?? null,
+        message: parsed.data.message,
+        channel: parsed.data.channel ?? null,
+        note: parsed.data.note ?? null,
+      });
+    } catch (err) {
+      throw new ValidationError(err instanceof Error ? err.message : 'Draft save failed');
+    }
+  });
+
+  app.get('/admin/campaigns', async (req) => {
+    const limit = Number((req.query as Record<string, string>).limit ?? 50);
+    return { campaigns: await listCampaigns(deps.pool, limit) };
+  });
+
+  app.get('/admin/campaigns/:id', async (req) => {
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isFinite(id)) throw new ValidationError('Invalid campaign id');
+    const c = await getCampaign(deps.pool, id);
+    if (!c) throw new ValidationError('Campaign not found');
+    return c;
+  });
+
+  app.post('/admin/campaigns/:id/send', async (req) => {
+    if (!deps.sender) throw new ValidationError('No message sender configured.');
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isFinite(id)) throw new ValidationError('Invalid campaign id');
+    const body = (req.body ?? {}) as { confirm?: boolean };
+    if (body.confirm !== true) throw new ValidationError('Confirmation required (confirm=true).');
+    const campaign = await getCampaign(deps.pool, id);
+    if (!campaign) throw new ValidationError('Campaign not found');
+    if (campaign.status !== 'draft') throw new ValidationError(`Campaign is already ${campaign.status}.`);
+    let result;
+    try {
+      result = await sendCampaign(
+        { pool: deps.pool, sender: deps.sender, memory: deps.memory },
+        {
+          actor: actorOf(req),
+          cohortKey: campaign.cohort_key ?? undefined,
+          cohortLabel: campaign.cohort_label,
+          message: campaign.message,
+          channel: campaign.channel,
+          confirm: true,
+          campaignId: id,
+        },
+      );
+    } catch (err) {
+      throw new ValidationError(err instanceof Error ? err.message : 'Campaign send failed');
+    }
+    void auditLogFull(deps.pool, {
+      action: 'admin.campaign_send',
+      ip: req.ip,
+      actor: actorOf(req),
+      details: { campaign_id: id, audience_size: result.audience_size, sent: result.sent, failed: result.failed, skipped: result.skipped },
+    });
+    return result;
   });
 
   // ─── Scheduler status ────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type AdminUser } from '../../lib/api';
+import { api, type AdminUser, type CohortUserRow } from '../../lib/api';
 import { Button } from '../../components/ui/button';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Input } from '../../components/ui/input';
@@ -55,20 +55,62 @@ const row = {
   show: { opacity: 1, x: 0, transition: { duration: 0.2, ease: [0.4, 0, 0.2, 1] } },
 };
 
+/** Map a cohort user row into the AdminUser shape the table renders. Fields the
+ *  cohort query doesn't return (goals, injection_count, rlhf) render as empty. */
+function cohortRowToAdminUser(r: CohortUserRow): AdminUser {
+  return {
+    phone: r.phone,
+    first_name: r.first_name,
+    medication: r.medication,
+    goals: [],
+    timezone: '',
+    active: true,
+    paused: r.paused,
+    blocked: r.blocked,
+    is_paid: r.is_paid,
+    is_pro: r.is_pro,
+    rlhf_enabled: false,
+    injection_day: r.injection_day,
+    injection_count: 0,
+    last_morning_sent_at: null,
+    last_reply_at: r.last_reply_at,
+    created_at: r.created_at,
+  };
+}
+
 export default function UsersPage() {
   const qc = useQueryClient();
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
+  const [cohort, setCohort] = useState(''); // '' = all users (default list)
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
-  const { data, isLoading } = useQuery({
+  // Cohort catalogue for the filter dropdown.
+  const { data: cohortsData } = useQuery({ queryKey: ['cohorts-catalog'], queryFn: () => api.cohorts() });
+
+  // Default (unfiltered) list — unchanged behaviour, only enabled when no cohort filter.
+  const { data, isLoading: listLoading } = useQuery({
     queryKey: ['admin-users', page],
     queryFn: () => api.users(PAGE_SIZE, page * PAGE_SIZE),
     placeholderData: (prev) => prev,
+    enabled: cohort === '',
   });
 
-  const filtered = (data?.users ?? []).filter((u) => {
+  // Cohort-filtered list — only fetched when a cohort is selected.
+  const { data: cohortData, isLoading: cohortLoading } = useQuery({
+    queryKey: ['admin-users-cohort', cohort, search],
+    queryFn: () => api.cohortUsers(cohort, { limit: 500, search: search || undefined }),
+    enabled: cohort !== '',
+  });
+
+  const isLoading = cohort === '' ? listLoading : cohortLoading;
+
+  const sourceUsers: AdminUser[] = cohort === ''
+    ? (data?.users ?? [])
+    : (cohortData?.users ?? []).map(cohortRowToAdminUser);
+
+  const filtered = sourceUsers.filter((u) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -78,7 +120,8 @@ export default function UsersPage() {
     );
   });
 
-  const totalPages = Math.ceil((data?.total ?? 0) / PAGE_SIZE);
+  const totalCount = cohort === '' ? (data?.total ?? 0) : (cohortData?.total ?? 0);
+  const totalPages = cohort === '' ? Math.ceil((data?.total ?? 0) / PAGE_SIZE) : 1;
 
   return (
     <>
@@ -90,10 +133,25 @@ export default function UsersPage() {
               Users
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {data?.total !== undefined ? `${data.total} total` : '—'}
+              {cohort === ''
+                ? (data?.total !== undefined ? `${data.total} total` : '—')
+                : `${totalCount} in cohort`}
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <select
+              value={cohort}
+              onChange={(e) => { setCohort(e.target.value); setPage(0); }}
+              className="h-9 rounded-lg bg-secondary/50 border border-border text-sm px-2 text-foreground max-w-[190px]"
+              title="Filter by cohort"
+            >
+              <option value="">All users</option>
+              {(cohortsData?.cohorts ?? [])
+                .filter((c) => c.key !== 'all_users')
+                .map((c) => (
+                  <option key={c.key} value={c.key}>{c.label} ({c.count})</option>
+                ))}
+            </select>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <Input

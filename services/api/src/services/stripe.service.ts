@@ -20,6 +20,71 @@ export function isStripeEnabled(): boolean {
   return stripe !== null;
 }
 
+/** Normalize a recurring price to a MONTHLY amount (in major currency units). */
+function toMonthly(unitAmount: number, interval: string, intervalCount: number): number {
+  const perPeriod = unitAmount / 100; // cents → dollars
+  const count = intervalCount || 1;
+  switch (interval) {
+    case 'year': return perPeriod / (12 * count);
+    case 'week': return (perPeriod * 4.3333) / count;
+    case 'day': return (perPeriod * 30) / count;
+    case 'month':
+    default: return perPeriod / count;
+  }
+}
+
+export interface StripeMrr {
+  mrr: number;
+  active_subscriptions: number;
+  currency: string | null;
+}
+
+let mrrCache: { at: number; value: StripeMrr } | null = null;
+const MRR_TTL_MS = 5 * 60_000;
+
+/**
+ * Live MRR straight from Stripe: sum the normalized monthly amount of every
+ * revenue-bearing subscription (active / trialing / past_due). Cached 5 min so
+ * the 60s-refetch business page doesn't hammer the Stripe API. Returns null when
+ * Stripe isn't configured or the call fails, so the caller can fall back to the
+ * count × configured-price estimate.
+ */
+export async function getStripeMrr(): Promise<StripeMrr | null> {
+  if (!stripe) return null;
+  const now = Date.now();
+  if (mrrCache && now - mrrCache.at < MRR_TTL_MS) return mrrCache.value;
+  try {
+    let mrr = 0;
+    let count = 0;
+    let currency: string | null = null;
+    const revenueStatuses = new Set(['active', 'trialing', 'past_due']);
+    // Paginate through all subscriptions via autoPagingEach, with a hard cap.
+    let scanned = 0;
+    await stripe.subscriptions
+      .list({ status: 'all', limit: 100 })
+      .autoPagingEach((sub) => {
+        scanned += 1;
+        if (!revenueStatuses.has(sub.status)) return;
+        for (const item of sub.items.data) {
+          const price = item.price;
+          if (!price?.unit_amount || !price.recurring) continue;
+          currency = currency ?? price.currency;
+          mrr += toMonthly(price.unit_amount, price.recurring.interval, price.recurring.interval_count) * (item.quantity ?? 1);
+        }
+        count += 1;
+        // Safety cap so a runaway account never scans unbounded pages.
+        if (scanned >= 5000) return false;
+        return;
+      });
+    const value: StripeMrr = { mrr: Math.round(mrr * 100) / 100, active_subscriptions: count, currency };
+    mrrCache = { at: now, value };
+    return value;
+  } catch (err) {
+    console.warn('[stripe.service] getStripeMrr failed', (err as Error).message);
+    return null;
+  }
+}
+
 /** Verify + parse a Stripe webhook payload. Throws if the signature is bad.
  *  Exposed so the v2 webhook route can construct events without holding its
  *  own Stripe instance. */

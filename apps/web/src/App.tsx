@@ -31,6 +31,9 @@ const FeedbackPage = lazy(() => import("./pages/admin/FeedbackPage.tsx"));
 const PromptsPage = lazy(() => import("./pages/admin/PromptsPage.tsx"));
 const ToolsPage = lazy(() => import("./pages/admin/ToolsPage.tsx"));
 const UsersPage = lazy(() => import("./pages/admin/UsersPage.tsx"));
+const CohortsPage = lazy(() => import("./pages/admin/CohortsPage.tsx"));
+const GrowthPage = lazy(() => import("./pages/admin/GrowthPage.tsx"));
+const CampaignsPage = lazy(() => import("./pages/admin/CampaignsPage.tsx"));
 const BusinessPage = lazy(() => import("./pages/admin/BusinessPage.tsx"));
 const SchedulerPage = lazy(() => import("./pages/admin/SchedulerPage.tsx"));
 const AIQualityPage = lazy(() => import("./pages/admin/AIQualityPage.tsx"));
@@ -79,6 +82,9 @@ const App = () => (
                 <Route path="prompts" element={<PromptsPage />} />
                 <Route path="tools" element={<ToolsPage />} />
                 <Route path="users" element={<UsersPage />} />
+                <Route path="cohorts" element={<CohortsPage />} />
+                <Route path="growth" element={<GrowthPage />} />
+                <Route path="campaigns" element={<CampaignsPage />} />
                 <Route path="business" element={<BusinessPage />} />
                 <Route path="scheduler" element={<SchedulerPage />} />
                 <Route path="ai-quality" element={<AIQualityPage />} />

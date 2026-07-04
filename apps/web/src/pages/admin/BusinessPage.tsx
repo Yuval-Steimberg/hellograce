@@ -96,7 +96,13 @@ export default function BusinessPage() {
           <StatCard label="Total Users" value={totals.users.toLocaleString()} />
         </motion.div>
         <motion.div variants={fadeUp}>
-          <StatCard label="MRR" value={`$${totals.mrr.toFixed(2)}`} sub="Monthly Recurring Revenue" />
+          <StatCard
+            label="MRR"
+            value={`$${totals.mrr.toFixed(2)}`}
+            sub={totals.mrr_source === 'stripe'
+              ? `Live from Stripe · ${totals.active_subscriptions ?? 0} active subs`
+              : 'Estimated (Stripe unavailable)'}
+          />
         </motion.div>
         <motion.div variants={fadeUp}>
           <StatCard label="Paid + Pro" value={totals.paid + totals.pro} sub={`${totals.paid} standard · ${totals.pro} pro`} />

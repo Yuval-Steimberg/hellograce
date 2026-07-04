@@ -3090,9 +3090,8 @@ CRITICAL RULES:
       pending.map((p) => ({ item: p.item })),
     ).catch(() => ({ ...EMPTY_EXTRACTION }));
 
-    // Query / advice / planning / non-food → let the grounded reply handle it
-    // (it reads the authoritative snapshot for "what did I eat / my total").
-    if (extraction.intent === 'none' || extraction.intent === 'query') return null;
+    // A pure diary/total QUERY → let the grounded reply read the snapshot.
+    if (extraction.intent === 'query') return null;
 
     if (extraction.intent === 'delete' && extraction.edit_ref) {
       try {
@@ -3101,6 +3100,23 @@ CRITICAL RULES:
       } catch { /* best-effort */ }
       await resolvePendingFood(this.deps.redis, input.userId, extraction.edit_ref).catch(() => {});
       return { logged: [], pending: [], removed: extraction.edit_ref };
+    }
+
+    // DETERMINISTIC BACKSTOP: flash-lite routinely mislabels a plainly-reported
+    // meal as planning (intent none). When it does, parse the report ourselves so
+    // a stated meal ALWAYS logs the portioned items and asks for the rest — never
+    // silently drops to a "sounds like a plan" chat reply. A genuine question /
+    // planning / non-food still returns null here.
+    let confirmed: Array<{ item: string; protein_g?: number | null; calories?: number | null }>;
+    let newPending: Array<{ item: string; clarify_question: string | null }>;
+    if (extraction.intent === 'none') {
+      const reported = parseReportedMeal(text);
+      if (!reported) return null;
+      confirmed = reported.confirmed.map((item) => ({ item }));
+      newPending = reported.pending.map((item) => ({ item, clarify_question: null }));
+    } else {
+      confirmed = extraction.items.filter((i) => i.status === 'confirmed');
+      newPending = extraction.items.filter((i) => i.status === 'pending_portion');
     }
 
     const logFood = makeLogFoodTool({
@@ -3113,8 +3129,6 @@ CRITICAL RULES:
       users: this.deps.users,
     });
 
-    const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
-    const newPending = extraction.items.filter((i) => i.status === 'pending_portion');
     const logged: string[] = [];
     for (const it of confirmed) {
       const args: Record<string, unknown> = { food: it.item };
@@ -6476,6 +6490,52 @@ export function splitMultiMealText(text: string): string[] {
     return true;
   });
   return segments.length >= 2 ? segments : [];
+}
+
+const MEAL_PLANNING_RE = /\b(i'?m going to|going to have|gonna|thinking of|thinking about|planning to|plan to|might have|might get|maybe|considering|should i|what should i|what about|i'?ll have|i will have|i'?ll make|i'?ll go with|i'?ll grab|what do you|any (idea|ideas|suggestion)|recommend|suggest)\b/i;
+// A concrete portion: a digit, a number word, a serving unit, or an inherently
+// single-serving item. "2 eggs" / "a cup of rice" / "a banana" → confirmed;
+// "chicken and rice" / "some yogurt" → no match → pending (ask the amount).
+const MEAL_PORTION_RE = /(\d|\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten|half|dozen|couple|few|cup|cups|oz|ounce|ounces|slice|slices|bowl|bowls|piece|pieces|scoop|scoops|can|cans|glass|handful|tbsp|tsp|tablespoon|teaspoon|gram|grams|serving|servings|plate|plates|palm|banana|apple|orange|pear|peach)\b)/i;
+const MEAL_LABEL_STRIP_RE = /\b(for|at|this|in the)?\s*(breakfast|lunch|dinner|snack|brunch|supper|morning|afternoon|evening|tonight|today)\b/gi;
+// A hedged amount ("some", "a bit of", "a little") always means pending, even
+// when a stray number word would otherwise read as a portion.
+const MEAL_HEDGE_RE = /\b(some|a bit of|a little|little bit of|a few|a handful of|a couple of|a couple|a tiny bit of|small amount of)\b/i;
+
+function stripMealLabels(s: string): string {
+  return s
+    .replace(MEAL_LABEL_STRIP_RE, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s,;:.\-]+|[\s,;:.\-]+$/g, '')
+    .trim();
+}
+
+/**
+ * Deterministic backstop for the Nudge food model: parse a plainly-REPORTED
+ * meal into portioned (confirmed) vs amount-missing (pending) foods WITHOUT an
+ * LLM, so a stated meal always logs/asks even when the flash-lite extractor
+ * misfires. gemini-2.5-flash-lite frequently mislabels "2 eggs for breakfast.
+ * For lunch chicken and rice" (and even "I ate …") as planning → intent none →
+ * nothing logged, no question, and the turn falls back to poisoned history.
+ * Returns null for a question, explicit planning, preference, or when no real
+ * food is named (those are not a report to log).
+ */
+export function parseReportedMeal(text: string): { confirmed: string[]; pending: string[] } | null {
+  const t = (text ?? '').trim();
+  if (!t || t.includes('?')) return null;
+  if (MEAL_PLANNING_RE.test(t)) return null;
+  if (detectMealConsumption(t) === 'preference') return null;
+  const meals = splitMultiMealText(t);
+  const units = (meals.length >= 2 ? meals : [t])
+    .map(stripMealLabels)
+    .filter((u) => u.length > 0 && namesSpecificFood(u));
+  if (units.length === 0) return null;
+  const confirmed: string[] = [];
+  const pending: string[] = [];
+  for (const u of units) {
+    (MEAL_PORTION_RE.test(u) && !MEAL_HEDGE_RE.test(u) ? confirmed : pending).push(u);
+  }
+  return { confirmed, pending };
 }
 
 // Render durable facts as a compact, grouped, scannable block.

@@ -1,6 +1,36 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone, looksStructured } from './ai.service.js';
+import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone, looksStructured, parseReportedMeal } from './ai.service.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+
+describe('parseReportedMeal — deterministic Nudge food backstop', () => {
+  it('the production failure: logs portioned foods, asks for the rest', () => {
+    expect(parseReportedMeal('2 eggs for breakfast. For lunch chicken and rice')).toEqual({
+      confirmed: ['2 eggs'],
+      pending: ['chicken and rice'],
+    });
+    // An explicit "I ate …" report must NOT return null (it was being treated
+    // as a plan in production) — it logs/asks something.
+    const r = parseReportedMeal('I ate 2 eggs for breakfast and chicken and rice for lunch');
+    expect(r).not.toBeNull();
+    expect((r!.confirmed.length + r!.pending.length)).toBeGreaterThan(0);
+  });
+  it('a hedged amount is pending (never auto-confirmed)', () => {
+    const r = parseReportedMeal('had some yogurt');
+    expect(r).not.toBeNull();
+    expect(r!.confirmed).toEqual([]);
+    expect(r!.pending.join(' ')).toContain('yogurt');
+  });
+  it('a single portioned item is confirmed', () => {
+    expect(parseReportedMeal('a banana')).toEqual({ confirmed: ['a banana'], pending: [] });
+  });
+  it('returns null for a question / planning / preference / non-food', () => {
+    expect(parseReportedMeal('what should I eat for lunch?')).toBeNull();
+    expect(parseReportedMeal('thinking of having chicken later')).toBeNull();
+    expect(parseReportedMeal('salmon sounds good')).toBeNull();
+    expect(parseReportedMeal('how are you today')).toBeNull();
+    expect(parseReportedMeal('')).toBeNull();
+  });
+});
 
 describe('looksStructured — general reply-shape guard (any words/variation)', () => {
   const STRUCTURED = [

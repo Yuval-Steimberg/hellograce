@@ -1,9 +1,28 @@
 import { describe, it, expect, vi } from 'vitest';
-import { MessageGenerator, isNearDuplicate, deriveMorningBridge, anticipationDirective, __testing } from './message-generator.js';
+import { MessageGenerator, isNearDuplicate, deriveMorningBridge, anticipationDirective, injectionNumberFromStart, __testing } from './message-generator.js';
 import type { GraceUser } from '../user/user.service.js';
 import type { LLMProvider } from '@grace/shared';
 
 const { sanitizeProactiveOutput } = __testing;
+
+describe('injectionNumberFromStart — grounded injection number, never invented', () => {
+  const now = new Date('2026-07-05T12:00:00Z');
+  it('weekly: weeks since start + 1', () => {
+    expect(injectionNumberFromStart('2026-07-01', 'weekly', now)).toBe(1); // <1 week → #1
+    expect(injectionNumberFromStart('2026-06-14', 'weekly', now)).toBe(4); // 3 weeks → #4
+  });
+  it('biweekly: halved', () => {
+    expect(injectionNumberFromStart('2026-05-10', 'biweekly', now)).toBe(5); // ~8 weeks / 2 + 1
+  });
+  it('returns null without a usable start date', () => {
+    expect(injectionNumberFromStart(null, 'weekly', now)).toBeNull();
+    expect(injectionNumberFromStart('not-a-date', 'weekly', now)).toBeNull();
+    expect(injectionNumberFromStart('2026-08-01', 'weekly', now)).toBeNull(); // future start
+  });
+  it('returns null for an implausible number (mis-entered start date)', () => {
+    expect(injectionNumberFromStart('2010-01-01', 'weekly', now)).toBeNull(); // >5 years
+  });
+});
 
 function makeUser(overrides: Partial<GraceUser> = {}): GraceUser {
   return {

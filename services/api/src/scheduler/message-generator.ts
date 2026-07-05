@@ -143,6 +143,32 @@ export interface GenerateOpts {
    *  reminder so Grace can gently pre-empt a recurring side effect + what helped
    *  before. Empty/absent when there's no confident pattern. */
   symptomHeadsUp?: string;
+  /** GROUNDED injection number for the injection_morning reminder (the "#N" in a
+   *  Nudge-style message), derived from glp1_start_date + cadence — never invented.
+   *  Absent when we can't compute it (no start date). */
+  injectionNumber?: number;
+}
+
+/**
+ * The grounded injection number ("this is your #N shot") derived from the GLP-1
+ * start date + cadence — accurate for existing users too (unlike injection_count,
+ * which was never maintained). Weekly → weeks since start + 1; biweekly → half
+ * that. Returns null when there's no usable start date or the result is
+ * implausible (a mis-entered start date), so we never show a wrong number.
+ */
+export function injectionNumberFromStart(
+  startDate: Date | string | null | undefined,
+  frequency: string | null | undefined,
+  now: Date = new Date(),
+): number | null {
+  if (!startDate) return null;
+  const start = new Date(startDate).getTime();
+  if (Number.isNaN(start)) return null;
+  const weeks = Math.floor((now.getTime() - start) / (7 * 24 * 3_600_000));
+  if (weeks < 0) return null;
+  const interval = (frequency ?? '').toLowerCase() === 'biweekly' ? 2 : 1;
+  const n = Math.floor(weeks / interval) + 1;
+  return n >= 1 && n <= 260 ? n : null; // cap ~5 years — beyond that a bad start date
 }
 
 // ─── Morning "yesterday bridge" ──────────────────────────────────────────────
@@ -333,11 +359,13 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
   injection_morning: (u) => {
     const med = u.medication ?? 'your medication';
     const seed = dailySeed(u.phone);
+    const n = injectionNumberFromStart(u.glp1_start_date, u.medication_frequency);
+    const num = n ? ` Injection #${n}.` : '';
     return pick([
-      `${med} day 💉 Rotate your spot, take your time. Reply "done" when you're set — no rush.`,
-      `Injection day 💉 No hurry. Rotate sites, breathe through it. Just reply "done" when it's done.`,
-      `${med} day 💉 You've got this. Rotate your site, go slow. "Done" when you're ready.`,
-      `Injection day. Take your time with it — rotate the spot, breathe. Reply "done" after 💉`,
+      `${med} day 💉${num} Rotate to a different spot than last time and take your time. Keep ginger tea, plain crackers, and electrolytes handy just in case. Reply "done" when you're set.`,
+      `Injection day 💉${num} Rotate your site, breathe through it, and keep ginger tea + crackers nearby just in case. Just reply "done" when it's done.`,
+      `${med} day 💉${num} Different spot than last time, go slow. Electrolytes and ginger tea ready if you need them. "Done" when you're ready.`,
+      `Injection day.${num} Take your time — rotate the spot, breathe. Ginger tea, plain crackers, electrolytes on hand just in case. Reply "done" after 💉`,
     ], seed);
   },
   injection_followup: (u) => {
@@ -754,7 +782,7 @@ export class MessageGenerator {
         }
         return `${base}Context: evening wind-down — a daily check-in that wraps the day, NOT a repeat of this morning's message. ${weightCtx} ${moodCtx}${dataBlock} ${dislikes} If suggesting evening food, filter by dislikes.${hook}`;
       })(),
-      injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}. Tell them to reply "done" when injected. No questions about feelings — that comes later.${opts?.symptomHeadsUp ?? ''}`,
+      injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}.${opts?.injectionNumber ? ` This is injection #${opts.injectionNumber} — you MAY mention the number.` : ' Do NOT mention an injection number (you don\'t know it).'} Remind them to rotate to a DIFFERENT injection site than last time, and to keep a few comfort items handy just in case (ginger tea, plain crackers, electrolytes). Tell them to reply "done" when injected. Warm and brief, 1-3 sentences. No questions about feelings — that comes later.${opts?.symptomHeadsUp ?? ''}`,
       injection_followup: `${base}Context: ~3 hours after their shot. Just check in softly — no interrogation. One brief opening for them to share if they want.`,
       injection_dayafter: `${base}Context: morning after injection. Acknowledge that day-after can be tough, be gentle. No checklist questions.`,
       side_effect_nausea: `${base}Context: they reported nausea earlier. Soft follow-up only — no question stack. Offer one practical tip in passing.`,

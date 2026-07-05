@@ -13,7 +13,19 @@ import {
   pickInjectionDoneAck,
   buildUpgradePitch,
   GRACE_MONTHLY_PRICE,
+  isInjectionDoneReply,
 } from './webhook.js';
+
+describe('isInjectionDoneReply — broadened injection-done confirmation', () => {
+  const yes = ['done', 'Done!', 'done ✅', 'DONE 💉', 'all done', 'did it', 'injected', 'injected it', 'just injected', 'took it', 'took my shot', 'shot done', 'all set', 'finished', 'completed'];
+  for (const t of yes) {
+    it(`advances on "${t}"`, () => expect(isInjectionDoneReply(t)).toBe(true));
+  }
+  const no = ['not yet', 'in a bit', "I'm done with this whole thing and feeling really frustrated today", 'what should I eat', 'done any protein ideas?', ''];
+  for (const t of no) {
+    it(`does NOT advance on "${t}"`, () => expect(isInjectionDoneReply(t)).toBe(false));
+  }
+});
 
 describe('buildUpgradePitch — Tomo-style in-chat payment pitch', () => {
   it('states the price, the 3-day trial (card + reminder), and the checkout link', () => {

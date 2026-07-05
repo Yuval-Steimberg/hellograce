@@ -5,6 +5,7 @@ import type { UserService, GraceUser } from '../user/user.service.js';
 import type { MessageSender } from '../twilio/sender.js';
 import type { MemoryService } from '../memory/memory.service.js';
 import type { MessageGenerator, GenerateOpts } from './message-generator.js';
+import { injectionNumberFromStart } from './message-generator.js';
 import type { PromptOptimizer } from './prompt-optimizer.js';
 import type { AnomalyDetectorService } from './anomaly-detector.service.js';
 import { buildOnboardingNudge } from '../onboarding/onboarding-flow.js';
@@ -709,11 +710,15 @@ export class Scheduler {
     // a side effect around their shot, weave a gentle pre-emptive heads-up + what
     // helped before into the injection message. Best-effort; never blocks.
     if (type === 'injection_morning') {
+      // Grounded injection number (never invented) from the GLP-1 start date +
+      // cadence, so the message can read "Injection #N" like a Nudge reminder.
+      const injectionNumber = injectionNumberFromStart(user.glp1_start_date, user.medication_frequency, new Date()) ?? undefined;
+      const base: GenerateOpts = { ...(opts ?? {}), ...(injectionNumber ? { injectionNumber } : {}) };
       try {
         const headsUp = await this.buildSymptomHeadsUp(user);
-        if (headsUp) return { ...(opts ?? {}), symptomHeadsUp: headsUp };
+        if (headsUp) return { ...base, symptomHeadsUp: headsUp };
       } catch { /* best-effort */ }
-      return opts;
+      return base;
     }
 
     const GENERATIVE_TYPES = new Set(['morning', 'midday', 'evening', 'bonus', 'injection_dayafter', 'journey', 'winback']);

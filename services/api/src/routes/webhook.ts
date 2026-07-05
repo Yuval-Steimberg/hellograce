@@ -232,10 +232,11 @@ export async function processInboundMessage(
           // pool and the user got a generic "Got it 👍" for completing their
           // injection (state was correct, reply wasn't — fixed 2026-06-10).
           if (user && user.injection_flow_stage === 'morning_sent') {
-            const trimmed = normalized.text.trim().toLowerCase();
-            if (trimmed === 'done' || trimmed === 'done!' || trimmed === 'injected') {
+            if (isInjectionDoneReply(normalized.text)) {
               await deps.users.setInjectionStage(user.phone, 'done_confirmed', {
                 injection_done_at: new Date(),
+                // Keep a real running count of completed shots (was never maintained).
+                injection_count: (user.injection_count ?? 0) + 1,
               }).catch(() => null);
               await deps.sender.send({
                 to: normalized.userId,
@@ -777,6 +778,22 @@ export function isAccessAllowed(user: { is_paid: boolean; is_pro: boolean; trial
  * with a null trial that never expires). Production bug surfaced 2026-06-13:
  * an admin-deleted user kept chatting normally and reappeared as Active.
  */
+/**
+ * A short confirmation that the user just took their shot — advances the
+ * injection flow (morning_sent → done_confirmed). Broad but SAFE because it's
+ * only consulted while awaiting an injection confirmation (stage === 'morning_sent'),
+ * so a loose "done"/"did it"/"all set" match can't hijack normal chat. Fixes the
+ * exact-match gate ("done ✅", "all done", "injected it" used to stall the flow
+ * until the 24h safety reset).
+ */
+export function isInjectionDoneReply(text: string): boolean {
+  let t = (text ?? '').trim().toLowerCase();
+  if (!t || t.length > 40) return false;
+  // Strip trailing punctuation / celebratory emoji so "done ✅" / "done!!" match.
+  t = t.replace(/[\s.!?,✅👍🎉💉🙌🤍🎊✔️]+$/u, '').trim();
+  return /^(done|all done|did it|injected(\s+it)?|just injected|took (it|my shot|the shot)|shot (done|is done|taken)|finished|all set|complete[d]?)$/.test(t);
+}
+
 export function needsRegistration(user: {
   is_paid: boolean; is_pro: boolean; trial_start: Date | null;
   medication?: string | null; goals?: string[] | null;

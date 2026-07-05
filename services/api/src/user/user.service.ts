@@ -611,6 +611,19 @@ export class UserService {
     await this.ensureNutritionTargets(userId).catch(() => undefined);
   }
 
+  /** Sync users.current_weight from a chat weight log (the fast path + log_weight
+   *  tool only write weight_logs), invalidate the cache so the next turn sees it,
+   *  and fill a personalized target if we didn't have one. Best-effort — this is
+   *  how a weight told in chat is REMEMBERED in the profile, not just the log. */
+  async syncCurrentWeight(userId: string, weightLbs: number): Promise<void> {
+    if (!(weightLbs > 0)) return;
+    await this.pool
+      .query(`UPDATE users SET current_weight = $2 WHERE phone = $1`, [userId, weightLbs])
+      .catch(() => undefined);
+    this.invalidate(userId);
+    await this.ensureNutritionTargets(userId).catch(() => undefined);
+  }
+
   /**
    * Fill-if-missing personalized protein/calorie targets from the user's current
    * profile (weight/goal/body metrics). Safe to call after any weight or profile

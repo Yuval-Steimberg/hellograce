@@ -16,6 +16,11 @@ export function makeLogWeightTool(deps: { pool: Pool; logger: Logger; userId: st
         `INSERT INTO weight_logs (user_id, weight) VALUES ($1, $2)`,
         [deps.userId, weight],
       );
+      // Remember it in the profile too, so current_weight (which feeds the
+      // protein target + progress) isn't left stale. Best-effort.
+      await deps.pool
+        .query(`UPDATE users SET current_weight = $2 WHERE phone = $1`, [deps.userId, weight])
+        .catch(() => undefined);
       deps.logger.info({ userId: deps.userId, weight }, 'tool.log_weight.ok');
       return { weight_lbs: weight };
     },

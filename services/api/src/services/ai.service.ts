@@ -547,6 +547,7 @@ import {
   clearReplayQuery,
   isGatherDecline,
 } from '../onboarding/progressive-profile.js';
+import { understandSlotWithLlm, type SlotId as OnboardingSlotId } from '../onboarding/onboarding-flow.js';
 import { detectHypoglycemiaWarning, mightBeHypoSymptom, isWhatShouldIDo } from '../safety/hypoglycemia-warning.js';
 import { detectPeptideSafety } from '../safety/peptide-safety.js';
 import { detectHabitCheck, detectSkipFoodLogging, buildHabitCheckReply, buildSkipFoodOffer } from './habit-checklist.js';
@@ -1738,6 +1739,10 @@ export class AIService {
             intentType: intentClass.type,
           });
           if (wlf) {
+            // Remember the weight in the PROFILE, not just weight_logs — syncs
+            // current_weight, invalidates the cache, and fills a personalized
+            // target if we didn't have one (best-effort, fire-and-forget).
+            void this.deps.users.syncCurrentWeight(input.userId, wlf.weightLbs).catch(() => undefined);
             const stageTimings = lat.snapshot();
             const totalMs = Date.now() - t0;
             this.deps.logger.info(
@@ -3701,6 +3706,8 @@ CRITICAL RULES:
         intentType: 'weight_log',
       }).catch(() => null);
       if (wlf) {
+        // Remember it in the profile (current_weight + target), not just the log.
+        void this.deps.users.syncCurrentWeight(params.userId, wlf.weightLbs).catch(() => undefined);
         toolResults.push({ name: 'log_weight', args: { weight_lbs: wlf.weightLbs }, ok: true, output: { weight_lbs: wlf.weightLbs, previous_lbs: wlf.previousLbs }, latencyMs: 0 });
         logNote = `\n\n[The user just shared their weight (${wlf.weightLbs} lbs) and it's been recorded. Acknowledge warmly, no judgment, no template.]`;
       }
@@ -4167,17 +4174,38 @@ CRITICAL RULES:
     // 1. Pending answer from a gather question we asked last turn?
     const pending = await getPendingProfileAsk(redis, phone);
     if (pending) {
-      const { fields } = parseProfileReply(pending, input.text);
-      const captured = !!fields && Object.keys(fields).length > 0;
+      let captureFields = parseProfileReply(pending, input.text).fields;
+      let captured = !!captureFields && Object.keys(captureFields).length > 0;
+      let llmDeclined = false;
+      // LLM-normalize fallback (parity with onboarding): when the deterministic
+      // parser misses a reasonable answer — a bare "Move", a typo, slang, an
+      // abbreviation — recover it via the LLM (re-validated through the strict
+      // parser), so a field the user DID answer is captured the FIRST time and
+      // never re-asked. Returns null on a topic-change, so it can't mis-capture.
+      // Only pays for the call on the miss path, and never for an obvious decline.
+      if (!captured && !isGatherDecline(input.text)) {
+        const recovered = await understandSlotWithLlm(
+          pending as unknown as OnboardingSlotId,
+          input.text,
+          this.deps.llm,
+          { logger: this.deps.logger },
+        ).catch(() => null);
+        if (recovered?.ok && recovered.fields && Object.keys(recovered.fields).length > 0) {
+          captureFields = recovered.fields as typeof captureFields;
+          captured = true;
+        } else if (recovered?.ok && recovered.skipped) {
+          llmDeclined = true; // LLM read it as "don't know / skip"
+        }
+      }
       if (captured) {
-        await this.deps.users.update(phone, fields!).catch(() => {});
-        this.deps.logger.info({ userId: phone, slot: pending, captured: Object.keys(fields!) }, 'progressive_profile.captured');
+        await this.deps.users.update(phone, captureFields!).catch(() => {});
+        this.deps.logger.info({ userId: phone, slot: pending, captured: Object.keys(captureFields!) }, 'progressive_profile.captured');
         // A newly-captured weight/goal/body metric may now let us derive a
         // personalized protein/calorie target — fill it (best-effort, never
         // clobbers a set value) so the replayed question answers with the number.
         await this.deps.users.ensureNutritionTargets(phone).catch(() => undefined);
       }
-      const declined = !captured && isGatherDecline(input.text);
+      const declined = !captured && (llmDeclined || isGatherDecline(input.text));
       if (captured || declined) {
         // On decline, persist a "no restriction" sentinel so the field reads as
         // FILLED and we never re-ask it (no sticky timer needed — the data is

@@ -57,11 +57,7 @@ const Terms = () => (
 
     <h2>5. SUBSCRIPTION AND PAYMENT</h2>
     <p><strong>Free Trial:</strong> 3 days unlimited, then subscription required to continue service.</p>
-    <p><strong>Paid Subscription:</strong> After the free trial, continued access requires a subscription:</p>
-    <ul>
-      <li>Grace Base Plan: $12.00 per month</li>
-      <li>Grace Pro Plan: $24.00 per month</li>
-    </ul>
+    <p><strong>Paid Subscription:</strong> After the free trial, continued access requires a subscription of $12.00 per month.</p>
     <p>Subscriptions are billed monthly to the payment method on file and automatically renew unless cancelled.</p>
     <p><strong>Cancellation:</strong> You may cancel your subscription at any time by contacting support@graceglp.com or by replying STOP to any message, which will also cancel your SMS service. Cancellation takes effect at the end of the current billing period. No refunds are provided for partial months.</p>
     <p><strong>Payment Processing:</strong> Payments are processed by Stripe. We do not store your full credit card information. By providing payment information, you agree to Stripe's terms of service.</p>

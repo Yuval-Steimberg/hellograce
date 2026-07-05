@@ -1,6 +1,42 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone, looksStructured, answerDateQuestion } from './ai.service.js';
+import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone, looksStructured, answerDateQuestion, buildKnownProfileFacts } from './ai.service.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+
+describe('buildKnownProfileFacts — surface the full profile so Grace never re-asks', () => {
+  it('includes every known settings field as a background fact', () => {
+    const facts = buildKnownProfileFacts(
+      {
+        first_name: 'Sam', medication: 'Zepbound', dose_mg: 5, injection_day: 'Saturday',
+        sex: 'female', age: 41, height_cm: 168, current_weight: 190, goal_weight: 160,
+        activity_level: 'lightly_active', primary_goal: 'fat_loss', protein_goal_grams: 130,
+        calorie_goal_kcal: 1600, exercise_habits: 'walks daily', why_started: 'sister\'s wedding',
+        biggest_challenge: 'evening snacking', support_style: 'tough_love',
+      },
+      { dietaryRestriction: { label: 'vegetarian' } as any, dislikes: ['mushrooms'] },
+    );
+    const joined = facts.join('\n');
+    expect(joined).toMatch(/Zepbound at 5mg/);
+    expect(joined).toMatch(/Saturday/);
+    expect(joined).toMatch(/Current weight 190 lbs, goal 160 lbs/);
+    expect(joined).toMatch(/lightly active/);
+    expect(joined).toMatch(/Daily protein target: 130g/);
+    expect(joined).toMatch(/vegetarian/);
+    expect(joined).toMatch(/mushrooms/);
+    expect(joined).toMatch(/evening snacking/);
+    expect(joined).toMatch(/tough-love/); // support_style shapes tone
+  });
+
+  it('is empty for an unknown user and omits absent fields', () => {
+    expect(buildKnownProfileFacts(null)).toEqual([]);
+    const facts = buildKnownProfileFacts({ first_name: 'Sam' });
+    expect(facts).toEqual(['Name: Sam']); // only what's known — no invented fields
+  });
+
+  it('never surfaces an encrypted-blob name/medication', () => {
+    const facts = buildKnownProfileFacts({ first_name: 'enc:aa:bb:cc', medication: 'enc:dd:ee:ff' });
+    expect(facts).toEqual([]);
+  });
+});
 
 describe('answerDateQuestion — deterministic date (flash denies it otherwise)', () => {
   it('answers a pure date/day question with the real local date', () => {

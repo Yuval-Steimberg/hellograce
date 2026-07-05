@@ -761,6 +761,80 @@ interface DashboardSignals {
   patterns: Array<{ symptom: string; count: number; typicalTiming: string | null; topRemedy: string | null }>;
 }
 
+/** The profile/settings fields surfaced to the reply prompt. All optional +
+ *  structural so GraceUser (and a test fixture) both satisfy it. */
+export interface KnownProfileInput {
+  first_name?: string | null;
+  medication?: string | null;
+  dose_mg?: number | null;
+  injection_day?: string | null;
+  sex?: string | null;
+  age?: number | null;
+  height_cm?: number | null;
+  current_weight?: number | null;
+  goal_weight?: number | null;
+  activity_level?: string | null;
+  primary_goal?: string | null;
+  goals?: string[] | null;
+  protein_goal_grams?: number | null;
+  calorie_goal_kcal?: number | null;
+  exercise_habits?: string | null;
+  why_started?: string | null;
+  biggest_challenge?: string | null;
+  support_style?: string | null;
+}
+
+const SUPPORT_STYLE_LABEL: Record<string, string> = {
+  gentle: 'gentle, encouraging',
+  straight_facts: 'direct, just-the-facts',
+  tough_love: 'tough-love, no-nonsense',
+  mix: 'balanced',
+};
+
+/**
+ * Everything Grace KNOWS about this user from their profile/settings, as short
+ * background facts. Surfaced in EVERY reply prompt so Grace personalizes from
+ * stored data and NEVER asks for something she already has (the user's core ask:
+ * "always look in the settings to see if any data can be included"). Stable
+ * identity/preference facts only — the recitation-prone injection schedule + food
+ * diary stay relevance-gated in the grounded builder.
+ */
+export function buildKnownProfileFacts(
+  user: KnownProfileInput | null | undefined,
+  opts: { dietaryRestriction?: DietaryRestriction | null; dislikes?: string[] } = {},
+): string[] {
+  const facts: string[] = [];
+  const name = user?.first_name && !isEncryptedBlob(user.first_name) ? user.first_name.trim() : null;
+  if (name) facts.push(`Name: ${name}`);
+  const med = user?.medication && !isEncryptedBlob(user.medication) ? user.medication.trim() : null;
+  if (med) facts.push(`Medication: ${med}${user?.dose_mg ? ` at ${user.dose_mg}mg` : ''}`);
+  if (user?.injection_day) facts.push(`Injection day: ${user.injection_day}`);
+  const body: string[] = [];
+  if (user?.sex) body.push(String(user.sex));
+  if (user?.age) body.push(`${user.age}y`);
+  if (user?.height_cm) body.push(`${user.height_cm}cm`);
+  if (body.length) facts.push(`Profile: ${body.join(', ')}`);
+  if (user?.current_weight != null) {
+    facts.push(`Current weight ${user.current_weight} lbs${user?.goal_weight != null ? `, goal ${user.goal_weight} lbs` : ''}`);
+  } else if (user?.goal_weight != null) {
+    facts.push(`Goal weight: ${user.goal_weight} lbs`);
+  }
+  if (user?.activity_level) facts.push(`Activity level: ${String(user.activity_level).replace(/_/g, ' ')}`);
+  if (user?.primary_goal) facts.push(`Primary goal: ${user.primary_goal}`);
+  else if (Array.isArray(user?.goals) && user.goals.length > 0) facts.push(`Wants help with: ${user.goals.join(', ')}`);
+  const diet = opts.dietaryRestriction?.label;
+  if (diet) facts.push(`Diet: ${diet} — never suggest a food that breaks it`);
+  if (opts.dislikes && opts.dislikes.length > 0) facts.push(`Dislikes/avoids (never suggest): ${opts.dislikes.join(', ')}`);
+  if (user?.protein_goal_grams) facts.push(`Daily protein target: ${user.protein_goal_grams}g`);
+  if (user?.calorie_goal_kcal) facts.push(`Daily calorie target: ${user.calorie_goal_kcal}`);
+  if (user?.exercise_habits) facts.push(`Exercise habits: ${user.exercise_habits}`);
+  if (user?.why_started) facts.push(`Why they started: ${user.why_started}`);
+  if (user?.biggest_challenge) facts.push(`Biggest challenge: ${user.biggest_challenge}`);
+  const style = user?.support_style ? SUPPORT_STYLE_LABEL[user.support_style] : null;
+  if (style) facts.push(`Prefers a ${style} tone — match it`);
+  return facts;
+}
+
 export class AIService {
   private systemPrompt: string | undefined;
 
@@ -6202,19 +6276,12 @@ CRITICAL RULES:
       dislikes?: string[];
     },
   ): string {
-    const name = user?.first_name && !isEncryptedBlob(user.first_name) ? user.first_name.trim() : null;
-    const med = user?.medication && !isEncryptedBlob(user.medication) ? user.medication.trim() : null;
-    const facts: string[] = [];
-    if (name) facts.push(`Their name is ${name}.`);
-    if (med) facts.push(`They're on ${med}.`);
+    const facts = buildKnownProfileFacts(user, { dietaryRestriction: opts.dietaryRestriction, dislikes: opts.dislikes });
     const f = opts.todaysFood;
     if (f && (f.protein_g > 0 || f.calories > 0)) {
-      facts.push(`So far today they've logged about ${Math.round(f.protein_g)}g protein${f.calories > 0 ? ` and ${Math.round(f.calories)} calories` : ''}.`);
+      facts.push(`So far today: about ${Math.round(f.protein_g)}g protein${f.calories > 0 ? ` and ${Math.round(f.calories)} calories` : ''} logged`);
     }
-    const diet = opts.dietaryRestriction?.label;
-    if (diet) facts.push(`They follow a ${diet} diet — never suggest a food that breaks it.`);
-    if (opts.dislikes && opts.dislikes.length > 0) facts.push(`They dislike/avoid: ${opts.dislikes.join(', ')} — never suggest these.`);
-    const factBlock = facts.length > 0 ? `\n\nWhat you know about them:\n- ${facts.join('\n- ')}` : '';
+    const factBlock = facts.length > 0 ? `\n\nWhat you know about them (USE this — never ask for anything already here):\n- ${facts.join('\n- ')}` : '';
     // Even the tiny compact prompt must carry the authoritative date/time, or the
     // model invents one (prod: "May 14, 2024") and claims real-time access.
     const temporalBlock = `\n\n${buildTemporalContextBlock(user?.timezone, new Date())}`;
@@ -6260,7 +6327,6 @@ CRITICAL RULES:
     },
   ): string {
     const now = new Date();
-    const name = user?.first_name && !isEncryptedBlob(user.first_name) ? user.first_name.trim() : null;
     const med = user?.medication && !isEncryptedBlob(user.medication) ? user.medication.trim() : null;
     const q = (opts.userText ?? '').toLowerCase();
     // Relevance gates: only surface a fact the model would otherwise recite when
@@ -6269,16 +6335,9 @@ CRITICAL RULES:
     const asksDiaryOrTotal = FOOD_DIARY_QUERY_RE.test(q) || /\b(protein|calorie|cals|kcal|total|how much have i|goal|left|remaining|so far)\b/.test(q);
     // Profile block — always-safe grounding (never the schedule or diary, which
     // are the recitation-prone snapshot lines gated below).
-    const profileFacts: string[] = [];
-    if (name) profileFacts.push(`Name: ${name}`);
-    if (med) profileFacts.push(`Medication: ${med}`);
-    const diet = opts.dietaryRestriction?.label;
-    if (diet) profileFacts.push(`Dietary style: ${diet} — never suggest a food that breaks it`);
-    if (opts.dislikes && opts.dislikes.length > 0) profileFacts.push(`Food dislikes/avoids (never suggest): ${opts.dislikes.join(', ')}`);
-    if (user?.protein_goal_grams) profileFacts.push(`Daily protein goal: ${user.protein_goal_grams}g`);
-    if (user?.calorie_goal_kcal) profileFacts.push(`Daily calorie goal: ${user.calorie_goal_kcal}`);
+    const profileFacts = buildKnownProfileFacts(user, { dietaryRestriction: opts.dietaryRestriction, dislikes: opts.dislikes });
     if (opts.knownFacts && opts.knownFacts.length > 0) profileFacts.push(`Also known: ${opts.knownFacts.slice(0, 6).map((k) => k.fact).join('; ')}`);
-    const profileBlock = profileFacts.length ? `WHAT YOU KNOW ABOUT THIS USER (background — do not recite):\n${profileFacts.map((f) => `- ${f}`).join('\n')}` : '';
+    const profileBlock = profileFacts.length ? `WHAT YOU KNOW ABOUT THIS USER (background — use it, never ask for what's here, don't recite as a list):\n${profileFacts.map((f) => `- ${f}`).join('\n')}` : '';
 
     // Today-snapshot — RELEVANCE-GATED. The injection schedule is present only
     // when the message asks about timing; the food diary + totals only when it

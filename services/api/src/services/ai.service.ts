@@ -474,6 +474,7 @@ import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood, findVagueAddOnItem, hasExplicitQuantity } from '../safety/vague-food.js';
 import { shouldDiscloseEstimate, estimateNote } from '../nutrition/estimate-note.js';
+import { calculateProteinTarget } from '../nutrition/protein-target.js';
 import { USER_DAY_CTE, isCurrentUserDay, computeUserLoggingDay } from '../nutrition/logging-window.js';
 import {
   looksLikeRecommendation,
@@ -2457,6 +2458,24 @@ export class AIService {
     const parts: string[] = [];
     if (wantsTarget && user.protein_goal_grams && user.protein_goal_grams > 0) {
       parts.push(`your daily protein target is ${user.protein_goal_grams}g`);
+    } else if (wantsTarget) {
+      // No stored target AND we couldn't derive one (weight missing). Don't dead-end
+      // or let the LLM invent a generic range — SUGGEST a computed number from
+      // whatever we have and invite them to confirm/set it in Settings, so the
+      // number is grounded and they know exactly what to do next.
+      const anchorLbs = user.current_weight ?? user.goal_weight ?? null;
+      const settingsUrl = 'https://graceglp.com/settings'; // rewritten by TwilioSender
+      if (anchorLbs != null) {
+        const suggested = calculateProteinTarget({
+          weightLbs: anchorLbs,
+          heightCm: user.height_cm ?? null,
+          age: user.age ?? null,
+          goal: user.primary_goal ?? null,
+        });
+        parts.push(`I don't have a protein target saved for you yet, but based on your weight a good goal is about ${suggested}g a day — you can confirm or adjust it in Settings (${settingsUrl}) and I'll track against it`);
+      } else {
+        parts.push(`I don't have your weight yet, so I can't pin your protein target exactly — for most people on a GLP-1 a solid goal is around 100-120g a day. Add your weight in Settings (${settingsUrl}) and I'll set your precise number`);
+      }
     }
     if (wantsHad) {
       const summary = await this.deps.users.getTodaysFoodSummary(input.userId).catch(() => null);

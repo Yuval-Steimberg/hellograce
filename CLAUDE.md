@@ -6,7 +6,7 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `4e7fdc6`, NOT deployed by me)
+## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `ac4c8cd`, NOT deployed by me)
 
 **Reminders/scheduler verification (`4e7fdc6`):** full audit — cron every minute
 (best-effort, allSettled), injection state machine (null→morning_sent→
@@ -22,10 +22,15 @@ exact-match → new `isInjectionDoneReply` (broad, scoped to morning_sent) so
 injection msg now has a GROUNDED number + comfort supplies like the Nudge target:
 `injectionNumberFromStart(glp1_start_date, freq)` → "#N" (null → prompt told not
 to invent), fallback+prompt add site rotation + ginger tea/crackers/electrolytes,
-threaded via `GenerateOpts.injectionNumber`. Minor/by-design NOT fixed: evening
-injectors' followup can slip to next AM (quiet hours), evening gated on
-engagedToday, trial_expiry is a CRITICAL_HEALTH_TYPE, injection msgs skip
-anti-repetition dedup, `toDateStr` assumes UTC process (Fly is UTC).
+threaded via `GenerateOpts.injectionNumber`. **Then fixed all 5 minor findings
+(`ac4c8cd`):** (1) evening injectors' followup now fires in the late-evening quiet
+window (21:00-22:59) instead of slipping to next AM, defers deep night, message
+time-agnostic; (2) evening gate relaxed to `engagedToday || silentDays<1` (mirrors
+midday); (3) `trial_expiry_reminder` split into CADENCE_EXEMPT (bypasses cap) vs
+COOLDOWN_EXEMPT (only the 2 injection types) — trial nudge now respects the
+engagement cooldown; (4) injection_morning/followup get `recentMessages` for
+anti-repetition; (5) `toDateStr` now reads local wall-clock fields (tz-safe, no
+UTC round-trip). +2 behavior tests. api 1807 green.
 
 
 Session driven by a product-direction ask: make Grace the simple all-in-one

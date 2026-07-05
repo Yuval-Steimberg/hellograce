@@ -450,6 +450,26 @@ describe('Scheduler — evening reminder', () => {
     expect(h.generateCalls.filter((c) => c.type === 'evening').length).toBe(0);
   });
 
+  it('fires evening for a user under a full day silent (engaged <24h ago, not today)', async () => {
+    // 2026-07-05 relaxation: evening now sends to engaged-today OR <1-day-silent
+    // users (mirrors midday). Replied ~21h ago (last night) — not "today", but
+    // not yet a full day silent → should still get the gentle evening close.
+    const u = makeUser({
+      wake_time: '08:00',
+      sleep_time: '22:00',
+      timezone: 'America/New_York',
+      last_morning_sent_at: new Date('2026-05-19T12:00:00Z'),
+      last_reply_at: new Date('2026-05-19T03:00:00Z'), // 23:00 NY previous night (~21h before the window)
+    });
+    const h = buildHarness(u);
+    await walkMinutes(
+      h.scheduler,
+      new Date(Date.UTC(2026, 4, 20, 0, 30)),
+      new Date(Date.UTC(2026, 4, 20, 0, 59)),
+    );
+    expect(h.generateCalls.filter((c) => c.type === 'evening').length).toBe(1);
+  });
+
   it('never fires during quiet hours (≥ 21:00 local)', async () => {
     const u = makeUser({
       wake_time: '08:00',
@@ -510,9 +530,11 @@ describe('Scheduler — injection day flow', () => {
     expect(h.user.injection_flow_stage).toBe('morning_sent');
   });
 
-  it('fires injection_followup 3h after user replied "Done" (evening injection)', async () => {
-    // User injects at 7pm and replies "Done". Followup should fire 3h later
-    // (10pm), but quiet hours start at 21:00 → deferred to next morning.
+  it('fires injection_followup in the late-evening quiet window (evening injector); defers deep night', async () => {
+    // User injects at 7pm NY and replies "Done". The ~3h post-shot check-in is a
+    // same-day HEALTH touchpoint: it may fire in the late-evening quiet window
+    // (21:00–22:59) rather than slipping to next morning, but is deferred out of
+    // deep night (23:00–06:59) so it never wakes them.
     const u = makeUser({
       wake_time: '08:00',
       timezone: 'America/New_York',
@@ -523,13 +545,13 @@ describe('Scheduler — injection day flow', () => {
     });
     const h = buildHarness(u);
 
-    // 22:00 NY = quiet hours, must NOT fire even though 3h has elapsed.
-    setUtc(2026, 5, 20, 2, 0);
+    // Deep night 01:00 NY (= 05:00 UTC May 20) — must NOT fire even though >3h elapsed.
+    setUtc(2026, 5, 20, 5, 0);
     await tick(h.scheduler);
     expect(h.generateCalls.filter((c) => c.type === 'injection_followup').length).toBe(0);
 
-    // Next morning 08:30 NY = 12:30 UTC, out of quiet hours, elapsed > 3h.
-    setUtc(2026, 5, 20, 12, 30);
+    // Late-evening window 22:00 NY (= 02:00 UTC May 20) — elapsed > 3h → fires.
+    setUtc(2026, 5, 20, 2, 0);
     await tick(h.scheduler);
     expect(h.generateCalls.filter((c) => c.type === 'injection_followup').length).toBe(1);
     expect(h.user.injection_flow_stage).toBe('followup_sent');
@@ -784,6 +806,25 @@ describe('Scheduler — cadence guardrails (max 2 proactive/day)', () => {
     expect(h.generateCalls.map((c) => c.type)).toContain('trial_expiry_reminder');
     expect(h.sends.length).toBe(1);
   });
+
+  it('trial_expiry_reminder respects the engagement cooldown (no mid-chat nag)', async () => {
+    // 2026-07-05: the trial nudge bypasses the daily CAP but NOT the engagement
+    // cooldown — it must never interrupt an active conversation.
+    const u = makeUser({
+      wake_time: '08:00',
+      timezone: 'America/New_York',
+      is_paid: false,
+      is_pro: false,
+      trial_start: new Date('2026-05-18T12:00:00Z'),
+      last_reply_at: new Date('2026-05-19T12:50:00Z'), // replied 10 min before the window
+    });
+    const h = buildHarness(u); // default engagement cooldown = 2h
+
+    setUtc(2026, 5, 19, 13, 0); // 09:00 local Tue, 25h into trial — but mid-chat
+    await tick(h.scheduler);
+
+    expect(h.generateCalls.filter((c) => c.type === 'trial_expiry_reminder').length).toBe(0);
+  });
 });
 
 describe('Scheduler — full day simulation', () => {
@@ -1014,14 +1055,18 @@ describe('Scheduler — reminder context enrichment (2026-06-11 reminders fix)',
     expect(h.sends.length).toBe(1); // still sent
   });
 
-  it('critical injection_morning skips context enrichment entirely', async () => {
+  it('injection_morning gets anti-repetition recentMessages but not food-data enrichment', async () => {
     setUtc(2026, 5, 19, 16, 0);
     const h = buildHarness(makeUser(), {
       recentCheckIns: [{ type: 'morning', message_sent: 'Old text' }],
     });
     await sendDirect(h, 'injection_morning');
     const call = h.generateCalls.find((c) => c.type === 'injection_morning');
-    expect(call?.opts?.['recentMessages']).toBeUndefined();
+    // 2026-07-05: injection reminders now get recentMessages so weekly texts
+    // don't repeat — but still NOT the yesterday/today food-data enrichment.
+    expect(call?.opts?.['recentMessages']).toEqual(['Old text']);
+    expect(call?.opts?.['yesterdayFood']).toBeUndefined();
+    expect(call?.opts?.['todayFood']).toBeUndefined();
   });
 });
 

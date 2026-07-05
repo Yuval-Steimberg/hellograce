@@ -268,8 +268,7 @@ export class Scheduler {
     const minute = now.getMinutes();
     const todayStr = toDateStr(now);
 
-    // ── Quiet hours: never send proactive messages between 21:00 and 07:00 local
-    if (hour >= 21 || hour < 7) return;
+    const quietHours = hour >= 21 || hour < 7;
 
     // ── Never interrupt onboarding. A user still in the chat signup flow
     // (onboarding_state === 'in_progress') must NOT get a scheduled message
@@ -277,6 +276,31 @@ export class Scheduler {
     // just told us their shot day. Proactive sends resume once onboarding
     // completes. (2026-06-28 production fix: "messages out of nowhere".)
     if (user.onboarding_state === 'in_progress') return;
+
+    // ── Post-injection followup — a same-day HEALTH check-in, so it runs BEFORE
+    // the general quiet-hours gate. It may fire in the late-evening quiet window
+    // (21:00–22:59) so an evening injector who replied "Done" at 7–8pm still gets
+    // their ~3h check-in the same night; it defers out of deep night
+    // (23:00–06:59) to the next morning tick rather than waking them (2026-07-05).
+    // Lives OUTSIDE handleInjectionFlow because the next-morning tick is not an
+    // injection day and would never run it.
+    if (
+      user.injection_flow_stage === 'done_confirmed' &&
+      user.injection_done_at
+    ) {
+      const elapsed =
+        (Date.now() - new Date(user.injection_done_at).getTime()) / 3_600_000;
+      if (elapsed >= 3 && (!quietHours || (hour >= 21 && hour < 23))) {
+        await this.sendAndRecord(user, 'injection_followup');
+        await this.deps.users.setInjectionStage(user.phone, 'followup_sent', {
+          injection_evening_followup_due: true,
+        });
+        return;
+      }
+    }
+
+    // ── Quiet hours: no OTHER proactive messages between 21:00 and 07:00 local.
+    if (quietHours) return;
 
     // Guard: skip users missing schedule config — avoids null.split() crash.
     // Defensive defaults so existing users without onboarding data still work.
@@ -289,27 +313,6 @@ export class Scheduler {
     const wakeBaseMin = wHour * 60 + wMin;
     const sleepBaseMin = sHour * 60 + sMin;
     const nowMin = hour * 60 + minute;
-
-    // ── Post-injection followup (any day, outside quiet hours).
-    // Lives OUTSIDE handleInjectionFlow because evening injectors who reply
-    // "Done" at 7-8pm have their 3h window fall in quiet hours (21:00+).
-    // The next-morning tick is NOT an injection day, so it would never run
-    // handleInjectionFlow. Hoisting this check up means the followup fires
-    // on the next available day-time tick after the 3h window opens.
-    if (
-      user.injection_flow_stage === 'done_confirmed' &&
-      user.injection_done_at
-    ) {
-      const elapsed =
-        (Date.now() - new Date(user.injection_done_at).getTime()) / 3_600_000;
-      if (elapsed >= 3) {
-        await this.sendAndRecord(user, 'injection_followup');
-        await this.deps.users.setInjectionStage(user.phone, 'followup_sent', {
-          injection_evening_followup_due: true,
-        });
-        return;
-      }
-    }
 
     // ── Injection day flow (runs any day matching injection_day)
     if (user.injection_day && user.injection_day === DAYS[dayOfWeek]) {
@@ -423,8 +426,11 @@ export class Scheduler {
       nowMin >= eveningTargetMin && nowMin < eveningTargetMin + 15;
     if (
       isEveningWindow &&
-      // Hard cap: never send evening to a user who hasn't actively chatted today
-      engagedToday
+      // Dampener (mirrors midday): send the evening wind-down to users who
+      // engaged today OR who aren't yet a full day silent — so a user who read
+      // the morning note but hasn't replied still gets a gentle evening close,
+      // while long-silent users are spared. (2026-07-05: was engaged-today only.)
+      (engagedToday || silentDays < 1)
     ) {
       if (!user.last_evening_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_evening_sent_at))) !== todayStr) {
         await this.sendAndRecord(user, 'evening', { lowMoodMode: user.low_mood_mode ?? false });
@@ -533,19 +539,26 @@ export class Scheduler {
     // injection_dayafter is NOT exempt — it's a check-in, not urgent. An
     // engaged user already knows the injection happened yesterday.
     const todayStr = toDateStr(localNow(user.timezone || 'America/New_York'));
-    const CRITICAL_HEALTH_TYPES = new Set([
+    // Two exemption tiers (2026-07-05 — split so the trial nudge doesn't nag):
+    //   CADENCE_EXEMPT   — bypass the Layer-2 daily cadence cap/gap (time-sensitive).
+    //   COOLDOWN_EXEMPT  — bypass the Layer-1 engagement cooldown (true health).
+    // trial_expiry_reminder is cadence-exempt (must land on day 2) but NOT
+    // cooldown-exempt — a billing nudge should never interrupt an active chat.
+    const CADENCE_EXEMPT = new Set([
       'injection_morning',
       'injection_followup',
       'trial_expiry_reminder',
     ]);
-    const isCritical = CRITICAL_HEALTH_TYPES.has(type);
+    const COOLDOWN_EXEMPT = new Set(['injection_morning', 'injection_followup']);
+    const skipCadence = CADENCE_EXEMPT.has(type);
+    const skipCooldown = COOLDOWN_EXEMPT.has(type);
 
     // ─── LAYER 1: Engagement cooldown ─────────────────────────────────────────
-    // Applies to EVERY type except truly critical health alerts. Skipping is
-    // the right behavior: the user is already talking to Grace, the next
-    // scheduled tick will re-check and send if the cooldown has expired.
+    // Applies to EVERY type except true health alerts. Skipping is the right
+    // behavior: the user is already talking to Grace, the next scheduled tick
+    // will re-check and send if the cooldown has expired.
     const cooldownH = this.deps.engagementCooldownHours ?? 2;
-    if (cooldownH > 0 && !isCritical && user.last_reply_at) {
+    if (cooldownH > 0 && !skipCooldown && user.last_reply_at) {
       const hoursSinceUserReply = (Date.now() - new Date(user.last_reply_at).getTime()) / 3_600_000;
       if (hoursSinceUserReply < cooldownH) {
         this.deps.logger.info(
@@ -562,7 +575,7 @@ export class Scheduler {
     }
 
     // ─── LAYER 2: Daily cadence ───────────────────────────────────────────────
-    if (!isCritical) {
+    if (!skipCadence) {
       // Honor the user's check-in cadence Settings. Until 2026-06-10 these
       // fields were collected at onboarding, editable on the Settings page,
       // and claimed by the AI context ("CHECKIN FREQUENCY: N") — but never
@@ -647,9 +660,9 @@ export class Scheduler {
         type,
         messageSent: message,
       });
-      // Increment cadence counters (skip for critical time-bound flows that
-      // don't participate in the daily cap).
-      if (!isCritical) {
+      // Increment cadence counters (skip for cadence-exempt time-bound flows
+      // that don't participate in the daily cap).
+      if (!skipCadence) {
         try {
           const countKey = `cadence:${user.phone}:${todayStr}`;
           const lastKey = `cadence:last:${user.phone}`;
@@ -709,15 +722,26 @@ export class Scheduler {
     // isn't a "generative" reminder, if this user has a clear personal pattern of
     // a side effect around their shot, weave a gentle pre-emptive heads-up + what
     // helped before into the injection message. Best-effort; never blocks.
-    if (type === 'injection_morning') {
-      // Grounded injection number (never invented) from the GLP-1 start date +
-      // cadence, so the message can read "Injection #N" like a Nudge reminder.
-      const injectionNumber = injectionNumberFromStart(user.glp1_start_date, user.medication_frequency, new Date()) ?? undefined;
-      const base: GenerateOpts = { ...(opts ?? {}), ...(injectionNumber ? { injectionNumber } : {}) };
+    if (type === 'injection_morning' || type === 'injection_followup') {
+      const base: GenerateOpts = { ...(opts ?? {}) };
+      // Anti-repetition (2026-07-05): feed the last few sent reminders so the
+      // weekly injection texts don't read identically week to week — the
+      // isNearDuplicate backstop + the prompt's banned-list both use this.
       try {
-        const headsUp = await this.buildSymptomHeadsUp(user);
-        if (headsUp) return { ...base, symptomHeadsUp: headsUp };
+        const recent = await this.deps.users.getRecentCheckIns(user.phone, 5);
+        const texts = recent.map((c) => c.message_sent).filter((m): m is string => !!m && m.length > 0);
+        if (texts.length > 0) base.recentMessages = texts;
       } catch { /* best-effort */ }
+      if (type === 'injection_morning') {
+        // Grounded injection number (never invented) from the GLP-1 start date +
+        // cadence, so the message can read "Injection #N" like a Nudge reminder.
+        const injectionNumber = injectionNumberFromStart(user.glp1_start_date, user.medication_frequency, new Date()) ?? undefined;
+        if (injectionNumber) base.injectionNumber = injectionNumber;
+        try {
+          const headsUp = await this.buildSymptomHeadsUp(user);
+          if (headsUp) base.symptomHeadsUp = headsUp;
+        } catch { /* best-effort */ }
+      }
       return base;
     }
 
@@ -836,8 +860,15 @@ function localNow(tz: string, date = new Date()): Date {
   }
 }
 
+// Reads the Date's LOCAL wall-clock fields (which localNow() already set to the
+// user's timezone), NOT toISOString() — the old UTC round-trip could shift the
+// date by a day near midnight on any server whose process TZ isn't UTC, poisoning
+// the cadence/lock keys + days-interval phase. Timezone-agnostic now (2026-07-05).
 function toDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 /**

@@ -370,7 +370,7 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
   },
   injection_followup: (u) => {
     return pick([
-      `A few hours post-shot — hope you're feeling okay. I'm here if anything's up 🤍`,
+      `Checking in since your shot — hope you're feeling okay. I'm here if anything's up 🤍`,
       `Checking in after your injection. How's your body feeling?`,
       `Post-shot check-in. Nausea, fatigue, or anything off? Or all good so far?`,
       `Just thinking about you after your injection today. How are you doing?`,
@@ -783,7 +783,7 @@ export class MessageGenerator {
         return `${base}Context: evening wind-down — a daily check-in that wraps the day, NOT a repeat of this morning's message. ${weightCtx} ${moodCtx}${dataBlock} ${dislikes} If suggesting evening food, filter by dislikes.${hook}`;
       })(),
       injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}.${opts?.injectionNumber ? ` This is injection #${opts.injectionNumber} — you MAY mention the number.` : ' Do NOT mention an injection number (you don\'t know it).'} Remind them to rotate to a DIFFERENT injection site than last time, and to keep a few comfort items handy just in case (ginger tea, plain crackers, electrolytes). Tell them to reply "done" when injected. Warm and brief, 1-3 sentences. No questions about feelings — that comes later.${opts?.symptomHeadsUp ?? ''}`,
-      injection_followup: `${base}Context: ~3 hours after their shot. Just check in softly — no interrogation. One brief opening for them to share if they want.`,
+      injection_followup: `${base}Context: a check-in after their shot (a few hours later, or the next morning if they injected late). Do NOT assume a specific number of hours. Just check in softly — no interrogation. One brief opening for them to share if they want.`,
       injection_dayafter: `${base}Context: morning after injection. Acknowledge that day-after can be tough, be gentle. No checklist questions.`,
       side_effect_nausea: `${base}Context: they reported nausea earlier. Soft follow-up only — no question stack. Offer one practical tip in passing.`,
       side_effect_fatigue: `${base}Context: they reported fatigue. Validate it's real, suggest one gentle helper. No quiz.`,

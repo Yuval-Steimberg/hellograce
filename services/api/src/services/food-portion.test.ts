@@ -35,10 +35,19 @@ describe('buildPortionConfirmQuestion', () => {
     expect(q).toMatch(/how much/i);
     expect(q).toMatch(/that'?s about right/i);
   });
-  it('handles multiple items and a missing estimate', () => {
-    expect(buildPortionConfirmQuestion([{ item: 'chicken', protein_g: null }, { item: 'rice', protein_g: null }]))
-      .toMatch(/chicken and rice/i);
+  it('asks about EACH dish with a fitting reference, not one generic amount', () => {
+    const q = buildPortionConfirmQuestion([{ item: 'chicken', protein_g: null }, { item: 'rice', protein_g: null }]);
+    expect(q).toMatch(/chicken and rice/i);
+    // per-dish references: a palm-sized piece for chicken, a cup for rice
+    expect(q).toMatch(/for the chicken, a palm-sized piece/i);
+    expect(q).toMatch(/for the rice, about a cup/i);
     expect(buildPortionConfirmQuestion([])).toBe('');
+  });
+
+  it('uses a food-appropriate reference for a single dish (not a blanket cup/container)', () => {
+    expect(buildPortionConfirmQuestion([{ item: 'grilled chicken', protein_g: null }])).toMatch(/palm-sized piece/i);
+    expect(buildPortionConfirmQuestion([{ item: 'white rice', protein_g: null }])).toMatch(/a cup/i);
+    expect(buildPortionConfirmQuestion([{ item: 'greek yogurt', protein_g: null }])).toMatch(/small container/i);
   });
 });
 

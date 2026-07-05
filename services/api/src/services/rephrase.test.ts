@@ -24,6 +24,16 @@ describe('isAcceptableRephrase — never ship a bad rewrite (fall back to the gr
     expect(isAcceptableRephrase("I don't have access to your logs.")).toBe(false);
     expect(isAcceptableRephrase('I cannot see your diary or health data.')).toBe(false);
   });
+
+  it('rejects report-shape rewrites (headings + lists) so the plain template ships', () => {
+    expect(isAcceptableRephrase('Here are your questions:\n- How is my protein?\n- Is my dose right?')).toBe(false);
+    expect(isAcceptableRephrase('Questions for your Doctor:\n1. Ask about protein.\n2. Ask about dose.')).toBe(false);
+    expect(isAcceptableRephrase('Questions for your Doctor:\n"I have been averaging 109g of protein."')).toBe(false);
+  });
+
+  it('still accepts warm prose that merely uses a dash or inline colon', () => {
+    expect(isAcceptableRephrase("I'd ask about your protein at 109g vs your 140g goal, and whether your dose is on track. Want me to adjust these?")).toBe(true);
+  });
 });
 
 describe('buildRephraseSystem', () => {

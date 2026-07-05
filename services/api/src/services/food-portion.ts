@@ -64,9 +64,29 @@ export function isPortionAffirmation(text: string): boolean {
 }
 
 /**
- * Build the ONE clarification question for foods reported without an explicit
- * amount: state the usual serving + its protein, and ask the user to confirm or
- * give the real amount, so the log is accurate rather than a default guess.
+ * A portion reference that FITS the food — a "cup" makes sense for rice but not
+ * for chicken, and a "small container" fits yogurt but not steak. Keeps the
+ * clarification concrete per-dish instead of a one-size-fits-all "a cup or a
+ * small container" (which reads wrong for half the foods it's asked about).
+ */
+export function portionHint(item: string): string {
+  const t = (item ?? '').toLowerCase();
+  if (/\b(chicken|beef|steak|pork|fish|salmon|tuna|shrimp|prawns|turkey|lamb|meat|gyro|shawarma|brisket|ribs|sausage|meatballs|mince|tofu|tempeh|seitan)\b/.test(t)) return 'a palm-sized piece';
+  if (/\b(rice|pasta|noodles|spaghetti|cereal|oatmeal|oats|quinoa|couscous|potato|potatoes|beans|lentils|chickpeas)\b/.test(t)) return 'about a cup';
+  if (/\b(yogurt|yoghurt|cheese|hummus|peanut butter)\b/.test(t)) return 'a small container';
+  if (/\b(nuts|almonds|peanuts|cashews|walnuts|trail[-\s]?mix)\b/.test(t)) return 'a small handful';
+  if (/\b(soup|stew|smoothie|salad|curry|casserole|chili|chilli|bowl|stir[-\s]?fry)\b/.test(t)) return 'a bowl';
+  return 'a rough amount';
+}
+
+/**
+ * Build the clarification question for foods reported without an explicit
+ * amount. For a SINGLE dish it states a fitting usual serving; for a MULTI-item
+ * meal it asks about EACH dish by name with its own fitting reference — so
+ * "chicken and rice" gets "for the chicken, a palm-sized piece; for the rice, a
+ * cup?" instead of one generic "a cup or a small container" that fits neither.
+ * The user confirms or gives real amounts, so the log is accurate rather than a
+ * default guess.
  */
 export function buildPortionConfirmQuestion(
   items: Array<{ item: string; protein_g: number | null }>,
@@ -75,8 +95,12 @@ export function buildPortionConfirmQuestion(
   if (named.length === 0) return '';
   if (named.length === 1) {
     const it = named[0]!;
-    return `Yum, ${it.item} 🙌 About how much did you have — roughly a cup, a handful, or one of those small containers? Or just say "that's about right" and I'll log a standard serving.`;
+    return `Yum, ${it.item} 🙌 About how much did you have — roughly ${portionHint(it.item)}? Or just say "that's about right" and I'll log a standard serving.`;
   }
   const list = named.map((i) => i.item).join(' and ');
-  return `Nice — ${list} 🙌 About how much of each did you have? A rough amount (a cup, a handful) works, or say "that's about right" for a standard serving.`;
+  // Per-dish so each portion is captured (cap the spelled-out references at the
+  // first two dishes to keep it a readable single text).
+  const perDish = named.slice(0, 2).map((i) => `for the ${i.item}, ${portionHint(i.item)}`).join('; ');
+  const tail = named.length > 2 ? ', and the rest' : '';
+  return `Nice — ${list} 🙌 Roughly how much of each — ${perDish}${tail}? Or say "that's about right" for standard servings.`;
 }

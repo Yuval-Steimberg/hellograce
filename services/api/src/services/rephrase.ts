@@ -23,6 +23,12 @@ export function isAcceptableRephrase(text: string | null | undefined): boolean {
   ) {
     return false;
   }
+  // Report-shape: a bulleted/numbered list, or a "Heading:" that introduces one,
+  // is exactly the structure a warm iMessage rewrite must NOT introduce. When the
+  // model balloons a clean template into a list (e.g. "Questions for your Doctor:"
+  // + items), reject it so the caller ships the plain grounded template instead.
+  if (/\n\s*(?:[-*•]|\d+[.)])\s/.test(t)) return false;
+  if (/(?:^|\n)\s*[A-Z][A-Za-z ]{2,40}:\s*(?:\n|["“])/.test(t)) return false;
   return true;
 }
 

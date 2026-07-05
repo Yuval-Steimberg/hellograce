@@ -3319,6 +3319,71 @@ CRITICAL RULES:
       }
     }
 
+    // ── Doctor-questions follow-up (2026-07-05, ported into the unified path) ─
+    // After the weekly recap offers "turn this into questions for your doctor?",
+    // a "Yes please" must run the DETERMINISTIC, grounded question builder — not
+    // the grounded LLM prompt below, which produced a report-shaped, TRUNCATED
+    // "Questions for your Doctor:" list in prod. Mirrors the compact-path
+    // intercept in handleMessageInner so both paths behave identically. Only
+    // fires when the prior assistant turn actually offered/gave doctor questions,
+    // so a plain "yes"/"great" elsewhere is never captured.
+    {
+      const trimmed = input.text.trim();
+      const isAffirmation = /^(?:yes|yep|yeah|yup|sure|ok|okay|sounds good|sound good|sounds great|sounds nice|please do|please|alright|go ahead|do it|let'?s do it|yes please|absolutely|great|perfect|love it|nice)[!.?]?\s*$/i.test(trimmed);
+      const followUp = detectFollowUp(trimmed);
+      if ((isAffirmation || followUp) && followUp?.kind !== 'clarify') {
+        const lastAssistant = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+        if (isDoctorQuestionsContext(lastAssistant)) {
+          const appendAndReturn = (reply: string): OrchestratorOutput => {
+            void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+            void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+            const totalMs = Date.now() - t0;
+            this.persistLatency(userId, 'appointment_prep', totalMs, lat.snapshot(), input.text, reply);
+            return { text: reply, confidence: 'high', intent: 'appointment_prep', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+          };
+          if (followUp?.kind === 'reject') {
+            this.deps.logger.info({ userId }, 'ai.unified.doctor_questions.declined');
+            return appendAndReturn('No worries. Anything else you want to go over before your appointment?');
+          }
+          const detailed = isDoctorQuestionsReply(lastAssistant) || wantsMoreDetail(followUp);
+          const data = user ? await gatherWeeklySummary(this.deps.users, user).catch(() => null) : null;
+          const grounded = buildDoctorQuestions(data, { detailed });
+          const warmed = await this.warmlyRephrase(
+            grounded,
+            'This is a short set of questions to bring to their doctor — keep each one specific and grounded in their real numbers, plain iMessage prose with NO headings, NO numbered/bulleted list, and keep the closing offer to adjust them.',
+            grounded,
+          );
+          const reply = warmed.length > 415 ? grounded : warmed;
+          this.deps.logger.info({ userId, detailed, kind: followUp?.kind }, 'ai.unified.doctor_questions.served');
+          return appendAndReturn(reply);
+        }
+      }
+    }
+
+    // ── Personal-stats questions → deterministic (2026-07-05, ported) ───────
+    // "What is my protein goal?" / "how much protein have I had?" must answer
+    // from the user's STORED target (protein_goal_grams) and today's real total
+    // — never the grounded LLM, which invented a generic "100-120g" range that
+    // contradicted the 140g the weekly summary + food-logging renderers use (all
+    // three now read the same stored number, so the target is consistent). Runs
+    // before the food step so a "goal" query is never mistaken for a food log.
+    {
+      const psRaw = await this.tryPersonalStats(input).catch(() => null);
+      if (psRaw) {
+        const reply = await this.warmlyRephrase(
+          psRaw,
+          'This is the answer to a question about their own numbers (protein, calories, target, weight). Keep every number EXACTLY as given — these are their real totals — just say it warmly and naturally in one short sentence, no lists.',
+          psRaw,
+        );
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId }, 'ai.unified.personal_stats.served');
+        this.persistLatency(userId, 'personal_stats', totalMs, lat.snapshot(), input.text, reply);
+        return { text: reply, confidence: 'high', intent: 'personal_stats', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      }
+    }
+
     // Nudge food step (extractFoodItems + planning guard): a specific meal logs
     // with an estimate; a hedged/generic mention comes back pending → we ask ONE
     // portion question via the CLARIFY note; advice/planning never logs.
@@ -3377,7 +3442,8 @@ CRITICAL RULES:
       const facts: string[] = [];
       if (food.removed) facts.push(`- You just took "${food.removed}" off today's log — confirm that casually.`);
       if (food.logged.length > 0) facts.push(`- You just logged: ${food.logged.join(', ')}. Their running protein total for today is now ${totalP}g. You may mention that total warmly. The ONLY protein number you may write is ${totalP}g.`);
-      if (food.pending.length > 0) facts.push(`- You still need the PORTION for: ${food.pending.join(', ')} before you can log it. Ask ONE short, casual "how much" question (a cup, a handful, a small container). Do NOT say it's logged and do NOT invent a protein number.`);
+      if (food.pending.length === 1) facts.push(`- You still need the PORTION for ${food.pending[0]} before you can log it. Ask ONE short, casual "how much" question, using a reference that FITS that food (a palm-sized piece for meat/fish, a cup for rice/pasta/cereal, a small container for yogurt). Do NOT say it's logged and do NOT invent a protein number.`);
+      else if (food.pending.length > 1) facts.push(`- You still need the PORTION for EACH of these before you can log them: ${food.pending.join(', ')}. In ONE short, casual message ask how much of EACH one they had — name each dish and give it a fitting reference (a palm-sized piece for meat/fish, a cup for rice/pasta, a small container for yogurt). Do NOT ask one generic amount for the whole meal, do NOT say it's logged, and do NOT invent a protein number.`);
       if (UNIFIED_FOOD_SIDE_Q_RE.test(input.text)) facts.push(`- They also asked for a suggestion — answer it in a few warm words.`);
       const warmSys =
         `You are Grace${nm ? `, texting ${nm}` : ''} — a warm, upbeat GLP-1 companion who texts like a supportive friend. Reply to what they just ate in ONE or TWO short, casual sentences with a little personality (a "yum", "nice", "love that", a light comment about their day is great).\n\nFACTS — use ONLY these, never invent a number:\n${facts.join('\n')}\n\nHARD RULES: never write any protein/calorie number other than the one in the facts; on a pending item never claim it's logged; no lists, no headings, no "breakdown"/"Part 1", no lecture about vitamins / muscle / "high-quality protein". Just a warm, human text.`;

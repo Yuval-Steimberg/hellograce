@@ -6,22 +6,26 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, branch `claude/grace-product-gaps-roadmap-h05gyn`, NOT merged)
+## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `5681007`, NOT deployed by me)
 
 Session driven by a product-direction ask: make Grace the simple all-in-one
 GLP-1 command center (medication, protein, habits, water, weight, symptoms,
 weekly insights) instead of "a chatbot that answers questions." Did a full
 gap analysis (dashboard/food-macro/medication/water/weekly/safety/subscription
 mapped via parallel Explore agents), then implemented in verified, one-at-a-time
-steps + follow-up fixes. **Branch HEAD `4480c45` (docs commit follows). 1777 api +
-659 ai-core green; all packages typecheck; web builds clean.** Merged to `main`
-per the user's "make everything ready to deploy" — see the deploy runbook at the
-end of this section.
+steps + follow-up fixes + a landing refresh. **ALL MERGED to `main` (HEAD
+`5681007`). 1777 api + 659 ai-core green; all packages typecheck; web builds
+clean. NOT deployed by me** — the user deploys `grace-api` on their Mac
+(`fly deploy … --no-cache --build-arg GIT_COMMIT=$(git rev-parse --short HEAD)`,
+verify `/health` == `5681007`); the web/dashboard + landing auto-deploy on Vercel
+from `main` (so the marketing + dashboard changes are live on the next Vercel
+build; the chat-side features need the API deploy).
 
-**⚠️ TWO MIGRATIONS TO APPLY before Steps 5–6 work in prod:**
-`20260705000001_habit_logs.sql` (habit checklist) + `20260705000002_dose_events.sql`
-(dose timeline). Both additive, RLS default-deny; code degrades to empty/current-only
-until applied (like water_logs). Steps 1–4 need **no** migration.
+**⚠️ TWO MIGRATIONS TO APPLY before Steps 5–6 work in prod (apply in Supabase
+BEFORE / with the API deploy):** `20260705000001_habit_logs.sql` (habit checklist)
++ `20260705000002_dose_events.sql` (dose timeline). Both additive, RLS
+default-deny; code degrades to empty/current-only until applied (like water_logs).
+Steps 1–4 + the two follow-up fixes + the landing need **no** migration.
 
 Steps shipped (each its own commit, verified before the next):
 1. **Personalized protein/calorie targets for SMS-onboarded users** (`ac91779`).
@@ -93,10 +97,15 @@ Steps shipped (each its own commit, verified before the next):
   reflect the all-in-one command center (targets, water, habit checklist, weekly
   insights/plateau, dose timeline, symptom memory, dashboard) and FIX the stale
   pricing on DesktopLanding (**7-day→3-day trial, $15→$12/mo**; rest of the site
-  was already 3-day/$12). Dead components (HeroSection/DesktopHero/ChatMockup/
-  MedicationsBar/FooterCTA) left untouched — not rendered. **Open:** `Terms.tsx`
-  still lists a "$24/mo Pro Plan" vs the single $12 plan everywhere else —
-  business decision, left for the user.
+  was already 3-day/$12). Only shipped features advertised (NO fiber/carbs/
+  measurements).
+- **Pricing consistency + dead-code cleanup** (`5681007`): `Terms.tsx` aligned to
+  the single **$12/mo** plan (was listing a stray "$24/mo Pro Plan"). Deleted 5
+  orphaned landing components verified unreferenced in the route tree
+  (`HeroSection`, `DesktopHero`, `ChatMockup`, `MedicationsBar`, `FooterCTA`).
+  Pricing is now consistent EVERYWHERE (landing / pricing / FAQ / SEO / Terms =
+  3-day trial → $12/mo). NOTE: admin `BusinessPage.tsx` still shows a `$24.99`
+  plan row — admin-internal analytics, left as-is (not customer-facing).
 
 **Deliberately untouched (kept the standing constraint "don't touch the rest"):**
 the live reply path (`runDirectReply`/unified), Stripe/trial gate, onboarding

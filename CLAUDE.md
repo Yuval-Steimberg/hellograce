@@ -6,7 +6,7 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 READ FIRST — live-testing quality fixes + cross-surface sync (2026-07-05, MERGED to `main` HEAD `bd71bcc`, NOT deployed by me)
+## 👉 READ FIRST — live-testing quality fixes + cross-surface sync (2026-07-05, MERGED to `main` HEAD `b2f1684`, NOT deployed by me)
 
 Follow-on to the product-gaps roadmap below. Driven by real iMessage screenshots
 + a sync audit. All on `main` (branch `claude/grace-product-gaps-roadmap-h05gyn`),
@@ -19,7 +19,7 @@ so the ~20 handleMessageInner intercepts are bypassed — any reply-quality fix 
 go inside `runUnifiedReply`, not the compact path.
 
 **Commits:** `c8fa014` admin toggle UI fix → `0a57020` logging/reply-quality →
-`bd71bcc` cross-surface sync.
+`bd71bcc` cross-surface sync → `b2f1684` suggest-a-number when a target is missing.
 
 1. **Admin toggle switches didn't flip (`c8fa014`).** UserDrawer account switches
    (paid/pro/paused/blocked) + RLHF read `checked` from the `['user-detail',phone]`
@@ -70,6 +70,16 @@ go inside `runUnifiedReply`, not the compact path.
    `UserDetail` type. (c) **Progress-photo weight** — `POST /dashboard/progress-photo`
    now also `logWeightEntry`s the optional weight (was stranded on the photo row,
    invisible to the chart + chat).
+
+7. **Suggest-a-number when a target is missing (`b2f1684`).** `tryPersonalStats`
+   used to derive+store a protein target from weight, but if weight was ALSO
+   missing it returned null → the LLM invented a generic "100-120g". Now it never
+   dead-ends: weight (or goal weight) present → suggests the `calculateProteinTarget`
+   number + "confirm/adjust it in Settings"; no weight at all → gives a sensible
+   GLP-1 suggestion (~100-120g) AND asks them to add their weight in Settings for
+   the precise number. So a missing detail always yields a GROUNDED suggestion +
+   a clear next step, never a made-up number. (Runs in both paths — the port is in
+   `runUnifiedReply`, the compact path already calls it at ~1901.)
 
 **NOTE on the unified path:** the doctor-questions + personal-stats ports were
 added ONLY to `runUnifiedReply`; the compact path already had them. If the flag is

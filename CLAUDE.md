@@ -6,7 +6,17 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `ac4c8cd`, NOT deployed by me)
+## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `6c9757f`, NOT deployed by me)
+
+**Full session arc (all on `main`, all green — 1807 api + 659 ai-core):** gap
+analysis → 6 product-gap steps (protein targets, peptide safety, water, weekly
+insights, habit checklist, dose timeline) → post-testing fixes (protein-goal chat
+UX, capture-once profiling, surface-full-profile-in-prompt) → landing refresh +
+pricing consistency + dead-code cleanup → reminders/scheduler verification + 7
+fixes (2 injection quality + 5 minor). **Deploy = apply the 2 migrations
+(`20260705000001_habit_logs.sql`, `20260705000002_dose_events.sql`) then
+`fly deploy` grace-api (verify `/health` == HEAD); web/dashboard + landing
+auto-deploy on Vercel from `main`.** No PR opened; merged via fast-forward.
 
 **Reminders/scheduler verification (`4e7fdc6`):** full audit — cron every minute
 (best-effort, allSettled), injection state machine (null→morning_sent→

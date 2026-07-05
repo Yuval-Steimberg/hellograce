@@ -6,6 +6,78 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — live-testing quality fixes + cross-surface sync (2026-07-05, MERGED to `main` HEAD `bd71bcc`, NOT deployed by me)
+
+Follow-on to the product-gaps roadmap below. Driven by real iMessage screenshots
++ a sync audit. All on `main` (branch `claude/grace-product-gaps-roadmap-h05gyn`),
+1811 api green, api+web typecheck clean, web builds. **NOT deployed by me** — user
+applies the 2 roadmap migrations (still pending) + `fly deploy` grace-api; web
+auto-deploys on Vercel. **Prod is running the UNIFIED path (`UNIFIED_REPLY_PATH`
+on)** — proven because the food portion wording matched the unified `warmSys`
+verbatim. That matters: the unified branch (`ai.service.ts` ~1069) RETURNS EARLY,
+so the ~20 handleMessageInner intercepts are bypassed — any reply-quality fix must
+go inside `runUnifiedReply`, not the compact path.
+
+**Commits:** `c8fa014` admin toggle UI fix → `0a57020` logging/reply-quality →
+`bd71bcc` cross-surface sync.
+
+1. **Admin toggle switches didn't flip (`c8fa014`).** UserDrawer account switches
+   (paid/pro/paused/blocked) + RLHF read `checked` from the `['user-detail',phone]`
+   query, but the toggle mutations only invalidated `['admin-users']` → saved but
+   never refetched. Both mutations now invalidate `['user-detail',phone]` too; RLHF
+   switch reads from `detail` like the others.
+
+2. **Protein-target inconsistency (`0a57020`).** "What is my protein goal?" hit the
+   grounded LLM → invented a generic "100-120g" (with a report-shaped "Protecting
+   Muscle / Fighting Fatigue" ramble), while the weekly summary + doctor questions +
+   food logging all used the stored `protein_goal_grams` (140). Ported
+   `tryPersonalStats` into `runUnifiedReply` (before the food step) → the goal +
+   "how much have I had" answer from the SAME stored number everywhere. ONE source
+   of truth.
+
+3. **Multi-item portion question was generic (`0a57020`).** "chicken and rice" →
+   "how much, a cup or a small container?" (fits neither). Root cause: the unified
+   food `warmSys` FACTS forced ONE generic question. Now asks PER-DISH with a
+   fitting reference (palm-sized piece for meat/fish, a cup for rice/pasta, a small
+   container for yogurt) via new `portionHint()` in `food-portion.ts`;
+   `buildPortionConfirmQuestion` multi-branch enumerates each dish.
+
+4. **Doctor-questions follow-up was a truncated report (`0a57020`).** After the
+   weekly recap offered "questions for your doctor?", "Yes please" fell to the
+   grounded LLM → "Questions for your Doctor:" heading + list, cut off mid-sentence.
+   Ported the deterministic `buildDoctorQuestions` intercept (confirm/refine/reject
+   via `detectFollowUp` + `isDoctorQuestionsContext`) into `runUnifiedReply`,
+   grounded + length-capped. Also hardened `isAcceptableRephrase` (rephrase.ts) to
+   REJECT list/heading report-shape so ANY `warmlyRephrase` falls back to the clean
+   template.
+
+5. **Food day reset = local midnight — VERIFIED (no change).** `logging-window.ts`
+   `userDayExpr`/`computeUserLoggingDay` already reset at local 11:59 PM→12:00 AM
+   (no wake/5h shift anywhere in food queries or the Redis key).
+
+6. **Cross-surface sync audit (`bd71bcc`).** Mapped dashboard / settings / admin /
+   chat field coverage. Settings↔chat already fully synced (30 profile fields
+   round-trip; `update()` invalidates the user cache). Fixed the real drift:
+   (a) **Diet dual-source** — `effectiveDietaryRestriction` returned only
+   `dietary_pattern` and DROPPED the free-text `dietary_restriction` (a "vegan +
+   kosher" user lost kosher). Now MERGES both (keeps the pattern label so the diet
+   key resolves, unions both forbidden sets). (b) **Admin parity** — added
+   `starting_weight`+`checkin_days_interval` to admin GET; added `dose_mg`,
+   `starting_weight`, `checkin_days_interval`, `medication_frequency`,
+   `medication_time`, `exercise_habits`, `why_started`, `biggest_challenge`,
+   `support_style` to the admin PUT schema (full Settings parity) + drawer inputs
+   for dose/med-freq/starting-weight/height/sex/activity/primary-goal/interval +
+   `UserDetail` type. (c) **Progress-photo weight** — `POST /dashboard/progress-photo`
+   now also `logWeightEntry`s the optional weight (was stranded on the photo row,
+   invisible to the chart + chat).
+
+**NOTE on the unified path:** the doctor-questions + personal-stats ports were
+added ONLY to `runUnifiedReply`; the compact path already had them. If the flag is
+ever turned OFF, both paths are covered. Still NOT ported to unified (documented
+gap): symptom-intelligence recall/record.
+
+---
+
 ## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `6c9757f`, NOT deployed by me)
 
 **Full session arc (all on `main`, all green — 1807 api + 659 ai-core):** gap

@@ -27,6 +27,9 @@ import { kgToLbs } from '../nutrition/units.js';
 import { getTodaysWaterOz, getDailyWaterHistory, logWater } from '../services/water-log.js';
 import { WATER_GOAL_MIN_OZ, WATER_GOAL_MAX_OZ } from '../nutrition/water.js';
 import { computeWeeklyStats } from '../services/weekly-insights.js';
+import { computeUserLoggingDay } from '../nutrition/logging-window.js';
+import { HABITS, HABIT_KEYS, type HabitKey } from '../services/habit-checklist.js';
+import { checkHabits, uncheckHabit, getTodaysHabits } from '../services/habit-store.js';
 
 /**
  * Grace user dashboard API (2026-07-02).
@@ -102,7 +105,7 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
     const user = await deps.users.getByPhone(phone);
     if (!user) throw new UnauthorizedError('Account not found');
 
-    const [weightRows, proteinHist, todayFood, moodRows, symptomRows, waterToday, waterHist] = await Promise.all([
+    const [weightRows, proteinHist, todayFood, moodRows, symptomRows, waterToday, waterHist, habitKeys] = await Promise.all([
       deps.users.getWeightHistory(phone, 90).catch(() => []),
       deps.users.getDailyProteinHistory(phone, 30).catch(() => [] as Array<{ day: string; protein_g: number; calories: number; item_count: number }>),
       deps.users.getTodaysFoodSummary(phone).catch(() => ({ protein_g: 0, calories: 0, items: [] as string[], items_detailed: [] as Array<{ food: string; protein_g: number; calories: number; logged_at: string }> })),
@@ -110,6 +113,7 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
       deps.users.getRecentSymptomEpisodes(phone, 80).catch(() => [] as Array<{ symptom: string; days_since_injection: number | null; dose_mg: number | null; remedy_helped: string | null; created_at: Date }>),
       getTodaysWaterOz(deps.pool, phone).catch(() => null),
       getDailyWaterHistory(deps.pool, phone, 7).catch(() => [] as Array<{ day: string; oz: number }>),
+      getTodaysHabits(deps.pool, phone, computeUserLoggingDay(user.timezone, user.wake_time, new Date())).catch(() => [] as HabitKey[]),
     ]);
 
     const episodes = symptomRows.map(toEpisode);
@@ -170,6 +174,12 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
         goalMax: WATER_GOAL_MAX_OZ,
         // Oldest → newest so the UI reads left-to-right; last 7 days.
         history: [...waterHist].reverse().map((d) => ({ day: d.day, oz: d.oz })),
+      },
+      // Quick-checkmark daily habits. `available` is the list to show (the shot
+      // habit only for weekly-injectable users); `checked` are today's ticks.
+      habits: {
+        available: HABITS.filter((h) => !h.weeklyInjectableOnly || (user.medication_frequency !== 'daily' && !!user.medication)).map((h) => ({ key: h.key, label: h.label, icon: h.icon })),
+        checked: habitKeys,
       },
       // Weekly rollup: averages + this-week weight change + plateau signal + one
       // hedged, non-causal insight. Pure derivation from data already fetched.
@@ -234,6 +244,25 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
     const today = (await getTodaysWaterOz(deps.pool, phone).catch(() => null)) ?? 0;
     deps.logger.info({ phone, oz: parsed.data.oz, today }, 'dashboard.water.logged');
     return { ok: true, today, goalMin: WATER_GOAL_MIN_OZ, goalMax: WATER_GOAL_MAX_OZ };
+  });
+
+  // ── POST /dashboard/habit — check / uncheck a daily habit ───────────────────
+  // Tappable checklist toggle. `checked:true` ticks it for the user's local day
+  // (idempotent), `checked:false` unticks. Returns today's full checked set.
+  app.post('/dashboard/habit', async (req) => {
+    const phone = await requireVerifiedPhone(req);
+    const parsed = z.object({
+      key: z.enum(HABIT_KEYS as unknown as [HabitKey, ...HabitKey[]]),
+      checked: z.boolean(),
+    }).safeParse(req.body);
+    if (!parsed.success) throw new ValidationError('Pick a valid habit to check.');
+    const user = await deps.users.getByPhone(phone);
+    const day = computeUserLoggingDay(user?.timezone, user?.wake_time, new Date());
+    if (parsed.data.checked) await checkHabits(deps.pool, phone, [parsed.data.key], day, 'dashboard');
+    else await uncheckHabit(deps.pool, phone, parsed.data.key, day);
+    const checked = await getTodaysHabits(deps.pool, phone, day);
+    deps.logger.info({ phone, key: parsed.data.key, checked: parsed.data.checked }, 'dashboard.habit.toggled');
+    return { ok: true, checked };
   });
 
   // ── POST /dashboard/symptom — log a symptom (+ optional remedy that helped) ─

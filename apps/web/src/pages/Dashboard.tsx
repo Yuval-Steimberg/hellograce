@@ -18,6 +18,7 @@ import { RecentWins } from "@/components/dashboard/RecentWins";
 import { InjectionCard } from "@/components/dashboard/InjectionCard";
 import { HydrationCard } from "@/components/dashboard/HydrationCard";
 import { WeeklyReview } from "@/components/dashboard/WeeklyReview";
+import { HabitChecklist } from "@/components/dashboard/HabitChecklist";
 import { TodaysMeals } from "@/components/dashboard/TodaysMeals";
 import { ProfileCompleteness } from "@/components/dashboard/ProfileCompleteness";
 import { DashboardSkeleton, DashboardLoadError } from "@/components/dashboard/DashboardStates";
@@ -178,8 +179,13 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
       </div>
 
       {/* Injection day + medication */}
-      <div className="mb-6">
+      <div className="mb-4">
         <InjectionCard data={data} />
+      </div>
+
+      {/* Quick-checkmark daily habits — low-friction tracking */}
+      <div className="mb-6">
+        <Reveal><HabitChecklist data={data} /></Reveal>
       </div>
 
       {/* Recent wins — encouragement, hidden when there's nothing earned yet */}

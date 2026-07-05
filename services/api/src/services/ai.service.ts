@@ -474,7 +474,7 @@ import type { BanditService } from './bandit.service.js';
 import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood, findVagueAddOnItem, hasExplicitQuantity } from '../safety/vague-food.js';
 import { shouldDiscloseEstimate, estimateNote } from '../nutrition/estimate-note.js';
-import { USER_DAY_CTE, isCurrentUserDay } from '../nutrition/logging-window.js';
+import { USER_DAY_CTE, isCurrentUserDay, computeUserLoggingDay } from '../nutrition/logging-window.js';
 import {
   looksLikeRecommendation,
   isRecommendationFollowUp,
@@ -549,6 +549,8 @@ import {
 } from '../onboarding/progressive-profile.js';
 import { detectHypoglycemiaWarning, mightBeHypoSymptom, isWhatShouldIDo } from '../safety/hypoglycemia-warning.js';
 import { detectPeptideSafety } from '../safety/peptide-safety.js';
+import { detectHabitCheck, detectSkipFoodLogging, buildHabitCheckReply, buildSkipFoodOffer } from './habit-checklist.js';
+import { checkHabits } from './habit-store.js';
 import {
   detectSummaryRequest,
   mightBeSummaryRequest,
@@ -930,6 +932,34 @@ export class AIService {
           usedRetrieval: false,
           latencyMs: totalMs,
         };
+      }
+    }
+
+    // ── Quick habit checklist (2026-07-05) — deterministic, both flag states.
+    // The low-friction path for users who don't want to log every bite. A message
+    // like "I hit protein and water today" or "done with movement" checks the
+    // habits off; "I don't want to log food today" offers the checklist instead.
+    // Runs before the food paths, but detectHabitCheck bails on anything naming a
+    // food or reading as consumption, so it can never hijack a meal log. Cheap
+    // regex first; only loads the user (for the local-day key) on a real hit.
+    {
+      const habitKeys = detectHabitCheck(input.text);
+      if (habitKeys.length > 0) {
+        const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+        const day = computeUserLoggingDay(user?.timezone, user?.wake_time, new Date());
+        await checkHabits(this.deps.pool, input.userId, habitKeys, day, 'chat').catch(() => undefined);
+        const reply = buildHabitCheckReply(habitKeys);
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId: input.userId, habits: habitKeys }, 'ai.habit_check.served');
+        this.persistLatency(input.userId, 'habit_check', totalMs, lat.snapshot(), input.text, reply);
+        return { text: reply, confidence: 'high', intent: 'habit_check', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      }
+      if (detectSkipFoodLogging(input.text)) {
+        const reply = buildSkipFoodOffer();
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId: input.userId }, 'ai.habit_skip_food.served');
+        this.persistLatency(input.userId, 'habit_skip_food', totalMs, lat.snapshot(), input.text, reply);
+        return { text: reply, confidence: 'high', intent: 'habit_skip_food', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
       }
     }
 

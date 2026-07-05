@@ -47,6 +47,10 @@ export interface DashboardSummary {
     goalMax: number;
     history: Array<{ day: string; oz: number }>;
   };
+  habits: {
+    available: Array<{ key: string; label: string; icon: string }>;
+    checked: string[];
+  };
   weekly: {
     avgProtein: number | null;
     proteinGoal: number | null;
@@ -101,6 +105,12 @@ export const dashboardApi = {
     call<{ ok: boolean; today: number; goalMin: number; goalMax: number }>(
       "/dashboard/water",
       { method: "POST", auth: true, body: JSON.stringify({ oz }) },
+    ),
+
+  toggleHabit: (key: string, checked: boolean) =>
+    call<{ ok: boolean; checked: string[] }>(
+      "/dashboard/habit",
+      { method: "POST", auth: true, body: JSON.stringify({ key, checked }) },
     ),
 
   logSymptom: (symptom: string, remedy?: string) =>

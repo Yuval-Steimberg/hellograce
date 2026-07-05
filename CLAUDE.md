@@ -16,10 +16,10 @@ mapped via parallel Explore agents), then implemented in verified, one-at-a-time
 steps. **Branch HEAD `110a819`; NOT merged, NOT deployed. 1760 api + 659 ai-core
 green; all packages typecheck; web builds clean.**
 
-**⚠️ ONE MIGRATION TO APPLY before Step 5 works in prod:**
-`supabase/migrations/20260705000001_habit_logs.sql` (habit checklist). Additive,
-RLS default-deny; code degrades to empty until applied (like water_logs). Steps
-1–4 need **no** migration.
+**⚠️ TWO MIGRATIONS TO APPLY before Steps 5–6 work in prod:**
+`20260705000001_habit_logs.sql` (habit checklist) + `20260705000002_dose_events.sql`
+(dose timeline). Both additive, RLS default-deny; code degrades to empty/current-only
+until applied (like water_logs). Steps 1–4 need **no** migration.
 
 Steps shipped (each its own commit, verified before the next):
 1. **Personalized protein/calorie targets for SMS-onboarded users** (`ac91779`).
@@ -60,18 +60,28 @@ Steps shipped (each its own commit, verified before the next):
    block in `/dashboard/summary` + `POST /dashboard/habit` toggle +
    `HabitChecklist.tsx` (tappable, optimistic).
 
+6. **Medication / dose timeline** (`8b14a07`, NEEDS `dose_events` migration).
+   New `services/medication-timeline.ts` (`recordDoseEvent`/`getDoseEvents` +
+   pure `buildDoseTimeline` → dose periods with GLP-1 week span, weight change,
+   top symptom per dose; synthesizes a current-dose period from `dose_mg` +
+   `glp1_start_date` when no events yet). Centralized best-effort hook in
+   `UserService.update()` + new `syncDoseEvent` records an event whenever
+   `dose_mg` changes (fire-and-forget). `medicationTimeline` block in
+   `/dashboard/summary` + `MedicationTimeline.tsx` card. Read-only history —
+   never dosing advice.
+
 **Deliberately untouched (kept the standing constraint "don't touch the rest"):**
 the live reply path (`runDirectReply`/unified), Stripe/trial gate, onboarding
 flow logic, reminders, injection state machine, food-logging internals, auth.
 Every addition is additive + best-effort (degrades, never throws).
 
-**NEXT (recommended order, each needs its own migration → explain-then-apply):**
-Priority-1 remaining — dose/medication timeline (new `dose_events` table),
-Simple vs Detailed tracking mode (`users.tracking_mode`). Priority-2 — fiber
+**NEXT (recommended order → explain-then-apply for any migration):**
+Priority-1 remaining — Simple vs Detailed tracking mode (`users.tracking_mode`,
+one column). Priority-2 — balanced-plate/carb-pairing helper (NO schema), fiber
 pipeline (food_logs `fiber_g` + the ~250-entry lookup table — the biggest lift),
-body measurements (new table), balanced-plate/carb-pairing helper (no schema).
-Priority-3 (business decision) — free vs paid feature tiering (access is
-all-or-nothing today; `is_pro`==`is_paid`). No PR opened yet.
+body measurements (new table). Priority-3 (business decision) — free vs paid
+feature tiering (access is all-or-nothing today; `is_pro`==`is_paid`). No PR
+opened yet.
 
 ---
 

@@ -180,6 +180,34 @@ function user(partial: Record<string, unknown> = {}): any {
   };
 }
 
+describe('parseSlotAnswer — activity level (bare answers to Grace\'s own question)', () => {
+  const cases: Array<[string, string]> = [
+    ['Move', 'moderate'],            // the production screenshot bug — bare "Move"
+    ['move', 'moderate'],
+    ['on the move', 'moderate'],
+    ['moving a lot', 'moderate'],
+    ['on my feet all day', 'moderate'],
+    ['sitting', 'sedentary'],
+    ['sitting day to day', 'sedentary'],
+    ['lightly active', 'lightly_active'], // canonical enum, not the old 'light'
+    ['very active', 'very_active'],
+  ];
+  for (const [input, expected] of cases) {
+    it(`"${input}" → ${expected}`, () => {
+      const r = parseSlotAnswer('activity', input);
+      expect(r.ok).toBe(true);
+      expect((r as { fields: { activity_level: string } }).fields.activity_level).toBe(expected);
+    });
+  }
+  it('returns canonical calorie-target enum values only', () => {
+    const valid = new Set(['sedentary', 'lightly_active', 'moderate', 'very_active']);
+    for (const [input] of cases) {
+      const r = parseSlotAnswer('activity', input) as { ok: boolean; fields?: { activity_level: string } };
+      expect(valid.has(r.fields!.activity_level)).toBe(true);
+    }
+  });
+});
+
 describe('slot sequencing', () => {
   it('weekly users get an injection_day slot; daily users get medication_time', () => {
     expect(signupSequence({ medication_frequency: 'weekly' })).toContain('injection_day');

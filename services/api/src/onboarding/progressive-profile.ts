@@ -89,9 +89,15 @@ export function nextMissingProfileSlot(user: ProfileShape): ProgressiveSlot | nu
   return null;
 }
 
-// The Mifflin-St Jeor inputs — a protein/calorie/target question is only as
+// The Mifflin-St Jeor inputs — a CALORIE/macro target question is only as
 // accurate as these. Asked in this order when one is missing.
 const TARGET_INPUTS: ProgressiveSlot[] = ['sex', 'current_weight', 'height', 'age', 'activity'];
+
+// A PROTEIN target only needs body weight (g/kg based) — so a protein-specific
+// question should never interrogate sex/height/age/activity. Gathering the full
+// Mifflin chain for "what's my protein goal" was the over-asking + repetition
+// bug (asked "sitting/lightly active/on the move", couldn't answer, re-asked).
+const PROTEIN_TARGET_INPUTS: ProgressiveSlot[] = ['current_weight'];
 
 // Only a question about the USER'S OWN target/goal — "how much protein SHOULD I
 // eat", "what's my protein target", "am I getting enough" — depends on the
@@ -120,7 +126,10 @@ export function relevantProfileSlot(user: ProfileShape, text: string): Progressi
   // directly — it never depends on the user's profile, so never gather for it.
   if (FOOD_CONTENT_RE.test(t)) return null;
   if (TARGET_QUESTION_RE.test(t)) {
-    for (const slot of TARGET_INPUTS) {
+    // Protein-only question → weight is the single input; calorie/macro → full set.
+    const proteinOnly = /\bprotein\b/i.test(t) && !/\b(calorie|kcal|macro|carb|fat)s?\b/i.test(t);
+    const inputs = proteinOnly ? PROTEIN_TARGET_INPUTS : TARGET_INPUTS;
+    for (const slot of inputs) {
       if (!isProfileSlotFilled(user, slot)) return slot;
     }
   }

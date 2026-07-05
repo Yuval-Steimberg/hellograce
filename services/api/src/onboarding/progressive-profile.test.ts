@@ -58,9 +58,17 @@ describe('nextMissingProfileSlot — priority order', () => {
 });
 
 describe('relevantProfileSlot — ask the field that makes THIS answer accurate', () => {
-  it('a protein/calorie question pulls the first missing Mifflin input', () => {
-    expect(relevantProfileSlot(empty, 'how much protein should I eat?')).toBe('sex');
-    expect(relevantProfileSlot({ ...empty, sex: 'male' }, 'how many calories do I need?')).toBe('current_weight');
+  it('a PROTEIN target question needs only weight (not the full Mifflin chain)', () => {
+    // Protein is g/kg — weight is the single input. Asking sex/height/age/activity
+    // for "what's my protein goal" was the over-ask + repetition bug.
+    expect(relevantProfileSlot(empty, 'how much protein should I eat?')).toBe('current_weight');
+    expect(relevantProfileSlot(empty, 'what is my protein goal?')).toBe('current_weight');
+    // weight known → no gather at all (tryPersonalStats derives + answers directly)
+    expect(relevantProfileSlot({ ...empty, current_weight: 190 }, 'what is my protein goal?')).toBeNull();
+  });
+  it('a CALORIE/macro question still pulls the first missing Mifflin input', () => {
+    expect(relevantProfileSlot(empty, 'how many calories do I need?')).toBe('sex');
+    expect(relevantProfileSlot({ ...empty, sex: 'male' }, "what's my calorie target?")).toBe('current_weight');
   });
   it('a FACTUAL food-content estimate never gathers (production: salmon protein)', () => {
     // "how much protein IS that" is answered directly — it does NOT depend on

@@ -2365,8 +2365,16 @@ export class AIService {
       /\bhow am i doing\b/.test(lower);
     if (!wantsTarget && !wantsHad) return null;
 
-    const user = await this.deps.users.getById(input.userId).catch(() => null);
+    let user = await this.deps.users.getById(input.userId).catch(() => null);
     if (!user) return null;
+    // Personalize on demand: if they're asking for their target but we've never
+    // computed one (SMS-onboarded users, or the field was added later), derive +
+    // store it now from their weight so the answer is THEIR own number, not a
+    // generic clinical range. Protein only needs weight — no extra questions.
+    if (wantsTarget && (!user.protein_goal_grams || user.protein_goal_grams <= 0) && user.current_weight != null) {
+      await this.deps.users.ensureNutritionTargets(input.userId).catch(() => undefined);
+      user = (await this.deps.users.getById(input.userId).catch(() => user)) ?? user;
+    }
     const parts: string[] = [];
     if (wantsTarget && user.protein_goal_grams && user.protein_goal_grams > 0) {
       parts.push(`your daily protein target is ${user.protein_goal_grams}g`);
@@ -4164,6 +4172,10 @@ CRITICAL RULES:
       if (captured) {
         await this.deps.users.update(phone, fields!).catch(() => {});
         this.deps.logger.info({ userId: phone, slot: pending, captured: Object.keys(fields!) }, 'progressive_profile.captured');
+        // A newly-captured weight/goal/body metric may now let us derive a
+        // personalized protein/calorie target — fill it (best-effort, never
+        // clobbers a set value) so the replayed question answers with the number.
+        await this.deps.users.ensureNutritionTargets(phone).catch(() => undefined);
       }
       const declined = !captured && isGatherDecline(input.text);
       if (captured || declined) {

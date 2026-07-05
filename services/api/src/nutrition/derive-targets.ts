@@ -78,8 +78,11 @@ export function deriveMissingTargets(p: TargetProfile): DerivedTargetUpdates {
 
   if (p.calorie_goal_kcal == null) {
     const sex = p.sex && SEXES.has(p.sex) ? (p.sex as Sex) : null;
+    // Tolerate the legacy 'light' value some users have stored from before the
+    // parser was normalized to 'lightly_active'.
+    const normalizedActivity = p.activity_level === 'light' ? 'lightly_active' : p.activity_level;
     const activityLevel =
-      p.activity_level && ACTIVITY_LEVELS.has(p.activity_level) ? (p.activity_level as ActivityLevel) : null;
+      normalizedActivity && ACTIVITY_LEVELS.has(normalizedActivity) ? (normalizedActivity as ActivityLevel) : null;
     const kcal = calculateCalorieTarget({
       weightLbs,
       heightCm: p.height_cm ?? null,

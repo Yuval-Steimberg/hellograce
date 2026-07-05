@@ -301,12 +301,18 @@ export function parseAge(text: string, now = new Date()): number | null {
   return n >= 13 && n <= 120 ? n : null;
 }
 
+// Returns the CANONICAL activity level used by the calorie/protein calculators
+// (sedentary | lightly_active | moderate | very_active). Order matters: the
+// specific "lightly active" / "sedentary" phrasings are checked BEFORE the
+// generic "active" so "lightly active" isn't swallowed as moderate, and bare
+// one-word answers to Grace's own question ("sitting / lightly active / on the
+// move") — including a lone "move" — are all recognized.
 function parseActivity(text: string): string | null {
   const t = text.toLowerCase();
-  if (/\b(very active|athlete|intense|gym (daily|every)|heavy)\b/.test(t)) return 'very_active';
-  if (/\b(active|on (my|the) (feet|move)|moderate|workout|exercise|run|lift)\b/.test(t)) return 'moderate';
-  if (/\b(lightly active|light|some walking|walk)\b/.test(t)) return 'light';
+  if (/\b(very active|athlete|intense|gym (daily|every)|heavy|super active)\b/.test(t)) return 'very_active';
+  if (/\b(lightly active|light(?:ly)?|some walking|walk)\b/.test(t)) return 'lightly_active';
   if (/\b(sedentary|desk|sitting|low|not (very|much)|barely|inactive)\b/.test(t)) return 'sedentary';
+  if (/\b(active|on (?:my|the) (?:feet|move|go)|move|moving|moderate|workout|exercise|run|lift)\b/.test(t)) return 'moderate';
   return null;
 }
 

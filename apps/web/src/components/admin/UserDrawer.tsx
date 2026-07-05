@@ -115,13 +115,22 @@ export default function UserDrawer({ user, onClose }: Props) {
 
   const toggleMutation = useMutation({
     mutationFn: (fields: Parameters<typeof api.updateUser>[1]) => api.updateUser(user!.phone, fields),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['admin-users'] }),
+    // Refresh BOTH the list AND the drawer's detail query — the account switches
+    // read their checked state from `detail`, so without this they saved but
+    // never visually flipped (the reported bug).
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-users'] });
+      void qc.invalidateQueries({ queryKey: ['user-detail', user?.phone] });
+    },
     onError: () => toast.error('Update failed'),
   });
 
   const rlhfMutation = useMutation({
     mutationFn: (enabled: boolean) => api.toggleRlhf(user!.phone, enabled),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['admin-users'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['admin-users'] });
+      void qc.invalidateQueries({ queryKey: ['user-detail', user?.phone] });
+    },
     onError: () => toast.error('RLHF toggle failed'),
   });
 
@@ -345,7 +354,7 @@ export default function UserDrawer({ user, onClose }: Props) {
                       <div className="flex items-center justify-between">
                         <Label className="text-sm">RLHF contributor (sees rating prompts)</Label>
                         <Switch
-                          checked={user.rlhf_enabled}
+                          checked={!!(detail as Record<string, unknown>)?.rlhf_enabled}
                           onCheckedChange={(val) => rlhfMutation.mutate(val)}
                           disabled={rlhfMutation.isPending}
                         />

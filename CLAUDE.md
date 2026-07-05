@@ -6,7 +6,27 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `bad8c51`, NOT deployed by me)
+## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `4e7fdc6`, NOT deployed by me)
+
+**Reminders/scheduler verification (`4e7fdc6`):** full audit — cron every minute
+(best-effort, allSettled), injection state machine (null→morning_sent→
+done_confirmed→followup_sent→null, 24h stale reset, evening-injector fix), caps
+(checkin_count_per_day 1-3, 3h gap, engagement cooldown 2h, quiet hours 21-07,
+days-interval, jitter), Redis distributed lock (no dup across machines), content
+rules + sanitizeProactiveOutput (salutation "For Yuval," strip), data grounding
+(yesterday/today totals + symptom heads-up), reminder-service answers "when's my
+next reminder". VERDICT: sound + all tests green (58 scheduler + 29 msg-gen + 23
+reminder-service + 9 quiet-reengage). Fixed 2: (1) "done" detection was
+exact-match → new `isInjectionDoneReply` (broad, scoped to morning_sent) so
+"done ✅"/"all done"/"did it" advance; also now increments `injection_count`. (2)
+injection msg now has a GROUNDED number + comfort supplies like the Nudge target:
+`injectionNumberFromStart(glp1_start_date, freq)` → "#N" (null → prompt told not
+to invent), fallback+prompt add site rotation + ginger tea/crackers/electrolytes,
+threaded via `GenerateOpts.injectionNumber`. Minor/by-design NOT fixed: evening
+injectors' followup can slip to next AM (quiet hours), evening gated on
+engagedToday, trial_expiry is a CRITICAL_HEALTH_TYPE, injection msgs skip
+anti-repetition dedup, `toDateStr` assumes UTC process (Fly is UTC).
+
 
 Session driven by a product-direction ask: make Grace the simple all-in-one
 GLP-1 command center (medication, protein, habits, water, weight, symptoms,

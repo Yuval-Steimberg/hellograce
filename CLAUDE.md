@@ -6,6 +6,75 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, branch `claude/grace-product-gaps-roadmap-h05gyn`, NOT merged)
+
+Session driven by a product-direction ask: make Grace the simple all-in-one
+GLP-1 command center (medication, protein, habits, water, weight, symptoms,
+weekly insights) instead of "a chatbot that answers questions." Did a full
+gap analysis (dashboard/food-macro/medication/water/weekly/safety/subscription
+mapped via parallel Explore agents), then implemented in verified, one-at-a-time
+steps. **Branch HEAD `110a819`; NOT merged, NOT deployed. 1760 api + 659 ai-core
+green; all packages typecheck; web builds clean.**
+
+**⚠️ ONE MIGRATION TO APPLY before Step 5 works in prod:**
+`supabase/migrations/20260705000001_habit_logs.sql` (habit checklist). Additive,
+RLS default-deny; code degrades to empty until applied (like water_logs). Steps
+1–4 need **no** migration.
+
+Steps shipped (each its own commit, verified before the next):
+1. **Personalized protein/calorie targets for SMS-onboarded users** (`ac91779`).
+   The calculators (`nutrition/protein-target.ts`, `calorie-target.ts`) existed
+   but only ran on the deprecated web onboard route — SMS users (the default)
+   silently got a generic 80g. New `nutrition/derive-targets.ts`
+   (`deriveMissingTargets`, FILL-IF-MISSING, never clobbers a Settings value)
+   wired into `onboarding-flow.ts` (after each field persist) +
+   `UserService.logWeightEntry` + new `UserService.ensureNutritionTargets`.
+2. **DIY-injectable / research-peptide safety guardrail** (`ee4b8fb`). New
+   `safety/peptide-safety.ts` `detectPeptideSafety` — deterministic refusal for
+   reconstitution/BAC-water/dosing-math/stacking/research peptides (warm, still
+   offers safe tracking + clinician). Intercept in `ai.service.handleMessage`
+   after the hypoglycemia block. Scoped so food "combine protein with carbs" +
+   normal dose tracking pass through. Content-checker backstops for INSTRUCTIONAL
+   outbound (BAC-water math, "to reconstitute", "draw up N units", "you can stack").
+3. **Water on the dashboard + loggable** (`9726837`). Water was tracked
+   (`water_logs`) + chat-logged since 2026-06-15 but invisible on the dashboard.
+   `water-log.getDailyWaterHistory` (new) → `hydration` block in
+   `/dashboard/summary` + `POST /dashboard/water` + `HydrationCard.tsx` (today vs
+   range + 7-day consistency) + a Water tab in `QuickLog`. No schema.
+4. **Weekly insights: totals + weight correlation + plateau** (`7367cd4`). New
+   pure `services/weekly-insights.ts` (`weeklyProteinStats`/`weeklyWaterStats`/
+   `weekWeightDelta`/`plateauSignal`/`buildWeeklyInsight`/`computeWeeklyStats`).
+   Plateau only flags a real ≥14-day flat span; insight NEVER claims causation
+   ("measurements often move before the scale"). `weekly` block in
+   `/dashboard/summary` + `WeeklyReview.tsx` card + a hydration-consistency line
+   in the chat weekly summary (optional `getDailyWaterHistory` dep on
+   `UserService`, back-compat). No schema.
+5. **Quick-checkmark habit tracking** (`110a819`, NEEDS the migration). 10
+   canonical habits. `services/habit-checklist.ts` (CONSERVATIVE
+   `detectHabitCheck` — multi-habit; macro habits need a completion frame;
+   aspiration guard; bails on any specific food/consumption so it can't hijack a
+   meal log; `injected` left to the existing injection state machine) +
+   `detectSkipFoodLogging` ("don't want to log food" → offer checklist).
+   `services/habit-store.ts` (check/uncheck/getTodaysHabits, pool-based,
+   best-effort). Intercept in `ai.service` after the peptide guard. `habits`
+   block in `/dashboard/summary` + `POST /dashboard/habit` toggle +
+   `HabitChecklist.tsx` (tappable, optimistic).
+
+**Deliberately untouched (kept the standing constraint "don't touch the rest"):**
+the live reply path (`runDirectReply`/unified), Stripe/trial gate, onboarding
+flow logic, reminders, injection state machine, food-logging internals, auth.
+Every addition is additive + best-effort (degrades, never throws).
+
+**NEXT (recommended order, each needs its own migration → explain-then-apply):**
+Priority-1 remaining — dose/medication timeline (new `dose_events` table),
+Simple vs Detailed tracking mode (`users.tracking_mode`). Priority-2 — fiber
+pipeline (food_logs `fiber_g` + the ~250-entry lookup table — the biggest lift),
+body measurements (new table), balanced-plate/carb-pairing helper (no schema).
+Priority-3 (business decision) — free vs paid feature tiering (access is
+all-or-nothing today; `is_pro`==`is_paid`). No PR opened yet.
+
+---
+
 ## 👉 READ FIRST — admin dashboard + onboarding/trial fixes (2026-07-04, MERGED to `main`)
 
 Two PRs merged to `main` this session (branch `claude/grace-admin-dashboard-z7xajj`).

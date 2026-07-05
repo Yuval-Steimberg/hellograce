@@ -6,6 +6,60 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — GLP-1 start date + settings reads never fabricate (2026-07-05, branch `claude/injection-start-date-57bxof`, NOT merged, NOT deployed)
+
+Live-testing screenshots (start-date questions). Branch off `main`; **1855 api +
+659 ai-core green, all packages typecheck + build clean.** Commit `f0cd50e`. NOT
+merged to main, NOT deployed. Governing rule the user set: **Grace must NEVER
+fabricate ANY settings datum — answer from stored data, or ask the user to
+set/confirm it; never invent.**
+
+Three reported failures, all on the GLP-1 start date:
+1. "When I started taking the injection" → "Today (Sunday) is your Ozempic shot
+   day." A START question was stolen by the injection-timing intercept
+   (`NEXT_RE` matched "when … injection").
+2. "When I started with glp?" → the LLM **fabricated** "September 15, 2024 … your
+   8th week … your jawline …" (matched neither the stored value nor reality).
+3. Settings showed a garbage start date ("Jan 5, 1999"); a start date stated in
+   chat was never saved.
+
+Root cause: the **unified path (live in prod) had NO deterministic settings-read
+layer** — `tryQueryFast` (start_date/week_number/medication/injection_day/weights/
+age, all read from stored data, never fabricated) was wired into the COMPACT path
+only. So on prod those questions fell to the LLM → fabrication.
+
+Fixes (commit `f0cd50e`):
+- `medication-schedule.ts`: `detectInjectionTimingIntent` now returns null for
+  ONSET phrasing (started/began/"how long have I been on"/"first shot") so a
+  start question is never answered with the next shot day.
+- `query-fast.ts`: broadened `START_DATE_RE` to the no-"did" forms ("when I
+  started with glp", "when I started taking the injection"). `start_date` +
+  `week_number` use a **plausibility guard** — missing OR implausible stored date
+  (future / <2015, e.g. "1999") → flag it and ASK, never parrot or compute a bogus
+  week. Uses new `buildStartDateAnswer`/`isPlausibleStartDate`.
+- **Wired `tryQueryFast` into `runUnifiedReply`** — after the deliberate unified
+  intercepts (personal-stats keeps protein/calorie; query-fast owns the rest),
+  before the food step. This is the big general win: all settings-field reads are
+  now deterministic in the live path.
+- New `services/api/src/services/medication-start-date.ts` (pure, fully tested):
+  `parseStartDateStatement` captures a start date the user STATES in chat
+  (absolute / relative "6 weeks ago" / duration "for 8 weeks"), with tight
+  onset↔medication binding (won't capture "I started this diet 3 weeks ago") and a
+  plausibility guard (never stores future/1999/unrelated). `buildStartDateCaptureReply`
+  confirms it. Wired into BOTH reply paths before injection-timing.
+- Validation: settings PUT + onboarding reject/skip an implausible `glp1_start_date`;
+  Settings `<input type=date>` constrained to `[2015-01-01, today]`.
+- `nudge-prompt.ts`: explicit "NEVER FABRICATE PERSONAL DATA (settings/profile)"
+  rule for the residual LLM-handled fields (height/sex/tz/wake-sleep/etc.).
+
+**Deploy = merge to main + `fly deploy` grace-api** (web auto-deploys on Vercel;
+the chat-side fix needs the API deploy). No migration. **Note (not fixed, out of
+scope):** the scheduler's `injectionNumberFromStart` would still compute an absurd
+"#N" from a garbage stored date — self-corrects once the user fixes the date via
+chat/Settings; guard it there if it resurfaces.
+
+---
+
 ## 👉 READ FIRST — live-testing quality fixes + cross-surface sync (2026-07-05, MERGED to `main` HEAD `b2f1684`, NOT deployed by me)
 
 Follow-on to the product-gaps roadmap below. Driven by real iMessage screenshots

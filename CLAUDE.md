@@ -13,8 +13,10 @@ GLP-1 command center (medication, protein, habits, water, weight, symptoms,
 weekly insights) instead of "a chatbot that answers questions." Did a full
 gap analysis (dashboard/food-macro/medication/water/weekly/safety/subscription
 mapped via parallel Explore agents), then implemented in verified, one-at-a-time
-steps. **Branch HEAD `110a819`; NOT merged, NOT deployed. 1760 api + 659 ai-core
-green; all packages typecheck; web builds clean.**
+steps + follow-up fixes. **Branch HEAD `4480c45` (docs commit follows). 1777 api +
+659 ai-core green; all packages typecheck; web builds clean.** Merged to `main`
+per the user's "make everything ready to deploy" — see the deploy runbook at the
+end of this section.
 
 **⚠️ TWO MIGRATIONS TO APPLY before Steps 5–6 work in prod:**
 `20260705000001_habit_logs.sql` (habit checklist) + `20260705000002_dose_events.sql`
@@ -69,6 +71,32 @@ Steps shipped (each its own commit, verified before the next):
    `dose_mg` changes (fire-and-forget). `medicationTimeline` block in
    `/dashboard/summary` + `MedicationTimeline.tsx` card. Read-only history —
    never dosing advice.
+
+**Follow-up fixes after live testing (same branch, HEAD `4480c45`):**
+- **Protein-goal chat UX** (`c0f01ec`): a real test showed Grace asking "sitting /
+  lightly active / on the move?", the user answering "Move", and Grace RE-asking
+  (the parser needed "on the move", never matched bare "Move") + giving a generic
+  range instead of the stored number. Fixed `parseActivity` (canonical enum, bare
+  "move"/"moving"); a PROTEIN target now gathers only `current_weight` (not the
+  full Mifflin chain); `tryPersonalStats` derives+stores the target on demand from
+  weight so it answers THE number; gather-capture calls `ensureNutritionTargets`.
+- **Capture & remember once, generally** (`4b0ec73`): the root re-ask class — a
+  gathered answer that missed the strict parser was DROPPED → re-asked. The
+  in-chat gather gate now has the same LLM-normalize fallback onboarding already
+  had (`understandSlotWithLlm`, re-validated through the strict parser), so ANY
+  reasonable answer to ANY field (sex/weight/height/age/activity/diet/dislikes/
+  goal-weight/injection-day/wake-sleep) is captured the FIRST time. Plus chat
+  weight logs now sync `users.current_weight` (`UserService.syncCurrentWeight` +
+  the log_weight tool), so weight is remembered in the profile, not just weight_logs.
+- **Landing pages** (`4480c45`): the live marketing pages (`DesktopLanding`,
+  `MobileHero`, `FeatureGrid`, `PricingSection`, `FAQSection`, `seo-schemas`) now
+  reflect the all-in-one command center (targets, water, habit checklist, weekly
+  insights/plateau, dose timeline, symptom memory, dashboard) and FIX the stale
+  pricing on DesktopLanding (**7-day→3-day trial, $15→$12/mo**; rest of the site
+  was already 3-day/$12). Dead components (HeroSection/DesktopHero/ChatMockup/
+  MedicationsBar/FooterCTA) left untouched — not rendered. **Open:** `Terms.tsx`
+  still lists a "$24/mo Pro Plan" vs the single $12 plan everywhere else —
+  business decision, left for the user.
 
 **Deliberately untouched (kept the standing constraint "don't touch the rest"):**
 the live reply path (`runDirectReply`/unified), Stripe/trial gate, onboarding

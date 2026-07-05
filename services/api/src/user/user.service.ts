@@ -1,9 +1,10 @@
 import type { Pool } from 'pg';
 import { encryptField, decryptField, hashField, isEncryptionEnabled, isEncryptedBlob } from '../crypto/field-encrypt.js';
 import type { TodayFoodCacheService } from '../cache/today-food-cache.js';
-import { USER_DAY_CTE, userDayExpr, isCurrentUserDay } from '../nutrition/logging-window.js';
+import { USER_DAY_CTE, userDayExpr, isCurrentUserDay, computeUserLoggingDay } from '../nutrition/logging-window.js';
 import { deriveMissingTargets } from '../nutrition/derive-targets.js';
 import { getDailyWaterHistory as getDailyWaterHistoryQuery } from '../services/water-log.js';
+import { recordDoseEvent, getDoseEvents } from '../services/medication-timeline.js';
 
 export interface GraceUser {
   id: string;
@@ -382,6 +383,12 @@ export class UserService {
   async update(phone: string, fields: Partial<Omit<GraceUser, 'id' | 'phone' | 'created_at' | 'updated_at'>>): Promise<void> {
     const keys = Object.keys(fields) as (keyof typeof fields)[];
     if (keys.length === 0) return;
+    // Capture a dose change to append to the timeline AFTER the update succeeds
+    // (read the raw number before the encryption pass mutates `fields`).
+    const doseChange =
+      'dose_mg' in fields && typeof (fields as Record<string, unknown>).dose_mg === 'number'
+        ? ((fields as Record<string, unknown>).dose_mg as number)
+        : null;
     if (isEncryptionEnabled()) {
       const f = fields as Record<string, unknown>;
       if (f.first_name && typeof f.first_name === 'string') f.first_name = encryptField(f.first_name);
@@ -395,6 +402,31 @@ export class UserService {
     );
     // Invalidate the user cache so the very next read picks up the change.
     this.invalidateUserCache([phone]);
+    // Append to the dose timeline when the dose actually changed. Best-effort +
+    // fire-and-forget so it never affects the update itself.
+    if (doseChange != null && doseChange > 0) {
+      void this.syncDoseEvent(phone, doseChange).catch(() => undefined);
+    }
+  }
+
+  /** Record a dose_event when the user's dose transitions to a new value. Reads
+   *  the latest recorded event and skips when unchanged; seeds the first event at
+   *  glp1_start_date when known. Best-effort — never throws. */
+  async syncDoseEvent(phone: string, newDoseMg: number): Promise<void> {
+    const events = await getDoseEvents(this.pool, phone).catch(() => []);
+    const latest = events[events.length - 1];
+    if (latest && Number(latest.dose_mg) === newDoseMg) return; // no real change
+    const user = await this.getByPhone(phone).catch(() => null);
+    const seedDate =
+      events.length === 0 && user?.glp1_start_date
+        ? new Date(user.glp1_start_date).toISOString().slice(0, 10)
+        : computeUserLoggingDay(user?.timezone, user?.wake_time, new Date());
+    await recordDoseEvent(this.pool, phone, {
+      medication: user?.medication ?? null,
+      doseMg: newDoseMg,
+      effectiveDate: seedDate,
+      source: 'update',
+    });
   }
 
   /** Update injection flow stage. */

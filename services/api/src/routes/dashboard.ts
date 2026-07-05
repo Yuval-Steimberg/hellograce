@@ -30,6 +30,7 @@ import { computeWeeklyStats } from '../services/weekly-insights.js';
 import { computeUserLoggingDay } from '../nutrition/logging-window.js';
 import { HABITS, HABIT_KEYS, type HabitKey } from '../services/habit-checklist.js';
 import { checkHabits, uncheckHabit, getTodaysHabits } from '../services/habit-store.js';
+import { getDoseEvents, buildDoseTimeline, type DoseEvent } from '../services/medication-timeline.js';
 
 /**
  * Grace user dashboard API (2026-07-02).
@@ -105,7 +106,7 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
     const user = await deps.users.getByPhone(phone);
     if (!user) throw new UnauthorizedError('Account not found');
 
-    const [weightRows, proteinHist, todayFood, moodRows, symptomRows, waterToday, waterHist, habitKeys] = await Promise.all([
+    const [weightRows, proteinHist, todayFood, moodRows, symptomRows, waterToday, waterHist, habitKeys, doseEvents] = await Promise.all([
       deps.users.getWeightHistory(phone, 90).catch(() => []),
       deps.users.getDailyProteinHistory(phone, 30).catch(() => [] as Array<{ day: string; protein_g: number; calories: number; item_count: number }>),
       deps.users.getTodaysFoodSummary(phone).catch(() => ({ protein_g: 0, calories: 0, items: [] as string[], items_detailed: [] as Array<{ food: string; protein_g: number; calories: number; logged_at: string }> })),
@@ -114,6 +115,7 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
       getTodaysWaterOz(deps.pool, phone).catch(() => null),
       getDailyWaterHistory(deps.pool, phone, 7).catch(() => [] as Array<{ day: string; oz: number }>),
       getTodaysHabits(deps.pool, phone, computeUserLoggingDay(user.timezone, user.wake_time, new Date())).catch(() => [] as HabitKey[]),
+      getDoseEvents(deps.pool, phone).catch(() => [] as DoseEvent[]),
     ]);
 
     const episodes = symptomRows.map(toEpisode);
@@ -181,6 +183,14 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
         available: HABITS.filter((h) => !h.weeklyInjectableOnly || (user.medication_frequency !== 'daily' && !!user.medication)).map((h) => ({ key: h.key, label: h.label, icon: h.icon })),
         checked: habitKeys,
       },
+      // Medication / dose timeline — dose periods enriched with GLP-1 week span,
+      // weight change, and top symptom per dose. Synthesizes a current-dose period
+      // from dose_mg + glp1_start_date when nothing is recorded yet.
+      medicationTimeline: buildDoseTimeline(doseEvents, weightRows, symptomRows, {
+        medication: plainOrNull(user.medication),
+        dose_mg: user.dose_mg ?? null,
+        glp1_start_date: user.glp1_start_date ?? null,
+      }),
       // Weekly rollup: averages + this-week weight change + plateau signal + one
       // hedged, non-causal insight. Pure derivation from data already fetched.
       weekly: computeWeeklyStats({

@@ -19,6 +19,7 @@ import { InjectionCard } from "@/components/dashboard/InjectionCard";
 import { HydrationCard } from "@/components/dashboard/HydrationCard";
 import { WeeklyReview } from "@/components/dashboard/WeeklyReview";
 import { HabitChecklist } from "@/components/dashboard/HabitChecklist";
+import { MedicationTimeline } from "@/components/dashboard/MedicationTimeline";
 import { TodaysMeals } from "@/components/dashboard/TodaysMeals";
 import { ProfileCompleteness } from "@/components/dashboard/ProfileCompleteness";
 import { DashboardSkeleton, DashboardLoadError } from "@/components/dashboard/DashboardStates";
@@ -196,6 +197,11 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
       {/* This week — averages + weight change + plateau signal + hedged insight */}
       <div className="mb-4">
         <Reveal><WeeklyReview data={data} /></Reveal>
+      </div>
+
+      {/* Dose journey — medication timeline with per-dose weight + symptom */}
+      <div className="mb-4">
+        <Reveal><MedicationTimeline data={data} /></Reveal>
       </div>
 
       {/* Charts grid — two-up from tablet width */}

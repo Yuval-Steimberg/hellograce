@@ -51,6 +51,17 @@ export interface DashboardSummary {
     available: Array<{ key: string; label: string; icon: string }>;
     checked: string[];
   };
+  medicationTimeline: Array<{
+    doseMg: number;
+    medication: string | null;
+    from: string;
+    to: string | null;
+    current: boolean;
+    glp1WeekStart: number | null;
+    glp1WeekEnd: number | null;
+    weightDeltaLbs: number | null;
+    topSymptom: string | null;
+  }>;
   weekly: {
     avgProtein: number | null;
     proteinGoal: number | null;

@@ -407,7 +407,13 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
       note: parsed.data.note ?? null,
       weight_lbs: weightLbs,
     });
-    deps.logger.info({ phone, id: saved.id }, 'dashboard.progress_photo.saved');
+    // Sync a weight entered with the photo to the SAME place a normal weight log
+    // goes (weight_logs + users.current_weight), so it shows on the chart and
+    // reaches chat — otherwise it was stranded on the photo row (unsynced).
+    if (weightLbs != null) {
+      await deps.users.logWeightEntry(phone, weightLbs).catch(() => undefined);
+    }
+    deps.logger.info({ phone, id: saved.id, weightSynced: weightLbs != null }, 'dashboard.progress_photo.saved');
     return { ok: true, photo: mapPhoto(saved) };
   });
 

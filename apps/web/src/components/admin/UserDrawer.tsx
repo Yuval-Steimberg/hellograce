@@ -63,6 +63,8 @@ export default function UserDrawer({ user, onClose }: Props) {
   const [form, setForm] = useState({
     first_name: '',
     medication: '',
+    medication_frequency: '',
+    dose_mg: '',
     injection_day: '',
     wake_time: '07:00',
     sleep_time: '22:00',
@@ -71,13 +73,19 @@ export default function UserDrawer({ user, onClose }: Props) {
     food_dislikes: '',
     current_weight: '',
     goal_weight: '',
+    starting_weight: '',
+    height_cm: '',
     age: '',
+    sex: '',
+    activity_level: '',
+    primary_goal: '',
     protein_goal_grams: '',
     calorie_goal_kcal: '',
     dietary_pattern: '',
     dietary_restriction: '',
     glp1_start_date: '',
     checkin_count_per_day: '',
+    checkin_days_interval: '',
   });
 
   useEffect(() => {
@@ -85,6 +93,8 @@ export default function UserDrawer({ user, onClose }: Props) {
     setForm({
       first_name: detail.first_name ?? '',
       medication: detail.medication ?? '',
+      medication_frequency: detail.medication_frequency ?? '',
+      dose_mg: detail.dose_mg?.toString() ?? '',
       injection_day: detail.injection_day ?? '',
       wake_time: detail.wake_time ?? '07:00',
       sleep_time: detail.sleep_time ?? '22:00',
@@ -93,13 +103,19 @@ export default function UserDrawer({ user, onClose }: Props) {
       food_dislikes: (detail.food_dislikes ?? []).join(', '),
       current_weight: detail.current_weight?.toString() ?? '',
       goal_weight: detail.goal_weight?.toString() ?? '',
+      starting_weight: detail.starting_weight?.toString() ?? '',
+      height_cm: detail.height_cm?.toString() ?? '',
       age: detail.age?.toString() ?? '',
+      sex: detail.sex ?? '',
+      activity_level: detail.activity_level ?? '',
+      primary_goal: detail.primary_goal ?? '',
       protein_goal_grams: detail.protein_goal_grams?.toString() ?? '',
       calorie_goal_kcal: detail.calorie_goal_kcal?.toString() ?? '',
       dietary_pattern: detail.dietary_pattern ?? '',
       dietary_restriction: detail.dietary_restriction ?? '',
       glp1_start_date: detail.glp1_start_date ? detail.glp1_start_date.split('T')[0] : '',
       checkin_count_per_day: detail.checkin_count_per_day?.toString() ?? '',
+      checkin_days_interval: detail.checkin_days_interval?.toString() ?? '',
     });
   }, [detail]);
 
@@ -265,6 +281,8 @@ export default function UserDrawer({ user, onClose }: Props) {
     updateMutation.mutate({
       first_name: form.first_name || undefined,
       medication: form.medication || undefined,
+      medication_frequency: form.medication_frequency || undefined,
+      dose_mg: form.dose_mg ? Number(form.dose_mg) : null,
       injection_day: form.injection_day || null,
       wake_time: form.wake_time || undefined,
       sleep_time: form.sleep_time || undefined,
@@ -273,7 +291,12 @@ export default function UserDrawer({ user, onClose }: Props) {
       food_dislikes: form.food_dislikes ? form.food_dislikes.split(',').map((s) => s.trim()).filter(Boolean) : [],
       current_weight: form.current_weight ? Number(form.current_weight) : null,
       goal_weight: form.goal_weight ? Number(form.goal_weight) : null,
+      starting_weight: form.starting_weight ? Number(form.starting_weight) : null,
+      height_cm: form.height_cm ? Number(form.height_cm) : null,
       age: form.age ? Number(form.age) : null,
+      sex: (form.sex || null) as 'male' | 'female' | 'other' | null,
+      activity_level: form.activity_level.trim() || null,
+      primary_goal: form.primary_goal.trim() || null,
       protein_goal_grams: form.protein_goal_grams ? Number(form.protein_goal_grams) : null,
       calorie_goal_kcal: form.calorie_goal_kcal ? Number(form.calorie_goal_kcal) : null,
       // Empty select → null (PUT enum rejects ''). Free-text restriction → null when blank.
@@ -281,6 +304,7 @@ export default function UserDrawer({ user, onClose }: Props) {
       dietary_restriction: form.dietary_restriction.trim() || null,
       glp1_start_date: form.glp1_start_date || null,
       checkin_count_per_day: form.checkin_count_per_day ? Number(form.checkin_count_per_day) : undefined,
+      checkin_days_interval: form.checkin_days_interval ? Number(form.checkin_days_interval) : null,
     });
   }
 
@@ -394,6 +418,14 @@ export default function UserDrawer({ user, onClose }: Props) {
                         <Input value={form.medication} onChange={(e) => setForm({ ...form, medication: e.target.value })} />
                       </div>
                       <div className="space-y-1">
+                        <Label className="text-xs">Dose (mg)</Label>
+                        <Input type="number" step="0.25" placeholder="e.g. 0.5" value={form.dose_mg} onChange={(e) => setForm({ ...form, dose_mg: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Med frequency</Label>
+                        <Input placeholder="weekly / daily" value={form.medication_frequency} onChange={(e) => setForm({ ...form, medication_frequency: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
                         <Label className="text-xs">Injection day</Label>
                         <Input placeholder="Monday" value={form.injection_day} onChange={(e) => setForm({ ...form, injection_day: e.target.value })} />
                       </div>
@@ -418,8 +450,37 @@ export default function UserDrawer({ user, onClose }: Props) {
                         <Input type="number" value={form.goal_weight} onChange={(e) => setForm({ ...form, goal_weight: e.target.value })} />
                       </div>
                       <div className="space-y-1">
+                        <Label className="text-xs">Starting weight (lbs)</Label>
+                        <Input type="number" value={form.starting_weight} onChange={(e) => setForm({ ...form, starting_weight: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Height (cm)</Label>
+                        <Input type="number" placeholder="e.g. 170" value={form.height_cm} onChange={(e) => setForm({ ...form, height_cm: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
                         <Label className="text-xs">Age</Label>
                         <Input type="number" placeholder="e.g. 42" value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Sex</Label>
+                        <select
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          value={form.sex}
+                          onChange={(e) => setForm({ ...form, sex: e.target.value })}
+                        >
+                          <option value="">—</option>
+                          <option value="male">Male</option>
+                          <option value="female">Female</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Activity level</Label>
+                        <Input placeholder="sedentary / active…" value={form.activity_level} onChange={(e) => setForm({ ...form, activity_level: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Primary goal</Label>
+                        <Input placeholder="lose weight…" value={form.primary_goal} onChange={(e) => setForm({ ...form, primary_goal: e.target.value })} />
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Protein goal (g/day)</Label>
@@ -453,6 +514,10 @@ export default function UserDrawer({ user, onClose }: Props) {
                       <div className="space-y-1">
                         <Label className="text-xs">Check-ins / day (1–4)</Label>
                         <Input type="number" min={1} max={4} placeholder="1" value={form.checkin_count_per_day} onChange={(e) => setForm({ ...form, checkin_count_per_day: e.target.value })} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Every N days (1–14)</Label>
+                        <Input type="number" min={1} max={14} placeholder="1" value={form.checkin_days_interval} onChange={(e) => setForm({ ...form, checkin_days_interval: e.target.value })} />
                       </div>
                       <div className="col-span-2 space-y-1">
                         <Label className="text-xs">Goals (comma-separated)</Label>

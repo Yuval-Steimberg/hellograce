@@ -7241,15 +7241,29 @@ export function effectiveDietaryRestriction(
   user: { dietary_pattern?: string | null; dietary_restriction?: string | null } | null | undefined,
 ): DietaryRestriction | null {
   if (!user) return null;
-  if (user.dietary_pattern) {
-    const r = buildRestrictionFromLabel(user.dietary_pattern);
-    if (r) return r;
-  }
-  if (user.dietary_restriction) {
-    const r = buildRestrictionFromLabel(user.dietary_restriction);
-    if (r) return r;
-  }
-  return null;
+  // BOTH fields are real, editable sources (the enum pattern + a free-text
+  // restriction like kosher/halal/gluten-free). The old code returned the
+  // pattern and SILENTLY DROPPED the free-text one, so a "vegan + kosher" user
+  // lost kosher in every food rec. Honor BOTH by merging their forbidden lists —
+  // a stored restriction must never be silently ignored just because a pattern
+  // is also set. Keeps a single source of truth: whatever the user saved wins.
+  const a = user.dietary_pattern ? buildRestrictionFromLabel(user.dietary_pattern) : null;
+  const b = user.dietary_restriction ? buildRestrictionFromLabel(user.dietary_restriction) : null;
+  if (a && b && a.label !== b.label) return mergeDietaryRestrictions(a, b);
+  return a ?? b;
+}
+
+/** Combine two dietary restrictions into one: forbidden = union of both,
+ *  allowed = the union minus anything now forbidden (so an item one diet allows
+ *  but the other bans is dropped). Keeps the PRIMARY (pattern) label so the diet
+ *  key still resolves (vegan stays vegan) while the second restriction's
+ *  forbidden foods are added. Used when a user has both a pattern (vegan) and a
+ *  free-text restriction (kosher) — both must be respected. */
+function mergeDietaryRestrictions(a: DietaryRestriction, b: DietaryRestriction): DietaryRestriction {
+  const forbidden = Array.from(new Set([...a.forbidden, ...b.forbidden]));
+  const forbiddenLc = new Set(forbidden.map((f) => f.toLowerCase()));
+  const allowed = Array.from(new Set([...a.allowed, ...b.allowed])).filter((x) => !forbiddenLc.has(x.toLowerCase()));
+  return { label: a.label, forbidden, allowed };
 }
 
 /**

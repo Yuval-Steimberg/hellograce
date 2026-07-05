@@ -287,6 +287,12 @@ export interface UserDetail {
   sleep_time: string;
   current_weight: number | null;
   goal_weight: number | null;
+  starting_weight: number | null;
+  height_cm: number | null;
+  dose_mg: number | null;
+  sex: string | null;
+  activity_level: string | null;
+  primary_goal: string | null;
   active: boolean;
   paused: boolean;
   blocked: boolean;
@@ -301,6 +307,7 @@ export interface UserDetail {
   dietary_restriction: string | null;
   glp1_start_date: string | null;
   checkin_count_per_day: number | null;
+  checkin_days_interval: number | null;
   created_at: string;
   updated_at: string;
   // Stripe sync state (migration 20260613000001). Optional — absent on an

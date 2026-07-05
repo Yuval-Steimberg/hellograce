@@ -692,13 +692,13 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     const { rows: userRows } = await deps.pool.query(
       `SELECT phone, first_name, medication, medication_frequency, injection_day,
               goals, food_dislikes, timezone, wake_time, sleep_time,
-              current_weight, goal_weight, height_cm, age, sex, activity_level,
+              current_weight, goal_weight, starting_weight, height_cm, age, sex, activity_level,
               primary_goal, protein_goal_grams, calorie_goal_kcal, glp1_start_date, dose_mg,
               dietary_restriction, dietary_pattern, biggest_challenge, why_started, support_style,
               exercise_habits, medication_time, sms_consent,
               active, paused, blocked, is_paid, is_pro, rlhf_enabled,
               trial_start, created_at, updated_at, last_reply_at,
-              checkin_count_per_day, grace_notes
+              checkin_count_per_day, checkin_days_interval, grace_notes
        FROM users WHERE phone = $1 LIMIT 1`,
       [phone],
     );
@@ -762,6 +762,18 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     calorie_goal_kcal: z.number().int().min(800).max(5000).nullable().optional(),
     glp1_start_date: z.string().nullable().optional(),
     checkin_count_per_day: z.number().int().min(1).max(4).optional(),
+    // Parity with the self-serve Settings schema so the admin panel can view AND
+    // correct every field a user can — otherwise these edits were silently
+    // dropped and admin/Settings/chat drifted. dose_mg also feeds the dose
+    // timeline (update() records a dose_event on change) and every chat prompt.
+    checkin_days_interval: z.number().int().min(1).max(14).nullable().optional(),
+    starting_weight: z.number().positive().nullable().optional(),
+    dose_mg: z.number().positive().max(100).nullable().optional(),
+    medication_time: z.string().max(40).nullable().optional(),
+    exercise_habits: z.string().max(200).nullable().optional(),
+    why_started: z.string().max(400).nullable().optional(),
+    biggest_challenge: z.string().max(400).nullable().optional(),
+    support_style: z.string().max(120).nullable().optional(),
     // Dietary fields — required for admin to set vegetarian/vegan/pescatarian
     // when a user hasn't told Grace directly. Without these, PUT silently
     // strips the field (Zod default) and returns null. Production failure

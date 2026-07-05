@@ -47,8 +47,19 @@ describe('effectiveDietaryRestriction — reads pattern OR signup free-text', ()
     expect(effectiveDietaryRestriction({ dietary_restriction: 'gluten free' })?.label).toBe('GLUTEN-FREE');
   });
 
-  it('pattern wins over a (recognized) restriction; null when neither maps', () => {
-    expect(effectiveDietaryRestriction({ dietary_pattern: 'vegan', dietary_restriction: 'kosher' })?.label).toBe('VEGAN');
+  it('MERGES a pattern + a recognized free-text restriction (never drops one)', () => {
+    // vegan pattern + kosher free-text: the label stays VEGAN (so the diet key
+    // still resolves) but BOTH forbidden sets are honored — kosher was being
+    // silently dropped before, so a "vegan + kosher" user lost kosher.
+    const merged = effectiveDietaryRestriction({ dietary_pattern: 'vegan', dietary_restriction: 'kosher' });
+    expect(merged?.label).toBe('VEGAN');
+    expect(merged?.forbidden).toContain('chicken'); // from vegan
+    expect(merged?.forbidden).toContain('pork');    // from kosher
+    expect(merged?.forbidden).toContain('shrimp');  // from kosher
+  });
+
+  it('an unrecognized free-text restriction leaves the pattern intact; null when neither maps', () => {
+    expect(effectiveDietaryRestriction({ dietary_pattern: 'vegan', dietary_restriction: 'no spicy food' })?.label).toBe('VEGAN');
     expect(effectiveDietaryRestriction({ dietary_restriction: 'no spicy food' })).toBeNull();
     expect(effectiveDietaryRestriction(null)).toBeNull();
   });

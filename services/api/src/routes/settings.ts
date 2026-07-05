@@ -6,6 +6,7 @@ import type { MessageSender } from '../twilio/sender.js';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import { ValidationError, UnauthorizedError } from '../errors.js';
 import { isEncryptedBlob } from '../crypto/field-encrypt.js';
+import { isPlausibleStartDate } from '../services/medication-start-date.js';
 
 /**
  * Self-serve user settings API (phone + verification code).
@@ -69,7 +70,15 @@ const SettingsUpdateSchema = z.object({
   goals: z.array(z.string().trim().max(120)).max(20).optional(),
   checkin_count_per_day: z.number().int().min(1).max(3).optional(),
   checkin_days_interval: z.number().int().min(1).max(14).optional(),
-  glp1_start_date: z.string().nullable().optional(),
+  // Validate format AND plausibility so a stray value (e.g. "1999-01-05" or a
+  // future date) can never be saved — Grace answers date questions from this
+  // field, so garbage here would surface as a wrong (but "real-looking") answer.
+  glp1_start_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a valid GLP-1 start date')
+    .refine((v) => isPlausibleStartDate(v), 'GLP-1 start date must be between 2015 and today')
+    .nullable()
+    .optional(),
   // Fields also collected at onboarding — editable here so Settings shows every
   // piece of data the user entered.
   medication_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),

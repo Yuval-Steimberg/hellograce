@@ -521,6 +521,10 @@ import {
   buildScheduleFactLine,
 } from './medication-schedule.js';
 import {
+  parseStartDateStatement,
+  buildStartDateCaptureReply,
+} from './medication-start-date.js';
+import {
   detectReminderIntent,
   buildNextReminderReply,
   buildReminderExplainReply,
@@ -1443,6 +1447,29 @@ export class AIService {
       // a flat denial ("I can't tell you when your next injection is"). Never
       // denies; if the day is unknown it ASKS. Placed alongside the reminder
       // intercept so all timing questions resolve deterministically.
+
+      // ── GLP-1 start-date CAPTURE ────────────────────────────────────────
+      // The user stating when they started ("I started Ozempic 6 weeks ago")
+      // logs accurately to glp1_start_date. Deterministic parse (never stores an
+      // implausible date). Runs before injection-timing so onset isn't misread.
+      {
+        const parsedStart = parseStartDateStatement(input.text, new Date());
+        if (parsedStart) {
+          try {
+            const user = await this.deps.users.getByPhone(input.userId).catch(() => null);
+            const medName = user?.medication && !isEncryptedBlob(user.medication) ? user.medication : null;
+            await this.deps.users.update(input.userId, { glp1_start_date: parsedStart.date }).catch(() => {});
+            const reply = buildStartDateCaptureReply(parsedStart.date, medName, new Date());
+            const totalMs = Date.now() - t0;
+            this.deps.logger.info({ userId: input.userId, iso: parsedStart.iso }, 'ai.start_date.captured');
+            this.persistLatency(input.userId, 'start_date_capture', totalMs, lat.snapshot(), input.text, reply);
+            return { text: reply, confidence: 'high', intent: 'start_date_capture', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+          } catch (err) {
+            this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.start_date_capture.error');
+          }
+        }
+      }
+
       {
         const injIntent = detectInjectionTimingIntent(input.text);
         if (injIntent) {
@@ -3272,6 +3299,30 @@ CRITICAL RULES:
     // seen in prod). These are facts we compute exactly, so answer them
     // deterministically and never let the model deny a capability.
     const medNow = user?.medication && !isEncryptedBlob(user.medication) ? user.medication.trim() : null;
+
+    // ── GLP-1 start-date CAPTURE (2026-07-05) ──────────────────────────────
+    // The user STATING when they started ("I started Ozempic in May", "began the
+    // shots 6 weeks ago") must be logged accurately to glp1_start_date — the
+    // Settings field. Deterministic parse (never stores an implausible date), then
+    // confirm. Runs before injection-timing so an onset statement is never misread.
+    if (user) {
+      const parsedStart = parseStartDateStatement(input.text, new Date());
+      if (parsedStart) {
+        try {
+          await this.deps.users.update(input.userId, { glp1_start_date: parsedStart.date });
+        } catch (err) {
+          this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.unified.start_date_capture.error');
+        }
+        const reply = buildStartDateCaptureReply(parsedStart.date, medNow, new Date());
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId, iso: parsedStart.iso }, 'ai.unified.start_date.captured');
+        this.persistLatency(userId, 'start_date_capture', totalMs, lat.snapshot(), input.text, reply);
+        return { text: reply, confidence: 'high', intent: 'start_date_capture', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      }
+    }
+
     const injIntent = detectInjectionTimingIntent(input.text);
     if (injIntent && user) {
       const sched = computeInjectionSchedule(
@@ -3401,6 +3452,29 @@ CRITICAL RULES:
         this.persistLatency(userId, 'personal_stats', totalMs, lat.snapshot(), input.text, reply);
         return { text: reply, confidence: 'high', intent: 'personal_stats', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
       }
+    }
+
+    // ── SETTINGS-FIELD READS → deterministic, NEVER fabricated (2026-07-05) ──
+    // The governing rule: Grace must never invent a settings datum. The unified
+    // path previously skipped query-fast entirely, so "when did I start", "what's
+    // my week number / injection day / medication / dose / weight / age" fell to
+    // the LLM → fabrication (a made-up start date + week count in prod). tryQueryFast
+    // answers each from the STORED value, and when a field is missing it asks the
+    // user / points to Settings — it never guesses. Placed AFTER the deliberate
+    // unified intercepts (personal-stats owns protein/calorie; this owns the rest)
+    // and before the food step; anchored READ-only patterns can't hijack a log.
+    try {
+      const qf = await tryQueryFast(input.text, { users: this.deps.users, logger: this.deps.logger, userId });
+      if (qf) {
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: qf.text }).catch(() => {});
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId, category: qf.category }, 'ai.unified.query_fast.served');
+        this.persistLatency(userId, `query_fast_${qf.category}`, totalMs, lat.snapshot(), input.text, qf.text);
+        return { text: qf.text, confidence: 'high', intent: `query_fast_${qf.category}`, toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      }
+    } catch (err) {
+      this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.unified.query_fast.error');
     }
 
     // Nudge food step (extractFoodItems + planning guard): a specific meal logs

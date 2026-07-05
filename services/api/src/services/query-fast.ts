@@ -21,6 +21,7 @@ import type { Logger } from 'pino';
 import { normalizeUserText } from '@grace/ai-core';
 import type { UserService } from '../user/user.service.js';
 import { renderDailyFoodSummary } from './food-summary.js';
+import { buildStartDateAnswer, isPlausibleStartDate } from './medication-start-date.js';
 
 export interface QueryFastResult {
   text: string;
@@ -144,8 +145,13 @@ const PLAN_TODAY_RE =
 // 2026-06-04 expansion: added "do you remember when/what date I started"
 // and "remind me when" patterns after production failure where Grace
 // HALLUCINATED a start date ("January 1st, 2024") instead of looking it up.
+// 2026-07-05 expansion: caught only "when DID i start". Real users write "when I
+// started taking the injection" and "when I started with glp" (no "did"), which
+// slipped to the injection-timing intercept → "today is your shot day", or to the
+// LLM → a FABRICATED date. Now also matches the no-"did" forms + "with glp" +
+// "taking the injection", and tolerates a leading connector ("on/with/taking the").
 const START_DATE_RE =
-  /^(?:(?:do you )?remember (?:when|what date) i (?:start(?:ed)?|began)|remind me (?:when|what date) i (?:start(?:ed)?|began)|when did i (?:start(?:ed)?|begin|began)|how long (?:have i been|since i started)|what(?:'?s| is| was)?\s+(?:my\s+)?start date)(?:\s+(?:on|with|using|taking|the))?(?:\s+(?:injections?|ozempic|wegovy|mounjaro|zepbound|semaglutide|tirzepatide|the medication|medication|treatment|glp-?1|glp))?\s*\??$/i;
+  /^(?:(?:do you )?remember (?:when|what date) i (?:start(?:ed)?|began|begin)|remind me (?:when|what date) i (?:start(?:ed)?|began|begin)|when(?: did)? i (?:start(?:ed)?|begin|began)|when did i (?:start|begin|began)|how long (?:have i been|since i (?:started|began))|what(?:'?s| is| was)?\s+(?:my\s+)?(?:glp-?1\s+)?start date)(?:\s+(?:on|with|using|taking|doing))?(?:\s+the)?(?:\s+(?:injections?|shots?|jabs?|ozempic|wegovy|mounjaro|zepbound|saxenda|rybelsus|semaglutide|tirzepatide|the medication|medication|meds?|treatment|glp-?1|glp))?\s*\??$/i;
 
 // "What's my week number" / "what week am I on" / "how many weeks" / "what week"
 const WEEK_NUMBER_RE =
@@ -568,40 +574,25 @@ export async function tryQueryFast(
       }
 
       case 'start_date': {
-        const d = user.glp1_start_date;
-        if (!d) {
-          // 2026-06-05 production failure: returning null let the message fall
-          // through to the orchestrator, which produced a generic knowledge
-          // fallback ("Muscle loss is common on GLP-1s...") that had NOTHING
-          // to do with the start date question. Returning a helpful "I don't
-          // have it" message ships in <300ms and tells the user exactly what
-          // to do — no guard can produce a worse response.
-          return {
-            text: `I don't have your GLP-1 start date on file yet. You can set it at graceglp.com/settings.`,
-            category: 'start_date',
-          };
-        }
-        const start = new Date(d);
-        const formatted = start.toLocaleDateString('en-US', {
-          year: 'numeric', month: 'long', day: 'numeric',
-        });
-        const weeks = Math.floor((Date.now() - start.getTime()) / (7 * 24 * 60 * 60 * 1000));
-        const ago = weeks <= 0
-          ? 'this week'
-          : weeks === 1 ? 'about 1 week ago'
-          : weeks < 52 ? `about ${weeks} weeks ago`
-          : `about ${Math.floor(weeks / 52)} year${Math.floor(weeks / 52) === 1 ? '' : 's'} ago`;
+        // NEVER fabricate: buildStartDateAnswer reads the stored value and, if it's
+        // missing OR implausible (e.g. a stray "Jan 5, 1999"), ASKS the user to
+        // confirm/set it instead of parroting a wrong or invented date.
+        const med = user.medication && user.medication.trim() ? user.medication : null;
         return {
-          text: `You started on ${formatted}, ${ago}.`,
+          text: buildStartDateAnswer(user.glp1_start_date, med, 'https://graceglp.com/settings'),
           category: 'start_date',
         };
       }
 
       case 'week_number': {
         const d = user.glp1_start_date;
-        if (!d) {
+        if (!d || !isPlausibleStartDate(d)) {
+          // No reliable start date → we can't pin a week number without inventing
+          // one. Ask the user to set/confirm it rather than guessing.
           return {
-            text: `I don't have your GLP-1 start date on file yet, so I can't pin the week number. Set it at graceglp.com/settings.`,
+            text: d
+              ? `The start date I have on file doesn't look right, so I can't pin your week number. When did you actually start? Tell me and I'll fix it, or update it at https://graceglp.com/settings.`
+              : `I don't have your GLP-1 start date on file yet, so I can't pin the week number. Tell me when you started, or set it at https://graceglp.com/settings.`,
             category: 'week_number',
           };
         }

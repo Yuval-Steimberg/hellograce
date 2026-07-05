@@ -86,6 +86,13 @@ describe('detectInjectionTimingIntent', () => {
     ['when is my next reminder?', null],
     ['I feel nauseous', null],
     ['how much protein today?', null],
+    // ONSET (when they STARTED) is NOT timing — must NOT return "today is your
+    // shot day". Regression: the exact reported production failure.
+    ['When I started taking the injection', null],
+    ['when did I start ozempic', null],
+    ['when I started with glp?', null],
+    ['how long have I been on ozempic', null],
+    ['when was my first shot', null],
   ];
   it.each(cases)('%s → %s', (text, expected) => {
     expect(detectInjectionTimingIntent(text)).toBe(expected);

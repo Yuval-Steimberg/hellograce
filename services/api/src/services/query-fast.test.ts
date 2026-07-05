@@ -164,6 +164,47 @@ describe('tryQueryFast', () => {
   });
 });
 
+describe('start_date: broadened detection + never fabricates (2026-07-05)', () => {
+  const startUser = (glp1_start_date: string | null) => ({
+    getById: vi.fn().mockResolvedValue({ glp1_start_date, medication: 'Ozempic' }),
+    getTodaysFoodSummary: vi.fn(),
+  } as unknown as UserService);
+
+  it('detects the no-"did" phrasings that used to misroute to injection timing', () => {
+    expect(__testing.START_DATE_RE.test('when I started taking the injection')).toBe(true);
+    expect(__testing.START_DATE_RE.test('when I started with glp')).toBe(true);
+    expect(__testing.START_DATE_RE.test('when did I start ozempic')).toBe(true);
+    expect(__testing.START_DATE_RE.test('how long have I been on ozempic')).toBe(true);
+  });
+
+  it('answers from a plausible stored date (no fabrication)', async () => {
+    const iso = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const r = await tryQueryFast('when did I start ozempic', { users: startUser(iso), logger: noopLogger, userId: 'u1' });
+    expect(r!.category).toBe('start_date');
+    expect(r!.text).toMatch(/week \d+/);
+    expect(r!.text).toContain('Ozempic');
+  });
+
+  it('asks for the date when none on file — never invents one', async () => {
+    const r = await tryQueryFast('when did I start', { users: startUser(null), logger: noopLogger, userId: 'u1' });
+    expect(r!.category).toBe('start_date');
+    expect(r!.text.toLowerCase()).toContain("don't have your start date");
+    expect(r!.text).not.toMatch(/\b(19|20)\d{2}\b/);
+  });
+
+  it('flags an implausible stored date instead of parroting it', async () => {
+    const r = await tryQueryFast('when did I start', { users: startUser('1999-01-05'), logger: noopLogger, userId: 'u1' });
+    expect(r!.category).toBe('start_date');
+    expect(r!.text.toLowerCase()).toContain("doesn't look right");
+  });
+
+  it('will not pin a week number from an implausible date', async () => {
+    const r = await tryQueryFast('what week am I on', { users: startUser('1999-01-05'), logger: noopLogger, userId: 'u1' });
+    expect(r!.category).toBe('week_number');
+    expect(r!.text.toLowerCase()).toContain("doesn't look right");
+  });
+});
+
 describe('food_summary_today: aggregated, non-repetitive summary (2026-06-11)', () => {
   it('explodes a multi-item meal label and shows a sectioned summary', async () => {
     // "3 eggs + salad + 1 can tuna + 1 cup rice" → exploded + aggregated.

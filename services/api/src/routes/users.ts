@@ -7,6 +7,7 @@ import type { MessageSender } from '../twilio/sender.js';
 import type { MessageGenerator } from '../scheduler/message-generator.js';
 import { calculateProteinTarget } from '../nutrition/protein-target.js';
 import { calculateCalorieTarget } from '../nutrition/calorie-target.js';
+import { isPlausibleStartDate } from '../services/medication-start-date.js';
 
 // Minimal onboarding spec: only medication / injection day / sex / height /
 // weight / goal weight / food dislikes are essential. Everything else is
@@ -212,7 +213,9 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     }
 
     // GLP-1 start date — depends on 20260513000003 migration. Silently degrade if absent.
-    if (b.glp1StartDate) {
+    // Only store a PLAUSIBLE date (2015 → today); a stray/future value would later
+    // surface as a wrong-but-real-looking answer to "when did I start". Never fabricate.
+    if (b.glp1StartDate && isPlausibleStartDate(b.glp1StartDate)) {
       try {
         await users.update(phone, {
           glp1_start_date: new Date(b.glp1StartDate),
@@ -220,6 +223,8 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
       } catch {
         req.log.warn({ phone }, 'onboard.glp1_start_date.skipped (likely missing migration 20260513000003)');
       }
+    } else if (b.glp1StartDate) {
+      req.log.warn({ phone }, 'onboard.glp1_start_date.implausible_skipped');
     }
 
     // Lifestyle & personalization fields — depend on 20260524000002 migration. Silently degrade.

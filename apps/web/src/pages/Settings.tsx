@@ -321,7 +321,7 @@ const Settings = () => {
                   <Field label="Dose (mg)"><input type="number" step="0.05" className={inputClass} value={form.dose_mg} onChange={(e) => setField("dose_mg", e.target.value)} /></Field>
                   <SelectField label="Injection day" value={form.injection_day} onChange={(v) => setField("injection_day", v)} options={[["", "—"], ...DAYS.map((d) => [d, d] as [string, string])]} />
                   <Field label="Medication time (daily meds)"><input type="time" className={inputClass} value={form.medication_time} onChange={(e) => setField("medication_time", e.target.value)} /></Field>
-                  <Field label="GLP-1 start date"><input type="date" className={inputClass} value={form.glp1_start_date} onChange={(e) => setField("glp1_start_date", e.target.value)} /></Field>
+                  <Field label="GLP-1 start date"><input type="date" min="2015-01-01" max={new Date().toISOString().slice(0, 10)} className={inputClass} value={form.glp1_start_date} onChange={(e) => setField("glp1_start_date", e.target.value)} /></Field>
                 </Section>
 
                 <Section title="Body & goals">

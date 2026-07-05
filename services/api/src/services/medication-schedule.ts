@@ -132,10 +132,19 @@ const TODAY_RE = new RegExp(
   'i',
 );
 
+// ONSET (when they STARTED the medication) is a different question from timing
+// (when the NEXT/LAST dose is). "When I started taking the injection" must NOT
+// resolve to "today is your shot day" — it routes to the start-date handler. We
+// exclude onset phrasing here so timing never steals it, in either reply path.
+const ONSET_RE =
+  /\b(when(?:'?s| is| was| did)?\s+(?:i\s+)?(?:first\s+)?(?:start|started|starting|begin|began|beginning)\b|i\s+(?:first\s+)?(?:start|started|begin|began)\b|how long\s+(?:have i been|since i (?:start|began|first))|(?:my\s+)?start\s+date|first\s+(?:shot|injection|dose|jab)\b)/i;
+
 /** Classify a chat message's injection/dose TIMING intent (cheap deterministic regex). */
 export function detectInjectionTimingIntent(text: string): InjectionTimingIntent {
   const s = (text ?? '').trim();
   if (!s) return null;
+  // A "when did I START" question is about onset, not the next/last dose.
+  if (ONSET_RE.test(s)) return null;
   if (TODAY_RE.test(s)) return 'today';
   if (LAST_RE.test(s) || LAST_VERB_RE.test(s)) return 'last';
   if (NEXT_RE.test(s) || NEXT_VERB_RE.test(s)) return 'next';

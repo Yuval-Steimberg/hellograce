@@ -19,6 +19,14 @@ const FAQS = [
     a: "Just text what you ate, or send a photo. Grace estimates the protein and calories, logs it, and tells you what you have left for the day against your personal target — no spreadsheets, no calorie-counting app.",
   },
   {
+    q: "Is there a dashboard I can see?",
+    a: "Yes. Text “dashboard” and Grace sends you a private link to your whole picture in one place — protein, calories, water, weight trends, your daily habit checklist, symptom patterns, a medication & dose timeline, and weekly insights. Everything syncs with your chats, and there's still nothing to download.",
+  },
+  {
+    q: "Do I have to log every single meal?",
+    a: "No. On busy days you can just check off what you did — protein, fluids, movement — with a tap on the dashboard or a quick text like “hit protein and water today.” Grace keeps it low-pressure; log the detail when you want deeper insight, skip it when you don't.",
+  },
+  {
     q: "What happens on my injection day?",
     a: "Grace texts you a quick morning prep (hydration, lighter meals, ginger if nausea hit last time), checks in after you've dosed, and follows up the next day. If you flag a side effect, she circles back a few hours later — right when most people need it.",
   },

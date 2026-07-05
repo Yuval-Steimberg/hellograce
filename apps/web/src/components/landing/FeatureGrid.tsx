@@ -1,12 +1,16 @@
 import { motion } from "framer-motion";
 import {
   Beef,
+  Target,
   Droplets,
+  ListChecks,
+  LineChart,
+  CalendarClock,
   Syringe,
   Stethoscope,
   Mic,
   Brain,
-  LineChart,
+  LayoutDashboard,
   MessageCircleHeart,
 } from "lucide-react";
 
@@ -14,12 +18,32 @@ const FEATURES = [
   {
     icon: Beef,
     title: "Food & protein tracking",
-    body: "Text what you ate — or snap a photo — and Grace logs it with protein and calories, then tells you what you have left for the day.",
+    body: "Text what you ate — or snap a photo — and Grace logs it with protein and calories, then tells you what you have left against your personal target.",
+  },
+  {
+    icon: Target,
+    title: "Your own protein & calorie targets",
+    body: "Personalized from your weight, goals, and activity — not a generic number you have to guess at.",
   },
   {
     icon: Droplets,
-    title: "Hydration nudges",
-    body: "Gentle, well-timed reminders to drink water, so you stay ahead of the fatigue and headaches.",
+    title: "Water & hydration",
+    body: "Log fluids with a tap or a text and see your daily range — so you stay ahead of the fatigue and headaches.",
+  },
+  {
+    icon: ListChecks,
+    title: "Quick daily checklist",
+    body: "Tired of logging every bite? Just check off protein, fluids, and movement — a tap on the dashboard or a quick text.",
+  },
+  {
+    icon: LineChart,
+    title: "Weekly insights & plateau signals",
+    body: "Weight trends and a weekly recap that connects your protein, fluids, and the scale — with honest encouragement through the plateau weeks.",
+  },
+  {
+    icon: CalendarClock,
+    title: "Medication & dose timeline",
+    body: "See your dose journey — how your weight moved and how you felt at each step. Read-only history, never dosing advice.",
   },
   {
     icon: Syringe,
@@ -28,8 +52,8 @@ const FEATURES = [
   },
   {
     icon: Stethoscope,
-    title: "Side-effect help",
-    body: "Practical, GLP-1-aware guidance for nausea, constipation and fatigue — and a clear nudge to your doctor when it matters.",
+    title: "Side-effect pattern memory",
+    body: "GLP-1-aware guidance for nausea, constipation and fatigue — and Grace learns what helped you last time.",
   },
   {
     icon: Mic,
@@ -39,12 +63,12 @@ const FEATURES = [
   {
     icon: Brain,
     title: "Personalized memory",
-    body: "Grace remembers your medication, goals, dislikes and history — so you never have to repeat yourself.",
+    body: "Grace remembers your medication, goals, dislikes and history — tell her once, and she remembers.",
   },
   {
-    icon: LineChart,
-    title: "Progress & motivation",
-    body: "Weight trends, weekly recaps and honest encouragement that keeps you going through the plateau weeks.",
+    icon: LayoutDashboard,
+    title: "One simple dashboard",
+    body: "Meals, weight, water, habits, symptoms, and your dose journey — all in one place. Text “dashboard” anytime.",
   },
   {
     icon: MessageCircleHeart,
@@ -56,14 +80,15 @@ const FEATURES = [
 const FeatureGrid = () => (
   <section id="features" className="pt-10 pb-20 md:py-32 px-6 md:px-14 max-w-[1320px] mx-auto">
     <div className="max-w-2xl mx-auto text-center mb-12 md:mb-16">
-      <span className="grace-chip mb-5">Everything in one chat</span>
+      <span className="grace-chip mb-5">Your all-in-one GLP-1 command center</span>
       <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight text-foreground leading-[1.08] mb-5">
-        One companion for{" "}
-        <span className="font-serif italic font-medium grace-gradient-text">every part of your day.</span>
+        Everything you'd use four apps for,{" "}
+        <span className="font-serif italic font-medium grace-gradient-text">in one place.</span>
       </h2>
       <p className="text-lg text-muted-foreground leading-relaxed">
-        From your morning water to your injection-day jitters, Grace quietly
-        handles the details so staying on track feels effortless.
+        Medication, protein, water, habits, weight, symptoms, and weekly
+        insights — Grace tracks it all through a friendly chat and brings it
+        together in one simple dashboard.
       </p>
     </div>
 

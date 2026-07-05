@@ -8,7 +8,7 @@ export const organizationSchema = {
   url: BASE_URL,
   logo: `${BASE_URL}/og-image.png`,
   description:
-    "grace is a personalized WhatsApp companion for people on GLP-1 medications like Ozempic, Wegovy, Mounjaro, and Zepbound. Handles nausea, plateau weeks, protein math, and injection-day check-ins via text.",
+    "grace is an all-in-one GLP-1 command center for people on Ozempic, Wegovy, Mounjaro, and Zepbound. Track medication, protein, water, weight, habits, and symptoms — with personalized targets, weekly insights, and injection-day check-ins — right inside iMessage, WhatsApp, or SMS.",
   sameAs: [],
   contactPoint: {
     "@type": "ContactPoint",
@@ -23,7 +23,7 @@ export const websiteSchema = {
   name: "grace",
   url: BASE_URL,
   description:
-    "Your daily GLP-1 companion on WhatsApp. Personalized check-ins for hydration, protein targets, injection days, and the dozen small questions GLP-1 throws at you.",
+    "Your all-in-one GLP-1 companion. Track protein, water, weight, habits, symptoms, and your medication timeline — with personalized targets and weekly insights — through a simple daily chat and one dashboard.",
   publisher: {
     "@type": "Organization",
     name: "grace",
@@ -36,9 +36,9 @@ export const softwareApplicationSchema = {
   name: "grace",
   applicationCategory: "HealthApplication",
   applicationSubCategory: "GLP-1 Support",
-  operatingSystem: "WhatsApp, SMS",
+  operatingSystem: "iMessage, WhatsApp, SMS",
   description:
-    "A daily WhatsApp companion for GLP-1 protocols (Wegovy, Ozempic, Mounjaro, Zepbound, compounded sema/tirz). Side-effect coaching, protein math against goal weight, injection-day prep, plateau diagnostics — all via text.",
+    "An all-in-one GLP-1 command center for Wegovy, Ozempic, Mounjaro, Zepbound and compounded sema/tirz. Personalized protein & calorie targets, food/water/weight/habit tracking, a medication & dose timeline, weekly insights and plateau signals, side-effect pattern memory, and injection-day support — all via iMessage, WhatsApp, or SMS, with one simple dashboard.",
   url: BASE_URL,
   offers: {
     "@type": "Offer",
@@ -57,13 +57,16 @@ export const softwareApplicationSchema = {
     },
   },
   featureList: [
-    "Side-effect coaching (nausea, fatigue, constipation)",
+    "All-in-one dashboard: protein, calories, water, weight, habits, symptoms",
+    "Personalized protein & calorie targets from your weight and goals",
+    "Food logging by text, voice note, or photo",
+    "Quick daily habit checklist",
+    "Water & hydration tracking",
+    "Weight trends, weekly insights & plateau signals",
+    "Medication & dose timeline",
+    "Side-effect pattern memory (nausea, fatigue, constipation)",
     "Injection-day prep + day-after follow-up",
-    "Protein and hydration targets against your goal weight",
-    "Plateau-week diagnostics",
-    "Adaptive emotional support",
-    "Dose-week awareness across all GLP-1 medications",
-    "WhatsApp + SMS — no app required",
+    "iMessage, WhatsApp + SMS — no app required",
   ],
   keywords:
     "GLP-1, Ozempic, Wegovy, Mounjaro, Zepbound, semaglutide, tirzepatide, weight loss, WhatsApp companion, injection day, nausea, protein, daily check-in",

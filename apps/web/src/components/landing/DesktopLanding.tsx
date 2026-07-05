@@ -22,18 +22,19 @@ const SERIF = "'Newsreader',Georgia,serif";
 
 const worries = [
   "What should I eat today?", "Am I getting enough protein?", "Did I drink enough water?",
-  "Is this side effect normal?", "When is my injection day?", "I forgot to track again.",
+  "Is this side effect normal?", "When is my injection day?", "I'm juggling three different apps.",
   "I don't want another complicated app.",
 ];
 const capabilities = [
-  { num: "01", t: "Smart food logging", d: "Just say what you ate — Grace handles the rest." },
-  { num: "02", t: "Protein & calorie awareness", d: "Gentle nudges that help you hit your goals." },
-  { num: "03", t: "Injection day support", d: "A calm reminder when your day comes around." },
-  { num: "04", t: "Friendly daily reminders", d: "Water, meals, and routine — never nagging." },
-  { num: "05", t: "Personalized guidance", d: "Grace remembers your preferences and routine." },
-  { num: "06", t: "Voice & image support", d: "Type, talk, or snap a photo of your plate." },
-  { num: "07", t: "Progress tracking", d: "Watch your consistency build, day by day." },
-  { num: "08", t: "Warm check-ins", d: "A little encouragement, exactly when you need it." },
+  { num: "01", t: "Food & protein logging", d: "Just say what you ate — by text, voice, or a photo of your plate." },
+  { num: "02", t: "Your own protein & calorie targets", d: "Personalized from your weight and goals — never a generic number." },
+  { num: "03", t: "Water & hydration tracking", d: "Log fluids in a tap or a text and see your daily range." },
+  { num: "04", t: "Quick daily habit checklist", d: "Tap off protein, fluids, movement — no need to log every bite." },
+  { num: "05", t: "Weight trends & plateau insights", d: "A weekly recap that connects protein, fluids, and the scale." },
+  { num: "06", t: "Medication & dose timeline", d: "See your dose journey and how you felt at each step." },
+  { num: "07", t: "Side-effect pattern memory", d: "Grace learns how your body handles symptoms over time." },
+  { num: "08", t: "Injection-day support & reminders", d: "A calm nudge on the day that matters — never nagging." },
+  { num: "09", t: "One simple dashboard", d: "Meals, weight, water, habits, and progress — all in one place." },
 ];
 const notThis = ["Complicated dashboards", "Judgment or shame", "Generic, copy-paste advice", "Pressure to be perfect"];
 const butThis = ["Understands your context", "Asks when it's unsure", "Replies short & personal", "Helps you stay consistent, gently"];
@@ -46,14 +47,15 @@ type Msg = { text: string; isGrace: boolean };
 const mockups: Array<{ caption: string; messages: Msg[] }> = [
   { caption: "Logging a meal is just a message.", messages: [
     { text: "Had Greek yogurt and berries", isGrace: false },
-    { text: "Got it — I'll log that as a high-protein snack. 💛", isGrace: true } ] },
-  { caption: "Mornings that start gently.", messages: [
-    { text: "Morning 💛 Yesterday you focused on protein — today let's keep it simple: start with something easy and protein-rich.", isGrace: true } ] },
+    { text: "Yum 🙌 Logged — that's about 18g protein toward your day.", isGrace: true } ] },
+  { caption: "No need to log every bite.", messages: [
+    { text: "Hit protein and water today", isGrace: false },
+    { text: "Nice — checked off protein and fluids for today. 💛", isGrace: true } ] },
+  { caption: "Your own numbers, not a generic goal.", messages: [
+    { text: "What's my protein goal?", isGrace: false },
+    { text: "Your daily protein target is 130g, based on your weight and goals. You're at 88g so far.", isGrace: true } ] },
   { caption: "A calm nudge on the day that matters.", messages: [
     { text: "Today is your injection day. Try to stay hydrated and keep meals gentle. I'm right here if you need anything.", isGrace: true } ] },
-  { caption: "Never wonder “what do I eat?” alone.", messages: [
-    { text: "What can I eat for dinner?", isGrace: false },
-    { text: "Something light and protein-focused could work well — grilled chicken, eggs, cottage cheese, or tofu, depending on what you're in the mood for.", isGrace: true } ] },
 ];
 const safety = [
   "Grace is not a doctor and does not replace medical advice.",
@@ -67,12 +69,14 @@ const testimonials = [
   { q: "I finally have something that reminds me without making me feel bad.", n: "Daniel K.", meta: "On Wegovy" },
   { q: "It feels like someone is actually checking in on me.", n: "Priya S.", meta: "On Mounjaro" },
 ].map((t) => ({ ...t, initials: t.n.split(" ").map((s) => s[0]).join("").slice(0, 2) }));
-const freeFeats = ["Full access for 7 days", "Meal & protein logging", "Daily reminders", "No commitment"];
-const proFeats = ["Everything in Free", "Voice & image logging", "Personalized guidance", "Progress tracking", "Injection day support"];
+const freeFeats = ["Full access for 3 days", "The all-in-one dashboard", "Meal, protein & water logging", "No card required"];
+const proFeats = ["Everything in the trial", "Voice & photo food logging", "Weekly insights & plateau signals", "Medication & dose timeline", "Habits, symptoms & progress tracking"];
 const FAQ = [
+  { q: "Is there an app or dashboard?", a: "Yes. Text “dashboard” and Grace sends you a private link to see your protein, calories, water, weight trends, habits, symptoms, dose timeline, and weekly insights — all in one place. Nothing to download." },
+  { q: "Do I have to log every meal?", a: "No. On busy days you can just check off what you did — protein, fluids, movement — with a tap or a quick text like “hit protein and water today.” Grace keeps it low-pressure." },
   { q: "Is Grace a medical app?", a: "No. Grace is a supportive wellness companion for daily habits, tracking, and reminders. It doesn't diagnose, treat, or provide medical advice." },
   { q: "Does Grace replace my doctor?", a: "Never. Grace supports your day-to-day routine, but your healthcare provider is always your source for medical decisions." },
-  { q: "Can Grace help me track protein?", a: "Yes. Just tell Grace what you ate and it'll help you stay aware of your protein and keep your goals in sight." },
+  { q: "Can Grace help me track protein?", a: "Yes. Tell Grace what you ate and it logs your protein and calories, and gives you a personalized daily target based on your weight and goals — so you always know what you have left." },
   { q: "Can Grace remind me about injection day?", a: "Yes. Set your schedule once and Grace will send a calm, friendly reminder when your day comes around." },
   { q: "Can I use Grace on Ozempic, Wegovy, Mounjaro, or Zepbound?", a: "Yes. Grace is built to support people across common GLP-1 medications and routines." },
   { q: "Can Grace understand my food preferences?", a: "Yes. Grace remembers what you like, what you avoid, and tailors its suggestions to you." },
@@ -138,7 +142,7 @@ const DesktopLanding = () => {
               <span style={{ width: 7, height: 7, borderRadius: "50%", background: ACCENT }} />For Ozempic · Wegovy · Mounjaro · Zepbound
             </span>
             <h1 style={{ fontFamily: SERIF, fontWeight: 500, fontSize: "clamp(38px,5.4vw,66px)", lineHeight: 1.03, letterSpacing: "-.8px", color: INK, margin: "24px 0 0", maxWidth: "15ch" }}>Your GLP-1 journey, with support that actually feels <em style={{ fontStyle: "italic", color: ACCENT_DEEP }}>personal</em>.</h1>
-            <p style={{ fontSize: "clamp(16.5px,1.5vw,19px)", lineHeight: 1.65, color: MUTE, margin: "24px 0 0", maxWidth: "46ch" }}>Grace helps you track meals, protein, reminders, symptoms, and daily progress — with warm support that feels more like a companion than another app.</p>
+            <p style={{ fontSize: "clamp(16.5px,1.5vw,19px)", lineHeight: 1.65, color: MUTE, margin: "24px 0 0", maxWidth: "46ch" }}>Grace tracks your meals, protein, water, weight, habits, symptoms, and medication — and brings it all together in one simple place. Your whole GLP-1 picture, in a warm daily conversation.</p>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 34 }}>
               <motion.span {...btnHover} onClick={start} style={{ display: "inline-flex", alignItems: "center", gap: 9, background: INK, color: "#FBF6EE", padding: "16px 28px", borderRadius: 40, fontSize: "15.5px", fontWeight: 600, cursor: "pointer", boxShadow: "0 16px 32px -16px rgba(43,39,34,.5)" }}>Start with Grace <span style={{ fontSize: 17 }}>→</span></motion.span>
               <motion.a whileHover={{ y: -1, backgroundColor: "#FFFFFF" }} href="#how" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: INK, padding: "16px 24px", borderRadius: 40, fontSize: "15.5px", fontWeight: 600, textDecoration: "none", border: "1.5px solid #E0D2BD" }}>See how it works</motion.a>
@@ -200,8 +204,8 @@ const DesktopLanding = () => {
         <div style={sectionPad}>
           <Reveal style={{ maxWidth: 720 }}>
             <div style={eyebrow()}>Meet Grace</div>
-            <h2 style={{ ...h2, maxWidth: "16ch" }}>Your simple daily companion.</h2>
-            <p style={{ fontSize: "clamp(16px,1.4vw,18.5px)", lineHeight: 1.7, color: MUTE, margin: "24px 0 0", maxWidth: "54ch" }}>Grace checks in, remembers your preferences, helps you log meals, tracks your protein, supports your routine, and sends gentle reminders — all through a friendly conversation.</p>
+            <h2 style={{ ...h2, maxWidth: "18ch" }}>Everything, in one simple place.</h2>
+            <p style={{ fontSize: "clamp(16px,1.4vw,18.5px)", lineHeight: 1.7, color: MUTE, margin: "24px 0 0", maxWidth: "54ch" }}>Stop juggling four different apps. Grace logs your meals, protein, water, weight, habits, and symptoms, tracks your medication and doses, and shows you the whole picture — with weekly insights and gentle reminders, all through one friendly conversation.</p>
           </Reveal>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(290px,1fr))", gap: "0 clamp(28px,5vw,72px)", marginTop: 54 }}>
             {capabilities.map((c, i) => (
@@ -348,7 +352,7 @@ const DesktopLanding = () => {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 24, maxWidth: 760, margin: "0 auto", alignItems: "stretch" }}>
             <motion.div initial={{ opacity: 0, y: 22 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }} {...liftHover} style={{ background: "#FFFDF9", border: "1px solid #EBDFCC", borderRadius: 28, padding: "38px 34px", display: "flex", flexDirection: "column", boxShadow: CARD_SHADOW }}>
               <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: "#9B9183" }}>Free Trial</div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "18px 0 4px" }}><span style={{ fontFamily: SERIF, fontSize: 52, fontWeight: 500, color: INK, lineHeight: 1 }}>$0</span><span style={{ fontSize: 14, color: "#9B9183" }}>for 7 days</span></div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "18px 0 4px" }}><span style={{ fontFamily: SERIF, fontSize: 52, fontWeight: 500, color: INK, lineHeight: 1 }}>$0</span><span style={{ fontSize: 14, color: "#9B9183" }}>for 3 days</span></div>
               <div style={{ fontSize: 15, color: MUTE, lineHeight: 1.55, marginBottom: 26 }}>Experience daily support with Grace, free.</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 13, marginBottom: 30 }}>
                 {freeFeats.map((f) => <div key={f} style={{ display: "flex", alignItems: "center", gap: 11, fontSize: 15, color: "#4A4339" }}><span style={{ width: 20, height: 20, borderRadius: "50%", background: "#EFE3D1", color: "#8C8377", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>✓</span>{f}</div>)}
@@ -358,7 +362,7 @@ const DesktopLanding = () => {
             <motion.div initial={{ opacity: 0, y: 22 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.55, delay: 0.08, ease: [0.22, 1, 0.36, 1] }} whileHover={{ y: -6, boxShadow: "0 36px 70px -34px rgba(192,116,79,.4)" }} style={{ position: "relative", background: "#FFFFFF", border: `2px solid ${ACCENT}`, borderRadius: 28, padding: "38px 34px", display: "flex", flexDirection: "column", boxShadow: "0 28px 60px -34px rgba(192,116,79,.34)" }}>
               <div style={{ position: "absolute", top: 22, right: 24, background: ACCENT, color: "#FBF6EE", fontSize: 11, fontWeight: 700, letterSpacing: ".8px", textTransform: "uppercase", padding: "6px 12px", borderRadius: 20 }}>Most loved</div>
               <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: ACCENT_DEEP }}>Pro</div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "18px 0 4px" }}><span style={{ fontFamily: SERIF, fontSize: 52, fontWeight: 500, color: INK, lineHeight: 1 }}>$15</span><span style={{ fontSize: 14, color: "#9B9183" }}>per month</span></div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "18px 0 4px" }}><span style={{ fontFamily: SERIF, fontSize: 52, fontWeight: 500, color: INK, lineHeight: 1 }}>$12</span><span style={{ fontSize: 14, color: "#9B9183" }}>per month</span></div>
               <div style={{ fontSize: 15, color: MUTE, lineHeight: 1.55, marginBottom: 26 }}>Your everyday companion, always there.</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 13, marginBottom: 30 }}>
                 {proFeats.map((f) => <div key={f} style={{ display: "flex", alignItems: "center", gap: 11, fontSize: 15, color: "#4A4339" }}><span style={{ width: 20, height: 20, borderRadius: "50%", background: ACCENT, color: "#FBF6EE", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>✓</span>{f}</div>)}

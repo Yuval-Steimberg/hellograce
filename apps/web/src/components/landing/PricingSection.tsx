@@ -5,12 +5,14 @@ import { Check, ChevronRight } from "lucide-react";
 
 const INCLUDED = [
   "Unlimited daily chat & check-ins",
-  "Food, protein & hydration tracking",
-  "Injection-day prep & follow-ups",
-  "Side-effect & symptom support",
+  "Food, protein, calorie & water tracking",
+  "Personalized protein & calorie targets",
+  "Quick daily habit checklist",
+  "Weight trends, weekly insights & plateau signals",
+  "Medication & dose timeline",
+  "Injection-day prep, side-effect & symptom support",
   "Photo & voice-note understanding",
-  "Personal memory of your journey",
-  "Weekly progress recaps",
+  "The all-in-one dashboard — everything in one place",
 ];
 
 const PricingSection = () => {

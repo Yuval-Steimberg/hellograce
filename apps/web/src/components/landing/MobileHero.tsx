@@ -16,10 +16,10 @@ type Msg = { from: "user" | "grace"; text: string };
 
 const INTRO: Msg[] = [
   { from: "grace", text: "Hi, I'm Grace 🌸" },
-  { from: "grace", text: "Your GLP-1 companion — here for the food, the reminders, and the hard days." },
+  { from: "grace", text: "Your all-in-one GLP-1 companion — food, protein, water, weight, habits, symptoms, and your shots, all in one place." },
   { from: "user", text: "how does it work?" },
   { from: "grace", text: "Just text me like a friend — what you ate, how you feel, when your shot is." },
-  { from: "grace", text: "I'll track it all and check in, so you're never doing this alone." },
+  { from: "grace", text: "I'll track it all, show you the whole picture, and check in — so you're never doing this alone." },
   { from: "user", text: "okay, I'm in" },
   { from: "grace", text: "Love that. Let's set you up 💛" },
 ];

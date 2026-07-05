@@ -6,7 +6,7 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `5681007`, NOT deployed by me)
+## 👉 READ FIRST — product-gaps roadmap: all-in-one GLP-1 command center (2026-07-05, MERGED to `main` HEAD `bad8c51`, NOT deployed by me)
 
 Session driven by a product-direction ask: make Grace the simple all-in-one
 GLP-1 command center (medication, protein, habits, water, weight, symptoms,
@@ -106,6 +106,24 @@ Steps shipped (each its own commit, verified before the next):
   Pricing is now consistent EVERYWHERE (landing / pricing / FAQ / SEO / Terms =
   3-day trial → $12/mo). NOTE: admin `BusinessPage.tsx` still shows a `$24.99`
   plan row — admin-internal analytics, left as-is (not customer-facing).
+- **Progressive profiling — capture once + USE it in replies** (`bad8c51`, plus
+  the `4b0ec73` gather LLM-fallback + `c0f01ec` protein fix). Verified the
+  gather→persist→no-repeat loop (`progressive-profile.ts`: `relevantProfileSlot`
+  ask-first, `contextualGatherSlot` topic-driven, `isProfileSlotFilled` skips
+  filled fields, Redis pending/asked markers). The remaining gap was the REPLY
+  PROMPT: the live compact + grounded builders only surfaced name/med/diet/
+  dislikes(/targets), so Grace couldn't personalize from most stored settings and
+  could re-ask for a goal weight she already had. New exported
+  `buildKnownProfileFacts(user, opts)` (in `ai.service.ts`, tested) renders the
+  FULL profile (name, med+dose, injection day, sex/age/height, current+goal
+  weight, activity, primary goal/goals, diet, dislikes, protein+calorie targets,
+  exercise habits, why-started, biggest challenge, support-style/tone) into BOTH
+  builders with "USE this — never ask for what's here". Encrypted blobs never
+  surfaced; the recitation-prone schedule+diary stay relevance-gated in grounded.
+  So the gather-level no-repeat now has an LLM-level complement. Gather slots
+  cover the core personalization fields; `support_style`/`why_started`/
+  `biggest_challenge`/`exercise_habits` are Settings-only (not gathered — a
+  "how should I talk to you" question has no natural contextual trigger).
 
 **Deliberately untouched (kept the standing constraint "don't touch the rest"):**
 the live reply path (`runDirectReply`/unified), Stripe/trial gate, onboarding

@@ -97,7 +97,7 @@ env change).**
 
 ---
 
-## 👉 READ FIRST — nightly end-of-day summary (NEW feature, 2026-07-06, branch `claude/grace-nightly-summary-qd76so`, PR #202 OPEN, NOT merged, NOT deployed)
+## 👉 READ FIRST — nightly end-of-day summary (NEW feature, 2026-07-06, MERGED to `main` HEAD `b7f3f44` via PR #202, NOT deployed by me — needs migration + `DAILY_SUMMARY_ENABLED=true`)
 
 A brand-new **daily recap** feature, deliberately SEPARATE from reminders (user's
 hard constraint: "do not modify/damage the reminder system; this is not a

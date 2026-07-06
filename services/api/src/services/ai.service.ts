@@ -3678,45 +3678,48 @@ CRITICAL RULES:
     }
     if (!reply) reply = 'I’m here — tell me a little more?';
 
-    // MUST-ASK guard: when food is PENDING (a bare sandwich/shake we can't log
-    // accurately), the reply has to ASK about EVERY pending item — not just have
-    // a "?" somewhere. The failure this fixes: the LLM asked about the shake but
-    // silently assumed the sandwich. We check each pending food is actually named
-    // in the reply; if any is missing we regenerate once demanding all of them,
-    // then append the deterministic clarify (which covers every item) as a
-    // guaranteed last resort. So no ambiguous eaten food is ever assumed.
-    if (food && food.pending.length > 0 && food.clarify && reply) {
+    // Ambiguous eaten foods, derived DETERMINISTICALLY from the message — the
+    // general guarantee that doesn't depend on the (flaky-on-complex-messages)
+    // extractor. The pending items to ASK about = whatever foodStepUnified pended
+    // OR, if it dropped them, what the message itself reports eating that's
+    // ambiguous. Either way the reply must ask about each and never assume a total.
+    const eatenAmbig = isMultiTopic ? ambiguousEatenFoods(input.text) : null;
+    const pendItems: string[] = (food && food.pending.length > 0 ? food.pending : eatenAmbig?.items) ?? [];
+    const pendClarify: string | null = (food && food.clarify) || eatenAmbig?.clarify || null;
+
+    // MUST-ASK guard: when food is ambiguous/pending (a bare sandwich/shake we
+    // can't log accurately), the reply has to ASK about EVERY such item — not just
+    // have a "?" somewhere. The failure this fixes: the LLM asked about the shake
+    // but silently assumed the sandwich. We check each item is actually named in
+    // the reply; if any is missing we regenerate once demanding all of them, then
+    // append the deterministic clarify (covers every item) as a guaranteed last
+    // resort. So no ambiguous eaten food is ever assumed.
+    if (pendItems.length > 0 && pendClarify && reply) {
       const keyword = (item: string): string =>
         (item.trim().split(/\s+/).pop() || item).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const asksEach = (t: string): boolean =>
-        t.includes('?') && food.pending.every((p) => new RegExp(`\\b${keyword(p)}`, 'i').test(t));
+        t.includes('?') && pendItems.every((p) => new RegExp(`\\b${keyword(p)}`, 'i').test(t));
       if (!asksEach(reply)) {
-        this.deps.logger.info({ userId, pending: food.pending.length }, 'ai.unified.pending_ask_regen');
+        this.deps.logger.info({ userId, pending: pendItems.length }, 'ai.unified.pending_ask_regen');
         const asked = await gen(systemPrompt +
-          `\n\nHARD OVERRIDE: you must ASK about EACH of these before logging — never assume any of them: ${food.pending.join(', ')}. Include this exact question, woven in naturally: "${food.clarify.replace(/"/g, "'")}". Keep the rest warm and answer their other parts.`);
+          `\n\nHARD OVERRIDE: you must ASK about EACH of these before logging — never assume any of them: ${pendItems.join(', ')}. Include this exact question, woven in naturally: "${pendClarify.replace(/"/g, "'")}". Keep the rest warm and answer their other parts.`);
         if (asked && asksEach(asked)) reply = asked;
       }
-      if (!asksEach(reply)) reply = `${reply} ${food.clarify}`.trim();
+      if (!asksEach(reply)) reply = `${reply} ${pendClarify}`.trim();
     }
 
-    // FALSE-RUNNING-TOTAL guard (food multi-topic turns only): the grounded path
-    // has no number-guard, so protect the 669g class here too. Only an explicit
-    // present-tense RUNNING-TOTAL claim ("you're at Ng", "total today is Ng") is
-    // checked against the authoritative total — general advice/goal numbers
-    // ("aim for ~30g", "a 120g daily goal") are deliberately left alone. On a
-    // mismatch, regenerate once with the correct number.
-    if (isFoodTurn && food && food.logged.length > 0 && reply) {
+    // FALSE-CONSUMED-TOTAL guard: the reply may state ONLY the authoritative
+    // logged total (`todaysFood.protein_g`); any other "you've consumed / you're
+    // at Ng today" claim is an ASSUMED total (prod: "you've likely consumed about
+    // 50g so far today" while the diary was empty). Runs whenever there's food
+    // context — LOGGED or ambiguous-pending — not only when something was logged.
+    // Goal / target / "to go" / "need" numbers are left alone (see the detector).
+    if (reply && ((food && food.logged.length > 0) || pendItems.length > 0)) {
       const realTotal = Math.round(todaysFood.protein_g);
-      const badTotal = (t: string): boolean => {
-        const re = /(?:you'?re (?:now |currently )?at|(?:protein )?total (?:for )?today (?:is|of|to|now at)|total for today (?:is|to))\s*(\d+)\s*g/gi;
-        let m: RegExpExecArray | null;
-        while ((m = re.exec(t))) if (Number(m[1]) !== realTotal) return true;
-        return false;
-      };
-      if (badTotal(reply)) {
-        this.deps.logger.info({ userId, realTotal }, 'ai.unified.multitopic_total_regen');
-        const fixed = await gen(systemPrompt + `\n\nHARD OVERRIDE: the ONLY correct protein running total for today is ${realTotal}g. Do not state any other running total. Keep everything else the same.`);
-        if (fixed && !badTotal(fixed)) reply = fixed;
+      if (statesFalseConsumedTotal(reply, realTotal)) {
+        this.deps.logger.info({ userId, realTotal }, 'ai.unified.false_total');
+        const fixed = await gen(systemPrompt + `\n\nHARD OVERRIDE: their food log currently totals ${realTotal}g of protein today — that is the ONLY consumed/"so far today" total you may state. ${pendItems.length > 0 ? `The ${pendItems.join(' and ')} are NOT logged yet (ask about them, don't count them). ` : ''}You may still talk about their goal and how much is left. Keep everything else the same.`);
+        if (fixed && !statesFalseConsumedTotal(fixed, realTotal)) reply = fixed;
       }
     }
 
@@ -7260,6 +7263,55 @@ export function stripReportShape(text: string): string {
   const lastPunct = Math.max(head.lastIndexOf('.'), head.lastIndexOf('!'), head.lastIndexOf('?'));
   if (lastPunct >= 20) head = head.slice(0, lastPunct + 1).trim();
   return head;
+}
+
+// Assembled foods whose protein depends on an unknown filling (mirror of the
+// food-portion set; used to name the specific ambiguous foods a message reports
+// eating, so the reply can ask about each by name).
+const ASSEMBLED_AMBIG_WORDS = ['sandwich', 'wrap', 'burrito', 'taco', 'sub', 'hoagie', 'quesadilla', 'panini'];
+
+/**
+ * The ambiguous foods a message reports EATING, derived deterministically from
+ * the text (independent of the LLM extractor, which can drop them on a complex
+ * planning message). Returns the specific ambiguous foods + the clarify question
+ * to ask about each, or null when the message reports no ambiguous intake. This
+ * is the general guarantee that a bare sandwich/shake buried in a planning
+ * message is ALWAYS asked about, never assumed.
+ */
+export function ambiguousEatenFoods(text: string): { items: string[]; clarify: string } | null {
+  const span = foodSpanFromConsumption(text);
+  if (!span) return null;
+  const items: string[] = [];
+  if (isCompositionAmbiguousFood(span)) {
+    for (const w of ASSEMBLED_AMBIG_WORDS) {
+      if (new RegExp(`\\b${w}(?:es|s)?\\b`, 'i').test(span)) items.push(w);
+    }
+  }
+  if (isProteinProductAmbiguous(span, text)) items.push('protein shake');
+  const uniq = [...new Set(items)];
+  if (uniq.length === 0) return null;
+  return { items: uniq, clarify: buildPortionConfirmQuestion(uniq.map((i) => ({ item: i, protein_g: null }))) };
+}
+
+/**
+ * True when a reply CLAIMS a present-tense consumed protein total that differs
+ * from the authoritative logged total. Only consumption / "so far today"
+ * phrasings are checked — GOAL / target / "to go" / "need" / remaining numbers
+ * are deliberately left alone (they're legitimate advice). Prod: "you've likely
+ * consumed about 50g so far today" while the diary was empty (0g). General guard
+ * against an ASSUMED total on food that isn't actually logged.
+ */
+export function statesFalseConsumedTotal(reply: string, realTotal: number): boolean {
+  const re =
+    /\b(?:consumed|you'?ve had|you have had|you'?ve eaten|you have eaten|you'?re (?:now |currently )?at|logged|had (?:about |roughly |around )?)\s*(?:about |around |roughly |~)?(\d+)\s*g\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(reply))) {
+    const n = Number(m[1]);
+    const ctx = reply.slice(Math.max(0, m.index - 12), m.index + 34).toLowerCase();
+    if (/\bgoal\b|\btarget\b|\bto go\b|\bto hit\b|\bneed\b|\bremaining\b|\bleft\b/.test(ctx)) continue;
+    if (n !== realTotal) return true;
+  }
+  return false;
 }
 
 // Hard per-call timeout for the unified reply generations. Keeps a turn from

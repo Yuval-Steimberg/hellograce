@@ -29,9 +29,11 @@ export type MealLifecycleState = 'consumed' | 'preference' | 'neither';
 // "log / track / add it". A leading "I" is optional ("Had the omelet").
 const CONSUMPTION_RE: RegExp[] = [
   // Past / completed eating, optional leading "I" + filler adverbs.
-  /^\s*(?:i\s+)?(?:just\s+|already\s+|also\s+|finally\s+|basically\s+|literally\s+|kinda\s+|sorta\s+)*(?:ate|eaten|had|have\s+had|have\s+eaten|finished|finished\s+eating|done\s+eating|polished\s+off|demolished|devoured|scarfed(?:\s+down)?|inhaled|downed|chowed(?:\s+down)?|wolfed(?:\s+down)?|gobbled(?:\s+up)?|snacked(?:\s+on)?|grabbed|consumed)\b/i,
-  // "I ate / had / finished" anywhere (not just at start).
-  /\bi\s+(?:just\s+|already\s+|also\s+|finally\s+)*(?:ate|had|finished\s+eating|finished\s+(?:my|the|a)|polished\s+off|devoured|scarfed|downed|consumed|grabbed)\b/i,
+  /^\s*(?:i\s+)?(?:just\s+|only\s+|already\s+|also\s+|finally\s+|recently\s+|earlier\s+|simply\s+|merely\s+|actually\s+|honestly\s+|basically\s+|literally\s+|kinda\s+|sorta\s+)*(?:ate|eaten|had|have\s+had|have\s+eaten|finished|finished\s+eating|done\s+eating|polished\s+off|demolished|devoured|scarfed(?:\s+down)?|inhaled|downed|chowed(?:\s+down)?|wolfed(?:\s+down)?|gobbled(?:\s+up)?|snacked(?:\s+on)?|grabbed|consumed)\b/i,
+  // "I ate / had / finished" anywhere (not just at start). The filler adverbs
+  // ("only", "just", "recently"…) keep "I only had a shake and a sandwich" from
+  // slipping past — a general gap the offline harness caught.
+  /\bi\s+(?:just\s+|only\s+|already\s+|also\s+|finally\s+|recently\s+|earlier\s+|simply\s+|merely\s+|actually\s+|honestly\s+)*(?:ate|had|finished\s+eating|finished\s+(?:my|the|a)|polished\s+off|devoured|scarfed|downed|consumed|grabbed)\b/i,
   // Present-progressive eating = eating now.
   /\bi'?m\s+(?:eating|having|finishing|munching|snacking|sipping|drinking|chowing|devouring)\b/i,
   /\bi\s+am\s+(?:eating|having|finishing|munching|snacking|drinking)\b/i,

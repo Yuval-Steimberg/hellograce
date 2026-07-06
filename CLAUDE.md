@@ -6,6 +6,43 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — food logging never assumes a sandwich's filling (2026-07-06, MERGED to `main` HEAD `63c3ded` via PR #204, NOT deployed by me)
+
+Live-testing screenshots (IMG_6699 Grace / IMG_6700 Nudge, same input). Grace
+logged "a protein shake and a sandwich" at 65g and, asked "How 65g?", admitted
+"Sandwich: ~23g (**assuming** deli meat/poultry and bread)". Nudge counted only
+the shake at standard and said "still waiting on the details for your sandwich" —
+never assumed the filling. The word "assuming" violates the standing "no
+assuming, be accurate" rule.
+
+**Root cause:** `foodStepUnified` only asked for a portion when a food was in the
+PORTION-SENSITIVE set AND no quantity was present. `sandwich`/`wrap`/`burrito`
+are in no ambiguity set, and the bare article "a" made `hasExplicitQuantity` true
+→ logged at an assumed value. (`detectProteinProduct`/`detectAteOut` "ask even
+though 'a' is present" logic existed but only on the COMPACT path, not unified.)
+
+**Fix (`food-portion.ts` + `foodStepUnified` in `ai.service.ts`):**
+- New `isCompositionAmbiguousFood(item)`: an ASSEMBLED food (sandwich, wrap,
+  burrito, taco, sub, hoagie, quesadilla, panini) mentioned WITHOUT a filling has
+  unknowable protein → must be ASKED, even when an article is present. A NAMED
+  filling ("turkey sandwich", "chicken wrap", "egg sandwich", "PB sandwich") stays
+  loggable. Non-assembled foods — INCLUDING a protein shake — are unaffected, so
+  the shake still logs at standard, matching Nudge exactly.
+- `foodStepUnified` (confirmed loop + never-drop backstop) downgrades a
+  composition-ambiguous food to PENDING regardless of the article.
+- `buildPortionConfirmQuestion` asks "what was in the sandwich?" (composition) vs
+  "how much?" (portion-variable, unchanged). Multi-topic grounded pending-note
+  updated to ask what's in an assembled food + never assume a number.
+
+**Verified:** api 1878 (+5) + ai-core 659 green; typecheck + build clean. Live
+extractor path needs a post-deploy look. **Deploy = `fly deploy` grace-api (no
+migration, no env).** NOTE: only the SANDWICH-class (unknown filling) asks;
+protein shake logs at standard per the user's shown Nudge ideal — if they later
+want the shake to ask too, add `protein_shake` handling (see `detectProteinProduct`
+in `vague-food.ts`, currently compact-path only).
+
+---
+
 ## 👉 READ FIRST — unified path no longer collapses multi-topic messages (2026-07-06, MERGED to `main` HEAD `944d7f8` via PR #203, NOT deployed by me)
 
 Live-testing screenshots (IMG_6697/6698): the SAME long message sent to Grace

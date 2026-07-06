@@ -29,9 +29,23 @@ parts are answered. api 1918 + ai-core 659 green.
 
 **⚠️ DEPLOY NOTE:** the IMG_6705/6706 behavior (food logged at assumed values, no
 ask) means prod was running an INTERMEDIATE build (after #203, before #204/#205/
-#206). The user must `fly deploy` the LATEST `main` (HEAD `2ec1d0b`) — verify
-`/health` == `2ec1d0b` — to get ALL of #204 (sandwich asks) + #205 (shake asks) +
-#206 (prose + guaranteed ask). No migration/env for these reply fixes.
+#206). The user must `fly deploy` the LATEST `main` — verify `/health` — to get
+ALL of #204 (sandwich asks) + #205 (shake asks) + #206 (prose + guaranteed ask).
+No migration/env for these reply fixes.
+
+**FOLLOW-UP (PR #207, MERGED to `main` HEAD `f1479af`, NOT deployed):** after the
+user deployed, IMG_6707 STILL showed a game plan ("…Here is your game plan for
+Friday… 1." truncated). #206's shape guard was live but `UNIFIED_BREAKDOWN_RE`
+MISSED it — it required "1. <Capital>" (a reply truncated at a lone "1." doesn't
+match) and didn't recognize "game plan"/"here's your plan" framing. Broadened the
+regex to add `game plan`, `here is a/the/your … plan`, `here is how to/you/i`, and
+a trailing lone-number `\d[.)]$` (truncated list). Verified vs the exact
+IMG_6707/6705 strings (matches game-plans, leaves warm prose/plain answers alone).
+ALSO: `detectFoodReset` now clears the Redis pending-food store (`clearPendingFood`)
+so "reset my food log" truly zeroes the day. **The 65g in IMG_6707 was STALE
+accumulated data from re-testing the same message — recommend the user text "reset
+my food log" then send a FRESH message to see clean pending/ask behavior.** api
+1918 + ai-core 659 green.
 
 ---
 

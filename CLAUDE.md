@@ -6,6 +6,35 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — multi-topic: GUARANTEE prose (deterministic strip) + fix eaten-food span (2026-07-06, MERGED to `main` HEAD `a62253d` via PR #209, NOT deployed)
+
+On the CONFIRMED-deployed build (`/health`==`011db0e`) the Friday multi-topic
+message STILL shipped "…Here is your strategy: 1." (truncated) and never asked the
+food clarification. Real code bugs (not deploy lag), both deterministic:
+
+1. **Report-shape regen didn't hold.** flash keeps emitting "here's your strategy:
+   1. …" even when told not to, and the guard only adopts a CLEAN regen → it
+   shipped the original list. New exported **`stripReportShape(text)`** (ai.service.ts):
+   when the multi-topic regen STILL matches `UNIFIED_BREAKDOWN_RE`, cut the list/
+   heading tail and ship the warm prose preamble (trimmed to last complete
+   sentence). A numbered game-plan/strategy can NO LONGER reach the user — worst
+   case is warm prose minus the list.
+2. **`foodSpanFromConsumption` grabbed the wrong clause** (`meal-lifecycle.ts`).
+   For "…there will probably be pasta, bread… Today I ate a protein shake and a
+   sandwich…" it returned the FUTURE dinner food (pasta/bread) because it cut at
+   the first sentence. Now it anchors the span at the earliest real consumption
+   verb ("Today I ate…"), so the eaten shake+sandwich (not pasta) flow into the
+   pending/clarify logic.
+
+api 1922 (+4) + ai-core 659 green. **Deploy = `fly deploy` grace-api, verify
+`/health`==new HEAD.** NOTE: the food-CLARIFICATION asking still partly depends on
+the live `extractFood` LLM (returns the foods → confirmed loop pends+asks; returns
+`none` → the now-fixed span backstop pends+asks) — couldn't exercise live Gemini
+in-session, so the ASK wording needs the user's post-deploy look; the report-shape
+strip is fully deterministic and guaranteed.
+
+---
+
 ## 👉 READ FIRST — multi-topic replies: warm prose + always ask the food clarification (2026-07-06, MERGED to `main` HEAD `2ec1d0b` via PR #206, NOT deployed by me)
 
 Live screenshots (IMG_6705/6706, the Friday family-dinner multi-topic message).

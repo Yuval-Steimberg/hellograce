@@ -7208,7 +7208,7 @@ const UNIFIED_DENIAL_RE = /\b(as an ai|i'?m an ai|i am an ai|i'?m just an ai|i (
 // A history-bleed / meta-breakdown reply — flash reading the whole thread and
 // answering it as "Part 1 / Part 2" instead of the current message. Deterministic
 // so it's caught even when the relevance judge (flash, lenient) passes it.
-const UNIFIED_BREAKDOWN_RE = /(\bpart 1\b|\bpart 2\b|two (?:distinct )?parts|distinct parts to your|let'?s break (?:them|it|this|these|your)|\bbreak (?:it|this|them) down|here (?:is|'?s) (?:a|the|my) (?:quick |brief |detailed )?breakdown|breakdown of (?:how|the |your )?(?:i |nutrition|what|meal|that)|breaking (?:it|this|them) down|game\s?plan|here (?:is|'?s) (?:a|the|your|my) (?:\w+ )?plan\b|here (?:is|'?s) how (?:to|you|i)\b|\b\d\.\s+(?:the\s+)?[A-Z]|\b\d[.)]\s*$)/i;
+const UNIFIED_BREAKDOWN_RE = /(\bpart 1\b|\bpart 2\b|two (?:distinct )?parts|distinct parts to your|let'?s break (?:them|it|this|these|your)|\bbreak (?:it|this|them) down|here (?:is|'?s) (?:a|the|my) (?:quick |brief |detailed )?breakdown|breakdown of (?:how|the |your )?(?:i |nutrition|what|meal|that)|breaking (?:it|this|them) down|game\s?plan|here (?:is|'?s) (?:a|the|your|my)(?: \w+){0,4}\s+(?:plan|strategy|strategies|breakdown|approach|steps?|game\s?plan)\b|here (?:is|'?s) how (?:to|you|i)\b|here (?:is|'?s)[^.!?\n]{0,60}:\s*\d|\b\d\.\s+(?:the\s+)?[A-Z]|\b\d[.)]\s*$)/i;
 
 // Hard per-call timeout for the unified reply generations. Keeps a turn from
 // running long enough to blow past the webhook in-flight lock's wait budget

@@ -3589,7 +3589,12 @@ CRITICAL RULES:
       const notes: string[] = [];
       if (food.removed) notes.push(`You just removed "${food.removed}" from today's log — confirm that in one casual clause.`);
       if (food.logged.length > 0) notes.push(`You just logged ${food.logged.join(', ')} for them. Their running protein total for TODAY is ${Math.round(todaysFood.protein_g)}g — you may mention it in ONE short clause, and it is the ONLY running-total protein number you may state (general advice like "aim for ~30g at dinner" is fine).`);
-      if (food.pending.length > 0) notes.push(`They mentioned ${food.pending.join(', ')} but you don't have enough to log it accurately yet — briefly ask what they need (how much; for an assembled food like a sandwich/wrap, what was in it; for a protein shake, how many scoops or what brand). Do NOT claim it's logged and do NOT attach or assume a protein number for it.`);
+      if (food.pending.length > 0) {
+        const ask = food.clarify
+          ? ` You MUST ask them about it before you can log it — weave THIS question in naturally (early, right after the warm opener): "${food.clarify.replace(/"/g, "'")}"`
+          : ' You MUST briefly ask what you need to log it (how much; for a sandwich/wrap what was in it; for a protein shake how many scoops or what brand).';
+        notes.push(`They mentioned ${food.pending.join(', ')} but you can't log it accurately yet — never assume its protein.${ask} Do NOT claim it's logged and do NOT state or assume a protein number for it.`);
+      }
       systemPrompt += `\n\nFOOD JUST HANDLED (weave in naturally, do NOT lead with it):\n- ${notes.join('\n- ')}`;
     }
 
@@ -3633,15 +3638,18 @@ CRITICAL RULES:
       }
     }
 
-    // BREAKDOWN / BLEED catcher (deterministic). A "two distinct parts… Part 1…"
-    // reply is answering the whole thread, not the current message. Regenerate
-    // answering ONLY the latest message. SKIPPED for a genuinely multi-topic
-    // message — there the user DID ask several things, so covering them is
-    // correct; the multi-part note already forbids lists/headings/"Part 1".
-    if (reply && !isMultiTopic && UNIFIED_BREAKDOWN_RE.test(reply)) {
-      this.deps.logger.info({ userId }, 'ai.unified.breakdown_regen');
-      const focused = await gen(systemPrompt +
-        `\n\nHARD OVERRIDE: reply ONLY to the user's last message: "${input.text.replace(/"/g, "'")}". Answer just that — one or two short sentences, plain prose. Do NOT break their message into parts, do NOT summarize the conversation, do NOT mention earlier meals or an injection unless THIS message asks about them.`);
+    // REPORT-SHAPE catcher (deterministic). A "here's the game plan: 1. … 2. …"
+    // reply reads like a document, not a text. Regenerate as warm prose.
+    //  - Single-topic: also strip any thread-bleed → one or two short sentences.
+    //  - Multi-topic: the user DID ask several things, so KEEP every part — just
+    //    force flowing prose (no numbered steps / headings / "game plan"). Do NOT
+    //    collapse to 1–2 sentences (that was dropping legit multi-part answers).
+    if (reply && UNIFIED_BREAKDOWN_RE.test(reply)) {
+      this.deps.logger.info({ userId, isMultiTopic }, 'ai.unified.breakdown_regen');
+      const override = isMultiTopic
+        ? `\n\nHARD OVERRIDE: rewrite as ONE warm, flowing text message — the way a friend texts back, not a document. Still answer EVERY part they asked, but in plain connected sentences: NO numbered steps ("1.", "2."), NO headings or bold section titles, NO "game plan"/"here's the plan"/"Part 1", NO bullet points. Lead with warmth, keep it concise.`
+        : `\n\nHARD OVERRIDE: reply ONLY to the user's last message: "${input.text.replace(/"/g, "'")}". Answer just that — one or two short sentences, plain prose. Do NOT break their message into parts, do NOT summarize the conversation, do NOT mention earlier meals or an injection unless THIS message asks about them.`;
+      const focused = await gen(systemPrompt + override);
       if (focused && !UNIFIED_BREAKDOWN_RE.test(focused)) reply = focused;
     }
 
@@ -3655,6 +3663,21 @@ CRITICAL RULES:
       if (retry2 && !UNIFIED_DENIAL_RE.test(retry2)) reply = retry2;
     }
     if (!reply) reply = 'I’m here — tell me a little more?';
+
+    // MUST-ASK guard: when food is PENDING (a bare sandwich/shake we can't log
+    // accurately), the reply has to ASK the clarification — otherwise Grace
+    // silently drops it and the food never gets logged. If the draft asks
+    // nothing (no "?"), regenerate once demanding the question; if it STILL
+    // doesn't, append the deterministic clarify so the ask is guaranteed.
+    if (food && food.pending.length > 0 && food.clarify && reply) {
+      if (!reply.includes('?')) {
+        this.deps.logger.info({ userId, pending: food.pending.length }, 'ai.unified.pending_ask_regen');
+        const asked = await gen(systemPrompt +
+          `\n\nHARD OVERRIDE: you did not ask about their ${food.pending.join(' / ')}. You cannot log it without more detail, so you MUST include this exact question, woven in naturally: "${food.clarify.replace(/"/g, "'")}". Keep the rest warm and answer their other parts.`);
+        if (asked && asked.includes('?')) reply = asked;
+      }
+      if (!reply.includes('?')) reply = `${reply} ${food.clarify}`.trim();
+    }
 
     // FALSE-RUNNING-TOTAL guard (food multi-topic turns only): the grounded path
     // has no number-guard, so protect the 669g class here too. Only an explicit

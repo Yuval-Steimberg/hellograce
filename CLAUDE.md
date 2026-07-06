@@ -6,6 +6,102 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — unified path no longer collapses multi-topic messages (2026-07-06, MERGED to `main` HEAD `944d7f8` via PR #203, NOT deployed by me)
+
+Live-testing screenshots (IMG_6697/6698): the SAME long message sent to Grace
+(blue/iMessage) and Nudge (green/SMS). The message mentions food eaten AND asks
+several planning/emotional things ("I ate a protein shake and a sandwich… help me
+plan what to eat before dinner, what to choose at the meal, and how to handle
+dessert without feeling guilty?"). **Grace collapsed it into a terse 2-sentence
+food-confirmation** ("you're already at 65g, try Greek yogurt + double meat") and
+DROPPED the meal advice + dessert-without-guilt + reassurance; Nudge answered all
+of it. NOTE: the 65g was REAL (the shake+sandwich were logged → 12g→65g), so this
+was a COMPLETENESS/shape bug, not a hallucination.
+
+**Root cause:** `runUnifiedReply`'s deterministic food early-return (built to kill
+the 669g hallucination) fires on ANY food mention and its warm reply is capped at
+1–2 sentences → it swallows the rest of a multi-part message. The `isMultiTopic`
+guard that protects the compact path was never applied inside the unified food
+block. **Prod runs the UNIFIED path, so this early-return is live.**
+
+**Fix (all in `runUnifiedReply`, `ai.service.ts`):**
+- Gate the food early-return on `!isMultiTopic` (`analyzeMessage(input.text).hasMultiple`,
+  media-guarded). A PURE food log ("I just had eggs") is unchanged — still the fast
+  deterministic confirmation with the exact grounded total.
+- Food mentioned INSIDE a bigger ask → still LOG it (side-effect, `foodStepUnified`
+  unchanged) but FALL THROUGH to the grounded path with a "FOOD JUST HANDLED" note
+  (running total = authoritative `getTodaysFoodSummary`, the ONLY total it may
+  state) + `buildMultiPartNote(understanding)` so every part is answered, feeling
+  first. `todaysFood` already reflects the just-logged items.
+- Skip the breakdown-shape regen (`UNIFIED_BREAKDOWN_RE`) for multi-topic turns so
+  a legit multi-part answer isn't truncated back to 1–2 sentences.
+- **Tight false-running-total guard** on the grounded reply for these turns: only
+  an explicit "you're at Ng / total today is Ng" claim is checked vs the real
+  total (advice/goal numbers like "aim for ~30g" left alone) → regen once with the
+  correct number. Keeps the 669g class closed in the grounded path too.
+
+**Verification:** the user's 15-message long multi-topic battery ALL route to the
+full grounded answer (`hasMultiple=true`, each carries a `food` part so it's still
+logged) — locked as regression tests in `message-understanding.test.ts` (+ the
+exact IMG_6697 message). Pure food logs stay single-topic. **api 1873 + ai-core
+659 green; typecheck + build clean.** Only `ai.service.ts` + `message-understanding.test.ts`
+touched (95 insertions). **CAVEAT: could NOT run live Gemini in-session** — verified
+the ROUTING deterministically (the actual bug); the generated WORDING needs the
+user's live look after deploy. **Deploy = `fly deploy` grace-api (no migration, no
+env change).**
+
+---
+
+## 👉 READ FIRST — nightly end-of-day summary (NEW feature, 2026-07-06, branch `claude/grace-nightly-summary-qd76so`, PR #202 OPEN, NOT merged, NOT deployed)
+
+A brand-new **daily recap** feature, deliberately SEPARATE from reminders (user's
+hard constraint: "do not modify/damage the reminder system; this is not a
+reminder"). Grace sends each eligible user a short warm end-of-day wrap-up of what
+they logged + a soft take + 1–2 practical suggestions for tomorrow. **1890 api
+(1855 + 35 new) + 659 ai-core green.** Additive only — reminder `processUser`/
+cadence/injection state machine UNTOUCHED. **PR #202 open against main; branch is
+NOT yet rebased onto the #203 merge (no conflict — #202 touches none of the same
+files as #203).**
+
+**Architecture (isolation is the point):**
+- New `services/api/src/services/daily-summary.ts` (pure + best-effort):
+  `gatherDailySummaryData` (fans out today's food/water/habits/symptoms/weight/
+  injection via existing best-effort helpers, mirrors `routes/dashboard.ts`),
+  `hasLoggedData`, **deterministic** `renderDailySummary` (NO LLM), plus pure
+  window math `dailySummaryTargetMinutes` / `isInDailySummaryWindow`.
+- New scheduler pass `Scheduler.sendDailySummaries()` — a **third independent
+  `tick()` pass** (alongside `nudgeAbandonedOnboarding`/`reengageQuietOptedOut`),
+  modeled on `reengageQuietOptedOut`. Does NOT go through `processUser`/
+  `sendAndRecord`.
+- **Dedup:** own Redis key `daily_summary:{phone}:{localDate}` (NX, 23h), distinct
+  from reminder `sched:`/`cadence:`. **Fails CLOSED** (skip on Redis error).
+  Records `check_ins.type='daily_summary'` (free-form column → no migration).
+- **Send:** `sender.send({..., raw:true})` so the multi-line "Protein: 82g" recap
+  survives the sanitizer (both iMessage + Sendblue honor `raw`).
+
+**Product decisions (locked by the user):** (1) deterministic template, no LLM;
+(2) **skip entirely on zero-log days** (no lock claimed, so a late log can still
+trigger a send in the window); (3) **dark launch** — `DAILY_SUMMARY_ENABLED` env
+default OFF + per-user `users.daily_summary_enabled` column default TRUE; (4) send
+target = `sleep_time − 30min` clamped **19:00–21:00** local, default 21:00, 15-min
+window. Audience = `listActiveUsers` minus onboarding-in-progress minus opted-out.
+
+**Admin toggle wired:** `GET`/`PUT /admin/users/:phone` carry `daily_summary_enabled`;
+`UserDrawer` has a "Nightly daily summary" switch (invalidates user-detail +
+admin-users). `UserDetail` type carries it.
+
+**Files:** `config/env.ts`, `user/user.service.ts` (GraceUser +col), `scheduler/
+scheduler.ts` (+`pool`/`dailySummaryEnabled` deps, +tick call, +method), `server.ts`,
+`routes/admin.ts` (GET+PUT), web `UserDrawer.tsx` + `lib/api.ts`, new
+`services/daily-summary.ts` + `.test.ts` (35 cases), migration
+`20260706000001_daily_summary.sql` (1 col, default TRUE).
+
+**TO DEPLOY (user):** merge PR #202, apply migration `20260706000001_daily_summary.sql`
+in Supabase, `fly deploy` grace-api, then `fly secrets set --app grace-api
+DAILY_SUMMARY_ENABLED=true`. Until the env flag is flipped the whole pass no-ops.
+
+---
+
 ## 👉 READ FIRST — GLP-1 start date + settings reads never fabricate (2026-07-05, branch `claude/injection-start-date-57bxof`, NOT merged, NOT deployed)
 
 Live-testing screenshots (start-date questions). Branch off `main`; **1855 api +

@@ -47,7 +47,7 @@ const BATTERY: Array<{ msg: string; ambiguous: string[] }> = [
   },
   {
     msg: 'I had grilled salmon with potatoes and salad for lunch and I felt great. Can you estimate my lunch, tell me what to eat tonight, and give me a two-day meal prep idea?',
-    ambiguous: [], // no assembled/shake ambiguity — salmon is portion-variable, handled elsewhere
+    ambiguous: ['salad'], // the bare side salad has an unknown composition → ask (salmon logs; salad asked)
   },
   {
     msg: "I'm vegetarian and today was hard. I had a veggie wrap and some fruit, and I still need protein. Can you help me find a gentle dinner idea and a plan for tomorrow?",
@@ -83,6 +83,18 @@ describe('offline harness — ambiguousEatenFoods derives what must be asked (no
 
   it('every battery message is multi-topic (routes to the full grounded answer)', () => {
     for (const c of BATTERY) expect(analyzeMessage(c.msg).hasMultiple).toBe(true);
+  });
+
+  // Prod IMG_6708: "2 eggs with salad" logged the salad silently (→32g) because
+  // the eggs' protein word masked the salad's composition-ambiguity. A separate
+  // food joined by with/and must never resolve the salad — it stays asked.
+  it('surfaces a salad reported ALONGSIDE eggs (eggs must not mask it)', () => {
+    for (const msg of ['I had 2 eggs with salad', 'today I ate eggs and salad', 'this morning I had 2 eggs with a salad']) {
+      const res = ambiguousEatenFoods(msg);
+      expect(res, msg).not.toBeNull();
+      expect(res!.items, msg).toContain('salad');
+      expect(res!.clarify.toLowerCase(), msg).toContain('salad');
+    }
   });
 });
 

@@ -73,15 +73,51 @@ const ASSEMBLED_AMBIGUOUS_RE =
 const FILLING_KNOWN_RE =
   /\b(turkey|chicken|ham|beef|roast\s*beef|steak|tuna|salmon|smoked\s*salmon|lox|egg|eggs|cheese|veggie|vegetable|veg|falafel|hummus|avocado|blt|club|salami|pastrami|bacon|meatball|meatballs|tofu|peanut\s*butter|\bpb\b|jelly|jam|nutella|cream\s*cheese|shrimp|prawns|chickpea|quinoa|lentil|green|garden|side|house|leafy|spinach|arugula|kale)\b/i;
 
+// Separators that join the assembled food to a DIFFERENT food ("eggs with
+// salad", "eggs and salad"). A filling word sitting on the FAR side of such a
+// separator belongs to that other food, NOT to the assembled one — so it must
+// not resolve the assembled food's composition.
+const FOOD_SEPARATOR_RE = /\b(?:with|and|plus|alongside|next to|w\/)\b|[,&+]/gi;
+
 /**
- * True for an assembled food (sandwich/wrap/burrito/taco…) mentioned WITHOUT a
- * filling, so its protein is unknowable and must be ASKED, not assumed — even if
- * an article/quantity is present ("a sandwich"). A named filling → false (loggable).
+ * True for an assembled/mixed food (sandwich/wrap/burrito/taco/salad/bowl…) whose
+ * protein is unknowable because no filling is attached to THAT food, so it must
+ * be ASKED, not assumed — even when an article/quantity is present ("a sandwich").
+ *
+ * A filling resolves it ONLY when the filling belongs to THIS food:
+ *   • as a modifier right before the noun — "chicken salad", "turkey sandwich",
+ *     "ham and cheese sandwich" (the immediate modifier "cheese"), OR
+ *   • attached right after via with/of/in — "salad with chicken", "sub with tuna".
+ * A filling that is a SEPARATE food joined by with/and ("eggs with salad", "2
+ * eggs and salad") does NOT resolve it — the salad still has an unknown
+ * composition and must be asked. Prod (IMG_6708): "2 eggs with salad" logged the
+ * salad silently because the eggs' protein word masked the salad's ambiguity.
  */
 export function isCompositionAmbiguousFood(item: string): boolean {
-  const t = item ?? '';
-  if (!ASSEMBLED_AMBIGUOUS_RE.test(t)) return false;
-  return !FILLING_KNOWN_RE.test(t);
+  const t = (item ?? '').toLowerCase();
+  const m = ASSEMBLED_AMBIGUOUS_RE.exec(t);
+  if (!m) return false;
+  const noun = m[0]!;
+  const start = m.index;
+  const before = t.slice(0, start);
+  const after = t.slice(start + noun.length);
+
+  // (a) Filling as a modifier directly before the noun — take only the words
+  // after the LAST separator, so a filling belonging to a different food
+  // ("eggs with …") is excluded. "chicken salad" → "chicken"; "ham and cheese
+  // sandwich" → "cheese"; "eggs with salad" → "" (nothing after "with").
+  let lastSep = -1;
+  for (const s of before.matchAll(FOOD_SEPARATOR_RE)) lastSep = s.index + s[0].length;
+  const modifier = lastSep >= 0 ? before.slice(lastSep) : before;
+  if (FILLING_KNOWN_RE.test(modifier)) return false;
+
+  // (b) Filling attached AFTER the noun via with/of/in ("salad with chicken").
+  // "and" is deliberately excluded — "salad and chicken" reads as two separate
+  // foods, so the salad stays ambiguous.
+  const afterFill = /^\s*(?:with|of|in|topped\s+with)\b([\s\S]*)$/.exec(after);
+  if (afterFill && FILLING_KNOWN_RE.test(afterFill[1]!)) return false;
+
+  return true;
 }
 
 // ── Protein products need scoop count / brand (2026-07-06) ────────────────────

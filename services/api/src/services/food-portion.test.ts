@@ -27,6 +27,18 @@ describe('isCompositionAmbiguousFood — ask what is IN it, never assume a filli
       expect(isCompositionAmbiguousFood(f), f).toBe(false);
     }
   });
+  it('a SEPARATE food joined by with/and does NOT resolve the salad — prod "2 eggs with salad" (IMG_6708)', () => {
+    // The eggs are a different food; the salad still has an unknown composition
+    // → must be asked, not silently logged at an assumed greens value.
+    for (const f of ['eggs with salad', '2 eggs with salad', 'eggs and salad', 'eggs, salad', 'chicken with a salad', 'a burger and a salad']) {
+      expect(isCompositionAmbiguousFood(f), f).toBe(true);
+    }
+  });
+  it('a filling attached to the salad itself (before, or after via with/of) still logs', () => {
+    for (const f of ['salad with chicken', 'salad with tuna', 'chicken salad sandwich', 'grilled chicken salad']) {
+      expect(isCompositionAmbiguousFood(f), f).toBe(false);
+    }
+  });
   it('is FALSE for non-assembled foods (a protein shake is not an assembled food)', () => {
     for (const f of ['protein shake', 'apple', 'banana', 'chicken', 'rice', 'yogurt', 'toast', 'burger']) {
       expect(isCompositionAmbiguousFood(f), f).toBe(false);

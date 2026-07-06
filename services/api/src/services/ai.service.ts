@@ -3849,13 +3849,18 @@ CRITICAL RULES:
         // gate below (log clear ones, ask about ambiguous ones per food).
         extraction = { ...spanEx, intent: 'log' as const };
       } else {
-        // The extractor couldn't itemize the span — pend/log the span itself so
-        // the intake is never silently dropped (deterministic last resort).
-        if (isCompositionAmbiguousFood(span) || isProteinProductAmbiguous(span, text) || (!quantified && isPortionSensitiveFood(span))) {
-          await addPendingFood(this.deps.redis, input.userId, [{ item: span, clarify_question: null }]).catch(() => {});
-          const clarify = buildPortionConfirmQuestion([{ item: span, protein_g: null }]);
-          this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_needs_portion');
-          return { logged: [], pending: [span], removed: null, clarify };
+        // The extractor couldn't itemize the span (e.g. a Gemini timeout). If the
+        // span names a SPECIFIC ambiguous food (a bare sandwich/salad/shake), pend
+        // those CLEAN names and ask about each — NEVER the raw span, which would
+        // echo the whole message into the question (prod IMG_6709). If we can't
+        // name a clean ambiguous food, log the span (never-drop) rather than emit a
+        // garbled portion question.
+        const names = ambiguousFoodNames(span, text);
+        if (names.length > 0) {
+          await addPendingFood(this.deps.redis, input.userId, names.map((n) => ({ item: n, clarify_question: null }))).catch(() => {});
+          const clarify = buildPortionConfirmQuestion(names.map((n) => ({ item: n, protein_g: null })));
+          this.deps.logger.info({ userId: input.userId, span, names }, 'ai.unified_food.backstop_needs_portion');
+          return { logged: [], pending: names, removed: null, clarify };
         }
         const r = (await logFood.execute({ food: span }).catch(() => null)) as Record<string, unknown> | null;
         if (!r || r.ok === false) return null;
@@ -7300,17 +7305,29 @@ const ASSEMBLED_AMBIG_WORDS = ['sandwich', 'wrap', 'burrito', 'taco', 'sub', 'ho
  * is the general guarantee that a bare sandwich/shake buried in a planning
  * message is ALWAYS asked about, never assumed.
  */
-export function ambiguousEatenFoods(text: string): { items: string[]; clarify: string } | null {
-  const span = foodSpanFromConsumption(text);
-  if (!span) return null;
+/**
+ * The SPECIFIC ambiguous food NAMES inside a consumption span — always clean
+ * words ("sandwich", "protein shake"), NEVER the raw span/sentence. Shared by the
+ * reply guard (ambiguousEatenFoods) and the log-path backstop so a clarification
+ * always names the food, not the whole message. Prod (IMG_6709): the backstop
+ * echoed the entire message ("how many scoops was the I ate pretty light, just a
+ * protein shake and a sandwich…") because it passed the raw span as the item.
+ */
+export function ambiguousFoodNames(span: string, context = ''): string[] {
   const items: string[] = [];
   if (isCompositionAmbiguousFood(span)) {
     for (const w of ASSEMBLED_AMBIG_WORDS) {
-      if (new RegExp(`\\b${w}(?:es|s)?\\b`, 'i').test(span)) items.push(w);
+      if (new RegExp(`\\b${w.replace(/\s+/g, '\\s*')}(?:es|s)?\\b`, 'i').test(span)) items.push(w);
     }
   }
-  if (isProteinProductAmbiguous(span, text)) items.push('protein shake');
-  const uniq = [...new Set(items)];
+  if (isProteinProductAmbiguous(span, context)) items.push('protein shake');
+  return [...new Set(items)];
+}
+
+export function ambiguousEatenFoods(text: string): { items: string[]; clarify: string } | null {
+  const span = foodSpanFromConsumption(text);
+  if (!span) return null;
+  const uniq = ambiguousFoodNames(span, text);
   if (uniq.length === 0) return null;
   return { items: uniq, clarify: buildPortionConfirmQuestion(uniq.map((i) => ({ item: i, protein_g: null }))) };
 }

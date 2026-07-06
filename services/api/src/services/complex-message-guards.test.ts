@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ambiguousEatenFoods,
+  ambiguousFoodNames,
   statesFalseConsumedTotal,
   stripReportShape,
   hasDisallowedProteinNumber,
@@ -95,6 +96,19 @@ describe('offline harness — ambiguousEatenFoods derives what must be asked (no
       expect(res!.items, msg).toContain('salad');
       expect(res!.clarify.toLowerCase(), msg).toContain('salad');
     }
+  });
+
+  // Prod IMG_6709: the log-path backstop echoed the WHOLE message as the food name
+  // ("how many scoops was the I ate pretty light, just a protein shake and a
+  // sandwich…"). ambiguousFoodNames must return only clean food words, never the
+  // raw span — this is what the backstop now pends + asks about.
+  it('ambiguousFoodNames returns clean food words for a raw consumption span', () => {
+    const span = 'I ate pretty light, just a protein shake and a sandwich, and I still feel like I need more protein';
+    const names = ambiguousFoodNames(span, span);
+    expect(names).toContain('sandwich');
+    expect(names).toContain('protein shake');
+    // never the raw sentence
+    for (const n of names) expect(n.length).toBeLessThan(20);
   });
 });
 

@@ -140,6 +140,19 @@ describe('buildPortionConfirmQuestion', () => {
     expect(q).toMatch(/how many scoops the protein shake/i);
     expect(q).toMatch(/what was in the sandwich/i);
   });
+
+  // Prod IMG_6709: a raw consumption span reached the clarify builder as the
+  // "item" → "how many scoops was the I ate pretty light, just a protein shake
+  // and a sandwich…". Defense-in-depth: an over-long, sentence-like item is
+  // reduced to its recognized food token so the whole message is never echoed.
+  it('never echoes a raw sentence — reduces a span-as-item to the food token', () => {
+    const raw = 'I ate pretty light, just a protein shake and a sandwich, and I still feel like I need more protein';
+    const q = buildPortionConfirmQuestion([{ item: raw, protein_g: null }]);
+    expect(q.toLowerCase()).not.toContain('i still feel');
+    expect(q.toLowerCase()).not.toContain('pretty light');
+    expect(q).toMatch(/protein shake/i); // asks about the actual food
+    expect(q).toMatch(/how many scoops/i);
+  });
 });
 
 describe('hasExplicitQuantity — the precision gate', () => {

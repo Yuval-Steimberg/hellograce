@@ -169,6 +169,27 @@ export function portionHint(item: string): string {
   return 'a rough amount';
 }
 
+// Recognized food tokens — used to reduce an item label that was accidentally
+// passed as a whole sentence/span down to the actual food, so a clarification can
+// never echo the user's entire message (prod IMG_6709: "how many scoops was the I
+// ate pretty light, just a protein shake and a sandwich…").
+const KNOWN_FOOD_TOKEN_RE =
+  /\b(protein\s*shakes?|protein\s*drinks?|protein\s*powder|protein\s*smoothie|whey|sandwiches?|wraps?|burritos?|tacos?|subs?|hoagie|quesadillas?|panini|poke\s*bowl|grain\s*bowl|buddha\s*bowl|salads?|smoothie|milkshake|shakes?|chicken|beef|steak|pork|fish|salmon|tuna|shrimp|prawns|turkey|lamb|tofu|tempeh|rice|pasta|noodles|spaghetti|oatmeal|oats|quinoa|couscous|potatoes?|beans|lentils|chickpeas|yogurt|yoghurt|cheese|nuts|almonds|soup|stew|curry|casserole|chili|chilli|bowl|omelette|omelet|eggs?|toast|bagel|burger|pizza|cereal)\b/i;
+
+/**
+ * A clean, short food label. A normal food phrase ("yogurt with berries", "ham
+ * and cheese sandwich") is kept as-is; an over-long, sentence-like value (a raw
+ * consumption span that slipped through) is reduced to its recognized food token
+ * so the question never echoes the whole message. Defense-in-depth: the source
+ * paths already pass clean names; this guarantees it for any future caller too.
+ */
+function foodLabel(raw: string): string {
+  const t = (raw ?? '').trim();
+  if (t.length <= 32 && t.split(/\s+/).length <= 5) return t;
+  const m = KNOWN_FOOD_TOKEN_RE.exec(t);
+  return m ? m[0].toLowerCase().replace(/\s+/g, ' ') : t.slice(0, 32).trim();
+}
+
 /**
  * Build the clarification question for foods reported without an explicit
  * amount. For a SINGLE dish it states a fitting usual serving; for a MULTI-item
@@ -181,7 +202,9 @@ export function portionHint(item: string): string {
 export function buildPortionConfirmQuestion(
   items: Array<{ item: string; protein_g: number | null }>,
 ): string {
-  const named = items.filter((i) => i.item && i.item.trim());
+  const named = items
+    .filter((i) => i.item && i.item.trim())
+    .map((i) => ({ ...i, item: foodLabel(i.item) }));
   if (named.length === 0) return '';
   if (named.length === 1) {
     const it = named[0]!;

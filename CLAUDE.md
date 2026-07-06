@@ -6,7 +6,7 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `747d8c8`; deploy = `fly deploy` grace-api, verify `/health`
+## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `05a0db9` (feature HEAD `747d8c8` = PR #212); deploy = `fly deploy` grace-api, verify `/health`
 
 **LATEST (PR #212):** (a) a bare **salad / poke-bowl / grain-bowl** is now
 composition-ambiguous → ASKS "what's in it?" (prod "2 eggs with salad" logged the

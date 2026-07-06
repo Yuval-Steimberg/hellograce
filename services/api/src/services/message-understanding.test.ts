@@ -201,3 +201,75 @@ describe('multi-topic breadth: all subjects, slang, typos, styles', () => {
     });
   }
 });
+
+// PRODUCTION SCREENSHOT (2026-07-06, IMG_6697): a planning + emotional message
+// that MENTIONS food eaten. Grace (unified path) collapsed it into a terse
+// food-confirmation ("you're at 65g, try Greek yogurt") and dropped the meal
+// advice + the dessert-without-guilt ask, while Nudge answered all of it. Root
+// cause: the unified food early-return fired on any food mention. The fix gates
+// that early-return on !isMultiTopic and falls through to the full grounded
+// answer. This locks the decision boundary the fix keys on: this class of
+// message MUST read as multi-topic, and a pure food log MUST NOT.
+describe('food-inside-a-bigger-ask routes to the full multi-part answer (IMG_6697)', () => {
+  const PROD_MSG =
+    "I'm going to my parents on Friday night and I know there will probably be a lot of food, maybe pasta, bread, desserts, and some kind of meat. I don't want to feel weird or restricted, but I also don't want to ruin my progress. Today I ate pretty light, just a protein shake and a sandwich, and I still feel like I need more protein. Can you help me plan what to eat before dinner, what to choose at the meal, and how to handle dessert without feeling guilty?";
+
+  it('the exact production message is multi-topic (so it falls through to the grounded full answer, not the terse food-confirm)', () => {
+    const u = analyzeMessage(PROD_MSG);
+    expect(u.hasMultiple).toBe(true);
+    expect(u.kinds).toContain('food'); // mentions the shake + sandwich (still logged as a side-effect)
+    expect(u.kinds).toContain('emotion'); // "don't want to feel weird / guilty"
+    expect(u.kinds).toContain('food_question'); // help me plan what to eat
+    // The multi-part note tells Grace to answer every part + feeling first.
+    const note = buildMultiPartNote(u);
+    expect(note).toMatch(/Reply to ALL of it/i);
+    expect(note).not.toMatch(/\n\d\)/);
+  });
+
+  it('shorter food-mention-plus-planning variants are still multi-topic', () => {
+    for (const m of [
+      'I ate a protein shake and a sandwich today, what should I eat before dinner and how do I handle dessert without feeling guilty?',
+      'had eggs this morning but I feel guilty about dinner at my parents, what should I do?',
+    ]) {
+      expect(analyzeMessage(m).hasMultiple).toBe(true);
+    }
+  });
+
+  it('a PURE food log stays single-topic (keeps the fast deterministic food confirmation — no regression)', () => {
+    for (const m of ['I just had eggs for breakfast', 'chicken and rice for dinner', 'a protein shake and a sandwich']) {
+      expect(analyzeMessage(m).hasMultiple).toBe(false);
+    }
+  });
+});
+
+// LONG MULTI-TOPIC BATTERY (user-provided, 2026-07-06). Realistic paragraph-long
+// messages that each MENTION food eaten AND ask several planning/estimate/
+// emotional things at once. Every one must route to the full grounded answer
+// (hasMultiple=true) so no part is dropped — and each carries a 'food' part, so
+// the food is still logged as a side-effect while the reply answers everything.
+describe('long multi-topic battery routes to the full grounded answer', () => {
+  const BATTERY: string[] = [
+    'I had a pretty good day overall. I ate eggs and toast in the morning, then chicken with rice for lunch, and I felt good after the meal. I also walked for about 30 minutes, but I didn’t drink enough water today. I’m starting to feel a little hungry now, but I don’t want something too heavy. Can you estimate how I’m doing with protein, tell me what I should focus on tonight, and also give me an idea for what to make for Friday night dinner?',
+    'Today was a little confusing for me. I took my injection this morning, and at first I wasn’t hungry at all, so I only had coffee and a small yogurt. Later I ate some chicken salad, but I’m not sure if it was enough protein. Now I feel okay, maybe a little tired, and I’m trying not to overthink the scale because it didn’t move this week. Can you help me understand what I should do for the rest of the day, what I can eat tonight, and what I should focus on tomorrow?',
+    'I’m going to my parents on Friday night and I know there will probably be a lot of food, maybe pasta, bread, desserts, and some kind of meat. I don’t want to feel weird or restricted, but I also don’t want to ruin my progress. Today I ate pretty light, just a protein shake and a sandwich, and I still feel like I need more protein. Can you help me plan what to eat before dinner, what to choose at the meal, and how to handle dessert without feeling guilty?',
+    'I feel good after lunch, but I’m not sure if I ate enough. I had rice, chicken, and some vegetables, but I don’t remember the exact amount. I also drank only one bottle of water today and I skipped breakfast because I wasn’t hungry. Can you estimate the meal, tell me if I should add more protein today, suggest something light for dinner, and remind me what I should do differently tomorrow?',
+    'I had a small breakfast, then I went to the gym, and after that I ate yogurt with berries and a protein bar. I feel okay but still a little low energy. I’m trying to stay consistent, but I’m not sure if I’m eating enough or just eating less because of the medication. Can you help me understand if today looks balanced, what I should eat next, and how to avoid feeling weak tomorrow?',
+    'I’m a little nauseous today, but I still want to stay on track. I took my shot yesterday, and today I only managed to eat toast, cottage cheese, and a few crackers. I’m not very hungry, but I know I need protein and water. Can you suggest something gentle to eat, tell me what not to force, and help me plan a simple meal for tomorrow if I still feel like this?',
+    'I ate pasta for lunch and now I’m worried it was too many carbs and not enough protein. I don’t want to panic because I actually enjoyed the meal and I feel fine, but I also want to make better choices for dinner. Can you estimate what I may still need today, suggest a high-protein dinner that is not too heavy, and give me one simple rule for meals like this in the future?',
+    'I had a good day with food but emotionally I feel a bit discouraged because my weight has been stuck for a few days. I ate eggs in the morning, chicken salad for lunch, and a protein shake in the afternoon. I also walked a lot and drank more water than usual. Can you tell me if I’m doing okay, what I should eat for dinner, and how to think about the scale without losing motivation?',
+    'I forgot to log earlier, but today I had coffee, a banana, a turkey sandwich, some soup, and a few bites of chocolate. I feel mostly fine, just a little hungry now. Can you help me log what you can, tell me what information you still need if anything, estimate my protein, and suggest a smart dinner that helps balance the day?',
+    'I’m going out to a restaurant tonight and I don’t know what to order. Today I only had a small yogurt and some crackers because I wasn’t hungry. I want to get enough protein, but I also don’t want to feel too full or nauseous. Can you give me restaurant order ideas, tell me what to avoid, and help me decide if I should eat something small before I go?',
+    'I had grilled salmon with potatoes and salad for lunch, and I felt really good after. I’m thinking about meal prepping tomorrow because I have a busy week, but I don’t want boring meals. Can you estimate my lunch, tell me what I should eat tonight, and give me a simple two-day meal prep idea that has enough protein?',
+    'I’m vegetarian and today was hard because I felt full very quickly. I had Greek yogurt, some fruit, a small salad, and a few crackers. I still need protein, but I don’t want eggs and I don’t feel like tofu. Can you help me find a gentle dinner idea, a snack option, and a plan for tomorrow so I don’t fall behind?',
+    'I took my injection this morning and I’m feeling okay, just not very hungry. I had a protein shake and half a sandwich, but I don’t know if that’s enough. I also have a family dinner tomorrow and I want to feel prepared. Can you tell me what to focus on today, what to eat tonight, and how to plan for tomorrow’s dinner?',
+    'I ate chicken and rice for lunch, but I don’t know if Grace should log it because I didn’t give the amount. I also feel good after the meal and I want to make something nice for Friday night that is still GLP-1 friendly. Can you ask me anything you need to log it accurately, estimate my protein if possible, and suggest a Friday dinner idea?',
+    'I had a weird food day. I skipped breakfast, had coffee, then ate a big lunch with chicken, rice, salad, and hummus, and now I’m not hungry at all. I don’t want to force dinner, but I also don’t want to miss my protein goal. Can you help me decide if I should eat later, what kind of small option would work, and what I should do tomorrow morning?',
+  ];
+  for (const [i, msg] of BATTERY.entries()) {
+    it(`battery #${i + 1} → multi-topic + food part (full answer, food still logged)`, () => {
+      const u = analyzeMessage(msg);
+      expect(u.hasMultiple).toBe(true);
+      expect(u.kinds).toContain('food');
+    });
+  }
+});

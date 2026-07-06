@@ -3493,6 +3493,17 @@ CRITICAL RULES:
     const isFoodTurn = !!food && (food.logged.length > 0 || food.pending.length > 0 || !!food.removed);
     const nm = user?.first_name && !isEncryptedBlob(user.first_name) ? user.first_name.trim() : null;
 
+    // Is this a message that says SEVERAL things at once (a planning/emotional
+    // question that merely MENTIONS food), rather than a pure food log? The
+    // deterministic food confirmation below is capped at 1–2 sentences and would
+    // drop the rest of a multi-part message (prod: "help me plan dinner… + how do
+    // I handle dessert without feeling guilty?" got only a terse "you're at 65g,
+    // try Greek yogurt"). When multi-topic we STILL log the food (side-effect,
+    // already done by foodStepUnified) but fall through to the full grounded path
+    // so EVERY part gets answered — Nudge-style — with the total kept grounded.
+    const understanding = analyzeMessage(input.text);
+    const isMultiTopic = input.media.length === 0 && understanding.hasMultiple;
+
     // ── DETERMINISTIC FOOD CONFIRMATION (the #1 complaint fix) ─────────────
     // The food confirmation is built by code, NOT the LLM: the exact protein
     // number comes from the authoritative day total, and "logged" is only
@@ -3502,7 +3513,7 @@ CRITICAL RULES:
     // a pending item was logged. The LLM is used ONLY to answer a genuine side
     // question ("...any snack idea?"), and even then it's forbidden to mention
     // logging, grams, or totals — so it can never invent a number.
-    if (isFoodTurn && food) {
+    if (isFoodTurn && food && !isMultiTopic) {
       const seed = `${userId}|${input.text}`;
       // ── DETERMINISTIC SAFE REPLY (the fallback) ──────────────────────────
       // Exact numbers, honest logged/pending claim. This is what ships if the
@@ -3566,8 +3577,24 @@ CRITICAL RULES:
       return { text: reply, confidence: 'high', intent: didLog ? 'food_log' : 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
     }
 
-    // Non-food chat uses the full Nudge grounded prompt.
-    const systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, userText: input.text });
+    // Non-food chat — OR a multi-topic message that merely mentioned food —
+    // uses the full Nudge grounded prompt so EVERY part gets answered (not the
+    // terse food-confirmation, which drops the rest of a multi-part message).
+    let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, userText: input.text });
+
+    // If this multi-topic turn ALSO logged/mentioned food, weave that in — but
+    // never let the model invent a total. The running total is the authoritative
+    // getTodaysFoodSummary number and is the ONLY running total it may state.
+    if (isFoodTurn && food) {
+      const notes: string[] = [];
+      if (food.removed) notes.push(`You just removed "${food.removed}" from today's log — confirm that in one casual clause.`);
+      if (food.logged.length > 0) notes.push(`You just logged ${food.logged.join(', ')} for them. Their running protein total for TODAY is ${Math.round(todaysFood.protein_g)}g — you may mention it in ONE short clause, and it is the ONLY running-total protein number you may state (general advice like "aim for ~30g at dinner" is fine).`);
+      if (food.pending.length > 0) notes.push(`They mentioned ${food.pending.join(', ')} without a portion — you may briefly ask the amount, but do NOT claim it's logged and do NOT attach a protein number to it.`);
+      systemPrompt += `\n\nFOOD JUST HANDLED (weave in naturally, do NOT lead with it):\n- ${notes.join('\n- ')}`;
+    }
+
+    // Multi-part guidance so Grace answers EVERY part + leads with the feeling.
+    if (isMultiTopic) systemPrompt += buildMultiPartNote(understanding);
 
     // Non-food chat keeps history for continuity.
     const effHistory = history;
@@ -3608,8 +3635,10 @@ CRITICAL RULES:
 
     // BREAKDOWN / BLEED catcher (deterministic). A "two distinct parts… Part 1…"
     // reply is answering the whole thread, not the current message. Regenerate
-    // answering ONLY the latest message.
-    if (reply && UNIFIED_BREAKDOWN_RE.test(reply)) {
+    // answering ONLY the latest message. SKIPPED for a genuinely multi-topic
+    // message — there the user DID ask several things, so covering them is
+    // correct; the multi-part note already forbids lists/headings/"Part 1".
+    if (reply && !isMultiTopic && UNIFIED_BREAKDOWN_RE.test(reply)) {
       this.deps.logger.info({ userId }, 'ai.unified.breakdown_regen');
       const focused = await gen(systemPrompt +
         `\n\nHARD OVERRIDE: reply ONLY to the user's last message: "${input.text.replace(/"/g, "'")}". Answer just that — one or two short sentences, plain prose. Do NOT break their message into parts, do NOT summarize the conversation, do NOT mention earlier meals or an injection unless THIS message asks about them.`);
@@ -3626,6 +3655,27 @@ CRITICAL RULES:
       if (retry2 && !UNIFIED_DENIAL_RE.test(retry2)) reply = retry2;
     }
     if (!reply) reply = 'I’m here — tell me a little more?';
+
+    // FALSE-RUNNING-TOTAL guard (food multi-topic turns only): the grounded path
+    // has no number-guard, so protect the 669g class here too. Only an explicit
+    // present-tense RUNNING-TOTAL claim ("you're at Ng", "total today is Ng") is
+    // checked against the authoritative total — general advice/goal numbers
+    // ("aim for ~30g", "a 120g daily goal") are deliberately left alone. On a
+    // mismatch, regenerate once with the correct number.
+    if (isFoodTurn && food && food.logged.length > 0 && reply) {
+      const realTotal = Math.round(todaysFood.protein_g);
+      const badTotal = (t: string): boolean => {
+        const re = /(?:you'?re (?:now |currently )?at|(?:protein )?total (?:for )?today (?:is|of|to|now at)|total for today (?:is|to))\s*(\d+)\s*g/gi;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(t))) if (Number(m[1]) !== realTotal) return true;
+        return false;
+      };
+      if (badTotal(reply)) {
+        this.deps.logger.info({ userId, realTotal }, 'ai.unified.multitopic_total_regen');
+        const fixed = await gen(systemPrompt + `\n\nHARD OVERRIDE: the ONLY correct protein running total for today is ${realTotal}g. Do not state any other running total. Keep everything else the same.`);
+        if (fixed && !badTotal(fixed)) reply = fixed;
+      }
+    }
 
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});

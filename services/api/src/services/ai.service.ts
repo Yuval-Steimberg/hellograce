@@ -3601,6 +3601,16 @@ CRITICAL RULES:
       systemPrompt += `\n\nFOOD JUST HANDLED (weave in naturally, do NOT lead with it):\n- ${notes.join('\n- ')}`;
     }
 
+    // Prime the FIRST generation to not estimate an ambiguous eaten food, even
+    // when foodStepUnified dropped it (the deterministic number guard below is
+    // the guarantee; this just reduces regens). Derived straight from the message.
+    const primeAmbig = isMultiTopic && !(isFoodTurn && food && food.pending.length > 0)
+      ? ambiguousEatenFoods(input.text)
+      : null;
+    if (primeAmbig) {
+      systemPrompt += `\n\nFOOD NOT LOGGABLE YET: they mentioned eating ${primeAmbig.items.join(' and ')}, but you can't know the protein (unknown scoops / what's in it). Do NOT estimate or count it, do NOT do protein math, state NO protein gram number except their goal. Ask what you need — weave in: "${primeAmbig.clarify.replace(/"/g, "'")}" — then answer their planning warmly.`;
+    }
+
     // Multi-part guidance so Grace answers EVERY part + leads with the feeling.
     if (isMultiTopic) systemPrompt += buildMultiPartNote(understanding);
 
@@ -3687,6 +3697,33 @@ CRITICAL RULES:
     const pendItems: string[] = (food && food.pending.length > 0 ? food.pending : eatenAmbig?.items) ?? [];
     const pendClarify: string | null = (food && food.clarify) || eatenAmbig?.clarify || null;
 
+    const realTotal = Math.round(todaysFood.protein_g);
+    const goal = user?.protein_goal_grams ?? null;
+
+    // ── NO-ASSUMED-PROTEIN guard (ambiguous/pending food) ────────────────────
+    // When an eaten food is ambiguous (unknown scoops/filling) the reply may
+    // mention ONLY two protein numbers that CAN'T be an assumption: the real
+    // logged total and the goal. ANY other gram figure — however phrased
+    // ("usually ~25-30g", "a sandwich is ~20-25g", "puts you around 50g") — is a
+    // guess about food we haven't logged. This replaces phrase-by-phrase total
+    // detection: regenerate once forbidding protein math, then deterministically
+    // STRIP any sentence that still carries a disallowed gram figure. Runs before
+    // the MUST-ASK guard so an appended clarify is never dropped by a regen.
+    if (pendItems.length > 0 && reply) {
+      const allowed = [realTotal, ...(goal ? [goal] : [])];
+      if (hasDisallowedProteinNumber(reply, allowed)) {
+        this.deps.logger.info({ userId, allowed }, 'ai.unified.assumed_protein');
+        const fixed = await gen(systemPrompt +
+          `\n\nHARD OVERRIDE: you do NOT know their protein intake yet — the ${pendItems.join(' and ')} are not logged (you don't know the scoops or what's in it). Do NOT estimate or count them, do NOT do any protein math, and state NO protein gram number except their goal${goal ? ` of ${goal}g` : ''}. Ask what you need to log them, then answer their planning warmly.`);
+        reply = fixed && !hasDisallowedProteinNumber(fixed, allowed) ? fixed : (stripAssumedProteinSentences(reply, allowed) || reply);
+      }
+    } else if (food && food.logged.length > 0 && reply && statesFalseConsumedTotal(reply, realTotal)) {
+      // Logged-food turn: allow advice numbers, only correct a WRONG stated total.
+      this.deps.logger.info({ userId, realTotal }, 'ai.unified.false_total');
+      const fixed = await gen(systemPrompt + `\n\nHARD OVERRIDE: their food log currently totals ${realTotal}g of protein today — that is the ONLY consumed/"so far today" total you may state. Keep everything else the same.`);
+      if (fixed && !statesFalseConsumedTotal(fixed, realTotal)) reply = fixed;
+    }
+
     // MUST-ASK guard: when food is ambiguous/pending (a bare sandwich/shake we
     // can't log accurately), the reply has to ASK about EVERY such item — not just
     // have a "?" somewhere. The failure this fixes: the LLM asked about the shake
@@ -3702,25 +3739,10 @@ CRITICAL RULES:
       if (!asksEach(reply)) {
         this.deps.logger.info({ userId, pending: pendItems.length }, 'ai.unified.pending_ask_regen');
         const asked = await gen(systemPrompt +
-          `\n\nHARD OVERRIDE: you must ASK about EACH of these before logging — never assume any of them: ${pendItems.join(', ')}. Include this exact question, woven in naturally: "${pendClarify.replace(/"/g, "'")}". Keep the rest warm and answer their other parts.`);
-        if (asked && asksEach(asked)) reply = asked;
+          `\n\nHARD OVERRIDE: you must ASK about EACH of these before logging — never assume any of them: ${pendItems.join(', ')}. Include this exact question, woven in naturally: "${pendClarify.replace(/"/g, "'")}". Keep the rest warm and answer their other parts, and state NO protein gram number except their goal.`);
+        if (asked && asksEach(asked) && (pendItems.length === 0 || !hasDisallowedProteinNumber(asked, [realTotal, ...(goal ? [goal] : [])]))) reply = asked;
       }
       if (!asksEach(reply)) reply = `${reply} ${pendClarify}`.trim();
-    }
-
-    // FALSE-CONSUMED-TOTAL guard: the reply may state ONLY the authoritative
-    // logged total (`todaysFood.protein_g`); any other "you've consumed / you're
-    // at Ng today" claim is an ASSUMED total (prod: "you've likely consumed about
-    // 50g so far today" while the diary was empty). Runs whenever there's food
-    // context — LOGGED or ambiguous-pending — not only when something was logged.
-    // Goal / target / "to go" / "need" numbers are left alone (see the detector).
-    if (reply && ((food && food.logged.length > 0) || pendItems.length > 0)) {
-      const realTotal = Math.round(todaysFood.protein_g);
-      if (statesFalseConsumedTotal(reply, realTotal)) {
-        this.deps.logger.info({ userId, realTotal }, 'ai.unified.false_total');
-        const fixed = await gen(systemPrompt + `\n\nHARD OVERRIDE: their food log currently totals ${realTotal}g of protein today — that is the ONLY consumed/"so far today" total you may state. ${pendItems.length > 0 ? `The ${pendItems.join(' and ')} are NOT logged yet (ask about them, don't count them). ` : ''}You may still talk about their goal and how much is left. Keep everything else the same.`);
-        if (fixed && !statesFalseConsumedTotal(fixed, realTotal)) reply = fixed;
-      }
     }
 
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
@@ -7268,7 +7290,7 @@ export function stripReportShape(text: string): string {
 // Assembled foods whose protein depends on an unknown filling (mirror of the
 // food-portion set; used to name the specific ambiguous foods a message reports
 // eating, so the reply can ask about each by name).
-const ASSEMBLED_AMBIG_WORDS = ['sandwich', 'wrap', 'burrito', 'taco', 'sub', 'hoagie', 'quesadilla', 'panini'];
+const ASSEMBLED_AMBIG_WORDS = ['sandwich', 'wrap', 'burrito', 'taco', 'sub', 'hoagie', 'quesadilla', 'panini', 'salad', 'poke bowl', 'grain bowl', 'buddha bowl'];
 
 /**
  * The ambiguous foods a message reports EATING, derived deterministically from
@@ -7312,6 +7334,42 @@ export function statesFalseConsumedTotal(reply: string, realTotal: number): bool
     if (n !== realTotal) return true;
   }
   return false;
+}
+
+/**
+ * When food is AMBIGUOUS/pending (we don't know the real protein), the reply may
+ * mention ONLY the authoritative logged total and the user's goal. ANY other
+ * gram figure is, by definition, an ASSUMED number — no matter how it's phrased
+ * ("usually ~25-30g", "puts you around 50g", "~20-25g"). This replaces the
+ * phrase-by-phrase whack-a-mole: instead of enumerating bad wordings, we allow
+ * exactly the two numbers that CAN'T be an assumption and reject the rest.
+ */
+export function hasDisallowedProteinNumber(reply: string, allowed: number[]): boolean {
+  const ok = new Set(allowed);
+  for (const m of reply.matchAll(/\b(\d+)\s*g\b/gi)) if (!ok.has(Number(m[1]))) return true;
+  return false;
+}
+
+/**
+ * Deterministic backstop for the no-assume (ambiguous food) case: drop every
+ * SENTENCE that either carries a protein gram figure not in `allowed` OR frames
+ * an estimate/guess of the unlogged food ("let's estimate based on your
+ * description", "I'll assume…"). So an assumed number — or the sentence that sets
+ * one up — can never ship even if a regen keeps slipping it in. Sentences with no
+ * gram figure and no estimate framing are kept.
+ */
+const ESTIMATE_FRAMING_RE = /\b(?:estimate|estimating|guess|guessing|assum\w*|based on (?:your|the) description)\b/i;
+export function stripAssumedProteinSentences(reply: string, allowed: number[]): string {
+  const ok = new Set(allowed);
+  return reply
+    .split(/(?<=[.!?])\s+/)
+    .filter(
+      (s) =>
+        [...s.matchAll(/\b(\d+)\s*g\b/gi)].every((m) => ok.has(Number(m[1]))) &&
+        !ESTIMATE_FRAMING_RE.test(s),
+    )
+    .join(' ')
+    .trim();
 }
 
 // Hard per-call timeout for the unified reply generations. Keeps a turn from

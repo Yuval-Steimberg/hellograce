@@ -3,6 +3,8 @@ import {
   ambiguousEatenFoods,
   statesFalseConsumedTotal,
   stripReportShape,
+  hasDisallowedProteinNumber,
+  stripAssumedProteinSentences,
 } from './ai.service.js';
 import { analyzeMessage } from './message-understanding.js';
 
@@ -95,6 +97,26 @@ describe('offline harness — statesFalseConsumedTotal catches an ASSUMED total'
     expect(statesFalseConsumedTotal('You still need 90g to hit your 140g goal today.', 0)).toBe(false);
     expect(statesFalseConsumedTotal('Aim for about 30g of protein at dinner tonight.', 0)).toBe(false);
     expect(statesFalseConsumedTotal("You're at 0g so far today — log a meal and I'll track it.", 0)).toBe(false);
+  });
+});
+
+describe('offline harness — no ASSUMED protein number ships (ambiguous food)', () => {
+  // The general rule that replaces phrase-by-phrase total detection: when food is
+  // ambiguous, the ONLY allowed protein numbers are the real logged total and the
+  // goal. Any other gram figure is an assumption, no matter how it's phrased.
+  const ASSUMED =
+    "Since your log is currently empty, let's estimate based on your description. A standard protein shake is usually ~25-30g and a sandwich (depending on the meat) is ~20-25g. That puts you around 50g of protein, meaning you likely need about 90g more to hit your 140g target.";
+  it('flags every assumed estimate (25/30/20/50/90) with allowed = {realTotal 0, goal 140}', () => {
+    expect(hasDisallowedProteinNumber(ASSUMED, [0, 140])).toBe(true);
+  });
+  it('a reply that mentions only the goal (140g) is allowed', () => {
+    const clean = 'You are aiming for 140g today. Load your plate with the meat first at dinner. What was in the sandwich, and how many scoops was the shake?';
+    expect(hasDisallowedProteinNumber(clean, [0, 140])).toBe(false);
+  });
+  it('strips the estimate/assumption sentences deterministically, leaving clean prose', () => {
+    const out = stripAssumedProteinSentences(ASSUMED, [0, 140]);
+    expect(out).not.toMatch(/\b(25|30|20|50|90)\s*g/i);
+    expect(out.toLowerCase()).not.toContain('estimate'); // "let's estimate…" framing removed too
   });
 });
 

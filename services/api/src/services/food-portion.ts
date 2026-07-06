@@ -62,10 +62,16 @@ export function isPortionSensitiveFood(item: string): boolean {
 // Prod (IMG_6699): Grace logged "a sandwich" at ~23g "assuming deli meat"; Nudge
 // held it pending and asked. A NAMED filling/protein makes it loggable
 // ("turkey sandwich", "chicken wrap", "egg sandwich", "peanut butter sandwich").
+// Also covers MIXED DISHES whose protein is set by their (unknown) contents — a
+// bare "salad" is ~2g of greens or ~40g chicken caesar; a "poke/grain/buddha
+// bowl" swings the same way. Prod (2026-07-06): "2 eggs with salad" logged the
+// salad at an assumed ~2-4g instead of asking. A named protein or a greens
+// descriptor ("chicken salad", "tuna salad", "green/garden/side salad") resolves
+// it → loggable; a bare "salad" / "caesar salad" / "poke bowl" is asked.
 const ASSEMBLED_AMBIGUOUS_RE =
-  /\b(sandwich|sandwiches|sub|subs|hoagie|grinder|wrap|wraps|burrito|burritos|taco|tacos|quesadilla|quesadillas|panini|pita\s*pocket)\b/i;
+  /\b(sandwich|sandwiches|sub|subs|hoagie|grinder|wrap|wraps|burrito|burritos|taco|tacos|quesadilla|quesadillas|panini|pita\s*pocket|salad|salads|poke\s*bowl|grain\s*bowl|buddha\s*bowl|burrito\s*bowl|acai\s*bowl)\b/i;
 const FILLING_KNOWN_RE =
-  /\b(turkey|chicken|ham|beef|roast\s*beef|steak|tuna|salmon|smoked\s*salmon|lox|egg|eggs|cheese|veggie|vegetable|veg|falafel|hummus|avocado|blt|club|salami|pastrami|bacon|meatball|meatballs|tofu|peanut\s*butter|\bpb\b|jelly|jam|nutella|cream\s*cheese)\b/i;
+  /\b(turkey|chicken|ham|beef|roast\s*beef|steak|tuna|salmon|smoked\s*salmon|lox|egg|eggs|cheese|veggie|vegetable|veg|falafel|hummus|avocado|blt|club|salami|pastrami|bacon|meatball|meatballs|tofu|peanut\s*butter|\bpb\b|jelly|jam|nutella|cream\s*cheese|shrimp|prawns|chickpea|quinoa|lentil|green|garden|side|house|leafy|spinach|arugula|kale)\b/i;
 
 /**
  * True for an assembled food (sandwich/wrap/burrito/taco…) mentioned WITHOUT a

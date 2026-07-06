@@ -17,6 +17,16 @@ describe('isCompositionAmbiguousFood — ask what is IN it, never assume a filli
       expect(isCompositionAmbiguousFood(f), f).toBe(false);
     }
   });
+  it('a bare salad / poke bowl is composition-ambiguous (contents drive the protein) — prod "2 eggs with salad"', () => {
+    for (const f of ['salad', 'a salad', 'caesar salad', 'greek salad', 'cobb salad', 'poke bowl', 'grain bowl', 'buddha bowl']) {
+      expect(isCompositionAmbiguousFood(f), f).toBe(true);
+    }
+  });
+  it('a described salad (named protein or greens) logs — no over-asking', () => {
+    for (const f of ['chicken salad', 'tuna salad', 'egg salad', 'green salad', 'garden salad', 'side salad', 'spinach salad']) {
+      expect(isCompositionAmbiguousFood(f), f).toBe(false);
+    }
+  });
   it('is FALSE for non-assembled foods (a protein shake is not an assembled food)', () => {
     for (const f of ['protein shake', 'apple', 'banana', 'chicken', 'rice', 'yogurt', 'toast', 'burger']) {
       expect(isCompositionAmbiguousFood(f), f).toBe(false);

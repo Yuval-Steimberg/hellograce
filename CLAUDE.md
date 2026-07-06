@@ -6,6 +6,37 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — message-derived food guards + OFFLINE HARNESS (2026-07-06, MERGED to `main` HEAD `c72fc0d` via PR #211, NOT deployed)
+
+The reply-layer accuracy guarantees no longer depend on the LLM extractor (which
+drops food on complex planning messages). Prod bug: the Friday reply said "you've
+likely consumed about 50g so far today" — an ASSUMED total (diary was empty) —
+and didn't ask about the food. Now DETERMINISTIC + message-derived:
+
+- **`ambiguousEatenFoods(text)`** (exported, ai.service.ts): from the message
+  ALONE, names the eaten foods that can't be logged without a clarification (bare
+  sandwich/wrap/burrito/…, or a protein shake w/ no scoop/brand) + the clarify.
+  `runUnifiedReply`'s MUST-ASK guard uses `foodStepUnified` pending items OR — if
+  the extractor dropped them — this message-derived set. So an ambiguous eaten
+  food buried in a planning message is ALWAYS asked, never assumed.
+- **`statesFalseConsumedTotal(reply, realTotal)`** (exported): catches an ASSUMED
+  consumed total; only present-tense "consumed/so far today/you're at Ng" claims
+  are checked (goal/target/"to go"/"need" left alone). The false-total guard now
+  runs whenever there's food context (logged OR ambiguous-pending), not just when
+  something was logged, and regens with the real total.
+- **OFFLINE HARNESS** `services/api/src/services/complex-message-guards.test.ts`:
+  runs the real user complex-message battery through the guards — proves the class
+  without live Gemini. It IMMEDIATELY caught a general gap ("I only had a shake and
+  a sandwich" wasn't recognized as consumption — adverbs only/recently/earlier
+  missing from `CONSUMPTION_RE` filler set; broadened it). This is the tool to use
+  for the NEXT complex-message report: add it to the battery, generalize the guard.
+
+Test-only harness + additive guards; NO change to logging/reminder logic. api 1933
+(+11) + ai-core 659 green. **Deploy = `fly deploy` grace-api, verify `/health`.**
+Architecture: LLM for warmth, deterministic message-derived guards for accuracy.
+
+---
+
 ## 👉 READ FIRST — multi-topic: GUARANTEE prose (deterministic strip) + fix eaten-food span (2026-07-06, MERGED to `main` HEAD `a62253d` via PR #209, NOT deployed)
 
 On the CONFIRMED-deployed build (`/health`==`011db0e`) the Friday multi-topic

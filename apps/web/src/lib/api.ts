@@ -299,6 +299,7 @@ export interface UserDetail {
   is_paid: boolean;
   is_pro: boolean;
   rlhf_enabled: boolean;
+  daily_summary_enabled: boolean;
   trial_start: string | null;
   age: number | null;
   protein_goal_grams: number | null;

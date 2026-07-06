@@ -696,7 +696,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
               primary_goal, protein_goal_grams, calorie_goal_kcal, glp1_start_date, dose_mg,
               dietary_restriction, dietary_pattern, biggest_challenge, why_started, support_style,
               exercise_habits, medication_time, sms_consent,
-              active, paused, blocked, is_paid, is_pro, rlhf_enabled,
+              active, paused, blocked, is_paid, is_pro, rlhf_enabled, daily_summary_enabled,
               trial_start, created_at, updated_at, last_reply_at,
               checkin_count_per_day, checkin_days_interval, grace_notes
        FROM users WHERE phone = $1 LIMIT 1`,
@@ -791,6 +791,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     blocked: z.boolean().optional(),
     is_paid: z.boolean().optional(),
     is_pro: z.boolean().optional(),
+    daily_summary_enabled: z.boolean().optional(),
     trial_start: z.string().nullable().optional(),
   });
 

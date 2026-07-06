@@ -322,6 +322,14 @@ const EnvSchema = z.object({
    *  passes. The upstream intercepts (reminders, image analysis, multi-part,
    *  safety) are UNAFFECTED by this flag; it only selects the final prompt. */
   UNIFIED_REPLY_PATH: boolish(false),
+  /** DAILY_SUMMARY_ENABLED (2026-07-06). Master gate for the nightly end-of-day
+   *  recap feature (a SEPARATE system from reminders — its own scheduler pass,
+   *  own Redis dedup lock, own check_ins type). Default false = dark launch:
+   *  nothing sends until this is flipped on. Per-user opt-out is the
+   *  users.daily_summary_enabled column (default TRUE), so once this env flag is
+   *  on, every eligible user gets it unless individually disabled. Instant
+   *  revert with `fly secrets set DAILY_SUMMARY_ENABLED=false`. */
+  DAILY_SUMMARY_ENABLED: boolish(false),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

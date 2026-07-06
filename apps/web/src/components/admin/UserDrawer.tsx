@@ -383,6 +383,14 @@ export default function UserDrawer({ user, onClose }: Props) {
                           disabled={rlhfMutation.isPending}
                         />
                       </div>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm">Nightly daily summary</Label>
+                        <Switch
+                          checked={detail?.daily_summary_enabled ?? true}
+                          onCheckedChange={(val) => toggleMutation.mutate({ daily_summary_enabled: val })}
+                          disabled={toggleMutation.isPending}
+                        />
+                      </div>
                     </div>
                     {detail?.trial_start && (
                       <div className="mt-3 flex items-center justify-between text-sm">

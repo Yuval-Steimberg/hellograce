@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
+import type { Pool } from 'pg';
 import type { UserService, GraceUser } from '../user/user.service.js';
 import type { MessageSender } from '../twilio/sender.js';
 import type { MemoryService } from '../memory/memory.service.js';
@@ -11,6 +12,13 @@ import type { AnomalyDetectorService } from './anomaly-detector.service.js';
 import { buildOnboardingNudge } from '../onboarding/onboarding-flow.js';
 import { buildQuietReengagement } from './quiet-reengagement.js';
 import { analyzeSymptomPattern, buildInjectionDaySymptomNote, type SymptomPattern } from '../services/symptom-intelligence.js';
+import {
+  gatherDailySummaryData,
+  hasLoggedData,
+  renderDailySummary,
+  dailySummaryTargetMinutes,
+  isInDailySummaryWindow,
+} from '../services/daily-summary.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const MIDDAY_DAYS = new Set([1, 3, 5]); // Mon, Wed, Fri
@@ -54,6 +62,14 @@ interface SchedulerDeps {
    *  user, so they're never nagged. Default 72 (every 3 days at most).
    *  Set via REENGAGE_QUIET_MIN_GAP_HOURS. Set to 0 to disable the feature. */
   reengageQuietMinGapHours?: number;
+  /** Postgres pool — needed by the nightly daily-summary pass to read water /
+   *  habit / dose logs directly. Optional so existing tests can omit it (the
+   *  summary pass no-ops without it). */
+  pool?: Pool;
+  /** Master gate for the nightly end-of-day summary (a SEPARATE feature from
+   *  reminders — its own tick() pass, own Redis lock, own check_ins type). When
+   *  false/absent the pass no-ops entirely. Set via DAILY_SUMMARY_ENABLED. */
+  dailySummaryEnabled?: boolean;
 }
 
 export class Scheduler {
@@ -156,6 +172,115 @@ export class Scheduler {
     // Separate pass: opted-out (paused) users are excluded from listActiveUsers,
     // so re-engage them with ONE warm "I'm still here" hello after a long silence.
     await this.reengageQuietOptedOut();
+    // Separate pass: nightly end-of-day summary (its OWN feature, fully isolated
+    // from the reminder logic above — never touches processUser / cadence / the
+    // injection state machine).
+    await this.sendDailySummaries();
+  }
+
+  /**
+   * Nightly end-of-day summary — a SEPARATE pass from the reminder tick.
+   *
+   * This is the ONLY entry point for the daily-recap feature. It deliberately
+   * does NOT go through processUser / sendAndRecord, so it inherits none of the
+   * reminder cadence, engagement-cooldown, or morning/evening gates and can
+   * never interfere with them. Isolation guarantees:
+   *   - Own once-per-user-per-day + cross-machine dedup via the Redis key
+   *     `daily_summary:{phone}:{date}` (distinct from the reminder `sched:` /
+   *     `cadence:` keys).
+   *   - Records into check_ins with type 'daily_summary' (free-form column, no
+   *     migration) so it shows in the admin user detail without polluting the
+   *     reminder counters.
+   *   - Gated OFF by default (DAILY_SUMMARY_ENABLED) + per-user opt-out
+   *     (users.daily_summary_enabled).
+   *
+   * Sends nothing on a zero-log day (product decision). Best-effort throughout:
+   * a per-user error is logged and never breaks the tick or the reminders.
+   */
+  private async sendDailySummaries(): Promise<void> {
+    if (!this.deps.dailySummaryEnabled) return;
+    const pool = this.deps.pool;
+    if (!pool) return;
+
+    let users: GraceUser[] = [];
+    try {
+      users = await this.deps.users.listActiveUsers();
+    } catch (err) {
+      this.deps.logger.warn(
+        { err: (err as Error).message },
+        'scheduler.daily_summary.list_failed',
+      );
+      return;
+    }
+
+    for (const user of users) {
+      try {
+        // Never interrupt an in-flight signup.
+        if (user.onboarding_state === 'in_progress') continue;
+        // Per-user opt-out. Undefined (pre-migration row) is treated as enabled.
+        if (user.daily_summary_enabled === false) continue;
+
+        // End-of-day window: sleep_time − 30min, clamped 19:00–21:00 local.
+        const now = localNow(user.timezone || 'America/New_York');
+        const minutesOfDay = now.getHours() * 60 + now.getMinutes();
+        const target = dailySummaryTargetMinutes(user);
+        if (!isInDailySummaryWindow(minutesOfDay, target)) continue;
+
+        // Gather first; on a zero-log day we send nothing (and don't claim the
+        // lock), so a late log can still trigger a send later in the window.
+        const data = await gatherDailySummaryData(
+          { users: this.deps.users, pool },
+          user,
+          now,
+        );
+        if (!hasLoggedData(data)) continue;
+
+        // Own dedup lock — once per user per local day, and cross-machine safe.
+        // FAIL CLOSED on any Redis error (skip), so a Redis hiccup can never
+        // produce duplicate summaries within the window ("no spam" > "always send").
+        const todayStr = toDateStr(now);
+        const lockKey = `daily_summary:${user.phone}:${todayStr}`;
+        const won = await this.deps.redis
+          .set(lockKey, '1', 'EX', 82_800, 'NX')
+          .catch(() => null);
+        if (won !== 'OK') continue;
+
+        const body = renderDailySummary(data, user);
+        try {
+          // raw:true keeps the multi-line recap intact (the outbound sanitizer
+          // otherwise flattens the "Protein: 82g" label lines).
+          await this.deps.sender.send({
+            to: user.phone,
+            body,
+            channel: user.channel ?? 'imessage',
+            raw: true,
+          });
+        } catch (sendErr) {
+          // Release the lock so a later tick in the window can retry today.
+          await this.deps.redis.del(lockKey).catch(() => {});
+          throw sendErr;
+        }
+
+        await this.deps.users
+          .recordCheckIn({
+            userId: user.phone,
+            phone: user.phone,
+            type: 'daily_summary',
+            messageSent: body,
+          })
+          .catch(() => {});
+
+        this.deps.logger.info(
+          { phone: user.phone, date: todayStr, protein: data.food.proteinG },
+          'scheduler.daily_summary.sent',
+        );
+      } catch (err) {
+        this.deps.logger.warn(
+          { err: (err as Error).message, phone: user.phone },
+          'scheduler.daily_summary.error',
+        );
+      }
+    }
   }
 
   /**

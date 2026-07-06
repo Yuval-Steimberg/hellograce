@@ -79,6 +79,12 @@ export interface GraceUser {
   is_pro: boolean;
   trial_start: Date | null;
   rlhf_enabled: boolean;
+  /** Per-user opt-out for the nightly end-of-day summary (SEPARATE from
+   *  reminders). Default TRUE in the DB, so once DAILY_SUMMARY_ENABLED is on,
+   *  every eligible user receives it unless individually disabled. Undefined
+   *  (pre-migration row) is treated as enabled by the summary job.
+   *  Added 2026-07-06 (migration 20260706000001_daily_summary.sql). */
+  daily_summary_enabled: boolean;
   created_at: Date;
   updated_at: Date;
   // lifestyle & personalization (migration 20260524000002)

@@ -6,9 +6,31 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `8d9a5ac` (= PR #213); deploy = `fly deploy` grace-api, verify `/health`
+## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `eaf025e` (= PR #215); deploy = `fly deploy` grace-api, verify `/health`
 
-**LATEST (PR #213) — salad no longer masked by an adjacent protein.** Prod
+**LATEST (PR #215) — clarification never echoes the whole message as the food
+name.** Prod IMG_6709 (same Friday-parents message): reply asked "…how many scoops
+was the **I ate pretty light, just a protein shake and a sandwich, and I still
+feel like I need more protein**, or what brand and size?" — the RAW consumption
+span was injected as the food item. Root cause: `foodStepUnified`'s never-drop
+backstop (fires when the span re-extraction returns nothing — e.g. a Gemini
+timeout → `EMPTY_EXTRACTION`) pended + asked about the raw `span` string, so
+`buildPortionConfirmQuestion` echoed the entire message. `food.clarify` (the
+garbled backstop value) takes precedence over the clean reply-guard value in
+`runUnifiedReply`. **Fix (two general layers):** (1) new exported
+`ambiguousFoodNames(span, context)` returns only CLEAN food words ("sandwich",
+"protein shake"), never the raw span — the backstop now pends/asks those; if none
+nameable, logs the span (never-drop). `ambiguousEatenFoods` reuses it (unchanged
+behavior). (2) Defense-in-depth: `buildPortionConfirmQuestion` runs each item
+through new `foodLabel()` — a normal food phrase (≤32 chars, ≤5 words) passes
+through, an over-long sentence-like value is reduced to its recognized food token.
+So no path can ever echo a whole sentence. Verified end-to-end on the exact
+IMG_6709 message (backstop clarify → "…what was in the sandwich; how many scoops
+the protein shake was?"). Only `foodStepUnified` backstop + `buildPortionConfirmQuestion`
+labeling changed. **1943 api + 659 ai-core green; typecheck + build clean. NOT
+deployed — `fly deploy` grace-api, verify `/health`. No migration/env.**
+
+**PR #213 — salad no longer masked by an adjacent protein.** Prod
 IMG_6708 on the CONFIRMED-deployed build (`/health`==`05a0db9`): **"2 eggs with
 salad" logged the salad SILENTLY** (→32g), no ask. Root cause found + fixed: when
 the extractor returns the meal as ONE combined item ("eggs with salad"),

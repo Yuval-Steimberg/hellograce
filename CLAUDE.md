@@ -6,6 +6,50 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `804c19d`; deploy = `fly deploy` grace-api, verify `/health`
+
+Two workstreams this session, all MERGED to `main` (detailed per-PR sections below):
+
+1. **Nightly end-of-day summary** (NEW feature, PR #202) — a SEPARATE system from
+   reminders (own `tick()` pass, own Redis lock, `check_ins.type='daily_summary'`,
+   deterministic render, `raw:true` send). **Dark-launched:** does nothing until
+   `DAILY_SUMMARY_ENABLED=true` + migration `20260706000001_daily_summary.sql`
+   applied. Admin toggle wired (`daily_summary_enabled` column). See its section.
+
+2. **Reply-path: complex multi-topic messages + food accuracy** (PRs #203–#211) —
+   driven by live IMG_6697…6707 screenshots comparing Grace (blue) vs Nudge
+   (green). The user's hard rule: **be accurate, NEVER assume; give a real GENERAL
+   solution, not per-message patches.** Final architecture: **LLM owns warmth;
+   DETERMINISTIC, MESSAGE-DERIVED guards own accuracy + structure** (they do NOT
+   trust the LLM extractor, which drops food on complex planning messages).
+
+**WHAT WAS AFFECTED (blast radius — the user asked explicitly):**
+- **All food logging** (single or complex): a bare sandwich/wrap/burrito/taco/sub
+  → asks "what's in it?"; a protein shake/powder w/ no scoop/brand → asks
+  "scoops/brand?"; NEVER logs an assumed number. Obvious foods (apple/eggs/toast)
+  still log with an estimate. Consumption detection broadened ("I only had X").
+  "reset my food log" now also clears the Redis pending store.
+- **Complex multi-topic replies:** every part answered; report-shape lists
+  ("here's your game plan/strategy: 1.") deterministically STRIPPED to warm prose;
+  every ambiguous eaten food asked; assumed totals ("you've consumed ~50g") caught.
+- **One side-effect outside food:** a single-topic NON-food chat reply that comes
+  back as a numbered "here's the plan" list is now rewritten to prose (grounded
+  path). Only makes it more prose-like.
+- **UNTOUCHED:** reminders, scheduler, injection flow, settings, onboarding, auth,
+  Stripe, dashboard, weight/water/habit/symptom logging. 1933 api + 659 ai-core
+  green (no existing behavior regressed in test).
+
+**THE TOOL for the next complex-message report:** `services/api/src/services/
+complex-message-guards.test.ts` — the OFFLINE HARNESS. Add the failing message to
+its battery, generalize the guard (`ambiguousEatenFoods` / `statesFalseConsumedTotal`
+/ `stripReportShape` / `UNIFIED_BREAKDOWN_RE` / `CONSUMPTION_RE`) until green.
+Prove the class deterministically instead of a live round-trip. **The user deploys
+incrementally and every "still broken" so far traced to an OLDER build — ALWAYS
+have them confirm `/health` == current HEAD before diagnosing.** Prod runs the
+UNIFIED path, so all reply fixes live in `runUnifiedReply` (`ai.service.ts`).
+
+---
+
 ## 👉 READ FIRST — message-derived food guards + OFFLINE HARNESS (2026-07-06, MERGED to `main` HEAD `c72fc0d` via PR #211, NOT deployed)
 
 The reply-layer accuracy guarantees no longer depend on the LLM extractor (which

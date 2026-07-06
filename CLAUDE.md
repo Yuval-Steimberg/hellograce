@@ -6,9 +6,30 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `05a0db9` (feature HEAD `747d8c8` = PR #212); deploy = `fly deploy` grace-api, verify `/health`
+## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `8d9a5ac` (= PR #213); deploy = `fly deploy` grace-api, verify `/health`
 
-**LATEST (PR #212):** (a) a bare **salad / poke-bowl / grain-bowl** is now
+**LATEST (PR #213) — salad no longer masked by an adjacent protein.** Prod
+IMG_6708 on the CONFIRMED-deployed build (`/health`==`05a0db9`): **"2 eggs with
+salad" logged the salad SILENTLY** (→32g), no ask. Root cause found + fixed: when
+the extractor returns the meal as ONE combined item ("eggs with salad"),
+`isCompositionAmbiguousFood` tested `FILLING_KNOWN_RE` against the WHOLE string, so
+the eggs' protein word ("egg"/"eggs") matched anywhere and MASKED the salad's
+ambiguity → logged at an assumed greens value. **General fix (`food-portion.ts`):
+a filling resolves an assembled/mixed food ONLY when it belongs to THAT food** — a
+modifier directly before the noun ("chicken salad", "ham and cheese sandwich") or
+attached after via with/of/in ("salad with chicken"). A SEPARATE food joined by
+with/and ("eggs with salad", "eggs and salad") no longer resolves it → the salad
+stays ambiguous and is ASKED. Named dishes ("egg salad", "chicken salad", "green
+salad") still log; no over-asking. Single change covers BOTH the log path
+(`foodStepUnified`) and the reply guard (`ambiguousEatenFoods`) since both call
+`isCompositionAmbiguousFood`. The span-level check now agrees with the per-item
+check (a bare side salad in "salmon + potatoes + salad" is asked too). Tests:
+`food-portion.test.ts` (separate-food-vs-attached-filling matrix) +
+`complex-message-guards.test.ts` (salad surfaced alongside eggs). **1941 api + 659
+ai-core green; typecheck + build clean. NOT deployed — `fly deploy` grace-api,
+verify `/health`==new HEAD. No migration/env.**
+
+**PR #212:** (a) a bare **salad / poke-bowl / grain-bowl** is now
 composition-ambiguous → ASKS "what's in it?" (prod "2 eggs with salad" logged the
 salad at assumed ~2-4g because the "2" made the msg "quantified", masking it; now
 composition-ambiguity fires regardless of quantity; a named-protein/greens salad

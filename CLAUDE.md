@@ -6,7 +6,19 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `804c19d`; deploy = `fly deploy` grace-api, verify `/health`
+## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `747d8c8`; deploy = `fly deploy` grace-api, verify `/health`
+
+**LATEST (PR #212):** (a) a bare **salad / poke-bowl / grain-bowl** is now
+composition-ambiguous → ASKS "what's in it?" (prod "2 eggs with salad" logged the
+salad at assumed ~2-4g because the "2" made the msg "quantified", masking it; now
+composition-ambiguity fires regardless of quantity; a named-protein/greens salad
+still logs). (b) **NO-ASSUMED-PROTEIN number guard** — when food is ambiguous, the
+reply may state ONLY the real logged total + the goal; ANY other gram figure
+(however phrased) is regenerated then STRIPPED (`hasDisallowedProteinNumber` /
+`stripAssumedProteinSentences`, ai.service.ts). Replaces phrase-by-phrase total
+detection — the general fix for the recurring "consumed ~50g / usually ~25-30g"
+assumptions.
+
 
 Two workstreams this session, all MERGED to `main` (detailed per-PR sections below):
 

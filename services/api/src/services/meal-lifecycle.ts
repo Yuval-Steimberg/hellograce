@@ -264,10 +264,22 @@ const CONSUMPTION_TAIL_RE =
 export function foodSpanFromConsumption(text: string): string | null {
   const t = (text ?? '').trim();
   if (!isConsumptionConfirmed(t)) return null;
+  // START at where the eating is actually reported. A leading clause about
+  // OTHER / FUTURE food ("there will probably be pasta, bread, desserts…") must
+  // NOT be mistaken for what was eaten — anchor the span at the earliest real
+  // consumption verb ("Today I ate …") and slice from there, not from a
+  // future-food first sentence (prod 2026-07-06, the Friday family-dinner msg).
+  let anchor = Infinity;
+  for (const re of CONSUMPTION_RE) {
+    const m = re.exec(t);
+    if (m && m.index < anchor) anchor = m.index;
+  }
+  const from = anchor === Infinity ? 0 : anchor;
+  const rest = t.slice(from);
   // Cut at the EARLIEST of: first sentence end, first '?', first question clause.
-  const idx = (re: RegExp): number => { const m = t.search(re); return m < 0 ? Infinity : m; };
+  const idx = (re: RegExp): number => { const m = rest.search(re); return m < 0 ? Infinity : m; };
   const cut = Math.min(idx(/[.!?]/), idx(QUESTION_TAIL_RE), idx(CONSUMPTION_TAIL_RE));
-  let span = (cut !== Infinity && cut > 0 ? t.slice(0, cut) : t).trim();
+  let span = (cut !== Infinity && cut > 0 ? rest.slice(0, cut) : rest).trim();
   // Trim a dangling connector/punctuation left by the cut ("… and salad ,").
   span = span.replace(/[\s,;:.!?]+$/g, '').replace(/\s+(?:and|with|plus|,|&)\s*$/i, '').trim();
   // Require a SPECIFIC food, not just a meal-time word ("I had breakfast late"

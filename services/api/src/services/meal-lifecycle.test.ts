@@ -29,6 +29,14 @@ describe('foodSpanFromConsumption — never-drop backstop for "I ate X … <ques
     // Must NOT over-cut a real food phrase:
     expect(foodSpanFromConsumption('I ate chicken with rice')).toBe('I ate chicken with rice');
   });
+  it('anchors on the ACTUAL eaten clause, not a leading future/other-food clause (prod 2026-07-06 Friday msg)', () => {
+    const span = foodSpanFromConsumption(
+      "I'm going to my parents on Friday night and there will probably be a lot of food, maybe pasta, bread, desserts, and some kind of meat. Today I ate pretty light, just a protein shake and a sandwich, and I still feel like I need more protein. Can you help me plan what to eat?",
+    );
+    expect(span).toMatch(/protein shake/i);
+    expect(span).toMatch(/sandwich/i);
+    expect(span).not.toMatch(/pasta|bread/i); // the future dinner food is NOT what they ate
+  });
   it('returns null for a PURE question (nothing eaten)', () => {
     expect(foodSpanFromConsumption('what should I eat later?')).toBeNull();
     expect(foodSpanFromConsumption('what did I eat today?')).toBeNull();

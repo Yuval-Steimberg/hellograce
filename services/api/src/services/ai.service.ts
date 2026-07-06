@@ -3650,10 +3650,21 @@ CRITICAL RULES:
     if (reply && UNIFIED_BREAKDOWN_RE.test(reply)) {
       this.deps.logger.info({ userId, isMultiTopic }, 'ai.unified.breakdown_regen');
       const override = isMultiTopic
-        ? `\n\nHARD OVERRIDE: rewrite as ONE warm, flowing text message — the way a friend texts back, not a document. Still answer EVERY part they asked, but in plain connected sentences: NO numbered steps ("1.", "2."), NO headings or bold section titles, NO "game plan"/"here's the plan"/"Part 1", NO bullet points. Lead with warmth, keep it concise.`
+        ? `\n\nHARD OVERRIDE: rewrite as ONE warm, flowing text message — the way a friend texts back, not a document. Still answer EVERY part they asked, but in plain connected sentences: NO numbered steps ("1.", "2."), NO headings or bold section titles, NO "game plan"/"strategy:"/"here's the plan"/"Part 1", NO bullet points. Lead with warmth, keep it to a few sentences.`
         : `\n\nHARD OVERRIDE: reply ONLY to the user's last message: "${input.text.replace(/"/g, "'")}". Answer just that — one or two short sentences, plain prose. Do NOT break their message into parts, do NOT summarize the conversation, do NOT mention earlier meals or an injection unless THIS message asks about them.`;
       const focused = await gen(systemPrompt + override);
-      if (focused && !UNIFIED_BREAKDOWN_RE.test(focused)) reply = focused;
+      if (focused && !UNIFIED_BREAKDOWN_RE.test(focused)) {
+        reply = focused;
+      } else if (isMultiTopic) {
+        // Regen STILL report-shaped (flash won't stop listing). Deterministically
+        // strip the list/heading tail so warm prose ships — a numbered "game plan"
+        // never reaches the user. Prefer whichever draft yields more usable prose.
+        const strippedFocused = focused ? stripReportShape(focused) : '';
+        const strippedOrig = stripReportShape(reply);
+        const best = strippedFocused.length >= strippedOrig.length ? strippedFocused : strippedOrig;
+        if (best.length >= 40) reply = best;
+        else if (focused && focused.length > 0) reply = focused; // last-ditch: at least the regen
+      }
     }
 
     // CAPABILITY-DENIAL safety net (rare — the deterministic date/injection
@@ -7209,6 +7220,30 @@ const UNIFIED_DENIAL_RE = /\b(as an ai|i'?m an ai|i am an ai|i'?m just an ai|i (
 // answering it as "Part 1 / Part 2" instead of the current message. Deterministic
 // so it's caught even when the relevance judge (flash, lenient) passes it.
 const UNIFIED_BREAKDOWN_RE = /(\bpart 1\b|\bpart 2\b|two (?:distinct )?parts|distinct parts to your|let'?s break (?:them|it|this|these|your)|\bbreak (?:it|this|them) down|here (?:is|'?s) (?:a|the|my) (?:quick |brief |detailed )?breakdown|breakdown of (?:how|the |your )?(?:i |nutrition|what|meal|that)|breaking (?:it|this|them) down|game\s?plan|here (?:is|'?s) (?:a|the|your|my)(?: \w+){0,4}\s+(?:plan|strategy|strategies|breakdown|approach|steps?|game\s?plan)\b|here (?:is|'?s) how (?:to|you|i)\b|here (?:is|'?s)[^.!?\n]{0,60}:\s*\d|\b\d\.\s+(?:the\s+)?[A-Z]|\b\d[.)]\s*$)/i;
+
+// Deterministic last resort when the prose regen STILL comes back report-shaped
+// (flash loves "here's the plan: 1. …" for planning questions). Strip the list/
+// heading tail so ONLY the warm prose preamble ships — cut at the earliest
+// list/heading marker, trim to the last complete sentence. Returns '' if there's
+// no usable prose before the marker (caller keeps the regen instead).
+export function stripReportShape(text: string): string {
+  const markers: RegExp[] = [
+    /here (?:is|'?s) (?:a|the|your|my)[^.!?\n]{0,40}\b(?:plan|strategy|strategies|breakdown|approach|steps?|game\s?plan)\b/i,
+    /\bhere (?:is|'?s) how (?:to|you|i)\b/i,
+    /\bgame\s?plan\b/i,
+    /(?:^|[.!?]\s)\s*\d[.)]\s/,   // a numbered list item
+    /:\s*\d[.)]?\s*$/,            // heading-colon dangling into a number
+  ];
+  let cut = text.length;
+  for (const re of markers) {
+    const m = re.exec(text);
+    if (m && m.index < cut) cut = m.index;
+  }
+  let head = text.slice(0, cut).trim();
+  const lastPunct = Math.max(head.lastIndexOf('.'), head.lastIndexOf('!'), head.lastIndexOf('?'));
+  if (lastPunct >= 20) head = head.slice(0, lastPunct + 1).trim();
+  return head;
+}
 
 // Hard per-call timeout for the unified reply generations. Keeps a turn from
 // running long enough to blow past the webhook in-flight lock's wait budget

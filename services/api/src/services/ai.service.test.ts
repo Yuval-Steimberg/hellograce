@@ -1,6 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone, looksStructured, answerDateQuestion, buildKnownProfileFacts } from './ai.service.js';
+import { splitMultiMealText, reconstructFoodFromClarification, splitQuestionParts, mealForLocalHour, wantsFullDayPlan, localHourForTimezone, looksStructured, answerDateQuestion, buildKnownProfileFacts, stripReportShape } from './ai.service.js';
 import { detectVagueFood } from '../safety/vague-food.js';
+
+describe('stripReportShape — guarantee no game-plan/strategy list ships (multi-topic backstop)', () => {
+  it('strips a "here is your strategy: 1." tail, keeping the warm prose (prod IMG)', () => {
+    const rpt =
+      "Let's treat Friday as a fresh start to hit that 140g protein goal. Because you are on a GLP-1, the fullness hits fast. If you wait until dinner you'll get full on pasta and miss your target. Here is your strategy: 1.";
+    const out = stripReportShape(rpt);
+    expect(out).toMatch(/miss your target\.$/);
+    expect(out).not.toMatch(/strategy/i);
+    expect(out).not.toMatch(/\d[.)]\s*$/);
+  });
+  it('strips a "game plan: 1. … 2. …" list', () => {
+    const out = stripReportShape('Family dinners can be tricky but you have got this. Here is a game plan: 1. Yogurt now. 2. Meat at dinner.');
+    expect(out).toBe('Family dinners can be tricky but you have got this.');
+  });
+  it('leaves clean warm prose untouched', () => {
+    const good = 'Family dinners can feel tricky, but you have got this. Grab a Greek yogurt now, load up on the meat at dinner, and enjoy a few bites of dessert with zero guilt.';
+    expect(stripReportShape(good)).toBe(good);
+  });
+});
 
 describe('buildKnownProfileFacts — surface the full profile so Grace never re-asks', () => {
   it('includes every known settings field as a background fact', () => {

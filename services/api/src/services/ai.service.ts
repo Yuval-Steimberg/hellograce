@@ -577,7 +577,7 @@ import {
 } from './symptom-intelligence.js';
 import { detectDashboardRequest, buildDashboardLinkReply } from './dashboard-link.js';
 import { detectFoodReset, buildFoodResetReply } from './food-reset.js';
-import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood } from './food-portion.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous } from './food-portion.js';
 import { weightProgress, loggingStreak, summarizeSymptoms } from './dashboard-data.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -3589,7 +3589,7 @@ CRITICAL RULES:
       const notes: string[] = [];
       if (food.removed) notes.push(`You just removed "${food.removed}" from today's log — confirm that in one casual clause.`);
       if (food.logged.length > 0) notes.push(`You just logged ${food.logged.join(', ')} for them. Their running protein total for TODAY is ${Math.round(todaysFood.protein_g)}g — you may mention it in ONE short clause, and it is the ONLY running-total protein number you may state (general advice like "aim for ~30g at dinner" is fine).`);
-      if (food.pending.length > 0) notes.push(`They mentioned ${food.pending.join(', ')} but you don't have enough to log it accurately yet — briefly ask what they need (how much, or for an assembled food like a sandwich/wrap, what was in it). Do NOT claim it's logged and do NOT attach or assume a protein number for it.`);
+      if (food.pending.length > 0) notes.push(`They mentioned ${food.pending.join(', ')} but you don't have enough to log it accurately yet — briefly ask what they need (how much; for an assembled food like a sandwich/wrap, what was in it; for a protein shake, how many scoops or what brand). Do NOT claim it's logged and do NOT attach or assume a protein number for it.`);
       systemPrompt += `\n\nFOOD JUST HANDLED (weave in naturally, do NOT lead with it):\n- ${notes.join('\n- ')}`;
     }
 
@@ -3770,10 +3770,10 @@ CRITICAL RULES:
       const span = foodSpanFromConsumption(text);
       if (!span) return null;
       // Ask when it's a composition-ambiguous assembled food (a bare sandwich/
-      // wrap — protein unknowable, so ASK even though "a" is present), or a
-      // portion-sensitive food with no amount (yogurt, rice, chicken…). An
-      // obvious food logs with the estimate.
-      if (isCompositionAmbiguousFood(span) || (!quantified && isPortionSensitiveFood(span))) {
+      // wrap — protein unknowable, so ASK even though "a" is present), a protein
+      // product with no scoop/brand, or a portion-sensitive food with no amount
+      // (yogurt, rice, chicken…). An obvious food logs with the estimate.
+      if (isCompositionAmbiguousFood(span) || isProteinProductAmbiguous(span, text) || (!quantified && isPortionSensitiveFood(span))) {
         await addPendingFood(this.deps.redis, input.userId, [{ item: span, clarify_question: null }]).catch(() => {});
         const clarify = buildPortionConfirmQuestion([{ item: span, protein_g: null }]);
         this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_needs_portion');
@@ -3805,7 +3805,11 @@ CRITICAL RULES:
       if (r && r.ok !== false) logged.push(it.item);
     };
     for (const it of confirmed) {
-      if (isCompositionAmbiguousFood(it.item) || (!quantified && isPortionSensitiveFood(it.item))) {
+      if (
+        isCompositionAmbiguousFood(it.item) ||
+        isProteinProductAmbiguous(it.item, text) ||
+        (!quantified && isPortionSensitiveFood(it.item))
+      ) {
         downgraded.push({ item: it.item, protein_g: it.protein_g ?? null });
       } else {
         await logConfirmed(it);

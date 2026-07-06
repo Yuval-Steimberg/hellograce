@@ -78,6 +78,28 @@ export function isCompositionAmbiguousFood(item: string): boolean {
   return !FILLING_KNOWN_RE.test(t);
 }
 
+// ── Protein products need scoop count / brand (2026-07-06) ────────────────────
+// A "protein shake"/"drink"/"powder"/"whey" gives no protein number on its own —
+// the SCOOP COUNT (or brand + size) drives it (one scoop ~20g, two ~40g). "a
+// protein shake" tells us nothing, so — like an assembled food — ASK even though
+// the article is present. A scoop count, gram figure, or a known brand makes it
+// loggable. Mirrors vague-food.detectProteinProduct (compact path); kept local so
+// food-portion.ts stays dependency-free. (A "protein BAR" is standard → excluded.)
+const PROTEIN_PRODUCT_RE = /\b(protein\s*shakes?|protein\s*drinks?|protein\s*powder|whey|mass\s*gainer|protein\s*smoothie)\b/i;
+const SCOOP_OR_BRAND_RE = /\b(\d+\s*scoops?|one scoop|two scoops|half\s*(?:a\s*)?scoop|\d+\s*g\b|\d+\s*grams?\b|optimum|gold standard|fairlife|premier|orgain|huel|isopure|ghost|quest|myprotein|core power|owyn|ready\s*to\s*drink|\brtd\b)\b/i;
+
+/**
+ * True when the text names a protein product but gives NO scoop count / gram
+ * figure / brand — so its protein is unknowable and must be asked, not assumed.
+ * `context` (the full message) is checked too, so "a protein shake, 2 scoops"
+ * anywhere in the message counts as specified.
+ */
+export function isProteinProductAmbiguous(item: string, context = ''): boolean {
+  const hay = `${item ?? ''} ${context ?? ''}`;
+  if (!PROTEIN_PRODUCT_RE.test(hay)) return false;
+  return !SCOOP_OR_BRAND_RE.test(hay);
+}
+
 /**
  * True when the user is confirming the standard/usual portion Grace proposed —
  * so the pending item is logged at its standard estimate. Only meaningful when
@@ -121,6 +143,10 @@ export function buildPortionConfirmQuestion(
   if (named.length === 0) return '';
   if (named.length === 1) {
     const it = named[0]!;
+    // Protein product: the scoop count / brand drives the protein — ask for it.
+    if (isProteinProductAmbiguous(it.item)) {
+      return `Got it — how many scoops was the ${it.item}, or what brand and size? The scoop count swings the protein a lot.`;
+    }
     // Composition-ambiguous (a bare sandwich/wrap/…): ask what's IN it, not how
     // much — the protein is unknowable from the mention, so never guess a filling.
     if (isCompositionAmbiguousFood(it.item)) {
@@ -129,12 +155,18 @@ export function buildPortionConfirmQuestion(
     return `Yum, ${it.item} 🙌 About how much did you have — roughly ${portionHint(it.item)}? Or just say "that's about right" and I'll log a standard serving.`;
   }
   const list = named.map((i) => i.item).join(' and ');
-  // Per-dish so each item is captured — a composition-ambiguous food asks what's
-  // in it, a portion-variable food asks how much. Cap the spelled-out references
-  // at the first two to keep it a readable single text.
+  // Per-dish so each item is captured — a protein product asks scoops/brand, a
+  // composition-ambiguous food asks what's in it, a portion-variable food asks
+  // how much. Cap the spelled-out references at the first two to keep it readable.
   const perDish = named
     .slice(0, 2)
-    .map((i) => (isCompositionAmbiguousFood(i.item) ? `what was in the ${i.item}` : `for the ${i.item}, ${portionHint(i.item)}`))
+    .map((i) =>
+      isProteinProductAmbiguous(i.item)
+        ? `how many scoops the ${i.item} was`
+        : isCompositionAmbiguousFood(i.item)
+          ? `what was in the ${i.item}`
+          : `for the ${i.item}, ${portionHint(i.item)}`,
+    )
     .join('; ');
   const tail = named.length > 2 ? ', and the rest' : '';
   return `Nice — ${list} 🙌 A couple quick things so I log it right — ${perDish}${tail}? Or say "that's about right" for standard servings.`;

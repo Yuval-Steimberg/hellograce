@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood } from './food-portion.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous } from './food-portion.js';
 import { hasExplicitQuantity } from '../safety/vague-food.js';
 
 // A composition-ambiguous assembled food (a bare sandwich/wrap) must be ASKED
@@ -17,9 +17,30 @@ describe('isCompositionAmbiguousFood — ask what is IN it, never assume a filli
       expect(isCompositionAmbiguousFood(f), f).toBe(false);
     }
   });
-  it('is FALSE for non-assembled foods (protein shake logs at standard, like Nudge)', () => {
+  it('is FALSE for non-assembled foods (a protein shake is not an assembled food)', () => {
     for (const f of ['protein shake', 'apple', 'banana', 'chicken', 'rice', 'yogurt', 'toast', 'burger']) {
       expect(isCompositionAmbiguousFood(f), f).toBe(false);
+    }
+  });
+});
+
+// A protein shake/drink/powder gives no protein number without the scoop count
+// or brand — one scoop ~20g, two ~40g — so ASK, even with the article present.
+describe('isProteinProductAmbiguous — ask for scoops/brand, never assume', () => {
+  it('is TRUE for a bare protein product (even with an article)', () => {
+    for (const f of ['protein shake', 'a protein shake', 'protein drink', 'whey', 'protein powder', 'protein smoothie']) {
+      expect(isProteinProductAmbiguous(f), f).toBe(true);
+    }
+  });
+  it('is FALSE once scoops / grams / a brand are given (in the item or the message)', () => {
+    expect(isProteinProductAmbiguous('protein shake', 'I had a protein shake with 2 scoops')).toBe(false);
+    expect(isProteinProductAmbiguous('protein shake', 'a fairlife protein shake')).toBe(false);
+    expect(isProteinProductAmbiguous('protein shake', 'protein shake, 30g')).toBe(false);
+    expect(isProteinProductAmbiguous('one scoop of whey')).toBe(false);
+  });
+  it('is FALSE for non-protein-products (a bar is standard; a milkshake / bare shake are not protein products)', () => {
+    for (const f of ['protein bar', 'milkshake', 'shake', 'sandwich', 'chicken', 'apple']) {
+      expect(isProteinProductAmbiguous(f), f).toBe(false);
     }
   });
 });
@@ -83,6 +104,19 @@ describe('buildPortionConfirmQuestion', () => {
     const q = buildPortionConfirmQuestion([{ item: 'sandwich', protein_g: null }, { item: 'rice', protein_g: null }]);
     expect(q).toMatch(/what was in the sandwich/i);
     expect(q).toMatch(/for the rice, about a cup/i);
+  });
+
+  it('asks a protein product for scoops/brand (not how much, not what is in it)', () => {
+    const q = buildPortionConfirmQuestion([{ item: 'protein shake', protein_g: null }]);
+    expect(q).toMatch(/how many scoops/i);
+    expect(q).toMatch(/brand/i);
+    expect(q).not.toMatch(/how much did you have/i);
+  });
+
+  it('asks scoops for the shake AND filling for the sandwich in one message', () => {
+    const q = buildPortionConfirmQuestion([{ item: 'protein shake', protein_g: null }, { item: 'sandwich', protein_g: null }]);
+    expect(q).toMatch(/how many scoops the protein shake/i);
+    expect(q).toMatch(/what was in the sandwich/i);
   });
 });
 

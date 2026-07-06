@@ -52,6 +52,32 @@ export function isPortionSensitiveFood(item: string): boolean {
   return PORTION_SENSITIVE_RE.test(item ?? '');
 }
 
+// ── Composition-ambiguous assembled foods (2026-07-06) ───────────────────────
+// A food whose protein depends ENTIRELY on an UNKNOWN filling — "a sandwich"
+// could be ~5g (PB&J) or 35g (chicken club). We can't estimate it from the bare
+// mention, so we must ASK what's in it rather than assume a deli-meat default.
+// This is distinct from portion-sensitivity (how MUCH): here the QUESTION is
+// what it's MADE OF. A bare article ("a sandwich") does NOT resolve this, so —
+// unlike the portion gate — this fires even when a quantity/article is present.
+// Prod (IMG_6699): Grace logged "a sandwich" at ~23g "assuming deli meat"; Nudge
+// held it pending and asked. A NAMED filling/protein makes it loggable
+// ("turkey sandwich", "chicken wrap", "egg sandwich", "peanut butter sandwich").
+const ASSEMBLED_AMBIGUOUS_RE =
+  /\b(sandwich|sandwiches|sub|subs|hoagie|grinder|wrap|wraps|burrito|burritos|taco|tacos|quesadilla|quesadillas|panini|pita\s*pocket)\b/i;
+const FILLING_KNOWN_RE =
+  /\b(turkey|chicken|ham|beef|roast\s*beef|steak|tuna|salmon|smoked\s*salmon|lox|egg|eggs|cheese|veggie|vegetable|veg|falafel|hummus|avocado|blt|club|salami|pastrami|bacon|meatball|meatballs|tofu|peanut\s*butter|\bpb\b|jelly|jam|nutella|cream\s*cheese)\b/i;
+
+/**
+ * True for an assembled food (sandwich/wrap/burrito/taco…) mentioned WITHOUT a
+ * filling, so its protein is unknowable and must be ASKED, not assumed — even if
+ * an article/quantity is present ("a sandwich"). A named filling → false (loggable).
+ */
+export function isCompositionAmbiguousFood(item: string): boolean {
+  const t = item ?? '';
+  if (!ASSEMBLED_AMBIGUOUS_RE.test(t)) return false;
+  return !FILLING_KNOWN_RE.test(t);
+}
+
 /**
  * True when the user is confirming the standard/usual portion Grace proposed —
  * so the pending item is logged at its standard estimate. Only meaningful when
@@ -95,12 +121,21 @@ export function buildPortionConfirmQuestion(
   if (named.length === 0) return '';
   if (named.length === 1) {
     const it = named[0]!;
+    // Composition-ambiguous (a bare sandwich/wrap/…): ask what's IN it, not how
+    // much — the protein is unknowable from the mention, so never guess a filling.
+    if (isCompositionAmbiguousFood(it.item)) {
+      return `Got it — what was in the ${it.item}? (turkey, chicken, cheese, veggie…) I'd rather log it right than guess the protein.`;
+    }
     return `Yum, ${it.item} 🙌 About how much did you have — roughly ${portionHint(it.item)}? Or just say "that's about right" and I'll log a standard serving.`;
   }
   const list = named.map((i) => i.item).join(' and ');
-  // Per-dish so each portion is captured (cap the spelled-out references at the
-  // first two dishes to keep it a readable single text).
-  const perDish = named.slice(0, 2).map((i) => `for the ${i.item}, ${portionHint(i.item)}`).join('; ');
+  // Per-dish so each item is captured — a composition-ambiguous food asks what's
+  // in it, a portion-variable food asks how much. Cap the spelled-out references
+  // at the first two to keep it a readable single text.
+  const perDish = named
+    .slice(0, 2)
+    .map((i) => (isCompositionAmbiguousFood(i.item) ? `what was in the ${i.item}` : `for the ${i.item}, ${portionHint(i.item)}`))
+    .join('; ');
   const tail = named.length > 2 ? ', and the rest' : '';
-  return `Nice — ${list} 🙌 Roughly how much of each — ${perDish}${tail}? Or say "that's about right" for standard servings.`;
+  return `Nice — ${list} 🙌 A couple quick things so I log it right — ${perDish}${tail}? Or say "that's about right" for standard servings.`;
 }

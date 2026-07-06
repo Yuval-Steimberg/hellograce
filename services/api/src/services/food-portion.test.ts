@@ -1,6 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood } from './food-portion.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood } from './food-portion.js';
 import { hasExplicitQuantity } from '../safety/vague-food.js';
+
+// A composition-ambiguous assembled food (a bare sandwich/wrap) must be ASKED
+// about, never logged at an assumed value — even when an article is present.
+// Prod (IMG_6699): Grace logged "a sandwich" at ~23g "assuming deli meat"; Nudge
+// held it pending and asked. A named filling makes it loggable.
+describe('isCompositionAmbiguousFood — ask what is IN it, never assume a filling', () => {
+  it('is TRUE for a bare assembled food (even with an article)', () => {
+    for (const f of ['sandwich', 'a sandwich', 'wrap', 'a wrap', 'burrito', 'taco', 'sub', 'hoagie', 'quesadilla', 'panini']) {
+      expect(isCompositionAmbiguousFood(f), f).toBe(true);
+    }
+  });
+  it('is FALSE once a filling/protein is named (loggable)', () => {
+    for (const f of ['turkey sandwich', 'chicken wrap', 'egg sandwich', 'peanut butter sandwich', 'tuna sub', 'veggie burrito', 'ham and cheese sandwich']) {
+      expect(isCompositionAmbiguousFood(f), f).toBe(false);
+    }
+  });
+  it('is FALSE for non-assembled foods (protein shake logs at standard, like Nudge)', () => {
+    for (const f of ['protein shake', 'apple', 'banana', 'chicken', 'rice', 'yogurt', 'toast', 'burger']) {
+      expect(isCompositionAmbiguousFood(f), f).toBe(false);
+    }
+  });
+});
 
 describe('isPortionSensitiveFood — only ask when the portion swings the macros', () => {
   it('is TRUE for portion-variable foods', () => {
@@ -48,6 +70,19 @@ describe('buildPortionConfirmQuestion', () => {
     expect(buildPortionConfirmQuestion([{ item: 'grilled chicken', protein_g: null }])).toMatch(/palm-sized piece/i);
     expect(buildPortionConfirmQuestion([{ item: 'white rice', protein_g: null }])).toMatch(/a cup/i);
     expect(buildPortionConfirmQuestion([{ item: 'greek yogurt', protein_g: null }])).toMatch(/small container/i);
+  });
+
+  it('asks what is IN a composition-ambiguous food (not how much), and never guesses the filling', () => {
+    const q = buildPortionConfirmQuestion([{ item: 'sandwich', protein_g: null }]);
+    expect(q).toMatch(/what was in the sandwich/i);
+    expect(q).not.toMatch(/how much/i);
+    expect(q.toLowerCase()).toContain('guess'); // "I'd rather log it right than guess"
+  });
+
+  it('mixes question types in a multi-item meal (what-was-in-it vs how-much)', () => {
+    const q = buildPortionConfirmQuestion([{ item: 'sandwich', protein_g: null }, { item: 'rice', protein_g: null }]);
+    expect(q).toMatch(/what was in the sandwich/i);
+    expect(q).toMatch(/for the rice, about a cup/i);
   });
 });
 

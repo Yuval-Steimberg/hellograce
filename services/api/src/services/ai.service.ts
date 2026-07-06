@@ -3679,18 +3679,24 @@ CRITICAL RULES:
     if (!reply) reply = 'I’m here — tell me a little more?';
 
     // MUST-ASK guard: when food is PENDING (a bare sandwich/shake we can't log
-    // accurately), the reply has to ASK the clarification — otherwise Grace
-    // silently drops it and the food never gets logged. If the draft asks
-    // nothing (no "?"), regenerate once demanding the question; if it STILL
-    // doesn't, append the deterministic clarify so the ask is guaranteed.
+    // accurately), the reply has to ASK about EVERY pending item — not just have
+    // a "?" somewhere. The failure this fixes: the LLM asked about the shake but
+    // silently assumed the sandwich. We check each pending food is actually named
+    // in the reply; if any is missing we regenerate once demanding all of them,
+    // then append the deterministic clarify (which covers every item) as a
+    // guaranteed last resort. So no ambiguous eaten food is ever assumed.
     if (food && food.pending.length > 0 && food.clarify && reply) {
-      if (!reply.includes('?')) {
+      const keyword = (item: string): string =>
+        (item.trim().split(/\s+/).pop() || item).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const asksEach = (t: string): boolean =>
+        t.includes('?') && food.pending.every((p) => new RegExp(`\\b${keyword(p)}`, 'i').test(t));
+      if (!asksEach(reply)) {
         this.deps.logger.info({ userId, pending: food.pending.length }, 'ai.unified.pending_ask_regen');
         const asked = await gen(systemPrompt +
-          `\n\nHARD OVERRIDE: you did not ask about their ${food.pending.join(' / ')}. You cannot log it without more detail, so you MUST include this exact question, woven in naturally: "${food.clarify.replace(/"/g, "'")}". Keep the rest warm and answer their other parts.`);
-        if (asked && asked.includes('?')) reply = asked;
+          `\n\nHARD OVERRIDE: you must ASK about EACH of these before logging — never assume any of them: ${food.pending.join(', ')}. Include this exact question, woven in naturally: "${food.clarify.replace(/"/g, "'")}". Keep the rest warm and answer their other parts.`);
+        if (asked && asksEach(asked)) reply = asked;
       }
-      if (!reply.includes('?')) reply = `${reply} ${food.clarify}`.trim();
+      if (!asksEach(reply)) reply = `${reply} ${food.clarify}`.trim();
     }
 
     // FALSE-RUNNING-TOTAL guard (food multi-topic turns only): the grounded path
@@ -3778,7 +3784,7 @@ CRITICAL RULES:
       return { logged, pending: [], removed: null };
     }
 
-    const extraction = await extractFood(
+    let extraction = await extractFood(
       this.deps.llm,
       this.deps.logger,
       text,
@@ -3787,8 +3793,6 @@ CRITICAL RULES:
       // flash model, not lite) — flash-lite mislabels reported meals as `none`.
       'gemini-2.5-flash',
     ).catch(() => ({ ...EMPTY_EXTRACTION }));
-
-    if (extraction.intent === 'query') return null;
 
     if (extraction.intent === 'delete' && extraction.edit_ref) {
       try {
@@ -3799,27 +3803,40 @@ CRITICAL RULES:
       return { logged: [], pending: [], removed: extraction.edit_ref };
     }
 
-    // NEVER-DROP BACKSTOP: the extractor sometimes returns `none` for a clearly
-    // reported meal ("I ate 2 eggs and chicken and rice"). With an explicit
-    // amount we log the span; WITHOUT one we ask for the portion instead of
-    // logging a guess (precision rule).
-    if (extraction.intent === 'none') {
+    // ── GENERAL FOOD RECOVERY (never-drop, works for ANY complex message) ─────
+    // A message that mixes eaten food with planning / emotion / questions ("…
+    // there'll be pasta Friday… today I ate a shake and a sandwich… help me plan
+    // dinner?") makes the first extraction pass mislabel the WHOLE thing 'query'
+    // or 'none' and drop the intake. The deterministic consumption span is the
+    // source of truth for what was EATEN: whenever it fires we RE-EXTRACT on just
+    // that span — clean, with no planning/question/future-food noise — so we
+    // always recover proper items to log/ask, regardless of how the overall
+    // message was classified. A pure query/none (no consumption span) falls
+    // through to the grounded path so a real question is answered, not logged.
+    if (extraction.intent === 'query' || extraction.intent === 'none') {
       const span = foodSpanFromConsumption(text);
       if (!span) return null;
-      // Ask when it's a composition-ambiguous assembled food (a bare sandwich/
-      // wrap — protein unknowable, so ASK even though "a" is present), a protein
-      // product with no scoop/brand, or a portion-sensitive food with no amount
-      // (yogurt, rice, chicken…). An obvious food logs with the estimate.
-      if (isCompositionAmbiguousFood(span) || isProteinProductAmbiguous(span, text) || (!quantified && isPortionSensitiveFood(span))) {
-        await addPendingFood(this.deps.redis, input.userId, [{ item: span, clarify_question: null }]).catch(() => {});
-        const clarify = buildPortionConfirmQuestion([{ item: span, protein_g: null }]);
-        this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_needs_portion');
-        return { logged: [], pending: [span], removed: null, clarify };
+      const spanEx = await extractFood(this.deps.llm, this.deps.logger, span, [], 'gemini-2.5-flash').catch(
+        () => ({ ...EMPTY_EXTRACTION }),
+      );
+      if (spanEx.items.length > 0) {
+        // Recovered clean per-food items → run them through the SAME ambiguity
+        // gate below (log clear ones, ask about ambiguous ones per food).
+        extraction = { ...spanEx, intent: 'log' as const };
+      } else {
+        // The extractor couldn't itemize the span — pend/log the span itself so
+        // the intake is never silently dropped (deterministic last resort).
+        if (isCompositionAmbiguousFood(span) || isProteinProductAmbiguous(span, text) || (!quantified && isPortionSensitiveFood(span))) {
+          await addPendingFood(this.deps.redis, input.userId, [{ item: span, clarify_question: null }]).catch(() => {});
+          const clarify = buildPortionConfirmQuestion([{ item: span, protein_g: null }]);
+          this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_needs_portion');
+          return { logged: [], pending: [span], removed: null, clarify };
+        }
+        const r = (await logFood.execute({ food: span }).catch(() => null)) as Record<string, unknown> | null;
+        if (!r || r.ok === false) return null;
+        this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_logged');
+        return { logged: [span], pending: [], removed: null };
       }
-      const r = (await logFood.execute({ food: span }).catch(() => null)) as Record<string, unknown> | null;
-      if (!r || r.ok === false) return null;
-      this.deps.logger.info({ userId: input.userId, span }, 'ai.unified_food.backstop_logged');
-      return { logged: [span], pending: [], removed: null };
     }
 
     const confirmed = extraction.items.filter((i) => i.status === 'confirmed');

@@ -6,6 +6,35 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — multi-topic replies: warm prose + always ask the food clarification (2026-07-06, MERGED to `main` HEAD `2ec1d0b` via PR #206, NOT deployed by me)
+
+Live screenshots (IMG_6705/6706, the Friday family-dinner multi-topic message).
+Two problems in the multi-topic grounded path from PR #203:
+1. **Report shape** — reply came back as "Here is a game plan… 1. Before You Go
+   (The 'Bridge' Snack)… 2. …" (numbered headings, truncated). #203 had DISABLED
+   the breakdown/shape guard for multi-topic turns → report shapes shipped.
+2. **Clarification not asked** — the food logged at assumed values (65g), and
+   "How 65g?" admitted "Sandwich: ~23g (Assuming ~3-4oz deli meat…)". The
+   deterministic `food.clarify` (from #204/#205) was computed but only used in
+   the terse early-return path, never surfaced in the multi-topic reply.
+
+**Fix (`runUnifiedReply`):** (a) the report-shape guard (`UNIFIED_BREAKDOWN_RE`)
+now RUNS for multi-topic turns, but its regen KEEPS every part while forcing warm
+flowing prose (no numbered steps/headings/"game plan"/bullets) instead of the old
+"collapse to 1–2 sentences". (b) the exact `food.clarify` is injected into the
+grounded note ("weave THIS question in…") + a MUST-ASK post-guard regenerates
+once (then appends the deterministic clarify as a last resort) if the draft has no
+"?". So a pending sandwich/shake always gets its accuracy question AND the other
+parts are answered. api 1918 + ai-core 659 green.
+
+**⚠️ DEPLOY NOTE:** the IMG_6705/6706 behavior (food logged at assumed values, no
+ask) means prod was running an INTERMEDIATE build (after #203, before #204/#205/
+#206). The user must `fly deploy` the LATEST `main` (HEAD `2ec1d0b`) — verify
+`/health` == `2ec1d0b` — to get ALL of #204 (sandwich asks) + #205 (shake asks) +
+#206 (prose + guaranteed ask). No migration/env for these reply fixes.
+
+---
+
 ## 👉 READ FIRST — food logging never assumes a sandwich's filling (2026-07-06, MERGED to `main` HEAD `63c3ded` via PR #204, NOT deployed by me)
 
 Live-testing screenshots (IMG_6699 Grace / IMG_6700 Nudge, same input). Grace

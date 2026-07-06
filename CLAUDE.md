@@ -36,10 +36,18 @@ though 'a' is present" logic existed but only on the COMPACT path, not unified.)
 
 **Verified:** api 1878 (+5) + ai-core 659 green; typecheck + build clean. Live
 extractor path needs a post-deploy look. **Deploy = `fly deploy` grace-api (no
-migration, no env).** NOTE: only the SANDWICH-class (unknown filling) asks;
-protein shake logs at standard per the user's shown Nudge ideal — if they later
-want the shake to ask too, add `protein_shake` handling (see `detectProteinProduct`
-in `vague-food.ts`, currently compact-path only).
+migration, no env).**
+
+**FOLLOW-UP (PR #205, MERGED to `main` HEAD `ec1fe29`, NOT deployed):** the user
+then asked for the protein shake to ask too. New `food-portion.isProteinProductAmbiguous(item,
+context)` — a protein shake/drink/powder/whey/mass-gainer with NO scoop count /
+gram figure / known brand → ASK "how many scoops, or what brand and size?" (checks
+the item AND the full message, so "a protein shake, 2 scoops"/"fairlife"/"30g"
+logs; a protein BAR, a milkshake, and a bare "shake" are excluded). Wired into
+`foodStepUnified` (confirmed loop + backstop) + a third branch in
+`buildPortionConfirmQuestion` (scoops/brand vs composition vs portion) + the
+multi-topic pending-note. So NOW both the sandwich AND the shake are asked, fully
+matching Nudge on IMG_6699/6700. api 1883 (+5) + ai-core 659 green.
 
 ---
 

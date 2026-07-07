@@ -543,7 +543,7 @@ import {
 import { GRACE_VOICE_ENABLED, GRACE_VOICE_BRIEF, voiceSuffix } from './voice.js';
 import { resolveTemporalContext, buildTemporalContextBlock } from './temporal-context.js';
 import { buildNudgeSystemPrompt } from './nudge-prompt.js';
-import { judgeReplyAddressesMessage, isMealAdviceOrPlanningTurn } from './nudge-relevance.js';
+import { isMealAdviceOrPlanningTurn } from './nudge-relevance.js';
 import {
   detectInjectionTimingIntent,
   computeInjectionSchedule,
@@ -3688,47 +3688,16 @@ CRITICAL RULES:
 
     let reply = await gen(systemPrompt);
 
-    // RELEVANCE JUDGE (Nudge's anti-bleed) on the non-food chat reply. Food
-    // turns are handled deterministically above and never reach here. Fails open.
-    if (reply) {
-      const addresses = await judgeReplyAddressesMessage(this.deps.llm, this.deps.logger, input.text, reply);
-      if (!addresses) {
-        this.deps.logger.info({ userId }, 'ai.unified.relevance_regen');
-        const retryText = await gen(systemPrompt +
-          `\n\nCRITICAL OVERRIDE: your previous draft did not respond to the user's most recent message. They just said: "${input.text.replace(/"/g, "'")}". Reply directly to THAT — answer their question or acknowledge what they shared. Do NOT change the subject or reply to an earlier message.`);
-        if (retryText) reply = retryText;
-      }
-    }
+    // ── ONE PASS + DETERMINISTIC FLOORS ──────────────────────────────────────
+    // The reply is a SINGLE Gemini call (above). The guarantees below are enforced
+    // by CODE, not by re-prompting Gemini — the old cascade fired up to ~6 extra
+    // LLM calls per turn (relevance judge + 5 regens), which multiplied latency
+    // and still failed. This is the Nudge model: one accurate call, then a fast
+    // deterministic safety net. The ONLY LLM "extra" kept is a rare denial retry.
 
-    // REPORT-SHAPE catcher (deterministic). A "here's the game plan: 1. … 2. …"
-    // reply reads like a document, not a text. Regenerate as warm prose.
-    //  - Single-topic: also strip any thread-bleed → one or two short sentences.
-    //  - Multi-topic: the user DID ask several things, so KEEP every part — just
-    //    force flowing prose (no numbered steps / headings / "game plan"). Do NOT
-    //    collapse to 1–2 sentences (that was dropping legit multi-part answers).
-    if (reply && UNIFIED_BREAKDOWN_RE.test(reply)) {
-      this.deps.logger.info({ userId, isMultiTopic }, 'ai.unified.breakdown_regen');
-      const override = isMultiTopic
-        ? `\n\nHARD OVERRIDE: rewrite as ONE warm, flowing text message — the way a friend texts back, not a document. Still answer EVERY part they asked, but in plain connected sentences: NO numbered steps ("1.", "2."), NO headings or bold section titles, NO "game plan"/"strategy:"/"here's the plan"/"Part 1", NO bullet points. Lead with warmth, keep it to a few sentences.`
-        : `\n\nHARD OVERRIDE: reply ONLY to the user's last message: "${input.text.replace(/"/g, "'")}". Answer just that — one or two short sentences, plain prose. Do NOT break their message into parts, do NOT summarize the conversation, do NOT mention earlier meals or an injection unless THIS message asks about them.`;
-      const focused = await gen(systemPrompt + override);
-      if (focused && !UNIFIED_BREAKDOWN_RE.test(focused)) {
-        reply = focused;
-      } else if (isMultiTopic) {
-        // Regen STILL report-shaped (flash won't stop listing). Deterministically
-        // strip the list/heading tail so warm prose ships — a numbered "game plan"
-        // never reaches the user. Prefer whichever draft yields more usable prose.
-        const strippedFocused = focused ? stripReportShape(focused) : '';
-        const strippedOrig = stripReportShape(reply);
-        const best = strippedFocused.length >= strippedOrig.length ? strippedFocused : strippedOrig;
-        if (best.length >= 40) reply = best;
-        else if (focused && focused.length > 0) reply = focused; // last-ditch: at least the regen
-      }
-    }
-
-    // CAPABILITY-DENIAL safety net (rare — the deterministic date/injection
-    // intercepts above cover the common cases). Regenerate once if the reply
-    // still claims to be an AI / lack access.
+    // Capability-denial is the one failure worth a retry (shipping "I'm an AI /
+    // I can't" is bad and can't be fixed deterministically). Rare — the date /
+    // injection / reminder intercepts above already answer capability questions.
     if (reply && UNIFIED_DENIAL_RE.test(reply)) {
       this.deps.logger.info({ userId }, 'ai.unified.denial_regen');
       const retry2 = await gen(systemPrompt +
@@ -3737,61 +3706,37 @@ CRITICAL RULES:
     }
     if (!reply) reply = 'I’m here — tell me a little more?';
 
-    // Ambiguous eaten foods, derived DETERMINISTICALLY from the message — the
-    // general guarantee that doesn't depend on the (flaky-on-complex-messages)
-    // extractor. The pending items to ASK about = whatever foodStepUnified pended
-    // OR, if it dropped them, what the message itself reports eating that's
-    // ambiguous. Either way the reply must ask about each and never assume a total.
+    // Report shape ("here's the game plan: 1. … 2. …") → strip to warm prose,
+    // deterministically (no regen). A numbered plan can never reach the user.
+    if (UNIFIED_BREAKDOWN_RE.test(reply)) {
+      const stripped = stripReportShape(reply);
+      if (stripped.length >= 40) {
+        reply = stripped;
+        this.deps.logger.info({ userId }, 'ai.unified.breakdown_stripped');
+      }
+    }
+
+    // Ambiguous/pending food → the reply may state NO protein number other than
+    // the real logged total + the goal (any other is an assumption), and it MUST
+    // ask about each pending item. Both enforced deterministically: strip a
+    // disallowed number, append the clarify if the ask is missing. No LLM regen.
     const eatenAmbig = isMultiTopic ? ambiguousEatenFoods(input.text) : null;
     const pendItems: string[] = (food && food.pending.length > 0 ? food.pending : eatenAmbig?.items) ?? [];
     const pendClarify: string | null = (food && food.clarify) || eatenAmbig?.clarify || null;
-
-    const realTotal = Math.round(todaysFood.protein_g);
-    const goal = user?.protein_goal_grams ?? null;
-
-    // ── NO-ASSUMED-PROTEIN guard (ambiguous/pending food) ────────────────────
-    // When an eaten food is ambiguous (unknown scoops/filling) the reply may
-    // mention ONLY two protein numbers that CAN'T be an assumption: the real
-    // logged total and the goal. ANY other gram figure — however phrased
-    // ("usually ~25-30g", "a sandwich is ~20-25g", "puts you around 50g") — is a
-    // guess about food we haven't logged. This replaces phrase-by-phrase total
-    // detection: regenerate once forbidding protein math, then deterministically
-    // STRIP any sentence that still carries a disallowed gram figure. Runs before
-    // the MUST-ASK guard so an appended clarify is never dropped by a regen.
-    if (pendItems.length > 0 && reply) {
+    if (pendItems.length > 0) {
+      const realTotal = Math.round(todaysFood.protein_g);
+      const goal = user?.protein_goal_grams ?? null;
       const allowed = [realTotal, ...(goal ? [goal] : [])];
       if (hasDisallowedProteinNumber(reply, allowed)) {
-        this.deps.logger.info({ userId, allowed }, 'ai.unified.assumed_protein');
-        const fixed = await gen(systemPrompt +
-          `\n\nHARD OVERRIDE: you do NOT know their protein intake yet — the ${pendItems.join(' and ')} are not logged (you don't know the scoops or what's in it). Do NOT estimate or count them, do NOT do any protein math, and state NO protein gram number except their goal${goal ? ` of ${goal}g` : ''}. Ask what you need to log them, then answer their planning warmly.`);
-        reply = fixed && !hasDisallowedProteinNumber(fixed, allowed) ? fixed : (stripAssumedProteinSentences(reply, allowed) || reply);
+        reply = stripAssumedProteinSentences(reply, allowed) || reply;
+        this.deps.logger.info({ userId }, 'ai.unified.assumed_protein_stripped');
       }
-    } else if (food && food.logged.length > 0 && reply && statesFalseConsumedTotal(reply, realTotal)) {
-      // Logged-food turn: allow advice numbers, only correct a WRONG stated total.
-      this.deps.logger.info({ userId, realTotal }, 'ai.unified.false_total');
-      const fixed = await gen(systemPrompt + `\n\nHARD OVERRIDE: their food log currently totals ${realTotal}g of protein today — that is the ONLY consumed/"so far today" total you may state. Keep everything else the same.`);
-      if (fixed && !statesFalseConsumedTotal(fixed, realTotal)) reply = fixed;
-    }
-
-    // MUST-ASK guard: when food is ambiguous/pending (a bare sandwich/shake we
-    // can't log accurately), the reply has to ASK about EVERY such item — not just
-    // have a "?" somewhere. The failure this fixes: the LLM asked about the shake
-    // but silently assumed the sandwich. We check each item is actually named in
-    // the reply; if any is missing we regenerate once demanding all of them, then
-    // append the deterministic clarify (covers every item) as a guaranteed last
-    // resort. So no ambiguous eaten food is ever assumed.
-    if (pendItems.length > 0 && pendClarify && reply) {
-      const keyword = (item: string): string =>
-        (item.trim().split(/\s+/).pop() || item).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const asksEach = (t: string): boolean =>
-        t.includes('?') && pendItems.every((p) => new RegExp(`\\b${keyword(p)}`, 'i').test(t));
-      if (!asksEach(reply)) {
-        this.deps.logger.info({ userId, pending: pendItems.length }, 'ai.unified.pending_ask_regen');
-        const asked = await gen(systemPrompt +
-          `\n\nHARD OVERRIDE: you must ASK about EACH of these before logging — never assume any of them: ${pendItems.join(', ')}. Include this exact question, woven in naturally: "${pendClarify.replace(/"/g, "'")}". Keep the rest warm and answer their other parts, and state NO protein gram number except their goal.`);
-        if (asked && asksEach(asked) && (pendItems.length === 0 || !hasDisallowedProteinNumber(asked, [realTotal, ...(goal ? [goal] : [])]))) reply = asked;
+      if (pendClarify) {
+        const keyword = (item: string): string =>
+          (item.trim().split(/\s+/).pop() || item).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const asksEach = reply.includes('?') && pendItems.every((p) => new RegExp(`\\b${keyword(p)}`, 'i').test(reply));
+        if (!asksEach) reply = `${reply} ${pendClarify}`.trim();
       }
-      if (!asksEach(reply)) reply = `${reply} ${pendClarify}`.trim();
     }
 
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});

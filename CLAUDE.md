@@ -8,6 +8,40 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `5d2130f` (PR #217 = ONE-pass reply); deploy = `fly deploy` grace-api, verify `/health`. NOTE: GitHub MCP dropped for two fixes (ff'd to `main` directly) then reconnected (#217 via PR).
 
+### 🔬 FULL-SYSTEM VALIDATION PLAYBOOK (delete user → onboard → verify)
+Use this to validate end-to-end from scratch. **Deploy the latest `main` FIRST**
+(`fly deploy` grace-api, confirm `/health`.version == HEAD) so you're testing
+current code, not an old build.
+- **DELETE the user (clean slate):** admin dashboard (`grace-admin-silk.vercel.app/admin`
+  → Users → open your number → **Delete user**), OR curl `DELETE
+  https://grace-api.fly.dev/admin/users/%2B<E164>` with `Authorization: Bearer
+  $ADMIN_TOKEN` (URL-encode `+` as `%2B`). `purgeUserData` wipes every child table
+  + user row + in-memory/today-food caches. **CAVEAT — not cleared by delete:**
+  Redis keys keyed by phone (`food:pending:`, `settings:session:`/`:code:`,
+  `paid:welcomed:`, `meal:rec:`, `daily_summary:`, `sched:`/`cadence:`,
+  `profile:replay:`). They don't block onboarding (that keys off the DB row), but
+  for a pristine test either flush them or, post-onboard, text "reset my food log"
+  to zero pending. (Possible enhancement: have `purgeUserData` also clear these —
+  needs the redis dep wired into UserService.)
+- **ONBOARD from scratch:** text Grace anything → in-chat flow (webhook.ts ~557,
+  gated on `SMS_ONBOARDING_ENABLED` default-on + `needsRegistration`). Slots in
+  order (`onboarding-flow.ts` L121): first_name → medication → medication_frequency
+  → injection day → timezone (AUTO from phone) → wake_sleep → dietary → consent →
+  completion sets `trial_start` (trial begins). VERIFY: no re-asks, warm/varied
+  wording, completion invites the FIRST food log.
+- **VERIFY features (the session's fixes + one-pass):** clear food ("2 eggs") logs;
+  ambiguous ("a sandwich") asks what's in it; portion-sensitive ("chicken and rice",
+  no amount) asks how much; protein shake asks scoops/brand; "2 eggs with salad"
+  asks about the salad; a portion answer ("one cup") → SHORT confirm, NO plan/history
+  leak; "what have I eaten today?" → clean log summary (after reset → "nothing logged
+  yet"); "reset my food log" → 0g; multi-topic planning msg mentioning ambiguous food
+  → asks, never assumes a total, no numbered "game plan"; "when's my next reminder"
+  → real schedule (no capability denial); "change my protein goal" → Settings link;
+  "dashboard" → link. Watch latency: replies should be fast (one Gemini pass now).
+- **VERIFY data surfaces:** admin `GET /admin/users/%2B<phone>/food-logs` (returns
+  `{items,…}`) + the dashboard reflect what was logged.
+
+
 **LATEST (PR #217) — unified reply collapsed to ONE Gemini pass + fast
 deterministic floors.** User ask: latency too high, system too complex, "trust the
 strong model, leave the most important guards, make them fast." The grounded path

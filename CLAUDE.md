@@ -6,7 +6,32 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `f4dda9d`+; deploy = `fly deploy` grace-api, verify `/health`.
+## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `7fbbfbe`, **DEPLOYED TO PROD**; deploy = `fly deploy` grace-api, verify `/health`.
+
+### 🚀 LIVE PROD STATE (deployed + activated 2026-07-07 by the user)
+- **`/health` == `7fbbfbe`** deployed. All this session's work is live.
+- **ACTIVE DB PROMPT = the Nudge-base prompt, version 61** (id `a7091aa6-e86c-42ed-85f4-05d39f8e5b6e`),
+  loaded from `services/api/prompts/grace-nudge-base.md` via `POST /admin/prompts` +
+  `PUT /admin/prompts/:id/activate`. **ROLLBACK to the old bloated prompt = re-activate
+  version 60, id `5cefa63f-95d7-41d6-bc9f-4df813a2dbad`.** (Admin GET/POST prompt cap
+  raised 10k→20k so the ~10.6k prompt fits.) This REPLACED the ~2500-line optimizer-grown
+  prompt with the tight Nudge base — the user's core directive.
+- **POST-TRIAL WIN-BACK is LIVE:** migration `20260707000001_post_trial_winback.sql` applied
+  (winback_stage + winback_last_sent_at columns exist) + `POST_TRIAL_WINBACK_ENABLED=true`.
+  5-stage expired-trial→paywall sequence (see its section below). NOTE: admin GET
+  `/admin/users/:phone` uses a fixed column projection that does NOT surface winback_* — so
+  checking those via the admin API returns []; verify columns via `information_schema` SQL instead.
+- **DAILY SUMMARY is the nightly night message (Option A):** `DAILY_SUMMARY_ENABLED=true`; the
+  Tue/Thu/Sun evening reminder now YIELDS to the summary when it will cover the night (has
+  logged data) — one night message/night, never a double; zero-log night → evening still fires.
+- Reply path is ONE Gemini pass + deterministic floors (PR #217); food-turn hallucination +
+  "Yum" repetition + inaccurate protein all fixed (f4dda9d); food-diary query + portion-answer
+  + salad-masking + clarify-echo + onboarding "Nice to meet you,." glitch all fixed & deployed.
+- Offline verification harness `full-system-verification.test.ts` locks every screenshot
+  scenario (IMG_6697…6717 + onboarding). 1988 api + 659 ai-core green at HEAD.
+- **OPEN / NEXT:** rotating-focus reminders (Nudge's TODAY'S FOCUS model — see below); watch
+  the live Nudge-base prompt A/B (rollback id above if worse); win-back HELP-intent reply
+  affordance (currently flows to the normal reply path).
 
 ### 🟢 NUDGE IS THE BASE (user directive, latest Nudge source studied 2026-07-07)
 User uploaded the actual Nudge code (`Nudge_Your_Wellness.zip`) and said: "the nudge

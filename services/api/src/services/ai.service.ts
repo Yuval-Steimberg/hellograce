@@ -3858,6 +3858,35 @@ CRITICAL RULES:
       return { logged, pending: [], removed: null };
     }
 
+    // PORTION ANSWER to a pending clarification ("One cup", "6 oz", "two cups",
+    // "a handful") → resolve the pending item(s) DETERMINISTICALLY by logging each
+    // with the stated amount. This must NOT depend on the extractor (which returns
+    // `none` for a bare amount) and must NEVER fall through to the grounded path —
+    // otherwise the portion turn re-opens earlier planning history and leaks it
+    // (prod IMG_6713: "One cup" produced a parents-dinner game plan instead of a
+    // log confirmation). Scoped tight: a SHORT amount-only reply that names no new
+    // food, so "a cup of rice too" (names a food) still goes through extraction.
+    if (
+      pending.length > 0 &&
+      hasExplicitQuantity(text) &&
+      !namesSpecificFood(text) &&
+      !FOOD_MUTATION_RE.test(text) &&
+      text.split(/\s+/).length <= 6
+    ) {
+      const amount = text.trim();
+      const logged: string[] = [];
+      for (const p of pending) {
+        const food = `${amount} ${p.item}`.replace(/\s+/g, ' ').trim();
+        const r = (await logFood.execute({ food }).catch(() => null)) as Record<string, unknown> | null;
+        if (r && r.ok !== false) logged.push(p.item);
+      }
+      await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+      if (logged.length > 0) {
+        this.deps.logger.info({ userId: input.userId, logged: logged.length }, 'ai.unified_food.portion_resolved');
+        return { logged, pending: [], removed: null };
+      }
+    }
+
     let extraction = await extractFood(
       this.deps.llm,
       this.deps.logger,

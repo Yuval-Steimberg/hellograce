@@ -499,6 +499,8 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     optimizersEnabled: env.OPTIMIZERS_ENABLED,
     pool,
     dailySummaryEnabled: env.DAILY_SUMMARY_ENABLED,
+    postTrialWinbackEnabled: env.POST_TRIAL_WINBACK_ENABLED,
+    publicWebUrl: env.PUBLIC_WEB_URL,
   });
 
   // Shared hot-reload routine — used by SIGHUP and the admin sync endpoint.

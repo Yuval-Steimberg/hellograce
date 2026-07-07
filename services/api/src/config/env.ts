@@ -330,6 +330,14 @@ const EnvSchema = z.object({
    *  on, every eligible user gets it unless individually disabled. Instant
    *  revert with `fly secrets set DAILY_SUMMARY_ENABLED=false`. */
   DAILY_SUMMARY_ENABLED: boolish(false),
+
+  /** POST_TRIAL_WINBACK_ENABLED (2026-07-07). Master gate for the post-trial
+   *  win-back sequence (spec Post_Trial_Winback.mmd — a SEPARATE system from
+   *  reminders + the morning "winback" variant: its own scheduler pass, own Redis
+   *  lock, own check_ins types, own users.winback_stage state). Default false =
+   *  dark launch: nothing sends until flipped on. Instant revert with
+   *  `fly secrets set POST_TRIAL_WINBACK_ENABLED=false`. */
+  POST_TRIAL_WINBACK_ENABLED: boolish(false),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

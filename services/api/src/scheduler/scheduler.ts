@@ -19,6 +19,16 @@ import {
   dailySummaryTargetMinutes,
   isInDailySummaryWindow,
 } from '../services/daily-summary.js';
+import {
+  nextWinbackStage,
+  isInWinbackTcpaWindow,
+  repliedRecently,
+  sentWinbackRecently,
+  isPaidUser,
+  buildWinbackMessage,
+  POST_TRIAL_WINBACK_STAGES,
+} from '../services/post-trial-winback.js';
+import { TRIAL_DAYS } from '../services/trial-info.js';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 const MIDDAY_DAYS = new Set([1, 3, 5]); // Mon, Wed, Fri
@@ -70,6 +80,13 @@ interface SchedulerDeps {
    *  reminders — its own tick() pass, own Redis lock, own check_ins type). When
    *  false/absent the pass no-ops entirely. Set via DAILY_SUMMARY_ENABLED. */
   dailySummaryEnabled?: boolean;
+  /** Master gate for the post-trial win-back sequence (SEPARATE system — its own
+   *  tick() pass, own Redis lock, own check_ins types, own users.winback_stage).
+   *  When false/absent the pass no-ops entirely. Set via POST_TRIAL_WINBACK_ENABLED. */
+  postTrialWinbackEnabled?: boolean;
+  /** Deployment web URL for the win-back paywall link (the sender also rewrites
+   *  graceglp.com → this host, so a default works too). */
+  publicWebUrl?: string;
 }
 
 export class Scheduler {
@@ -176,6 +193,105 @@ export class Scheduler {
     // from the reminder logic above — never touches processUser / cadence / the
     // injection state machine).
     await this.sendDailySummaries();
+    // Separate pass: post-trial win-back sequence (its OWN feature, fully isolated
+    // from reminders — only touches expired-trial, unpaid users, never processUser).
+    await this.sendPostTrialWinback();
+  }
+
+  /**
+   * Post-trial win-back — a SEPARATE pass (spec Post_Trial_Winback.mmd). Walks an
+   * expired-trial, unpaid user through the 5-stage escalation, once per stage,
+   * respecting the TCPA window + the 36h-gap + 6h-quiet guards. Dark-launched:
+   * no-ops unless `postTrialWinbackEnabled`. Own Redis lock (cross-machine safe),
+   * own check_ins types, advances users.winback_stage. Never touches reminders.
+   */
+  private async sendPostTrialWinback(): Promise<void> {
+    if (!this.deps.postTrialWinbackEnabled) return;
+    const pool = this.deps.pool;
+
+    let users: GraceUser[] = [];
+    try {
+      users = await this.deps.users.listActiveUsers(); // active + not paused + not blocked
+    } catch (err) {
+      this.deps.logger.warn({ err: (err as Error).message }, 'scheduler.winback.list_failed');
+      return;
+    }
+    const webUrl = this.deps.publicWebUrl ?? 'https://graceglp.com';
+
+    for (const user of users) {
+      try {
+        if (user.onboarding_state === 'in_progress') continue; // never interrupt signup
+        if (isPaidUser(user)) continue;                         // paid → sequence never reaches them
+        if ((user.winback_stage ?? 0) >= POST_TRIAL_WINBACK_STAGES.length) continue; // complete
+
+        const now = localNow(user.timezone || 'America/New_York');
+        // Guards (spec): TCPA 8am–9pm local, no user reply in 6h, no win-back in 36h.
+        if (!isInWinbackTcpaWindow(now.getHours())) continue;
+        if (repliedRecently(user, now)) continue;
+        if (sentWinbackRecently(user, now)) continue;
+
+        // Is the next stage time-due? (trial expired + inter-stage wait elapsed)
+        const due = nextWinbackStage(user, now, TRIAL_DAYS);
+        if (!due) continue;
+
+        // Cross-machine dedup — one send per user per stage. FAIL CLOSED (skip) on
+        // any Redis error so a hiccup can never double-send a win-back.
+        const lockKey = `winback:${user.phone}:${due.index}`;
+        const won = await this.deps.redis.set(lockKey, '1', 'EX', 7 * 82_800, 'NX').catch(() => null);
+        if (won !== 'OK') continue;
+
+        // Value stage wants trial stats (best-effort; a generic line if unavailable).
+        let meals: number | undefined;
+        let checkins: number | undefined;
+        if (due.stage.key === 'winback_value' && pool) {
+          meals = await this.countWinbackStat(pool, 'food_logs', user.phone);
+          checkins = await this.countWinbackStat(pool, 'check_ins', user.phone);
+        }
+
+        const upgradeUrl = `${webUrl.replace(/\/$/, '')}/upgrade?phone=${encodeURIComponent(user.phone)}`;
+        const body = buildWinbackMessage(due.stage.key, {
+          firstName: user.first_name && !user.first_name.startsWith('enc:') ? user.first_name : null,
+          upgradeUrl,
+          meals,
+          checkins,
+        });
+
+        try {
+          await this.deps.sender.send({ to: user.phone, body, channel: user.channel ?? 'imessage' });
+        } catch (sendErr) {
+          await this.deps.redis.del(lockKey).catch(() => {}); // let a later tick retry
+          throw sendErr;
+        }
+
+        // Advance the state machine + record the send.
+        await this.deps.users
+          .update(user.phone, {
+            winback_stage: due.index + 1,
+            winback_last_sent_at: new Date(),
+          } as Partial<GraceUser>)
+          .catch(() => {});
+        await this.deps.users
+          .recordCheckIn({ userId: user.phone, phone: user.phone, type: `winback_${due.stage.key}`, messageSent: body })
+          .catch(() => {});
+
+        this.deps.logger.info(
+          { phone: user.phone, stage: due.index + 1, key: due.stage.key },
+          'scheduler.winback.sent',
+        );
+      } catch (err) {
+        this.deps.logger.warn({ err: (err as Error).message, phone: user.phone }, 'scheduler.winback.error');
+      }
+    }
+  }
+
+  /** Best-effort row count for a user's trial-engagement stat (win-back value stage). */
+  private async countWinbackStat(pool: Pool, table: 'food_logs' | 'check_ins', phone: string): Promise<number | undefined> {
+    try {
+      const { rows } = await pool.query<{ n: string }>(`SELECT COUNT(*)::text AS n FROM ${table} WHERE user_id = $1`, [phone]);
+      return Number(rows[0]?.n ?? 0);
+    } catch {
+      return undefined;
+    }
   }
 
   /**

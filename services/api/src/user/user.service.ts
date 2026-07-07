@@ -78,6 +78,13 @@ export interface GraceUser {
   is_paid: boolean;
   is_pro: boolean;
   trial_start: Date | null;
+  /** Post-trial win-back sequence state (2026-07-07, migration
+   *  20260707000001_post_trial_winback.sql). 0 = none sent, 1..5 = stages sent,
+   *  5 = sequence complete. Undefined (pre-migration) is treated as 0. */
+  winback_stage?: number | null;
+  /** When the last post-trial win-back SMS went out — drives the inter-stage
+   *  waits and the 36h min-gap guard. */
+  winback_last_sent_at?: Date | null;
   rlhf_enabled: boolean;
   /** Per-user opt-out for the nightly end-of-day summary (SEPARATE from
    *  reminders). Default TRUE in the DB, so once DAILY_SUMMARY_ENABLED is on,

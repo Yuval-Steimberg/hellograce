@@ -486,6 +486,7 @@ Give them a quick practical plan and move on.`,
 import { tryFoodLogFastResponse } from './food-log-fast.js';
 import { tryWeightLogFastResponse } from './weight-log-fast.js';
 import { tryQueryFast } from './query-fast.js';
+import { detectTemporalQuery, buildLocalTimeReply, buildDayResetReply } from './temporal-query.js';
 import { classifyIntentLLM } from './intent-llm.js';
 import { isWaterQuery, isWaterLog, parseWaterOz, WATER_GOAL_MIN_OZ, WATER_GOAL_MAX_OZ } from '../nutrition/water.js';
 import { getTodaysWaterOz, renderWaterTotal, logWater } from './water-log.js';
@@ -3527,6 +3528,27 @@ CRITICAL RULES:
       this.deps.logger.info({ userId }, 'ai.unified.food_diary.served');
       this.persistLatency(userId, 'food_diary_today', totalMs, lat.snapshot(), input.text, reply);
       return { text: reply, confidence: 'high', intent: 'food_diary_today', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+    }
+
+    // ── LOCAL TIME / DAY-RESET → deterministic, from the real timezone ──────────
+    // "what is my local time?" / "when does my diary reset?" are FACTS Grace knows
+    // (the user's timezone, corrected from their phone number, drives the local
+    // clock). Prod IMG_6720/6721: the LLM hedged ("I don't have access to your
+    // device's clock") AND gave New York time for an Israeli number. Answer from
+    // the temporal context, never a model guess.
+    if (input.media.length === 0) {
+      const tq = detectTemporalQuery(input.text);
+      if (tq) {
+        const reply = tq === 'local_time'
+          ? buildLocalTimeReply(user?.timezone ?? null)
+          : buildDayResetReply(user?.timezone ?? null);
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId, tq }, 'ai.unified.temporal_query.served');
+        this.persistLatency(userId, `temporal_${tq}`, totalMs, lat.snapshot(), input.text, reply);
+        return { text: reply, confidence: 'high', intent: `temporal_${tq}`, toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      }
     }
 
     // Nudge food step (extractFoodItems + planning guard): a specific meal logs

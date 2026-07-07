@@ -5,6 +5,7 @@ import { USER_DAY_CTE, userDayExpr, isCurrentUserDay, computeUserLoggingDay } fr
 import { deriveMissingTargets } from '../nutrition/derive-targets.js';
 import { getDailyWaterHistory as getDailyWaterHistoryQuery } from '../services/water-log.js';
 import { recordDoseEvent, getDoseEvents } from '../services/medication-timeline.js';
+import { timezoneFromPhone } from '../services/timezone-parse.js';
 
 export interface GraceUser {
   id: string;
@@ -351,7 +352,7 @@ export class UserService {
       );
       const u = this.decryptUser(rows[0]!);
       this.cacheUser(u);
-      return u;
+      return this.correctTimezoneFromPhone(u);
     }
 
     const { rows } = await this.pool.query<GraceUser>(
@@ -364,7 +365,30 @@ export class UserService {
     );
     const u = this.decryptUser(rows[0]!);
     this.cacheUser(u);
-    return u;
+    return this.correctTimezoneFromPhone(u);
+  }
+
+  /**
+   * The DB default timezone is a blind 'America/New_York'. Derive the REAL zone
+   * from the phone's country/area code (e.g. +972 → Asia/Jerusalem, +44 →
+   * Europe/London) so local time, the diary's midnight reset, reminders, and the
+   * daily summary are all on the user's actual clock — including DST/summer time,
+   * which the IANA zone handles automatically. Self-healing: runs only while the
+   * timezone is still the default, so it corrects existing users on their next
+   * message and NEVER overrides a real (non-default) setting. One UPDATE at most.
+   */
+  private async correctTimezoneFromPhone(u: GraceUser): Promise<GraceUser> {
+    if (u.timezone && u.timezone !== 'America/New_York') return u; // real setting → leave it
+    const tz = timezoneFromPhone(u.phone);
+    if (!tz || tz === u.timezone) return u; // no better guess (or already NY-from-NY-number)
+    try {
+      await this.pool.query(`UPDATE users SET timezone = $2, updated_at = now() WHERE phone = $1`, [u.phone, tz]);
+      const next = { ...u, timezone: tz };
+      this.cacheUser(next);
+      return next;
+    } catch {
+      return u; // best-effort — never block a message on this
+    }
   }
 
   /**

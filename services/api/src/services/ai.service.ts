@@ -165,6 +165,36 @@ const FOOD_DIARY_QUERY_RE =
 const FOOD_MUTATION_RE =
   /\b(remove|delete|undo|scratch that|take (?:that|it|the)\b|didn'?t (?:actually |really )?(?:eat|have|mean)|make it|change (?:it|that) to|actually (?:it was|that was|only|just)|correct(?:ion)?|not \d)\b/i;
 
+// A QUESTION asking WHAT the user has eaten / their intake so far — must be
+// answered from the LOG deterministically, never the LLM reading conversation
+// history. Tolerates a leading greeting ("Good morning, …") and BOTH word orders
+// ("what have I eaten" / "what I have eaten"). The anchored query-fast summary
+// regex misses a greeting prefix + this word order (prod IMG_6710: after a reset,
+// "Good morning, what I have eaten today?" was answered by the LLM, which dragged
+// the PRE-RESET shake+sandwich back up and offered to re-add them). Nudge answers
+// it plainly from the snapshot → "Nothing is logged yet for today."
+const FOOD_DIARY_ASK_RE =
+  /\bwhat\s+(?:have\s+i|i\s+have|did\s+i|i)\s+(?:eaten|ate|eat|had|logged|consumed)\b|\bwhat(?:'?s| is| has been)\s+(?:logged|(?:in|on)\s+my\s+(?:food\s+)?log)\b|\bhow\s+(?:much|many)\s+(?:protein|calories?|cals?|kcal)\s+(?:have\s+i|i\s+have|did\s+i|i)\s+(?:had|eaten|consumed|logged|eat|ate)\b|\b(?:show|list|summari[sz]e|tell\s+me|recap)\s+(?:me\s+)?(?:my|today'?s)\s+(?:food|meals?|intake|log|eating|diet|day)\b/i;
+// If the SAME message also asks for a recommendation / plan, it's not a pure
+// diary read → let the full grounded path answer every part (the snapshot rule
+// keeps its intake grounded). A greeting alone does NOT disqualify it.
+const FOOD_RECO_OR_PLAN_RE =
+  /\b(what should i|what can i|any (?:idea|ideas|suggestion|suggestions)|recommend|suggest|plan|for (?:breakfast|lunch|dinner|a snack)|help me|before dinner)\b/i;
+
+/**
+ * True when a message is a QUESTION about what the user has eaten / their intake
+ * today — answered deterministically from the food log, never the LLM reading
+ * conversation history. Covers any phrasing/word order ("what have I eaten",
+ * "what I have eaten", "what did I eat", "how much protein have I had",
+ * "show my food today") with or without a leading greeting. A message that ALSO
+ * asks for a recommendation/plan, or is a mutation (remove/undo), is NOT a pure
+ * diary read → false (the grounded path answers it, still snapshot-bound).
+ */
+export function isFoodDiaryQuery(text: string): boolean {
+  const t = text ?? '';
+  return FOOD_DIARY_ASK_RE.test(t) && !FOOD_MUTATION_RE.test(t) && !FOOD_RECO_OR_PLAN_RE.test(t);
+}
+
 // Split a multi-part question ("can I drink alcohol AND how much protein AND why
 // is my weight") into its parts so the reply can be told to answer EVERY one.
 // Only fires on a question-shaped message with a conjunction or multiple "?",
@@ -3478,6 +3508,25 @@ CRITICAL RULES:
       }
     } catch (err) {
       this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.unified.query_fast.error');
+    }
+
+    // ── FOOD-DIARY QUERY → answered from the LOG, never conversation history ──
+    // "what have I eaten today?" (any phrasing/word order, with or without a
+    // greeting) is answered DETERMINISTICALLY from the authoritative day total —
+    // the same per-local-day window everything else uses. After a reset / on a new
+    // day the log is 0g → a clean "Nothing logged yet today", NEVER a
+    // reconstruction of pre-reset mentions or an offer to re-add them (prod
+    // IMG_6710). A message that ALSO asks for a recommendation/plan falls through
+    // to the grounded path (which answers every part, intake still snapshot-bound).
+    if (isFoodDiaryQuery(input.text) && input.media.length === 0) {
+      const s = todaysFoodPre;
+      const reply = renderDailyFoodSummary(s.items, Math.round(s.protein_g), Math.round(s.calories));
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+      const totalMs = Date.now() - t0;
+      this.deps.logger.info({ userId }, 'ai.unified.food_diary.served');
+      this.persistLatency(userId, 'food_diary_today', totalMs, lat.snapshot(), input.text, reply);
+      return { text: reply, confidence: 'high', intent: 'food_diary_today', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
     }
 
     // Nudge food step (extractFoodItems + planning guard): a specific meal logs
@@ -6943,6 +6992,15 @@ CRITICAL RULES:
           // categorize" trigger; the running totals above are enough.
           lines.push(`Foods logged today: ${formatAggregatedInline(aggregateFoodItems(f.items), 10)}`);
         }
+        // The food log is the ONLY source of truth for intake. If the user asks
+        // what they've eaten / their intake / totals today, answer ONLY from the
+        // lines above. When nothing is logged (0g, no foods), say plainly that
+        // nothing is logged yet today — NEVER reconstruct meals from earlier
+        // messages, from something they "mentioned", or from before a reset, and
+        // never offer to add past-mentioned food back in (prod IMG_6710).
+        lines.push(
+          `INTAKE SOURCE OF TRUTH: use ONLY the "Total protein TODAY"/"Foods logged today" lines above for what the user has eaten today. If nothing is logged, say so plainly; do NOT infer intake from conversation history or a reset, and never offer to re-add previously mentioned food.`,
+        );
       }
 
       // PROGRESS SNAPSHOT — derived dashboard signals so replies are grounded in

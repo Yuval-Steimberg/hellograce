@@ -435,7 +435,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     return { prompts: rows };
   });
 
-  const PromptBodySchema = z.object({ content: z.string().min(20).max(10_000) });
+  const PromptBodySchema = z.object({ content: z.string().min(20).max(20_000) });
 
   app.post('/admin/prompts', async (req) => {
     const parsed = PromptBodySchema.safeParse(req.body);

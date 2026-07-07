@@ -6,7 +6,48 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `5d2130f` (PR #217 = ONE-pass reply); deploy = `fly deploy` grace-api, verify `/health`. NOTE: GitHub MCP dropped for two fixes (ff'd to `main` directly) then reconnected (#217 via PR).
+## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `f4dda9d`+; deploy = `fly deploy` grace-api, verify `/health`.
+
+### 🟢 NUDGE IS THE BASE (user directive, latest Nudge source studied 2026-07-07)
+User uploaded the actual Nudge code (`Nudge_Your_Wellness.zip`) and said: "the nudge
+system working better, this needs to be our base; our features layer on top." Key
+findings from `supabase/functions/handle-inbound-sms/index.ts` (2647 lines):
+- **Nudge's reply = ONE call** `[system, ...history, latest]`, `google/gemini-3-flash-preview`
+  via Lovable gateway (Grace can't use that gateway — stays on Google `gemini-2.5-flash`),
+  `max_tokens 500, temp 0.8`. Food is a SEPARATE extraction that updates a snapshot;
+  the reply READS the snapshot (never free-writes food). A pending portion appends a
+  "CLARIFY PENDING PORTION" line to the system prompt. **Grace's `runUnifiedReply` is
+  already this shape** — the remaining gap was the bloated prod prompt + extra guard calls.
+- **Nudge's `buildSystemPrompt` (~185 lines) literally starts "You are Grace"** — Grace's
+  code-default `GRACE_SYSTEM_PROMPT` shares its origin. Nudge's CURRENT version adds:
+  a length hierarchy (160/320/640), NO-EMOJI GSM-7 rule + ≤1 "!", stronger MEMORY/
+  ATTRIBUTION/CORRECTION rules, a "make it feel like a conversation" section, and
+  ASSESS-BEFORE-ESCALATE + CONTEXTUAL-TRIAGE for symptoms. Nudge does NOT do reminders;
+  **Grace DOES (the one deviation to keep).**
+- **`services/api/prompts/grace-nudge-base.md`** (NEW, ~1600 tokens) = Nudge's current
+  prompt adapted for Grace (its snapshot labels → Grace's "Total protein TODAY"/"Foods
+  logged today"; reminder ownership added; keeps graceglp.com/settings; light-emoji kept).
+  SUPERSEDES `grace-lean-v1.md`. **A/B live via `POST /admin/prompts {content}` →
+  `PUT /admin/prompts/:id/activate`** (hot-reload, no deploy); rollback = re-activate the
+  prior version. Or `POST /admin/prompts/sync-from-code` after making it GRACE_SYSTEM_PROMPT.
+- **REMINDERS content model (from `send-scheduled-checkin/index.ts` — apply next):** each
+  check-in has a rotating **TODAY'S FOCUS** (hydration / movement / mindset / self_compassion /
+  non_scale_win / rest_sleep / side_effect_care / nutrition / connection), WEIGHTED by the
+  user's goal, and **TOPIC DISCIPLINE**: stay on that focus, do NOT default to protein/food
+  every time, do NOT recite numbers unless the focus is nutrition, no "and don't forget your
+  protein" tacked on. It's a STANDALONE reminder — context shapes the vibe, never quote/
+  continue the last chat, no follow-up question about it. Short, no "!", no bullets, no
+  self-intro. Injection day → gentle water/rest/site-rotation, avoid macro talk. Grace's
+  `message-generator.ts` currently over-indexes on protein → adopt the rotating focus.
+
+### ⚠️ Prod food bugs fixed this session (IMG_6716/6717, f4dda9d):
+Food-turn hallucination ("black coffee" invented on a portion answer) + repetitive "Yum"
+→ removed the warm-rephrase LLM call, ship deterministic `formatFoodReply` (accurate total,
+seed-varied openers, no invention). Inaccurate protein (2 eggs+salad = 3g) → extractor now
+told to SPLIT "X with Y" so the eggs log (12g) + salad pends. Onboarding "Nice to meet you,."
+name glitch + slowness still OPEN.
+
+## 👉 (prior) SESSION SUMMARY — `main` HEAD `5d2130f` (PR #217 = ONE-pass reply). NOTE: GitHub MCP dropped for two fixes (ff'd to `main` directly) then reconnected (#217 via PR).
 
 ### 🔬 FULL-SYSTEM VALIDATION PLAYBOOK (delete user → onboard → verify)
 Use this to validate end-to-end from scratch. **Deploy the latest `main` FIRST**

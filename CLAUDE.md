@@ -6,9 +6,30 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `942cc19` (food-diary fix); deploy = `fly deploy` grace-api, verify `/health`. NOTE: GitHub MCP disconnected mid-session so this fix was fast-forwarded to `main` directly (no PR); prior fixes #212–#216 went via PR.
+## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `8f7ccd3`; deploy = `fly deploy` grace-api, verify `/health`. NOTE: GitHub MCP disconnected mid-session so the last two fixes were fast-forwarded to `main` directly (no PR); prior fixes #212–#216 went via PR.
 
-**LATEST — "what have I eaten today" answered from the LOG, never conversation
+**LATEST — a portion answer resolves pending food deterministically (no history
+leak).** Prod IMG_6713: user answered "One cup" to a salad portion Q; Grace logged
+it but dumped a numbered "plan for the rest of the day … parents' dinner tonight:
+1. …" — leaking the earlier Friday-parents planning into a portion reply. Root
+cause: a bare amount ("One cup") has no food word → `extractFood` returns
+none/query → `foodSpanFromConsumption` null → `foodStepUnified` returned null →
+turn fell to the GROUNDED path (fed FULL history at `effHistory = history`) → LLM
+re-opened the planning thread. Fix (`foodStepUnified`): a short amount-only reply
+while a portion is pending now logs each pending item with the stated amount
+DETERMINISTICALLY (no extractor, no history, no grounded path); scoped out when it
+names a new food / is a mutation / >6 words / has no amount. NOTE: current main
+already blocked the *shape* two other ways (`UNIFIED_BREAKDOWN_RE` matches "here
+is your plan … 1."; the deterministic food path carries no history), so IMG_6713
+was an OLDER build — but this closes the underlying leak path. **USER FEEDBACK
+(important): the accumulated guards/intercepts have made the reply system too
+complex; they want a SIMPLER consolidated design. The direction: food logging is a
+side-effect; a food/portion turn ALWAYS gets a short snapshot-based confirmation
+with NO conversation history; only a genuine standalone question uses the LLM
+(bounded history). Consider consolidating the food-reply branches in
+`runUnifiedReply` toward that single invariant.** 1945 api + 659 ai-core green.
+
+**"what have I eaten today" answered from the LOG, never conversation
 history.** Prod IMG_6710: after a reset, "Good morning, what I have eaten today?"
 was answered by the grounded LLM reading history → it dragged the PRE-RESET
 shake+sandwich back up and offered to re-add them. Nudge (IMG_6711/6712) answers

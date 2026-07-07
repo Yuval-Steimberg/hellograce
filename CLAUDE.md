@@ -6,9 +6,31 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-06) — current `main` HEAD `eaf025e` (= PR #215); deploy = `fly deploy` grace-api, verify `/health`
+## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `942cc19` (food-diary fix); deploy = `fly deploy` grace-api, verify `/health`. NOTE: GitHub MCP disconnected mid-session so this fix was fast-forwarded to `main` directly (no PR); prior fixes #212–#216 went via PR.
 
-**LATEST (PR #215) — clarification never echoes the whole message as the food
+**LATEST — "what have I eaten today" answered from the LOG, never conversation
+history.** Prod IMG_6710: after a reset, "Good morning, what I have eaten today?"
+was answered by the grounded LLM reading history → it dragged the PRE-RESET
+shake+sandwich back up and offered to re-add them. Nudge (IMG_6711/6712) answers
+plainly: "Nothing is logged yet for today." Root cause: a food-diary QUESTION had
+no deterministic handler in the unified path; query-fast's summary regex is
+anchored (^…$) so a greeting prefix ("Good morning,") + the "what I have eaten"
+word order both miss it → fell to the grounded LLM (which reconstructs from
+history). **General fix (whole class):** (1) new exported `isFoodDiaryQuery(text)`
+— matches ANY phrasing/word order of "what have I eaten / what did I eat / how
+much protein have I had / show my food today", greeting-tolerant; excludes
+recommendations/plans + mutations. (2) Deterministic intercept in `runUnifiedReply`
+(after query-fast, before the food step) answers from `getTodaysFoodSummary` via
+`renderDailyFoodSummary` (per-local-day window) → empty log = "Nothing logged yet
+today", never a reconstruction. (3) Grounded-prompt hardening (closes the class
+for any phrasing the regex misses AND multi-topic turns): the "Total protein
+TODAY"/"Foods logged today" lines are declared the ONLY source of truth for
+intake — never infer from history/a reset, never offer to re-add mentioned food.
+Tests: `food-diary-query.test.ts` (18 phrasings). Verified end-to-end on IMG_6710.
+**1945 api + 659 ai-core green; typecheck + build clean. NOT deployed — `fly
+deploy` grace-api, verify `/health`. No migration/env.**
+
+**PR #215 — clarification never echoes the whole message as the food
 name.** Prod IMG_6709 (same Friday-parents message): reply asked "…how many scoops
 was the **I ate pretty light, just a protein shake and a sandwich, and I still
 feel like I need more protein**, or what brand and size?" — the RAW consumption

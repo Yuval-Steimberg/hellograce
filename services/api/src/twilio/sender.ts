@@ -258,6 +258,13 @@ export function sanitizeOutbound(input: string, logger?: Logger): string {
     text = /^[a-z]/.test(deOrphaned) ? deOrphaned.charAt(0).toUpperCase() + deOrphaned.slice(1) : deOrphaned;
   }
 
+  // Mid-sentence orphan-comma repair (2026-07-07) — when a name is stripped from
+  // "Nice to meet you, <name>! …", the gap leaves ", ." / ", !" (prod IMG_6716:
+  // "Nice to meet you,. 😊"). A comma directly followed by sentence-ending
+  // punctuation is always wrong → collapse to just the terminator. Also drop a
+  // space that ends up before a comma ("you , what" → "you, what").
+  text = text.replace(/,\s*([.!?])/g, '$1').replace(/\s+,/g, ',');
+
   return text;
 }
 

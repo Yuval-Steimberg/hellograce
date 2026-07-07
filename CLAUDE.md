@@ -6,9 +6,29 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `8f7ccd3`; deploy = `fly deploy` grace-api, verify `/health`. NOTE: GitHub MCP disconnected mid-session so the last two fixes were fast-forwarded to `main` directly (no PR); prior fixes #212–#216 went via PR.
+## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `5d2130f` (PR #217 = ONE-pass reply); deploy = `fly deploy` grace-api, verify `/health`. NOTE: GitHub MCP dropped for two fixes (ff'd to `main` directly) then reconnected (#217 via PR).
 
-**LATEST — a portion answer resolves pending food deterministically (no history
+**LATEST (PR #217) — unified reply collapsed to ONE Gemini pass + fast
+deterministic floors.** User ask: latency too high, system too complex, "trust the
+strong model, leave the most important guards, make them fast." The grounded path
+had grown to a cascade of up to ~7 SEQUENTIAL Gemini calls/turn (main reply +
+relevance judge + 5 LLM regens: relevance/report-shape/assumed-protein/false-total/
+must-ask). Now ONE reply call + DETERMINISTIC-only floors (no extra LLM): report
+shape → `stripReportShape`; ambiguous/pending food → `stripAssumedProteinSentences`
+(only realTotal+goal allowed) + append `pendClarify` if the ask is missing; the
+ONE LLM "extra" kept is a rare capability-denial retry (can't fix deterministically,
+shipping "I'm an AI" is bad). Removed the relevance judge + all 5 LLM regens — their
+deterministic equivalents remain, so NO fix regressed (no assumed number, no plan
+shape, every pending food still asked). Worst-case chat/multi-topic: ~7 calls → 1.
+Net −55 lines, one file (`runUnifiedReply` tail). UNTOUCHED: `foodStepUnified`
+(salad/shake ambiguity, portion resolution, clarify-echo, backstop), the diary
+intercept, and the cheap pre-LLM intercepts (crisis/hypo/settings/reminders). Food
+turn path unchanged (extraction + one guarded warm call). **OPEN (user flagged, NOT
+done — too risky blind): the master system prompt is still ~2500 lines ("too many
+guards off the prompt"); tightening it to a Nudge-size accurate prompt needs a live
+A/B, do it carefully next.** 1945 api + 659 ai-core green.
+
+**A portion answer resolves pending food deterministically (no history
 leak).** Prod IMG_6713: user answered "One cup" to a salad portion Q; Grace logged
 it but dumped a numbered "plan for the rest of the day … parents' dinner tonight:
 1. …" — leaking the earlier Friday-parents planning into a portion reply. Root

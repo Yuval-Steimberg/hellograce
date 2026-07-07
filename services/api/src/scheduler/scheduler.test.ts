@@ -113,6 +113,9 @@ function buildHarness(
     proteinHistory?: Array<{ day: string; protein_g: number; calories: number; item_count: number }>;
     /** Mocked today's food summary (evening context). */
     todaySummary?: { protein_g: number; calories: number; items: string[] };
+    /** Enable the nightly daily-summary coordination (Option A). When set, a pool
+     *  is wired so the evening pass can check whether the summary covers tonight. */
+    dailySummaryEnabled?: boolean;
   } = {},
 ): Harness {
   let user: GraceUser = { ...initial };
@@ -133,6 +136,9 @@ function buildHarness(
     getDailyProteinHistory: async () => opts.proteinHistory ?? [],
     getTodaysFoodSummary: async () => opts.todaySummary
       ?? { protein_g: 0, calories: 0, items: [], items_detailed: [] },
+    // Used by gatherDailySummaryData (daily-summary coordination in the evening pass).
+    getRecentSymptomEpisodes: async () => [],
+    getWeightHistory: async () => [],
   } as unknown as UserService;
 
   const sender = {
@@ -179,7 +185,14 @@ function buildHarness(
     },
   } as unknown as import('ioredis').Redis;
 
-  const scheduler = new Scheduler({ users, sender, generator, logger, redis });
+  // Pool wired only for the daily-summary coordination tests. Empty rows for all
+  // best-effort reads, so hasLoggedData is driven purely by getTodaysFoodSummary.
+  const pool = { query: async () => ({ rows: [] }) } as unknown as import('pg').Pool;
+  const scheduler = new Scheduler(
+    opts.dailySummaryEnabled
+      ? { users, sender, generator, logger, redis, pool, dailySummaryEnabled: true }
+      : { users, sender, generator, logger, redis },
+  );
 
   return {
     scheduler,
@@ -417,6 +430,40 @@ describe('Scheduler — evening reminder', () => {
       new Date(Date.UTC(2026, 4, 20, 0, 30)),
       new Date(Date.UTC(2026, 4, 20, 0, 59)),
     );
+    expect(h.generateCalls.filter((c) => c.type === 'evening').length).toBe(1);
+  });
+
+  it('Option A: SKIPS the evening reminder when the nightly summary covers tonight', async () => {
+    // Same Tuesday evening window, but the daily summary is enabled AND the user
+    // logged food today → the summary IS the night message, so no evening text.
+    const u = makeUser({
+      wake_time: '08:00',
+      sleep_time: '22:00',
+      timezone: 'America/New_York',
+      last_morning_sent_at: new Date('2026-05-19T12:00:00Z'),
+      last_reply_at: new Date('2026-05-19T13:00:00Z'),
+    });
+    const h = buildHarness(u, {
+      dailySummaryEnabled: true,
+      todaySummary: { protein_g: 60, calories: 800, items: ['eggs'] }, // logged data
+    });
+    await walkMinutes(h.scheduler, new Date(Date.UTC(2026, 4, 20, 0, 30)), new Date(Date.UTC(2026, 4, 20, 0, 59)));
+    expect(h.generateCalls.filter((c) => c.type === 'evening').length).toBe(0);
+  });
+
+  it('Option A: STILL fires the evening reminder on a zero-log night (summary will not send)', async () => {
+    const u = makeUser({
+      wake_time: '08:00',
+      sleep_time: '22:00',
+      timezone: 'America/New_York',
+      last_morning_sent_at: new Date('2026-05-19T12:00:00Z'),
+      last_reply_at: new Date('2026-05-19T13:00:00Z'),
+    });
+    const h = buildHarness(u, {
+      dailySummaryEnabled: true,
+      todaySummary: { protein_g: 0, calories: 0, items: [] }, // nothing logged → summary skips
+    });
+    await walkMinutes(h.scheduler, new Date(Date.UTC(2026, 4, 20, 0, 30)), new Date(Date.UTC(2026, 4, 20, 0, 59)));
     expect(h.generateCalls.filter((c) => c.type === 'evening').length).toBe(1);
   });
 

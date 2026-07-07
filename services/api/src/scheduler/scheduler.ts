@@ -673,6 +673,32 @@ export class Scheduler {
       // while long-silent users are spared. (2026-07-05: was engaged-today only.)
       (engagedToday || silentDays < 1)
     ) {
+      // Coordinate with the nightly daily summary (2026-07-07, Option A): the
+      // summary IS the night message. When it's enabled, the user is opted in,
+      // and they have data to recap tonight, SKIP the evening wind-down so there's
+      // never a double night text. On a zero-log night the summary won't send, so
+      // the evening reminder still fires — the user always gets exactly one night
+      // message. Fails toward SENDING the reminder (never suppress on a read error).
+      let summaryCoversNight = false;
+      if (this.deps.dailySummaryEnabled && user.daily_summary_enabled !== false && this.deps.pool) {
+        try {
+          const data = await gatherDailySummaryData(
+            { users: this.deps.users, pool: this.deps.pool },
+            user,
+            localNow(user.timezone || 'America/New_York'),
+          );
+          summaryCoversNight = hasLoggedData(data);
+        } catch {
+          summaryCoversNight = false;
+        }
+      }
+      if (summaryCoversNight) {
+        // Mark the evening slot resolved for today so we don't re-gather every
+        // minute of the window; the summary pass sends the actual night message.
+        this.deps.logger.info({ phone: user.phone }, 'scheduler.evening_skipped_for_daily_summary');
+        await this.deps.users.update(user.phone, { last_evening_sent_at: new Date() }).catch(() => {});
+        return;
+      }
       if (!user.last_evening_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_evening_sent_at))) !== todayStr) {
         await this.sendAndRecord(user, 'evening', { lowMoodMode: user.low_mood_mode ?? false });
         await this.deps.users.update(user.phone, { last_evening_sent_at: new Date() });

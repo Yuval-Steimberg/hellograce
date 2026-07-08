@@ -223,7 +223,7 @@ export class GeminiProvider implements LLMProvider {
     // caching to be billed at the cached rate; we set the floor at 2500 chars
     // to stay comfortably above the minimum on every cached call.
     let cachedContentName: string | null = null;
-    if (systemInstruction && systemInstruction.length > 2500 && !req.useGoogleSearch) {
+    if (systemInstruction && systemInstruction.length > 2500 && !req.useGoogleSearch && !req.skipContextCache) {
       cachedContentName = await this.getOrCreateCachedContent(systemInstruction, modelName);
     }
 

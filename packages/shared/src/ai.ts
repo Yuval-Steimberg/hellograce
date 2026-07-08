@@ -227,6 +227,16 @@ export interface LLMRequest {
    *  output and lets the caller trust the parsed shape. Supersedes
    *  responseFormat — when schema is present, the response IS JSON. */
   responseSchema?: ResponseSchema;
+  /** Skip Gemini CONTEXT caching (cachedContents) for this request. Set it on a
+   *  call whose systemInstruction is rebuilt per-message (e.g. the grounded reply
+   *  — it embeds the current time, the user's profile, and recalled memories), so
+   *  its hash differs every call and can NEVER reuse a cached object. Attempting
+   *  to cache it only pays a wasted createCachedContent round-trip, leaks an
+   *  orphaned 1-hour cached object, and evicts the single cache slot that a
+   *  static prompt (the food extractor) could actually reuse. The model receives
+   *  the identical systemInstruction either way, so this is purely a
+   *  latency/cost fix with NO effect on output. */
+  skipContextCache?: boolean;
 }
 
 /** Minimal JSON Schema subset that maps cleanly to Gemini's responseSchema

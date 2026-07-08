@@ -3714,7 +3714,12 @@ CRITICAL RULES:
     // chaos in the 2026-07-04 PM screenshots). temp 0.8 / 500 / thinking off.
     const gen = async (sys: string): Promise<string> => {
       const r = await Promise.race([
-        this.deps.llm.generate({ messages: baseMessages(sys), temperature: 0.8, maxOutputTokens: 500, skipCache: true, disableThinking: true }),
+        // skipContextCache: the grounded prompt is rebuilt every message (current
+        // time + per-user profile + recalled memories), so a cachedContents object
+        // could never be reused — attempting it only wastes a round-trip and evicts
+        // the extractor's reusable cache. Identical systemInstruction reaches the
+        // model, so this is latency/cost-only, no output change.
+        this.deps.llm.generate({ messages: baseMessages(sys), temperature: 0.8, maxOutputTokens: 500, skipCache: true, skipContextCache: true, disableThinking: true }),
         new Promise<{ text: string } | null>((res) => setTimeout(() => res(null), UNIFIED_GEN_TIMEOUT_MS)),
       ]).catch(() => null);
       return r ? enforceFormat(r.text ?? '', { userMessage: input.text }).text.trim() : '';

@@ -52,6 +52,32 @@ export function isPortionSensitiveFood(item: string): boolean {
   return PORTION_SENSITIVE_RE.test(item ?? '');
 }
 
+// A PRECISE amount — a number, number-word, or a real measuring unit — is enough
+// to log accurately. A bare SIZE word ("small", "large") or a VAGUE quantifier
+// ("some", "a few", "a bit") is deliberately NOT precise: "small yogurt" and
+// "some crackers" still need a quick confirm. Checked against the item label +
+// its serving_size together.
+const PRECISE_AMOUNT_RE =
+  /\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|dozen|half|quarter|cup|cups|oz|ounces?|slices?|pieces?|scoops?|tbsp|tablespoons?|tsp|teaspoons?|grams?|lbs?|pounds?|handful|palmful|palm-sized|servings?|bowls?|plates?|glass|glasses|bottles?|cans?|cartons?|sticks?|bars?)\b/i;
+
+/** True when the text carries a precise, loggable amount (number or unit) — a
+ *  bare size/vague quantifier does not count. */
+export function hasPreciseAmount(text: string): boolean {
+  return PRECISE_AMOUNT_RE.test(text ?? '');
+}
+
+// Foods that come in an obvious single standard serving — asking "how much?"
+// adds friction with ~no accuracy gain (a whole fruit, a wrapped bar). Everything
+// else material is worth a quick portion confirm.
+const OBVIOUS_SINGLE_SERVING_RE =
+  /\b(?:apple|banana|orange|pear|peach|plum|kiwi|clementine|tangerine|mandarin|granola\s*bar|protein\s*bar|cereal\s*bar|nutri-?grain|clif\s*bar|rx\s?bar|kind\s*bar)\b/i;
+
+/** True for a food whose standard serving is one obvious unit (a fruit, a bar) —
+ *  logged with the estimate rather than asked about. */
+export function isObviousSingleServing(item: string): boolean {
+  return OBVIOUS_SINGLE_SERVING_RE.test(item ?? '');
+}
+
 // ── Composition-ambiguous assembled foods (2026-07-06) ───────────────────────
 // A food whose protein depends ENTIRELY on an UNKNOWN filling — "a sandwich"
 // could be ~5g (PB&J) or 35g (chicken club). We can't estimate it from the bare

@@ -615,7 +615,7 @@ import {
 } from './symptom-intelligence.js';
 import { detectDashboardRequest, buildDashboardLinkReply } from './dashboard-link.js';
 import { detectFoodReset, buildFoodResetReply } from './food-reset.js';
-import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous } from './food-portion.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous, hasPreciseAmount, isObviousSingleServing } from './food-portion.js';
 import { weightProgress, loggingStreak, summarizeSymptoms } from './dashboard-data.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -4122,20 +4122,26 @@ CRITICAL RULES:
       }
     };
     for (const it of confirmed) {
-      // A rough estimate (medium/low confidence) of a food with real macros,
-      // where the user gave no portion phrase, is a typical-serving GUESS — the
-      // exact class the user wants confirmed ("crackers", "yogurt") rather than
-      // silently logged. Per-item (not the message-level `quantified` flag) so a
-      // stated food logs while an estimated one beside it is still asked. Fires in
-      // multi-topic too — the grounded path weaves the question in without dropping
-      // any part of the answer.
-      const roughMaterial =
-        askAggressively && isRoughConfidence(it.confidence) && isMaterialMacro(it.protein_g, it.calories) && !it.serving_size;
+      // A food with real macros that has NO precise amount is a typical-serving
+      // GUESS — the exact class the user wants confirmed ("small yogurt", "some
+      // crackers") rather than silently logged. DETERMINISTIC (not the extractor's
+      // confidence, which unreliably marked "small yogurt" high → logged): ask
+      // unless the item carries a real number/unit (its label OR serving_size), is
+      // a nutrition-label exact value, or is an obvious single-serving food (a
+      // fruit, a bar). Per-item, so "small" on the yogurt no longer silences the
+      // crackers; fires in multi-topic too (the grounded path weaves the question
+      // in without dropping any part of the answer).
+      const needsPortion =
+        askAggressively &&
+        isMaterialMacro(it.protein_g, it.calories) &&
+        it.confidence !== 'exact' &&
+        !hasPreciseAmount(`${it.item} ${it.serving_size ?? ''}`) &&
+        !isObviousSingleServing(it.item);
       if (
         isCompositionAmbiguousFood(it.item) ||
         isProteinProductAmbiguous(it.item, text) ||
         (!quantified && isPortionSensitiveFood(it.item)) ||
-        roughMaterial
+        needsPortion
       ) {
         downgraded.push({ item: it.item, protein_g: it.protein_g ?? null });
       } else {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous } from './food-portion.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous, hasPreciseAmount, isObviousSingleServing } from './food-portion.js';
 import { hasExplicitQuantity } from '../safety/vague-food.js';
 
 // A composition-ambiguous assembled food (a bare sandwich/wrap) must be ASKED
@@ -76,6 +76,32 @@ describe('isPortionSensitiveFood — only ask when the portion swings the macros
   it('is FALSE for obvious / low-variance foods (just log)', () => {
     for (const f of ['apple', 'banana', 'toast', 'a boiled egg', 'orange', 'protein bar', 'a granola bar']) {
       expect(isPortionSensitiveFood(f), f).toBe(false);
+    }
+  });
+});
+
+describe('hasPreciseAmount — a real number/unit, NOT a bare size or vague quantifier', () => {
+  it('is TRUE for a number or a measuring unit', () => {
+    for (const t of ['2 eggs', 'a cup of rice', '6 oz chicken', 'three slices', '200 grams', 'one scoop protein', 'a bowl of oats', 'half a bagel', '1 bottle']) {
+      expect(hasPreciseAmount(t), t).toBe(true);
+    }
+  });
+  it('is FALSE for a bare size word or vague quantifier (still needs a confirm)', () => {
+    for (const t of ['small yogurt', 'yogurt small', 'some crackers', 'crackers', 'a bit of chicken', 'a little rice', 'big salad', 'yogurt']) {
+      expect(hasPreciseAmount(t), t).toBe(false);
+    }
+  });
+});
+
+describe('isObviousSingleServing — a whole fruit / a wrapped bar logs without asking', () => {
+  it('is TRUE for obvious single-serving foods', () => {
+    for (const f of ['apple', 'a banana', 'orange', 'granola bar', 'protein bar', 'kind bar']) {
+      expect(isObviousSingleServing(f), f).toBe(true);
+    }
+  });
+  it('is FALSE for variable-portion foods', () => {
+    for (const f of ['yogurt', 'crackers', 'chicken', 'rice', 'toast', 'cheese']) {
+      expect(isObviousSingleServing(f), f).toBe(false);
     }
   });
 });

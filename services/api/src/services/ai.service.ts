@@ -3748,7 +3748,10 @@ CRITICAL RULES:
         this.deps.llm.generate({ messages: baseMessages(sys), temperature: 0.8, maxOutputTokens: 500, skipCache: true, skipContextCache: true, disableThinking: true }),
         new Promise<{ text: string } | null>((res) => setTimeout(() => res(null), UNIFIED_GEN_TIMEOUT_MS)),
       ]).catch(() => null);
-      return r ? enforceFormat(r.text ?? '', { userMessage: input.text }).text.trim() : '';
+      // A multi-part answer keeps its paragraph breaks (one short section per
+      // part) — clearer + ensures every part is visibly covered. A single-topic
+      // reply stays one paragraph (default collapse).
+      return r ? enforceFormat(r.text ?? '', { userMessage: input.text, preserveParagraphs: isMultiTopic }).text.trim() : '';
     };
 
     let reply = await gen(systemPrompt);
@@ -3824,7 +3827,7 @@ CRITICAL RULES:
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
     const totalMs = Date.now() - t0;
     this.persistLatency(userId, 'unified', totalMs, lat.snapshot(), input.text, reply);
-    return { text: reply, confidence: 'high', intent: 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+    return { text: reply, confidence: 'high', intent: 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs, ...(isMultiTopic ? { preserveParagraphs: true } : {}) };
   }
 
   /**

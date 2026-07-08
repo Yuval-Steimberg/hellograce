@@ -741,7 +741,7 @@ export async function processInboundMessage(
           const body = shouldAppendRlhfPrompt(responseText, isRlhfUser)
             ? `${responseText}\n\n👍 👎 to rate · # to add a thought`
             : responseText;
-          await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body });
+          await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body, ...(result?.preserveParagraphs ? { preserveParagraphs: true } : {}) });
         } else {
           // The reply was empty, junk, or truncated mid-sentence. We must NOT
           // ship the bad text — but we must ALSO never go silent. Before this,

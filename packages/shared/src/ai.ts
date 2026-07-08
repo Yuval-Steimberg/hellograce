@@ -157,6 +157,10 @@ export interface OrchestratorOutput {
     /** The shape-guard regeneration LLM call (0 when not triggered). */
     directRegen?: number;
   };
+  /** Keep the reply's paragraph breaks (blank line between parts) through the
+   *  outbound sanitizer instead of collapsing to one paragraph. Set only for a
+   *  multi-part answer, where one short section per part reads clearest. */
+  preserveParagraphs?: boolean;
 }
 
 export type CriticCriterion = 'grounding' | 'safety' | 'on_task' | 'tone';

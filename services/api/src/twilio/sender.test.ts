@@ -74,6 +74,17 @@ describe('sanitizeOutbound — never truncates a trailing URL (2026-06-13)', () 
   });
 });
 
+describe('sanitizeOutbound — preserveParagraphs opt-in for multi-part replies', () => {
+  const multi = 'You are on track today.\n\nFor tonight, try Greek yogurt.\n\nFor Friday, protein first, then dessert.';
+  it('collapses paragraphs by default', () => {
+    expect(sanitizeOutbound(multi)).not.toContain('\n');
+  });
+  it('keeps the blank-line sections when the flag is set', () => {
+    const out = sanitizeOutbound(multi, undefined, { preserveParagraphs: true });
+    expect(out.split('\n\n')).toHaveLength(3);
+  });
+});
+
 describe('sanitizeOutbound — encrypted-field leak guard (2026-06-18)', () => {
   it('redacts an undecrypted enc: blob (the prod medication leak)', () => {
     const msg =

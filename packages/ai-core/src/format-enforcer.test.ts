@@ -559,4 +559,46 @@ describe('enforceFormat', () => {
       expect(text.charAt(0)).toMatch(/[A-Z]/);
     });
   });
+
+  // A multi-part answer reads clearest as one short section per part. By default
+  // paragraph breaks are collapsed (WhatsApp reads a blank line as a new
+  // message); the opt-in preserveParagraphs keeps them for multi-part replies.
+  describe('preserveParagraphs — multi-part sectioning (opt-in)', () => {
+    const multi = 'You are on track today.\n\nFor tonight, try Greek yogurt.\n\nFor Friday, protein first, then dessert.';
+
+    it('DEFAULT collapses paragraphs to one (unchanged behavior)', () => {
+      const { text, fixes } = enforceFormat(multi, {});
+      expect(text).not.toContain('\n');
+      expect(fixes).toContain('paragraphs_collapsed');
+      expect(text).toContain('You are on track today. For tonight');
+    });
+
+    it('preserveParagraphs KEEPS one blank line between each part', () => {
+      const { text, fixes } = enforceFormat(multi, { preserveParagraphs: true });
+      expect(fixes).toContain('paragraphs_preserved');
+      expect(text.split('\n\n')).toHaveLength(3);
+      expect(fixes).not.toContain('paragraphs_collapsed');
+    });
+
+    it('a SINGLE mid-paragraph newline becomes a SPACE, never deletes (no word-merge)', () => {
+      // Prod: "cheese stick\ncan" collapsed to "stickcan". Must be "stick can".
+      const input = 'A tiny snack now\nlike a few bites of a cheese stick\ncan help.\n\nFor your order, grilled chicken.';
+      const { text } = enforceFormat(input, { preserveParagraphs: true });
+      expect(text).toContain('snack now like');
+      expect(text).toContain('cheese stick can help');
+      expect(text).not.toContain('stickcan');
+      expect(text.split('\n\n')).toHaveLength(2);
+    });
+
+    it('normalizes 3+ blank lines down to a single gap', () => {
+      const { text } = enforceFormat('Part one.\n\n\n\nPart two.', { preserveParagraphs: true });
+      expect(text).toBe('Part one.\n\nPart two.');
+    });
+
+    it('a single-paragraph reply is unchanged either way', () => {
+      const single = 'Logged 2 eggs. You are at 12g protein today.';
+      expect(enforceFormat(single, {}).text).toBe(single);
+      expect(enforceFormat(single, { preserveParagraphs: true }).text).toBe(single);
+    });
+  });
 });

@@ -55,7 +55,7 @@ export class SendblueSender implements MessageSender {
       body = msg.body;
     } else {
       try {
-        body = sanitizeOutbound(msg.body, this.logger);
+        body = sanitizeOutbound(msg.body, this.logger, { preserveParagraphs: msg.preserveParagraphs });
       } catch (err) {
         if (err instanceof EmptyOutboundError) {
           this.logger.warn({ original: msg.body }, 'sendblue.send.empty_after_sanitize');

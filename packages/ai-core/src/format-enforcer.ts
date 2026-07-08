@@ -156,7 +156,7 @@ const ALL_CONTEXT_OPENERS: RegExp[] = [
 
 export function enforceFormat(
   input: string,
-  opts?: { stripFirstName?: string; messageContext?: MessageContext; lastAssistantMessage?: string; userMessage?: string },
+  opts?: { stripFirstName?: string; messageContext?: MessageContext; lastAssistantMessage?: string; userMessage?: string; preserveParagraphs?: boolean },
 ): FormatEnforcementResult {
   let text = input;
   const fixes: string[] = [];
@@ -709,11 +709,26 @@ export function enforceFormat(
     }
   }
 
-  // ─── Collapse multi-paragraph responses into a single paragraph ──────
+  // ─── Paragraph handling ──────────────────────────────────────────────
   // Gemini sometimes emits multi-paragraph responses with double newlines.
-  // On WhatsApp, paragraph breaks look like separate messages and encourage
-  // wall-of-text reading. Collapse them to a single space (one paragraph).
-  if (/\n{2,}/.test(text)) {
+  // DEFAULT: collapse to a single paragraph — on most turns paragraph breaks
+  // look like separate messages and encourage wall-of-text reading.
+  // OPT-IN (preserveParagraphs): a multi-part answer reads far clearer as one
+  // short paragraph per part (blank line between), so we KEEP the paragraph
+  // breaks — but still normalize 3+ blank lines to one gap and, crucially,
+  // turn a SINGLE mid-paragraph newline into a SPACE (never delete it, which
+  // merged words in prod — "cheese stick\ncan" → "stickcan").
+  if (opts?.preserveParagraphs) {
+    if (/\n/.test(text)) {
+      text = text
+        .split(/\n{2,}/) // real paragraph breaks (a blank line) split the parts
+        .map((p) => p.replace(/[ \t]*\n[ \t]*/g, ' ').replace(/ {2,}/g, ' ').trim()) // within a part: single newline -> space (never delete -> no word-merge)
+        .filter((p) => p.length > 0)
+        .join('\n\n')
+        .trim();
+      fixes.push('paragraphs_preserved');
+    }
+  } else if (/\n{2,}/.test(text)) {
     text = text.replace(/\n{2,}/g, ' ').replace(/\n/g, ' ').replace(/ {2,}/g, ' ').trim();
     fixes.push('paragraphs_collapsed');
   }

@@ -64,6 +64,9 @@ export interface OutboundMessage {
   body: string;
   /** Skip the AI-text sanitizer. Use for hardcoded admin/report messages. */
   raw?: boolean;
+  /** Keep paragraph breaks (blank line between parts) instead of collapsing to
+   *  one paragraph. Set only for a multi-part answer. Ignored when raw. */
+  preserveParagraphs?: boolean;
 }
 
 /**
@@ -96,7 +99,7 @@ export class EmptyOutboundError extends Error {
   constructor() { super('Outbound body is empty after sanitization'); }
 }
 
-export function sanitizeOutbound(input: string, logger?: Logger): string {
+export function sanitizeOutbound(input: string, logger?: Logger, opts?: { preserveParagraphs?: boolean }): string {
   let text = input;
 
   // ─── Encrypted-field leak guard (2026-06-18) ──────────────────────────
@@ -126,7 +129,7 @@ export function sanitizeOutbound(input: string, logger?: Logger): string {
   // caught regardless of source. format-enforcer is idempotent (no-op on
   // clean text), so this is safe to run twice for the main orchestrator path.
   try {
-    const formatted = enforceFormat(text, {});
+    const formatted = enforceFormat(text, { preserveParagraphs: opts?.preserveParagraphs });
     if (formatted.fixes.length > 0 && logger) {
       logger.info(
         { original: text.slice(0, 200), fixes: formatted.fixes },
@@ -285,7 +288,7 @@ export class TwilioSender implements MessageSender {
       body = msg.body;
     } else {
       try {
-        body = sanitizeOutbound(msg.body, this.logger);
+        body = sanitizeOutbound(msg.body, this.logger, { preserveParagraphs: msg.preserveParagraphs });
       } catch (err) {
         if (err instanceof EmptyOutboundError) {
           // Sanitizer produced an empty body — log and substitute a neutral

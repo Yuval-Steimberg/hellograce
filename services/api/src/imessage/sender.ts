@@ -51,7 +51,7 @@ export class ImessageSender implements MessageSender {
       body = msg.body;
     } else {
       try {
-        body = sanitizeOutbound(msg.body, this.logger);
+        body = sanitizeOutbound(msg.body, this.logger, { preserveParagraphs: msg.preserveParagraphs });
       } catch (err) {
         if (err instanceof EmptyOutboundError) {
           this.logger.warn({ original: msg.body }, 'imessage.send.empty_after_sanitize');

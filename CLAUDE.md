@@ -6,7 +6,30 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `35a4e31`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`35a4e31`. **Apply migration `20260708000001_food_serving_size.sql` with the deploy.**
+## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `13405eb` (last CODE change `35a4e31`); PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health` == HEAD. **Apply migration `20260708000001_food_serving_size.sql` with the deploy.**
+
+### 🧭 THIS SESSION'S ARC (2026-07-08, all merged, NONE deployed yet)
+Deployed baseline is `7fbbfbe`. On top, in order: #228 timezone-from-phone self-heal + deterministic
+local-time answers · #229/#230 settings suggest-not-store (protein+calorie READ path) · #231 rotating
+TODAY'S FOCUS reminders + win-back HELP/STOP · #232 food-tracker fields (confidence/serving_size/
+macro-sanity — **needs the migration**) · #233 memory learn+recall wired into the live unified path
+(was inert) · #234 don't context-cache the per-message grounded prompt · #235 settings-WRITE path
+closed (weight capture no longer stores a derived target) + kg unit parse + warmer food reply ·
+#236 diary surfaces pending foods + composition-answer resolves+logs + multi-ask completeness guard.
+**"Hermes agent as Grace's brain" (user idea):** evaluated + DECLINED as an integration — Nous
+**Hermes Agent** is an interactive agent CLI (blocked by the env network policy anyway) and NOT a
+model API, so it can't be a server-side brain. The real path is a `HermesProvider` implementing the
+existing `LLMProvider` seam (`packages/shared/src/ai.ts:194` + `services/api/src/llm/gemini.ts`) IF
+Nous exposes a model API — needs base URL / model id / key (`LLM_PROVIDER=hermes|gemini` flag). Also
+DECLINED: converting the deterministic guards to LLM-called tools/skills — Grace's guards are already
+fast PRE-LLM intercepts; function-calling would ADD round-trips (slower), failing the user's "only if
+it helps latency" gate. Complex-message #1/#2 (skip/parallelize the extractor) also DECLINED — the
+extractor is accuracy-critical and there's no deterministic proxy for "has confirmed food to log"
+(`hasExplicitQuantity` matches the article "a"/"an"). **Post-deploy DB cleanup for the test user
+(+972547722420):** stale `protein_goal_grams=95` + `current_weight=150` from the old write/kg bugs —
+clear/reset in Settings; new code won't rewrite them.
+
+### ⏳ ON MAIN, NOT YET DEPLOYED (user must `fly deploy`)
 
 ### ⏳ ON MAIN, NOT YET DEPLOYED (user must `fly deploy`)
 - **`35a4e31` (#236) — three reply-path fixes from prod screenshots (surgical, verified).**

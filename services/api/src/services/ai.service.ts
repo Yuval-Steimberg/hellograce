@@ -506,6 +506,11 @@ import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood, findVagueAddOnItem, hasExplicitQuantity } from '../safety/vague-food.js';
 import { shouldDiscloseEstimate, estimateNote } from '../nutrition/estimate-note.js';
 import { calculateProteinTarget } from '../nutrition/protein-target.js';
+import {
+  calculateCalorieTarget,
+  type Sex as CalorieSex,
+  type ActivityLevel as CalorieActivity,
+} from '../nutrition/calorie-target.js';
 import { USER_DAY_CTE, isCurrentUserDay, computeUserLoggingDay } from '../nutrition/logging-window.js';
 import {
   looksLikeRecommendation,
@@ -2500,6 +2505,10 @@ export class AIService {
     const wantsTarget =
       /\b(?:my|what'?s|whats|what is|tell me)\b[^?]{0,30}\b(?:protein|calorie)\s+(?:target|goal)\b/.test(lower) ||
       /\b(?:protein|calorie)\s+(?:target|goal)\b/.test(lower) && /\b(my|what|whats|what'?s|tell)\b/.test(lower);
+    // Which target(s) the question is about — a "calorie goal" ask must not be
+    // answered with the protein number, and vice versa.
+    const targetIsCalorie = wantsTarget && /\b(?:calorie|calories|cal|kcal)\b/.test(lower);
+    const targetIsProtein = wantsTarget && (/\bprotein\b/.test(lower) || !targetIsCalorie);
     const wantsHad =
       /\bhow (?:much|many)\b[^?]{0,40}\b(?:protein|calorie|cal|kcal)?\b[^?]{0,20}\b(had|today|so far|eaten|consumed|left|remaining)\b/.test(lower) ||
       /\b(?:protein|calorie|cal|kcal)\b[^?]{0,15}\b(today|so far|left|remaining)\b/.test(lower) ||
@@ -2514,13 +2523,13 @@ export class AIService {
     // (the user configured it in Settings), read it back. If it's NOT set, we
     // never derive+store it silently — we SUGGEST a number, explain WHY, and ask
     // them to put it in Settings themselves. Same flow for every settings datum.
-    if (wantsTarget && user.protein_goal_grams && user.protein_goal_grams > 0) {
+    const settingsUrl = 'https://graceglp.com/settings'; // rewritten by TwilioSender
+    if (targetIsProtein && user.protein_goal_grams && user.protein_goal_grams > 0) {
       parts.push(`your daily protein target is ${user.protein_goal_grams}g`);
-    } else if (wantsTarget) {
+    } else if (targetIsProtein) {
       // No stored target → suggest (never save), with the reasoning + a clear
       // "set it in Settings yourself" so Grace isn't the source of truth.
       const anchorLbs = user.current_weight ?? user.goal_weight ?? null;
-      const settingsUrl = 'https://graceglp.com/settings'; // rewritten by TwilioSender
       if (anchorLbs != null) {
         const suggested = calculateProteinTarget({
           weightLbs: anchorLbs,
@@ -2531,6 +2540,25 @@ export class AIService {
         parts.push(`you haven't set a protein target yet. Based on your weight, a good daily goal is about ${suggested}g — on a GLP-1 that's roughly the protein that protects your muscle while you lose. I can't save it from here, so pop that number into Settings (${settingsUrl}) and I'll track every meal against it`);
       } else {
         parts.push(`you haven't set a protein target yet, and I don't have your weight to suggest a precise one — for most people on a GLP-1, 100-120g a day is a solid goal to protect muscle. Add your weight and set your number in Settings (${settingsUrl}) and I'll track against it`);
+      }
+    }
+    // CALORIE target — same suggest-not-store flow (user directive 2026-07-07:
+    // "not only the protein. Every data in the settings, this is the flow").
+    if (targetIsCalorie && user.calorie_goal_kcal && user.calorie_goal_kcal > 0) {
+      parts.push(`your daily calorie target is about ${user.calorie_goal_kcal} kcal`);
+    } else if (targetIsCalorie) {
+      const suggested = calculateCalorieTarget({
+        weightLbs: user.current_weight ?? user.goal_weight ?? null,
+        heightCm: user.height_cm ?? null,
+        age: user.age ?? null,
+        sex: (user.sex as CalorieSex | null) ?? null,
+        activityLevel: (user.activity_level as CalorieActivity | null) ?? null,
+        goal: user.primary_goal ?? null,
+      });
+      if (suggested != null) {
+        parts.push(`you haven't set a calorie target yet. Based on your weight, height, and activity, a good daily goal is about ${suggested} kcal — a gentle deficit that protects muscle on a GLP-1. I can't save it from here, so set that number in Settings (${settingsUrl}) and I'll track against it`);
+      } else {
+        parts.push(`you haven't set a calorie target yet, and I'm missing a couple of details (weight, height, age, or activity) to suggest a precise one. Fill those in and set your number in Settings (${settingsUrl}) and I'll track against it`);
       }
     }
     if (wantsHad) {

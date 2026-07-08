@@ -600,5 +600,31 @@ describe('enforceFormat', () => {
       expect(enforceFormat(single, {}).text).toBe(single);
       expect(enforceFormat(single, { preserveParagraphs: true }).text).toBe(single);
     });
+
+    it('does NOT truncate a ~600-char 3-part reply (higher cap for multi-part)', () => {
+      const p1 = 'You are on track today, protein looks solid so far and you are doing really well keeping it steady across your meals which is exactly the habit that matters most.';
+      const p2 = 'For tonight, something light like Greek yogurt or a couple of eggs would round the day out nicely without feeling heavy or making you too full before bed.';
+      const p3 = 'For Friday, fill your plate with the protein and veggies first, then have the dessert you actually want, and enjoy it fully without any guilt about it at all.';
+      const input = `${p1}\n\n${p2}\n\n${p3}`; // ~480 chars, >420 default cap
+      const { text, fixes } = enforceFormat(input, { preserveParagraphs: true });
+      expect(text.split('\n\n')).toHaveLength(3);
+      expect(fixes).not.toContain('length_capped');
+      expect(text).toContain('without any guilt'); // the LAST part survived
+    });
+
+    it('exact-dup dedup keeps the paragraph structure (no collapse)', () => {
+      const input = 'You are on track. You are on track.\n\nTry yogurt tonight.';
+      const { text, fixes } = enforceFormat(input, { preserveParagraphs: true });
+      expect(fixes).toContain('duplicate_sentence_stripped');
+      expect(text).toBe('You are on track.\n\nTry yogurt tonight.');
+    });
+
+    it('does NOT drop a legit part that repeats a number (no same-quantity dedup for multi-part)', () => {
+      const input = 'You logged 20g protein so far.\n\nAim for another 20g protein at dinner.';
+      const { text } = enforceFormat(input, { preserveParagraphs: true });
+      expect(text.split('\n\n')).toHaveLength(2);
+      expect(text).toContain('so far');
+      expect(text).toContain('at dinner'); // the 2nd 20g sentence is NOT dropped
+    });
   });
 });

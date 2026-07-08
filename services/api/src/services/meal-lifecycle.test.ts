@@ -47,19 +47,28 @@ describe('composition-answer resolution gate (prod: "Cheese" → the pending sal
 // WITH details ("Cheese sandwich and one scoop protein shake") — has both a
 // filling and an amount, for several items. Prod IMG_6733/6735: it fell to the
 // grounded path, which hallucinated a total and logged nothing.
-function detailResolve(text: string, pending: string[]): { logged: string[]; unresolved: string[] } {
-  const gate = pending.length > 0 && namesSpecificFood(text) && !foodSpanFromConsumption(text) && text.split(/\s+/).length <= 12;
-  if (!gate) return { logged: [], unresolved: pending };
+function detailResolve(text: string, pending: string[]): { logged: string[]; unresolved: string[]; fellThrough: boolean } {
+  // Mirrors foodStepUnified's DETAIL-resolution branch: a question or a
+  // fresh-food mention disqualifies it (fall through), pending items match
+  // DISTINCT segments, and any unmatched food-bearing segment forces fall-through
+  // so a new food is never dropped.
+  const looksLikeQuestion =
+    /\?/.test(text) ||
+    /^\s*(is|are|was|were|do|does|did|can|could|should|would|will|why|what|how|when|where|which|who|whose)\b/i.test(text);
+  const gate = pending.length > 0 && !looksLikeQuestion && namesSpecificFood(text) && !foodSpanFromConsumption(text) && text.split(/\s+/).length <= 12;
+  if (!gate) return { logged: [], unresolved: pending, fellThrough: true };
   const segments = text.split(/\s+and\s+|,|;/i).map((s) => s.trim().replace(/[.!?]+$/, '')).filter(Boolean);
-  const logged: string[] = [];
+  const usedSeg = new Set<number>();
+  const matched: string[] = [];
   const unresolved: string[] = [];
   for (const p of pending) {
     const key = (p.toLowerCase().split(/\s+/).pop() || p.toLowerCase());
-    const seg = segments.find((s) => new RegExp(`\\b${key}\\b`, 'i').test(s));
-    if (seg) logged.push(seg);
-    else unresolved.push(p);
+    const idx = segments.findIndex((s, i) => !usedSeg.has(i) && new RegExp(`\\b${key}\\b`, 'i').test(s));
+    if (idx >= 0) { usedSeg.add(idx); matched.push(segments[idx]!); } else unresolved.push(p);
   }
-  return { logged, unresolved };
+  const hasFreshFood = segments.some((s, i) => !usedSeg.has(i) && namesSpecificFood(s));
+  if (matched.length > 0 && !hasFreshFood) return { logged: matched, unresolved, fellThrough: false };
+  return { logged: [], unresolved: pending, fellThrough: true };
 }
 
 describe('pending DETAIL resolution gate (prod IMG_6733: shake + sandwich never logged)', () => {
@@ -73,14 +82,38 @@ describe('pending DETAIL resolution gate (prod IMG_6733: shake + sandwich never 
     expect(detailResolve('turkey sandwich', ['sandwich']).logged).toEqual(['turkey sandwich']);
   });
   it('leaves an unmentioned pending item pending, and never hijacks an unrelated food', () => {
-    // A new/unrelated food does not match the pending keyword → nothing logged.
+    // A new/unrelated food does not match the pending keyword → nothing logged, falls through.
     const r = detailResolve('some chicken', ['sandwich']);
     expect(r.logged).toEqual([]);
     expect(r.unresolved).toEqual(['sandwich']);
+    expect(r.fellThrough).toBe(true);
   });
   it('does not fire on a fresh consumption log ("I ate a sandwich")', () => {
     // foodSpanFromConsumption matches → the gate is false → handled as a new log.
     expect(detailResolve('I ate a turkey sandwich', ['sandwich']).logged).toEqual([]);
+  });
+  // A QUESTION about the pending food must NEVER be logged as food (was: logged
+  // the raw question string as a sandwich + wiped the pending clarify).
+  it('never logs a QUESTION about the pending food', () => {
+    for (const q of ['Is the sandwich healthy?', 'why did you ask about the sandwich', 'how many calories is the sandwich']) {
+      const r = detailResolve(q, ['sandwich']);
+      expect(r.logged, q).toEqual([]);
+      expect(r.fellThrough, q).toBe(true);
+    }
+  });
+  // A fresh food alongside a pending one must NOT be dropped (was: logged only
+  // rice, silently dropped chicken). Falls through so the extractor logs both.
+  it('falls through when the message also names a FRESH food (never drops it)', () => {
+    const r = detailResolve('chicken and rice', ['rice']);
+    expect(r.logged).toEqual([]); // deterministic branch declines → extractor handles both
+    expect(r.fellThrough).toBe(true);
+  });
+  // Two pending items sharing a trailing word must map to DISTINCT segments
+  // (was: both collapsed onto the first → one double-logged, the other dropped).
+  it('maps two same-suffix pending items to distinct segments', () => {
+    const r = detailResolve('cheese sandwich and ham sandwich', ['chicken sandwich', 'turkey sandwich']);
+    expect(r.logged).toEqual(['cheese sandwich', 'ham sandwich']);
+    expect(r.unresolved).toEqual([]);
   });
 });
 

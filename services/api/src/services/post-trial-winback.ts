@@ -155,7 +155,15 @@ export function buildWinbackMessage(key: WinbackStageDef['key'], ctx: WinbackMes
 
 /** A short reply expressing intent to STOP/unsubscribe → opt out, silence forever. */
 export function isWinbackStopIntent(text: string): boolean {
-  return /^\s*(stop|unsubscribe|cancel|quit|end|opt\s*out|leave me alone|no more|remove me)\b/i.test(text ?? '');
+  const t = (text ?? '').trim();
+  if (!t) return false;
+  // Unambiguous opt-out commands.
+  if (/^(stop|unsubscribe|cancel|opt\s*out|leave me alone|no more|remove me)\b/i.test(t)) return true;
+  // "end" / "quit" are ambiguous ("End of my rope", "I quit my job" are venting,
+  // NOT opt-outs) — only as a bare command or with a clear stop-object.
+  if (/^(end|quit)\s*[.!]*$/i.test(t)) return true;
+  if (/^(end|stop)\s+(this|it|these|the\s+(messages|texts|check[-\s]?ins|reminders|nudges))\b/i.test(t)) return true;
+  return false;
 }
 
 /** The "reply HELP if cost is the thing" affordance from the final stage. */

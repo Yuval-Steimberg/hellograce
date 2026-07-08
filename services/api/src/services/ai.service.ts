@@ -3312,21 +3312,23 @@ CRITICAL RULES:
     // Images / voice keep the existing media pipeline for now.
     if (input.media.length > 0) return this.handleMessageInner(input, t0, lat);
 
-    const [user, todaysFoodPre, knownFacts, memoryMd, history, conversationId, recalled] = await Promise.all([
+    const [user, todaysFoodPre, knownFacts, memoryMd, history, conversationId] = await Promise.all([
       this.deps.users.getByPhone(userId).catch(() => null),
       this.deps.users.getTodaysFoodSummary(userId).catch(() => ({ protein_g: 0, calories: 0, items: [] as string[] })),
       this.deps.users.getKnownFacts(userId, 8).catch(() => [] as Array<{ fact: string }>),
       this.deps.memoryMd ? this.deps.memoryMd.get(userId).catch(() => null) : Promise.resolve(null),
       this.deps.memory.getRecentTurns(userId, this.deps.historyTurns ?? 12).catch(() => [] as ChatTurn[]),
       this.deps.memory.ensureConversation(userId).catch(() => `fallback-${userId}`),
-      // Episodic recall (recency-weighted user_memories) — retrieved IN PARALLEL
-      // with the loads above so it adds ~zero latency (the query-embedding is
-      // cached 30min and overlaps the DB reads). Only consumed on the grounded
-      // reply path below; a deterministic intercept that returns first just drops it.
-      this.deps.userMemory
-        ? this.deps.userMemory.retrieve(userId, input.text, 3).catch(() => [] as string[])
-        : Promise.resolve([] as string[]),
     ]);
+    // Episodic recall (recency-weighted user_memories) is consumed ONLY on the
+    // grounded reply path. Kick it off here so it overlaps the deterministic
+    // intercepts + the food step below, but AWAIT it lazily at buildGroundedPrompt
+    // — a food log / reminder / diary / settings intercept returns before then and
+    // never pays the query-embedding round-trip (was in the awaited Promise.all, so
+    // every unified turn ate it). Errors are swallowed → always resolves to [].
+    const recalledPromise: Promise<string[]> = this.deps.userMemory
+      ? this.deps.userMemory.retrieve(userId, input.text, 3).catch(() => [] as string[])
+      : Promise.resolve([] as string[]);
 
     // ── Progressive gather gate (2026-06-28) ───────────────────────────────
     // Keep learning the user so every reply is specific to them. Ask-first
@@ -3692,6 +3694,7 @@ CRITICAL RULES:
     // Non-food chat — OR a multi-topic message that merely mentioned food —
     // uses the full Nudge grounded prompt so EVERY part gets answered (not the
     // terse food-confirmation, which drops the rest of a multi-part message).
+    const recalled = await recalledPromise;
     let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, recalled, userText: input.text });
 
     // If this multi-topic turn ALSO logged/mentioned food, weave that in — but
@@ -3961,36 +3964,59 @@ CRITICAL RULES:
     // pending item's word, so a fresh/unrelated food is never hijacked. Scoped
     // like the branches above: names a food, not a mutation, not a consumption
     // statement ("I ate X" = a new log → extractor), short.
+    // A genuine detail ANSWER, not a QUESTION about the pending food ("is the
+    // sandwich healthy?", "why did you ask about the sandwich") and not a fresh
+    // food log — either of those must never be logged as food. A leading
+    // interrogative / any "?" disqualifies the whole turn (it's a question →
+    // let the grounded path answer it, pending stays intact).
+    const looksLikeQuestion =
+      /\?/.test(text) ||
+      /^\s*(is|are|was|were|do|does|did|can|could|should|would|will|why|what|how|when|where|which|who|whose)\b/i.test(text);
     if (
       pending.length > 0 &&
+      !looksLikeQuestion &&
       namesSpecificFood(text) &&
       !FOOD_MUTATION_RE.test(text) &&
       !foodSpanFromConsumption(text) &&
       text.split(/\s+/).length <= 12
     ) {
       const segments = text.split(/\s+and\s+|,|;/i).map((s) => s.trim().replace(/[.!?]+$/, '')).filter(Boolean);
-      const logged: string[] = [];
+      // Match each pending item to a DISTINCT segment (a segment is consumed
+      // once), so two pending items that share a trailing word ("chicken
+      // sandwich" / "turkey sandwich") don't both collapse onto the first match.
+      const usedSeg = new Set<number>();
+      const matched: string[] = [];
       const unresolved: typeof pending = [];
       for (const p of pending) {
         const key = (p.item.toLowerCase().split(/\s+/).pop() || p.item.toLowerCase())
           .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const seg = key ? segments.find((s) => new RegExp(`\\b${key}\\b`, 'i').test(s)) : undefined;
-        if (seg) {
-          const r = (await logFood.execute({ food: seg }).catch(() => null)) as Record<string, unknown> | null;
-          if (r && r.ok !== false) { logged.push(seg); continue; }
-        }
-        unresolved.push(p);
+        const idx = key
+          ? segments.findIndex((s, i) => !usedSeg.has(i) && new RegExp(`\\b${key}\\b`, 'i').test(s))
+          : -1;
+        if (idx >= 0) { usedSeg.add(idx); matched.push(segments[idx]!); } else unresolved.push(p);
       }
-      if (logged.length > 0) {
-        await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
-        if (unresolved.length > 0) {
-          await addPendingFood(this.deps.redis, input.userId, unresolved.map((p) => ({ item: p.item, clarify_question: null }))).catch(() => {});
+      // A segment that names a real food but matched NO pending item is a FRESH
+      // food (prod-safe: "chicken and rice" while only rice is pending). Do NOT
+      // short-circuit — fall through to the extractor so the new food is logged,
+      // never silently dropped.
+      const hasFreshFood = segments.some((s, i) => !usedSeg.has(i) && namesSpecificFood(s));
+      if (matched.length > 0 && !hasFreshFood) {
+        const logged: string[] = [];
+        for (const seg of matched) {
+          const r = (await logFood.execute({ food: seg }).catch(() => null)) as Record<string, unknown> | null;
+          if (r && r.ok !== false) logged.push(seg);
         }
-        const clarify = unresolved.length > 0
-          ? buildPortionConfirmQuestion(unresolved.map((p) => ({ item: p.item, protein_g: null })))
-          : null;
-        this.deps.logger.info({ userId: input.userId, logged: logged.length, unresolved: unresolved.length }, 'ai.unified_food.detail_resolved');
-        return { logged, pending: unresolved.map((p) => p.item), removed: null, clarify };
+        if (logged.length > 0) {
+          await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+          if (unresolved.length > 0) {
+            await addPendingFood(this.deps.redis, input.userId, unresolved.map((p) => ({ item: p.item, clarify_question: null }))).catch(() => {});
+          }
+          const clarify = unresolved.length > 0
+            ? buildPortionConfirmQuestion(unresolved.map((p) => ({ item: p.item, protein_g: null })))
+            : null;
+          this.deps.logger.info({ userId: input.userId, logged: logged.length, unresolved: unresolved.length }, 'ai.unified_food.detail_resolved');
+          return { logged, pending: unresolved.map((p) => p.item), removed: null, clarify };
+        }
       }
     }
 

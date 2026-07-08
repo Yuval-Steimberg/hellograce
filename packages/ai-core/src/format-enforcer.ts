@@ -753,7 +753,33 @@ export function enforceFormat(
   //   (b) Same SPECIFIC QUANTITY (like "0g protein", "40g", "150 kcal")
   //       repeated in two different sentences within the response. That's
   //       the production pattern even when wording differs.
-  {
+  if (opts?.preserveParagraphs) {
+    // Multi-part reply: dedupe EXACT-duplicate sentences WITHIN each paragraph
+    // (keeping the blank-line structure), and DON'T same-quantity-dedupe —
+    // different parts of a multi-ask answer legitimately reference the same
+    // number (e.g. "20g protein" in the food part and again in the plan part),
+    // and the whole-message split+rejoin would collapse the sections.
+    const paras = text.split(/\n{2,}/);
+    let anyDropped = false;
+    const dedupedParas = paras.map((para) => {
+      const ss = para.split(/(?<=[.!?])\s+/);
+      if (ss.length < 2) return para;
+      const seen = new Set<string>();
+      const keep: string[] = [];
+      for (const s of ss) {
+        const norm = s.toLowerCase().replace(/[.!?]+$/, '').replace(/\s+/g, ' ').trim();
+        if (norm.length === 0) continue;
+        if (seen.has(norm)) { anyDropped = true; continue; }
+        seen.add(norm);
+        keep.push(s);
+      }
+      return keep.join(' ');
+    });
+    if (anyDropped) {
+      text = dedupedParas.filter((p) => p.length > 0).join('\n\n').trim();
+      fixes.push('duplicate_sentence_stripped');
+    }
+  } else {
     const sentenceSplit = text.split(/(?<=[.!?])\s+/);
     if (sentenceSplit.length >= 2) {
       // (a) Exact-duplicate dedupe — first occurrence wins.
@@ -817,7 +843,14 @@ export function enforceFormat(
     social_situation:    420,  // practical strategies, brief
     pause_request:       200,  // confirmation only
   };
-  const MAX_CHARS = opts?.messageContext ? (CONTEXT_MAX[opts.messageContext] ?? 420) : 420;
+  // A multi-part sectioned reply legitimately needs room for one short paragraph
+  // per part; the 420 default would truncate a 3-ask answer mid-way and DROP a
+  // whole part (defeating the completeness guard, which regenerates through this
+  // same cap). Give it Nudge's long-form ceiling. Non-multi-part paths are
+  // unchanged (per-context cap, else the 420 default).
+  const MAX_CHARS = opts?.preserveParagraphs
+    ? 700
+    : opts?.messageContext ? (CONTEXT_MAX[opts.messageContext] ?? 420) : 420;
   if (text.length > MAX_CHARS) {
     const window = text.slice(0, MAX_CHARS + 1);
     // Regex lookahead matches . ! ? followed by whitespace OR end-of-string,

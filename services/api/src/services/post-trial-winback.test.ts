@@ -121,11 +121,14 @@ describe('post-trial win-back — message copy', () => {
 
 describe('post-trial win-back — reply intents', () => {
   it('detects STOP intent', () => {
-    for (const t of ['STOP', 'stop', 'unsubscribe', 'cancel', 'opt out', 'no more']) {
+    for (const t of ['STOP', 'stop', 'unsubscribe', 'cancel', 'opt out', 'no more', 'end', 'quit', 'end the messages', 'stop these texts']) {
       expect(isWinbackStopIntent(t), t).toBe(true);
     }
     expect(isWinbackStopIntent('stopped by the store')).toBe(false); // "stopped" ≠ "stop" (word boundary)
     expect(isWinbackStopIntent('I ate a sandwich')).toBe(false);
+    // "end"/"quit" as venting (not a bare command / stop-object) must NOT opt out.
+    expect(isWinbackStopIntent('End of my rope, I feel awful')).toBe(false);
+    expect(isWinbackStopIntent('I quit my job this week and I am stressed')).toBe(false);
   });
   it('detects HELP intent', () => {
     expect(isWinbackHelpIntent('HELP')).toBe(true);

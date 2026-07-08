@@ -13,8 +13,11 @@ import { resolveTemporalContext } from './temporal-context.js';
 
 export type TemporalQuery = 'local_time' | 'day_reset' | null;
 
+// "what time is it" is the wall-clock question — but NOT "what time is it best/
+// good/ideal to inject / to take my pill / to eat" (timing guidance, answered by
+// the grounded path), so a negative lookahead excludes those.
 const LOCAL_TIME_RE =
-  /\b(?:what(?:'?s| is)?\s+(?:my|the)\s+(?:local|current)?\s*time|what\s+time\s+is\s+it|my\s+(?:local|current)\s+time|current\s+time\s+(?:for\s+me|here|where\s+i\s+am))\b/i;
+  /\b(?:what(?:'?s| is)?\s+(?:my|the)\s+(?:local|current)?\s*time|what\s+time\s+is\s+it(?!\s+(?:best|good|ideal|better|to|should)\b)|my\s+(?:local|current)\s+time|current\s+time\s+(?:for\s+me|here|where\s+i\s+am))\b/i;
 // A QUESTION about when the day/diary/totals reset (not the "reset my food log"
 // command — that's a mutation handled elsewhere; this requires when/what-time).
 const DAY_RESET_RE =

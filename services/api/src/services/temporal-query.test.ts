@@ -17,6 +17,14 @@ describe('detectTemporalQuery', () => {
       expect(detectTemporalQuery(t), t).toBe(null);
     }
   });
+  it('does NOT steal a TIMING question ("what time is it best to inject")', () => {
+    for (const t of ['what time is it best to inject', 'what time is it good to take my pill', 'what time is it ideal to eat', 'what time is it to weigh in']) {
+      expect(detectTemporalQuery(t), t).toBe(null);
+    }
+    // but a plain clock question still resolves
+    expect(detectTemporalQuery('what time is it now')).toBe('local_time');
+    expect(detectTemporalQuery('what time is it here')).toBe('local_time');
+  });
 });
 
 describe('deterministic replies use the REAL timezone (prod IMG_6720/6721)', () => {

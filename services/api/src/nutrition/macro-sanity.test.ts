@@ -4,6 +4,7 @@ import {
   macroSanityConfidence,
   isRoughConfidence,
   worstConfidence,
+  isMaterialMacro,
 } from './macro-sanity.js';
 
 describe('isMacroConsistent — protein kcal cannot exceed total kcal', () => {
@@ -57,5 +58,30 @@ describe('isRoughConfidence + worstConfidence', () => {
     expect(worstConfidence([null, 'high', null])).toBe('high');
     expect(worstConfidence([null, undefined])).toBe('medium'); // nothing present
     expect(worstConfidence([])).toBe('medium');
+  });
+});
+
+describe('isMaterialMacro — worth confirming the portion?', () => {
+  it('is TRUE for foods with real protein or calories (crackers, yogurt, toast)', () => {
+    expect(isMaterialMacro(1, 120)).toBe(true); // crackers: low protein, real calories
+    expect(isMaterialMacro(17, 130)).toBe(true); // greek yogurt
+    expect(isMaterialMacro(3, 80)).toBe(true); // toast
+    expect(isMaterialMacro(6, 70)).toBe(true); // an egg
+    expect(isMaterialMacro(1, 105)).toBe(true); // a banana (real calories)
+  });
+  it('is FALSE for near-zero-macro items (portion never moves the totals)', () => {
+    expect(isMaterialMacro(0, 0)).toBe(false); // water
+    expect(isMaterialMacro(0, 5)).toBe(false); // black coffee
+    expect(isMaterialMacro(0, 2)).toBe(false); // plain tea
+    expect(isMaterialMacro(1, 10)).toBe(false); // a mint / sugar-free gum
+  });
+  it('is FALSE when there are no numbers to weigh (nothing to confirm)', () => {
+    expect(isMaterialMacro(null, null)).toBe(false);
+    expect(isMaterialMacro(undefined, undefined)).toBe(false);
+  });
+  it('either floor alone qualifies (≥2g protein OR ≥25 kcal)', () => {
+    expect(isMaterialMacro(2, 0)).toBe(true); // protein floor
+    expect(isMaterialMacro(0, 25)).toBe(true); // calorie floor
+    expect(isMaterialMacro(1, 24)).toBe(false); // both below
   });
 });

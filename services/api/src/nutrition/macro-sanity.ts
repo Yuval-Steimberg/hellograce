@@ -53,6 +53,28 @@ export function isRoughConfidence(c: Confidence | null | undefined): boolean {
   return c === 'low' || c === 'medium';
 }
 
+// A food carries meaningful macros when it has real protein OR real calories.
+// Below both floors it's a near-zero item (water, black coffee, plain tea, a
+// mint, a diet soda) whose portion never moves the day's totals — so Grace logs
+// it without a portion question. Floors: ≥2g protein OR ≥25 kcal. Missing
+// numbers → not material (there's nothing worth confirming).
+const MATERIAL_PROTEIN_G = 2;
+const MATERIAL_CALORIES = 25;
+
+/**
+ * True when a food has enough protein/calories that getting the portion right
+ * matters. Used to decide whether a rough estimate is worth a quick confirm
+ * (accuracy) vs. logging straight through (a near-zero item — no point asking).
+ */
+export function isMaterialMacro(
+  proteinG: number | null | undefined,
+  calories: number | null | undefined,
+): boolean {
+  const p = typeof proteinG === 'number' && Number.isFinite(proteinG) ? proteinG : 0;
+  const c = typeof calories === 'number' && Number.isFinite(calories) ? calories : 0;
+  return p >= MATERIAL_PROTEIN_G || c >= MATERIAL_CALORIES;
+}
+
 const CONFIDENCE_RANK: Record<Confidence, number> = { exact: 3, high: 2, medium: 1, low: 0 };
 
 /** The LEAST confident of several estimates — used when collapsing multiple food

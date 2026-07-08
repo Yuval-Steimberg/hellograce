@@ -506,7 +506,7 @@ import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood, findVagueAddOnItem, hasExplicitQuantity } from '../safety/vague-food.js';
 import { shouldDiscloseEstimate, estimateNote } from '../nutrition/estimate-note.js';
 import { calculateProteinTarget } from '../nutrition/protein-target.js';
-import { worstConfidence, isRoughConfidence } from '../nutrition/macro-sanity.js';
+import { worstConfidence, isRoughConfidence, isMaterialMacro } from '../nutrition/macro-sanity.js';
 import {
   calculateCalorieTarget,
   type Sex as CalorieSex,
@@ -4054,14 +4054,19 @@ CRITICAL RULES:
     const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
     const extractorPending = extraction.items.filter((i) => i.status === 'pending_portion');
 
-    // PRECISION GATE (scoped — don't over-ask): with NO explicit amount, a
-    // PORTION-SENSITIVE food (yogurt, rice, chicken…) is NOT logged at a default
-    // guess — ask to confirm/correct the standard portion first. A COMPOSITION-
-    // AMBIGUOUS assembled food (a bare sandwich/wrap — protein depends on an
-    // UNKNOWN filling) is NEVER logged at an assumed value, even when an article
-    // is present ("a sandwich") — we ask what's in it. An OBVIOUS / low-variance
-    // food (an apple, toast, a banana) logs with the estimate. With an explicit
-    // amount, portion-variable foods log as normal.
+    // PRECISION GATE (accuracy-first — user directive 2026-07-08: ask about
+    // "almost every food with real macros"). A confirmed item is logged straight
+    // through ONLY when its portion is precisely anchored (extractor confidence
+    // high/exact — a stated amount/label) or it carries near-zero macros (water,
+    // black coffee — no point asking). Otherwise Grace confirms the portion first:
+    //   • COMPOSITION-AMBIGUOUS assembled food (a bare sandwich/wrap — protein set
+    //     by an UNKNOWN filling) → ask what's in it, even with an article present.
+    //   • PROTEIN PRODUCT with no scoop/brand → ask scoops/brand.
+    //   • PORTION-SENSITIVE food with no message-level amount → ask how much.
+    //   • ANY rough-estimate (medium/low confidence) material-macro food whose
+    //     portion wasn't stated → ask, so the number reflects what they ate, not a
+    //     typical-serving guess. A precisely-stated portion (high/exact, or a
+    //     recorded serving_size) logs as normal.
     const logged: string[] = [];
     let anyRough = false;
     const downgraded: Array<{ item: string; protein_g: number | null }> = [];
@@ -4079,10 +4084,18 @@ CRITICAL RULES:
       }
     };
     for (const it of confirmed) {
+      // A rough estimate (medium/low confidence) of a food with real macros,
+      // where the user gave no portion phrase, is a typical-serving GUESS — the
+      // exact class the user wants confirmed ("crackers", "yogurt") rather than
+      // silently logged. Per-item (not the message-level `quantified` flag) so a
+      // stated food logs while an estimated one beside it is still asked.
+      const roughMaterial =
+        isRoughConfidence(it.confidence) && isMaterialMacro(it.protein_g, it.calories) && !it.serving_size;
       if (
         isCompositionAmbiguousFood(it.item) ||
         isProteinProductAmbiguous(it.item, text) ||
-        (!quantified && isPortionSensitiveFood(it.item))
+        (!quantified && isPortionSensitiveFood(it.item)) ||
+        roughMaterial
       ) {
         downgraded.push({ item: it.item, protein_g: it.protein_g ?? null });
       } else {

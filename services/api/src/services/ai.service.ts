@@ -4067,6 +4067,13 @@ CRITICAL RULES:
     //     portion wasn't stated → ask, so the number reflects what they ate, not a
     //     typical-serving guess. A precisely-stated portion (high/exact, or a
     //     recorded serving_size) logs as normal.
+    //
+    // The last (broad) rule is SCOPED to a PURE food log. A MULTI-TOPIC message
+    // (a planning/emotional message that merely mentions food) keeps the exact
+    // pre-existing gate — those replies answer every part and already ask about
+    // genuinely-ambiguous foods via their own path; we do NOT add portion
+    // questions there (would disrupt the carefully-tuned multi-part answer).
+    const foodOnlyTurn = input.media.length === 0 && !analyzeMessage(text).hasMultiple;
     const logged: string[] = [];
     let anyRough = false;
     const downgraded: Array<{ item: string; protein_g: number | null }> = [];
@@ -4088,9 +4095,10 @@ CRITICAL RULES:
       // where the user gave no portion phrase, is a typical-serving GUESS — the
       // exact class the user wants confirmed ("crackers", "yogurt") rather than
       // silently logged. Per-item (not the message-level `quantified` flag) so a
-      // stated food logs while an estimated one beside it is still asked.
+      // stated food logs while an estimated one beside it is still asked. Only on
+      // a PURE food turn — a multi-topic message keeps its existing behavior.
       const roughMaterial =
-        isRoughConfidence(it.confidence) && isMaterialMacro(it.protein_g, it.calories) && !it.serving_size;
+        foodOnlyTurn && isRoughConfidence(it.confidence) && isMaterialMacro(it.protein_g, it.calories) && !it.serving_size;
       if (
         isCompositionAmbiguousFood(it.item) ||
         isProteinProductAmbiguous(it.item, text) ||

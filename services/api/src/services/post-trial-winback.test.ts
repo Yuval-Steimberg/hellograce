@@ -7,6 +7,8 @@ import {
   sentWinbackRecently,
   isPaidUser,
   buildWinbackMessage,
+  buildWinbackHelpReply,
+  buildWinbackStopReply,
   isWinbackStopIntent,
   isWinbackHelpIntent,
   type WinbackUser,
@@ -129,5 +131,25 @@ describe('post-trial win-back — reply intents', () => {
     expect(isWinbackHelpIntent('HELP')).toBe(true);
     expect(isWinbackHelpIntent('help me plan dinner')).toBe(true);
     expect(isWinbackHelpIntent('no thanks')).toBe(false);
+  });
+
+  it('HELP reply keeps the door open with the link and invites the blocker', () => {
+    const r = buildWinbackHelpReply({ firstName: 'Yuval', upgradeUrl: 'https://graceglp.com/upgrade?phone=%2B1' });
+    expect(r).toContain('https://graceglp.com/upgrade?phone=%2B1');
+    expect(r).toMatch(/Yuval/);
+    expect(r).toMatch(/cost or timing/i);
+    expect(r).toMatch(/\?$/); // ends by inviting a reply
+  });
+
+  it('STOP reply confirms without pressure and leaves the door open', () => {
+    const r = buildWinbackStopReply('Yuval');
+    expect(r).toMatch(/stop the check-ins/i);
+    expect(r).toMatch(/text me/i);
+    expect(r).not.toContain('http'); // no link on an opt-out
+  });
+
+  it('reply builders are name-safe when no first name', () => {
+    expect(buildWinbackHelpReply({ upgradeUrl: 'https://x/u' })).toMatch(/^Happy to help\./);
+    expect(buildWinbackStopReply(null)).toMatch(/^You got it —/);
   });
 });

@@ -12,17 +12,6 @@ function buildUpgradeUrl(phone: string, webUrl: string = DEFAULT_WEB_URL): strin
   return `${base}/upgrade?phone=${encodeURIComponent(phone)}`;
 }
 
-const GOAL_MODE_MAP: Record<string, string> = {
-  'Losing weight': 'protein',
-  'Eating enough protein': 'protein',
-  'Staying hydrated': 'hydration',
-  'Managing side effects': 'side_effects',
-  'Hitting my fiber goals': 'fiber',
-  'Feeling less alone in this': 'connection',
-  'Building better habits': 'habits',
-  'Protecting my muscle': 'muscle',
-};
-
 // ─── Daily variation engine ───────────────────────────────────────────────────
 // Deterministic by phone + date so retries within a day get the same message,
 // but the selection rotates every day automatically.
@@ -111,6 +100,149 @@ const OPENER_POOL = [
   'Checking', 'Popping', 'Wanted', 'Hope', 'Thinking', 'Sending',
   'Taking', 'Making', 'Keeping', 'Staying', 'Feeling', 'Starting',
 ] as const;
+
+// ─── TODAY'S FOCUS — rotating check-in topic (Nudge model, 2026-07-08) ─────────
+// Grace's morning/midday/evening reminders historically defaulted to protein/food
+// every time (GOAL_MODE_MAP → 'protein'), so a user heard about protein far too
+// often. Nudge's send-scheduled-checkin rotates a single TODAY'S FOCUS per
+// check-in — weighted by the user's onboarding goals but blended with a universal
+// set so it stays human and varied — and enforces TOPIC DISCIPLINE: stay on that
+// focus, do NOT default to protein/food unless the focus IS nutrition, never
+// recite numbers unless the focus is nutrition. This adapts that model. The pick
+// is DETERMINISTIC by the daily seed (+ a per-slot offset) so retries within a
+// day are stable while morning/midday/evening still differ.
+
+export type FocusKey =
+  | 'protein' | 'nutrition' | 'hydration' | 'movement' | 'rest_sleep'
+  | 'mindset' | 'self_compassion' | 'non_scale_win' | 'stress_breath'
+  | 'sunlight_fresh_air' | 'connection' | 'side_effect_care';
+
+const FOCUS_DESC: Record<FocusKey, string> = {
+  protein: 'Protein — a gentle nudge, numbers only if they genuinely help.',
+  nutrition: 'Nutrition — gentle, non-tracking. No calorie talk.',
+  hydration: 'Hydration — water, electrolytes, sipping between meals.',
+  movement: 'Movement — a walk, a stretch, light strength. Not exercise pressure.',
+  rest_sleep: 'Rest and sleep — recovery matters as much as effort.',
+  mindset: 'Mindset — patience, trusting the process, one day at a time.',
+  self_compassion: 'Self-compassion — be kind to yourself today, however the day looks.',
+  non_scale_win: 'Non-scale wins — energy, clothes, mood, sleep, strength. Not the number on the scale.',
+  stress_breath: 'Stress + nervous system — a slow breath, a pause, a soft reset.',
+  sunlight_fresh_air: 'Sunlight or fresh air — five minutes outside, a window, a doorstep.',
+  connection: 'Human connection — a text to someone, a hello, not being alone in this.',
+  side_effect_care: 'Comfort + side-effect care — ginger, bland food, slow sips, rest.',
+};
+
+// Grace's exact onboarding goal labels (GOAL_MODE_MAP keys) → weighted foci.
+const GOAL_FOCUS_WEIGHTS: Record<string, Partial<Record<FocusKey, number>>> = {
+  'Eating enough protein': { protein: 5, nutrition: 2, mindset: 1 },
+  'Protecting my muscle': { protein: 3, movement: 4, rest_sleep: 2 },
+  'Hitting my fiber goals': { nutrition: 5, hydration: 2, side_effect_care: 1 },
+  'Staying hydrated': { hydration: 6, side_effect_care: 1 },
+  'Losing weight': { non_scale_win: 4, movement: 3, mindset: 2, nutrition: 1, self_compassion: 1 },
+  'Managing side effects': { side_effect_care: 5, hydration: 2, rest_sleep: 1, nutrition: 1 },
+  'Feeling less alone in this': { connection: 5, self_compassion: 3, mindset: 2 },
+  'Building better habits': { mindset: 3, movement: 2, self_compassion: 2, stress_breath: 1, sunlight_fresh_air: 1 },
+};
+// Blended in for everyone so check-ins stay varied even with a single goal.
+const UNIVERSAL_FOCUS_WEIGHTS: Partial<Record<FocusKey, number>> = {
+  self_compassion: 1, mindset: 1, stress_breath: 1, sunlight_fresh_air: 1, rest_sleep: 1,
+};
+
+const SLOT_FOCUS_OFFSET: Record<string, number> = { morning: 0, midday: 7, evening: 13, bonus: 19 };
+
+export function isNutritionFocus(focus: FocusKey): boolean {
+  return focus === 'protein' || focus === 'nutrition';
+}
+
+/**
+ * Deterministic weighted focus for a given slot + day. Weighted by the user's
+ * goals plus a universal set; stable on retry (seed = phone+date), varies across
+ * slots (offset) so a user's morning and evening foci differ. Pure.
+ */
+export function pickTodaysFocus(goals: readonly string[], seed: number, slot: string = 'morning'): FocusKey {
+  const weights: Record<string, number> = { ...UNIVERSAL_FOCUS_WEIGHTS } as Record<string, number>;
+  for (const g of goals) {
+    const map = GOAL_FOCUS_WEIGHTS[g];
+    if (!map) continue;
+    for (const [t, w] of Object.entries(map)) weights[t] = (weights[t] ?? 0) + (w as number);
+  }
+  const entries = Object.entries(weights).filter(([, w]) => w > 0);
+  if (entries.length === 0) return 'self_compassion';
+  const total = entries.reduce((s, [, w]) => s + w, 0);
+  let cursor = (seed + (SLOT_FOCUS_OFFSET[slot] ?? 0)) % total;
+  for (const [t, w] of entries) {
+    cursor -= w;
+    if (cursor < 0) return t as FocusKey;
+  }
+  return entries[0]![0] as FocusKey;
+}
+
+/** The TOPIC DISCIPLINE block appended to a scheduled reminder's prompt. */
+export function buildFocusBlock(focus: FocusKey): string {
+  const nutrition = isNutritionFocus(focus);
+  const disc = nutrition
+    ? 'A gentle protein/nutrition nudge fits today — keep it soft, numbers only if they truly help.'
+    : 'Do NOT default to protein, calories, macros, or food tracking today, and do NOT recite protein/calorie numbers — today is not a nutrition day. No "and don\'t forget your protein" tacked on.';
+  return `\nTODAY'S FOCUS: ${FOCUS_DESC[focus]}\nTOPIC DISCIPLINE — write ONE standalone reminder about the focus above and nothing else:\n- ${disc}\n- Context shapes the vibe, it is not the subject: never quote or continue the last chat, never ask a follow-up about a past topic.`;
+}
+
+// Focus-matched fallback pools (name-free, per the RLHF rule) — shipped only when
+// the LLM output fails to sanitize / duplicates / trips a content rule, so the
+// degraded message still matches the day's focus instead of always saying protein.
+const FOCUS_FALLBACKS: Record<FocusKey, readonly string[]> = {
+  protein: [
+    `Quick protein nudge — a little goes a long way today 🌿`,
+    `If breakfast was light, a protein snack now is a kind move 🌿`,
+  ],
+  nutrition: [
+    `Something nourishing when you can today — no pressure on amounts 🌿`,
+    `Appetite low today? Even a few bites of something real counts 🌿`,
+  ],
+  hydration: [
+    `Water reminder — sip between meals, not with them. Easier on a GLP-1 stomach 🌿`,
+    `A glass now sets the rest of the day up. That's the whole nudge 🌿`,
+  ],
+  movement: [
+    `A five-minute walk, even around the room, counts today 🌿`,
+    `One little stretch right where you are. That's it 🌿`,
+  ],
+  rest_sleep: [
+    `Rest is part of the work, not a reward for finishing it 🤍`,
+    `If you're tired, that's information, not weakness. Be gentle tonight 🌙`,
+  ],
+  mindset: [
+    `Slow progress is still progress. You're doing the thing 🌿`,
+    `One day at a time — that's the whole strategy 🌿`,
+  ],
+  self_compassion: [
+    `However today's going, you're allowed to be gentle with yourself 🤍`,
+    `No perfect days required. Showing up is enough 🤍`,
+  ],
+  non_scale_win: [
+    `Notice one small thing today — easier stairs, a looser waistband, better mood. That counts 🌿`,
+    `The scale isn't the whole story. Energy and sleep count too 🌿`,
+  ],
+  stress_breath: [
+    `One slow breath in, longer out. That's the whole reminder 🌿`,
+    `Shoulders down, jaw soft. Tiny reset 🤍`,
+  ],
+  sunlight_fresh_air: [
+    `Five minutes by a window or outside if you can — it helps more than it sounds 🌿`,
+    `A doorstep moment of fresh air counts today 🌿`,
+  ],
+  connection: [
+    `Text one person today — you don't have to do this alone 🤍`,
+    `A quick hello to someone you like. That's the nudge 🤍`,
+  ],
+  side_effect_care: [
+    `If your stomach's off, plain and small is your friend today 🌿`,
+    `Ginger tea, slow sips, soft foods. Be gentle with your system 🤍`,
+  ],
+};
+
+function focusFallback(focus: FocusKey, seed: number): string {
+  return pick(FOCUS_FALLBACKS[focus], seed);
+}
 
 type MsgType = 'morning' | 'midday' | 'evening' | 'bonus' | 'injection_morning' | 'injection_followup' |
   'injection_dayafter' | 'side_effect_nausea' | 'side_effect_fatigue' | 'side_effect_constipation' |
@@ -204,6 +336,11 @@ export interface MorningBridge {
   /** True when a single gentle question fits this morning (e.g. checking on a
    *  symptom). Lets the morning instruction relax its default "no questions". */
   allowQuestion: boolean;
+  /** What drove the bridge, so the morning path can decide whether the rotating
+   *  TODAY'S FOCUS should take over. 'protein' (yesterday came up short) is
+   *  suppressed on a non-nutrition focus day so Grace stops over-indexing on
+   *  protein; 'symptom'/'emotion' (human continuity) always win. */
+  kind: 'symptom' | 'emotion' | 'protein' | 'positive' | 'quiet' | 'none';
 }
 
 /**
@@ -224,28 +361,37 @@ export function deriveMorningBridge(
 
   let angle = '';
   let allowQuestion = false;
+  let kind: MorningBridge['kind'] = 'none';
   const extra: string[] = [];
 
   if (symptom) {
     angle = `Yesterday they had a rough time with ${symptom}. Open by gently checking how that's feeling this morning, and keep today's food simple and easy on the stomach. If it sounds like it's still lingering or getting worse, softly suggest they check with their doctor.`;
     allowQuestion = true;
+    kind = 'symptom';
   } else if (emotionalRough) {
     angle = `Yesterday felt heavy or frustrating for them. Lead with a clean-slate, no-pressure reset — today's a fresh start, no need to be perfect, just here when they need you.`;
+    kind = 'emotion';
   } else if (y && y.itemCount > 0 && y.proteinGoal && y.protein_g < y.proteinGoal) {
     angle = `Yesterday came up a little short on protein. Nudge ONE easy protein-first meal to make today smoother — encouraging, never scolding, and don't quote the numbers.`;
-  } else if (emotionalPositive || (y && y.proteinGoal && y.protein_g >= y.proteinGoal && y.itemCount > 0)) {
+    kind = 'protein';
+  } else if (emotionalPositive) {
     angle = `Yesterday looked solid for them. Acknowledge it warmly and invite building on it today — keep it light and simple.`;
+    kind = 'emotion';
+  } else if (y && y.proteinGoal && y.protein_g >= y.proteinGoal && y.itemCount > 0) {
+    angle = `Yesterday looked solid for them. Acknowledge it warmly and invite building on it today — keep it light and simple.`;
+    kind = 'positive';
   } else if (y && y.itemCount === 0) {
     angle = `Yesterday was quiet — nothing logged. Warm fresh-start hello, zero pressure, and an easy open door to share what they eat today.`;
+    kind = 'quiet';
   }
 
-  if (!angle) return { block: '', allowQuestion: false };
+  if (!angle) return { block: '', allowQuestion: false, kind: 'none' };
 
   let block = `\nYESTERDAY BRIDGE — make this morning feel like a natural continuation of yesterday, the way a real friend would pick the thread back up (NOT a report, NOT a recap):\n- ${angle}`;
   if (extra.length > 0) block += `\n- ${extra.join('\n- ')}`;
   block += `\n- Weave it in naturally and ONLY if it fits. NEVER say "based on our conversation yesterday" / "yesterday you logged" / recite totals. Don't force it — if it feels off, just send a warm, plain good-morning. Vary the shape from previous mornings. Keep it to one short, warm message.`;
 
-  return { block, allowQuestion };
+  return { block, allowQuestion, kind };
 }
 
 /**
@@ -270,65 +416,14 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
       ];
       return pick(pool, dailySeed(u.phone));
     }
-    const goal = u.goals[0];
-    const mode = goal ? (GOAL_MODE_MAP[goal] ?? 'protein') : 'protein';
-    const target = u.protein_goal_grams ?? 80;
-    const med = u.medication ?? 'GLP-1';
+    // Focus-matched fallback so the degraded morning matches the day's rotating
+    // focus instead of always leading with protein.
     const seed = dailySeed(u.phone);
-    if (mode === 'protein') {
-      return pick([
-        `Protein first today. Front-load it before appetite fades — ${target}g is easier when you start early 🌿`,
-        `${target}g of protein by noon makes the rest of the day feel lighter. Start early if you can 🌿`,
-        `Early protein on ${med} protects muscle and steadies energy. Even 20g before 10am counts 🌿`,
-        `One thing that consistently helps on ${med}: landing protein in the morning. ${target}g is the target 🌿`,
-        `Your body is doing a lot on ${med}. Protein early keeps muscle and energy stable — front-load it today 🌿`,
-      ], seed);
-    }
-    if (mode === 'hydration') return pick([
-      `A glass of water before coffee sets the whole day up differently. Start there 🌿`,
-      `Hydration on ${med} matters more than most people realize. First glass — right now 🌿`,
-      `Before anything else today: water. It's the easiest win on the list 🌿`,
-    ], seed);
-    if (mode === 'side_effects') return pick([
-      `Take it easy on yourself today. I'm here if anything feels off 🤍`,
-      `${med} can make mornings unpredictable. No pressure today — just check in if you need to 🌿`,
-      `Soft morning. You know your body. Rest what needs resting, do what feels okay 🤍`,
-    ], seed);
-    if (mode === 'fiber') return pick([
-      `A little fiber early (oats, berries, chia) makes the rest of the day kinder to your gut 🌿`,
-      `Fiber in the morning is quiet protection. Oats or berries if you can manage it 🌿`,
-      `Gut-friendly morning: something fibrous early helps a lot on ${med} 🌿`,
-    ], seed);
-    if (mode === 'connection') return pick([
-      `You're not doing this alone. I'm here whenever 🤍`,
-      `Checking in — not because I have to, because I'm actually thinking about you 🌿`,
-      `This journey is genuinely hard. You're still showing up. That's worth noting 🤍`,
-    ], seed);
-    if (mode === 'habits') return pick([
-      `One small thing today. That's enough 🌿`,
-      `Habits compound quietly. Whatever small thing you do today — it counts 🌿`,
-      `No pressure to be perfect. One tiny intention is a whole thing 🌿`,
-    ], seed);
-    if (mode === 'muscle') return pick([
-      `Muscle protection on ${med}: protein early, even a small amount, makes a real difference 🌿`,
-      `${target}g today keeps muscle loss at bay on ${med}. Start early if you can 🌿`,
-      `Protecting muscle is one of the most important things on ${med}. Protein first this morning 🌿`,
-    ], seed);
-    return pick([
-      `Hope today's a soft one. I'm here whenever you want to chat 🌿`,
-      `Good morning. No agenda — just rooting for you today 🤍`,
-      `A quiet one or a full one, I'm here either way. Morning 🌿`,
-    ], seed);
+    return focusFallback(pickTodaysFocus(u.goals, seed, 'morning'), seed);
   },
   midday: (u) => {
-    return pick([
-      `Midday. No pressure to reply — just rooting for you over here 🤍`,
-      `Quick hello from the middle of the day. Hope it's treating you okay 🌿`,
-      `Halfway through — you're doing it 🤍`,
-      `Afternoon check-in. Nothing required from you. Just thinking of you 🌿`,
-      `The day's half done. Be kind to yourself for the rest of it 🤍`,
-      `Midday nudge: water if you haven't had any. That's it 🌿`,
-    ], dailySeed(u.phone));
+    const seed = dailySeed(u.phone);
+    return focusFallback(pickTodaysFocus(u.goals, seed, 'midday'), seed);
   },
   evening: (u, opts) => {
     const seed = dailySeed(u.phone);
@@ -340,21 +435,7 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
         `Some days the win is just making it to evening. Tonight counts 🤍`,
       ], seed);
     }
-    if (u.current_weight && u.goal_weight) {
-      const diff = Math.abs(u.current_weight - u.goal_weight).toFixed(0);
-      return pick([
-        `Wrapping up? You're ${diff} lbs from your goal — every consistent day moves the needle 🌙`,
-        `${diff} lbs from where you want to be. Today was another step 🌙`,
-        `You're closer than you were. ${diff} lbs to go — rest well tonight 🌙`,
-      ], seed);
-    }
-    return pick([
-      `Wrapping the day. Hope it had a good moment in it somewhere. Rest well 🌙`,
-      `Evening. Whatever you managed today — it was enough 🌙`,
-      `The day's done. You showed up. Rest well 🌙`,
-      `Good evening. No recap needed — just rest well tonight 🌙`,
-      `End of day. Be gentle with yourself tonight 🤍`,
-    ], seed);
+    return focusFallback(pickTodaysFocus(u.goals, seed, 'evening'), seed);
   },
   injection_morning: (u) => {
     const med = u.medication ?? 'your medication';
@@ -699,20 +780,13 @@ export class MessageGenerator {
 
     const instructions: Record<MsgType, string> = {
       morning: (() => {
-        const mode = user.goals[0] ? (GOAL_MODE_MAP[user.goals[0]] ?? 'protein') : 'protein';
-        const modeHint = {
-          protein: `nudge them toward getting protein early. Their target is ${user.protein_goal_grams ?? 80}g.`,
-          hydration: 'remind them to start hydrated. One glass of water sets the day.',
-          side_effects: 'check in gently about how they\'re feeling. Be soft, no questions required.',
-          fiber: 'mention one easy fiber option for morning (oats, berries, chia). Keep it light.',
-          connection: 'just let them know they\'re not alone in this. Warm presence, nothing more.',
-          habits: 'acknowledge one small intention for the day. Very gentle.',
-          muscle: `remind them that protein early protects muscle on ${user.medication ?? 'GLP-1'}. Target: ${user.protein_goal_grams ?? 80}g.`,
-        }[mode] ?? 'say good morning warmly.';
-        // REAL yesterday data → the morning reminder can reference actual
-        // behavior ("yesterday you were a little short on protein") instead
-        // of a generic template. Absent data → plain warm reminder, never
-        // invented numbers.
+        // Rotating TODAY'S FOCUS (weighted by goals) replaces the old always-protein
+        // default so mornings vary across the whole wellness picture, not just food.
+        const focus = pickTodaysFocus(user.goals, seed, 'morning');
+        const nutritionDay = isNutritionFocus(focus);
+        // REAL yesterday data stays in the prompt for AWARENESS, but TOPIC
+        // DISCIPLINE forbids reciting it (or pivoting to protein) unless the focus
+        // is nutrition — so a hydration/mindset morning won't drag in protein.
         const y = opts?.yesterdayFood;
         let dataBlock = '';
         if (y) {
@@ -721,21 +795,25 @@ export class MessageGenerator {
           } else {
             const goalPart = y.proteinGoal
               ? y.protein_g >= y.proteinGoal
-                ? `they HIT their ${y.proteinGoal}g protein target (${y.protein_g}g) — a brief genuine acknowledgment is welcome`
-                : `they reached ${y.protein_g}g of their ${y.proteinGoal}g protein target (${Math.max(0, y.proteinGoal - y.protein_g)}g short) — today is a good day to plan one solid protein meal early`
+                ? `they HIT their ${y.proteinGoal}g protein target (${y.protein_g}g)${nutritionDay ? ' — a brief genuine acknowledgment is welcome' : ''}`
+                : `they reached ${y.protein_g}g of their ${y.proteinGoal}g protein target (${Math.max(0, y.proteinGoal - y.protein_g)}g short)${nutritionDay ? ' — today is a good day to plan one solid protein meal early' : ''}`
               : `they logged ${y.protein_g}g protein`;
-            dataBlock = `\nREAL DATA — yesterday: ${goalPart}. ${y.itemCount} food${y.itemCount === 1 ? '' : 's'} logged. Use this naturally if helpful; don't recite all the numbers.`;
+            dataBlock = `\nREAL DATA — yesterday: ${goalPart}. ${y.itemCount} food${y.itemCount === 1 ? '' : 's'} logged.${nutritionDay ? " Use this naturally if helpful; don't recite all the numbers." : " For your AWARENESS only — today's focus is not nutrition, so do NOT recite these numbers or pivot to protein."}`;
           }
         }
-        // Yesterday bridge: gently continue yesterday's thread into today so the
-        // reminder feels personal, not automated. When it produces an angle, it
-        // takes the lead over the generic goal template and may allow ONE soft
-        // question (e.g. checking on a symptom).
+        // Yesterday bridge: gently continue yesterday's thread (symptom/emotion)
+        // into today so the reminder feels personal. A PROTEIN bridge (yesterday
+        // came up short / hit goal) is suppressed on a non-nutrition focus day —
+        // that's exactly the over-indexing we're removing — while symptom/emotion
+        // continuity always wins and the rotating focus fills the rest.
         const bridge = deriveMorningBridge(user, opts);
-        const closer = bridge.allowQuestion
+        const useBridge = bridge.block.length > 0
+          && !((bridge.kind === 'protein' || bridge.kind === 'positive') && !nutritionDay);
+        const focusBlock = useBridge ? bridge.block : buildFocusBlock(focus);
+        const closer = (useBridge && bridge.allowQuestion)
           ? 'At most ONE short, gentle question is fine today; never stack questions.'
           : 'No questions.';
-        return `${base}Context: gentle morning hello. Today's focus: ${modeHint}${dataBlock}${bridge.block} ${closer}${hook}`;
+        return `${base}Context: gentle morning hello.${focusBlock}${dataBlock} ${closer}${hook}`;
       })(),
       bonus: (() => {
         const catIdx = (seed + dayOfYear(new Date())) % BONUS_CATEGORIES.length;
@@ -754,33 +832,39 @@ export class MessageGenerator {
         };
         return `${base}Context: spontaneous check-in at an unexpected time. Today's theme: ${catHints[category] ?? 'warm presence.'} This is a BONUS touch point — extra brief, extra casual. Must feel like a random thoughtful text from a friend, not a scheduled message. ONE sentence only.`;
       })(),
-      midday: `${base}Context: midday nudge (Mon/Wed/Fri). Keep it brief — a soft "thinking of you." ${dislikes} If you mention food, it must be something practical and filtered by their dislikes. NO questions.`,
+      midday: (() => {
+        const focus = pickTodaysFocus(user.goals, seed, 'midday');
+        return `${base}Context: midday nudge (Mon/Wed/Fri). Keep it brief — a soft "thinking of you."${buildFocusBlock(focus)}${isNutritionFocus(focus) && dislikes ? ` ${dislikes} If you mention food, filter by their dislikes.` : ''} NO questions.`;
+      })(),
       evening: (() => {
+        const focus = pickTodaysFocus(user.goals, seed, 'evening');
+        const nutritionDay = isNutritionFocus(focus);
         const weightCtx = user.current_weight && user.goal_weight
-          ? `They're ${Math.abs(user.current_weight - user.goal_weight).toFixed(0)} lbs from their goal (currently ${user.current_weight} lbs, aiming for ${user.goal_weight} lbs). Gently acknowledge progress if it feels natural.`
+          ? `They're ${Math.abs(user.current_weight - user.goal_weight).toFixed(0)} lbs from their goal (currently ${user.current_weight} lbs, aiming for ${user.goal_weight} lbs). Gently acknowledge progress ONLY if it feels natural and fits the focus.`
           : '';
         const moodCtx = opts?.lowMoodMode
           ? 'Their recent mood data shows they\'ve been struggling. Lead with encouragement and warmth — no reflection prompts, no "how did today go?". Just presence.'
           : 'Soft wind-down tone. Optional one-word-answer question max, or none.';
-        // REAL same-day data → the evening reminder is a daily wrap-up
-        // grounded in what actually happened TODAY ("you're at 82g — eggs or
-        // yogurt tonight would close the gap"), never a repeat of the
-        // morning message and never invented numbers.
+        // REAL same-day data stays for AWARENESS, but the wrap-up only recites the
+        // protein number / suggests food when the focus is nutrition — otherwise
+        // the evening winds down on the rotating focus (rest, mindset, etc.).
         const t = opts?.todayFood;
         let dataBlock = '';
         if (t) {
           if (t.itemCount === 0) {
-            dataBlock = `\nREAL DATA — today: nothing logged yet. A gentle, shame-free nudge that they can still text you what they ate is welcome. Do NOT pretend to know what they ate.`;
+            dataBlock = nutritionDay
+              ? `\nREAL DATA — today: nothing logged yet. A gentle, shame-free nudge that they can still text you what they ate is welcome. Do NOT pretend to know what they ate.`
+              : `\nREAL DATA — today: nothing logged yet (for your AWARENESS only — today's focus is not nutrition, so do NOT bring up food or logging).`;
           } else {
             const goalPart = t.proteinGoal
               ? t.protein_g >= t.proteinGoal
-                ? `they're at ${t.protein_g}g protein — target (${t.proteinGoal}g) already hit. Acknowledge it; no food suggestion needed`
-                : `they're at ${t.protein_g}g of their ${t.proteinGoal}g protein target. If they're still eating tonight, ONE simple suggestion (eggs, Greek yogurt, cottage cheese — filtered by dislikes) could close the gap`
+                ? `they're at ${t.protein_g}g protein — target (${t.proteinGoal}g) already hit${nutritionDay ? '. Acknowledge it; no food suggestion needed' : ''}`
+                : `they're at ${t.protein_g}g of their ${t.proteinGoal}g protein target${nutritionDay ? '. If they\'re still eating tonight, ONE simple suggestion (eggs, Greek yogurt, cottage cheese — filtered by dislikes) could close the gap' : ''}`
               : `they're at ${t.protein_g}g protein today`;
-            dataBlock = `\nREAL DATA — today: ${goalPart}. ${t.itemCount} food${t.itemCount === 1 ? '' : 's'} logged so far.`;
+            dataBlock = `\nREAL DATA — today: ${goalPart}. ${t.itemCount} food${t.itemCount === 1 ? '' : 's'} logged so far.${nutritionDay ? '' : " For your AWARENESS only — today's focus is not nutrition, so do NOT recite these numbers or bring up protein."}`;
           }
         }
-        return `${base}Context: evening wind-down — a daily check-in that wraps the day, NOT a repeat of this morning's message. ${weightCtx} ${moodCtx}${dataBlock} ${dislikes} If suggesting evening food, filter by dislikes.${hook}`;
+        return `${base}Context: evening wind-down — a daily check-in that wraps the day, NOT a repeat of this morning's message.${buildFocusBlock(focus)} ${weightCtx} ${moodCtx}${dataBlock}${nutritionDay ? ` ${dislikes} If suggesting evening food, filter by dislikes.` : ''}${hook}`;
       })(),
       injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}.${opts?.injectionNumber ? ` This is injection #${opts.injectionNumber} — you MAY mention the number.` : ' Do NOT mention an injection number (you don\'t know it).'} Remind them to rotate to a DIFFERENT injection site than last time, and to keep a few comfort items handy just in case (ginger tea, plain crackers, electrolytes). Tell them to reply "done" when injected. Warm and brief, 1-3 sentences. No questions about feelings — that comes later.${opts?.symptomHeadsUp ?? ''}`,
       injection_followup: `${base}Context: a check-in after their shot (a few hours later, or the next morning if they injected late). Do NOT assume a specific number of hours. Just check in softly — no interrogation. One brief opening for them to share if they want.`,

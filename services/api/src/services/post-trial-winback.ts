@@ -162,3 +162,24 @@ export function isWinbackStopIntent(text: string): boolean {
 export function isWinbackHelpIntent(text: string): boolean {
   return /^\s*help\b/i.test(text ?? '');
 }
+
+/**
+ * The reply to a HELP intent from an expired-trial user. The paywall + the final
+ * win-back stage both invite "reply HELP", but without this the reply just looped
+ * back to the generic paywall. This is the actual affordance: warm, addresses the
+ * likely blocker (cost/timing), keeps the door open with the upgrade link, and
+ * invites them to say what's holding them back so it can be a conversation, not a
+ * wall. Deterministic + plain text (one link) so it's reviewable and testable.
+ */
+export function buildWinbackHelpReply(ctx: Pick<WinbackMessageContext, 'firstName' | 'upgradeUrl'>): string {
+  const name = ctx.firstName && ctx.firstName.trim() ? ` ${ctx.firstName.trim()}` : '';
+  return `Happy to help${name}. If cost or timing is the thing holding you back, just tell me — a lot of people find the daily check-ins pay for themselves in momentum, and I would rather find a way to keep you than lose you. Whenever you are ready you can pick up right where you left off here: ${ctx.upgradeUrl}. What is making you pause?`;
+}
+
+/** The confirmation for a STOP intent — acknowledge, stop the sequence, leave the
+ *  door open without pressure. Sending path also flips the opt-out flag + ends the
+ *  win-back sequence so nothing further fires. */
+export function buildWinbackStopReply(firstName?: string | null): string {
+  const name = firstName && firstName.trim() ? ` ${firstName.trim()}` : '';
+  return `You got it${name} — I will stop the check-ins. No hard feelings at all. If you ever want to pick things back up, just text me and I will be right here.`;
+}

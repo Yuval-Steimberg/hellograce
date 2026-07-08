@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { MessageGenerator, isNearDuplicate, deriveMorningBridge, anticipationDirective, injectionNumberFromStart, __testing } from './message-generator.js';
+import { MessageGenerator, isNearDuplicate, deriveMorningBridge, anticipationDirective, injectionNumberFromStart, pickTodaysFocus, buildFocusBlock, isNutritionFocus, __testing } from './message-generator.js';
 import type { GraceUser } from '../user/user.service.js';
 import type { LLMProvider } from '@grace/shared';
 
@@ -271,6 +271,81 @@ describe('anticipationDirective — occasional forward teaser', () => {
   });
   it('never promises anything medical', () => {
     expect(anticipationDirective(0)).toMatch(/never promise anything medical/i);
+  });
+});
+
+describe("TODAY'S FOCUS — rotating check-in topic (Nudge model)", () => {
+  const NUTRITION = new Set(['protein', 'nutrition']);
+
+  it('is deterministic per (seed, slot) and varies across slots', () => {
+    // Same inputs → same focus (stable on retry within a day).
+    expect(pickTodaysFocus(['Losing weight'], 12345, 'morning'))
+      .toBe(pickTodaysFocus(['Losing weight'], 12345, 'morning'));
+    // At least one seed produces different morning vs evening foci.
+    const differs = [0, 1, 2, 3, 4, 5, 6, 7].some(
+      (s) => pickTodaysFocus(['Losing weight'], s, 'morning') !== pickTodaysFocus(['Losing weight'], s, 'evening'),
+    );
+    expect(differs).toBe(true);
+  });
+
+  it('a hydration-goal user NEVER lands on a protein/nutrition focus', () => {
+    // 'Staying hydrated' weights + universal contain no protein/nutrition topic,
+    // so every seed must yield a non-nutrition focus — the over-indexing fix.
+    for (let s = 0; s < 60; s++) {
+      for (const slot of ['morning', 'midday', 'evening']) {
+        expect(NUTRITION.has(pickTodaysFocus(['Staying hydrated'], s, slot))).toBe(false);
+      }
+    }
+  });
+
+  it('a protein-goal user CAN land on protein (weighted, not forced)', () => {
+    const foci = new Set(Array.from({ length: 60 }, (_, s) => pickTodaysFocus(['Eating enough protein'], s, 'morning')));
+    expect(foci.has('protein')).toBe(true);
+    expect(foci.size).toBeGreaterThan(1); // still varied, not protein every time
+  });
+
+  it('buildFocusBlock enforces TOPIC DISCIPLINE and bans protein on a non-nutrition day', () => {
+    const hydration = buildFocusBlock('hydration');
+    expect(hydration).toContain("TODAY'S FOCUS");
+    expect(hydration).toContain('TOPIC DISCIPLINE');
+    expect(hydration).toContain('Hydration');
+    expect(hydration).toMatch(/Do NOT default to protein/i);
+    expect(hydration).toMatch(/do NOT recite protein\/calorie numbers/i);
+    // A nutrition focus DOES allow the protein nudge.
+    const protein = buildFocusBlock('protein');
+    expect(protein).toMatch(/protein\/nutrition nudge fits/i);
+    expect(protein).not.toMatch(/Do NOT default to protein/i);
+    expect(isNutritionFocus('protein')).toBe(true);
+    expect(isNutritionFocus('hydration')).toBe(false);
+  });
+
+  it('a non-nutrition morning keeps yesterday data as AWARENESS only — no protein pivot', async () => {
+    const { llm, calls } = makeStubLlm('A glass of water now sets the whole day up 🌿');
+    const gen = new MessageGenerator(llm);
+    // 'Staying hydrated' → focus is always non-nutrition regardless of the daily seed.
+    await gen.generate('morning', makeUser({ goals: ['Staying hydrated'] }), {
+      yesterdayFood: { protein_g: 42, calories: 900, itemCount: 3, proteinGoal: 90 },
+    });
+    const prompt = calls[0]!.prompt;
+    expect(prompt).toContain('TOPIC DISCIPLINE');
+    expect(prompt).toMatch(/Do NOT default to protein/i);
+    // Numbers stay for awareness, but the protein DIRECTIVE is gone.
+    expect(prompt).toContain('REAL DATA — yesterday');
+    expect(prompt).toContain('AWARENESS only');
+    expect(prompt).not.toMatch(/plan one solid protein meal early/i);
+  });
+
+  it('a non-nutrition evening does not recite the protein total as a suggestion', async () => {
+    const { llm, calls } = makeStubLlm('Rest is part of the work tonight 🌙');
+    const gen = new MessageGenerator(llm);
+    await gen.generate('evening', makeUser({ goals: ['Staying hydrated'] }), {
+      todayFood: { protein_g: 82, calories: 1400, itemCount: 4, proteinGoal: 100 },
+    });
+    const prompt = calls[0]!.prompt;
+    expect(prompt).toContain('TOPIC DISCIPLINE');
+    expect(prompt).toContain('82g'); // still present for awareness
+    expect(prompt).toMatch(/AWARENESS only|do NOT recite these numbers/i);
+    expect(prompt).not.toMatch(/could close the gap/i);
   });
 });
 

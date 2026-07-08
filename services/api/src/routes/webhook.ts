@@ -23,6 +23,13 @@ import { tryHandleSettings, isBareSettingsFieldReply, tryHandleSettingsFollowUp 
 // 7 days, cut at 3" churn was exactly that kind of drift).
 import { TRIAL_DAYS } from '../services/trial-info.js';
 import { runOnboardingTurn } from '../onboarding/onboarding-flow.js';
+import {
+  isWinbackHelpIntent,
+  isWinbackStopIntent,
+  buildWinbackHelpReply,
+  buildWinbackStopReply,
+  POST_TRIAL_WINBACK_STAGES,
+} from '../services/post-trial-winback.js';
 
 const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 
@@ -580,6 +587,49 @@ export async function processInboundMessage(
             }
             log.info({ phone: user.phone, mode }, 'webhook.sms_onboarding');
             return;
+          }
+
+          // ── Post-trial win-back HELP / STOP affordance ─────────────────────
+          // The paywall + the final win-back SMS both invite "reply HELP" (and a
+          // STOP is always honored), but without this a HELP reply just looped
+          // back to the generic paywall and a STOP fell through to it too. For an
+          // expired-trial, unpaid user we answer those two intents deterministically
+          // BEFORE the paywall gate: HELP → a warm, cost/timing-aware reply that
+          // keeps the door open and invites a conversation; STOP → confirm, flip
+          // the opt-out flag, and end the win-back sequence so nothing else fires.
+          if (
+            user &&
+            deps.users &&
+            user.trial_start &&
+            !isAccessAllowed(user) &&
+            normalized.type === 'text'
+          ) {
+            if (isWinbackStopIntent(normalized.text)) {
+              await deps.users.setPaused(user.phone, true).catch(() => {});
+              // End the sequence so the scheduler never sends another stage.
+              await deps.users
+                .update(user.phone, { winback_stage: POST_TRIAL_WINBACK_STAGES.length })
+                .catch(() => {});
+              await deps.sender.send({
+                to: normalized.userId,
+                channel: normalized.channel,
+                body: buildWinbackStopReply(user.first_name),
+              });
+              log.info({ phone: user.phone }, 'webhook.winback_stop');
+              return;
+            }
+            if (isWinbackHelpIntent(normalized.text)) {
+              await deps.sender.send({
+                to: normalized.userId,
+                channel: normalized.channel,
+                body: buildWinbackHelpReply({
+                  firstName: user.first_name,
+                  upgradeUrl: buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL),
+                }),
+              });
+              log.info({ phone: user.phone }, 'webhook.winback_help');
+              return;
+            }
           }
 
           // Registration gate — a user with no subscription and no trial ever

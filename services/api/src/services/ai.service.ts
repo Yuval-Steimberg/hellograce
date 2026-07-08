@@ -4097,12 +4097,14 @@ CRITICAL RULES:
     //     typical-serving guess. A precisely-stated portion (high/exact, or a
     //     recorded serving_size) logs as normal.
     //
-    // The last (broad) rule is SCOPED to a PURE food log. A MULTI-TOPIC message
-    // (a planning/emotional message that merely mentions food) keeps the exact
-    // pre-existing gate — those replies answer every part and already ask about
-    // genuinely-ambiguous foods via their own path; we do NOT add portion
-    // questions there (would disrupt the carefully-tuned multi-part answer).
-    const foodOnlyTurn = input.media.length === 0 && !analyzeMessage(text).hasMultiple;
+    // This applies to a MULTI-TOPIC message too (user directive after seeing prod:
+    // "where are the clarification questions?"). It does NOT disrupt the multi-part
+    // answer: a downgraded food becomes PENDING, and the multi-topic grounded path
+    // ALREADY weaves the portion question into the full reply (see the "FOOD JUST
+    // HANDLED … weave THIS question in" note) while still answering every part via
+    // buildMultiPartNote — the Nudge model (IMG_6737). It's per-item, so the word
+    // "small" elsewhere in the message no longer suppresses asking about "crackers".
+    const askAggressively = input.media.length === 0;
     const logged: string[] = [];
     let anyRough = false;
     const downgraded: Array<{ item: string; protein_g: number | null }> = [];
@@ -4124,10 +4126,11 @@ CRITICAL RULES:
       // where the user gave no portion phrase, is a typical-serving GUESS — the
       // exact class the user wants confirmed ("crackers", "yogurt") rather than
       // silently logged. Per-item (not the message-level `quantified` flag) so a
-      // stated food logs while an estimated one beside it is still asked. Only on
-      // a PURE food turn — a multi-topic message keeps its existing behavior.
+      // stated food logs while an estimated one beside it is still asked. Fires in
+      // multi-topic too — the grounded path weaves the question in without dropping
+      // any part of the answer.
       const roughMaterial =
-        foodOnlyTurn && isRoughConfidence(it.confidence) && isMaterialMacro(it.protein_g, it.calories) && !it.serving_size;
+        askAggressively && isRoughConfidence(it.confidence) && isMaterialMacro(it.protein_g, it.calories) && !it.serving_size;
       if (
         isCompositionAmbiguousFood(it.item) ||
         isProteinProductAmbiguous(it.item, text) ||

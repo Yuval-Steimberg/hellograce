@@ -43,6 +43,47 @@ describe('composition-answer resolution gate (prod: "Cheese" → the pending sal
   });
 });
 
+// The pending DETAIL-resolution branch: a reply that names the pending food(s)
+// WITH details ("Cheese sandwich and one scoop protein shake") — has both a
+// filling and an amount, for several items. Prod IMG_6733/6735: it fell to the
+// grounded path, which hallucinated a total and logged nothing.
+function detailResolve(text: string, pending: string[]): { logged: string[]; unresolved: string[] } {
+  const gate = pending.length > 0 && namesSpecificFood(text) && !foodSpanFromConsumption(text) && text.split(/\s+/).length <= 12;
+  if (!gate) return { logged: [], unresolved: pending };
+  const segments = text.split(/\s+and\s+|,|;/i).map((s) => s.trim().replace(/[.!?]+$/, '')).filter(Boolean);
+  const logged: string[] = [];
+  const unresolved: string[] = [];
+  for (const p of pending) {
+    const key = (p.toLowerCase().split(/\s+/).pop() || p.toLowerCase());
+    const seg = segments.find((s) => new RegExp(`\\b${key}\\b`, 'i').test(s));
+    if (seg) logged.push(seg);
+    else unresolved.push(p);
+  }
+  return { logged, unresolved };
+}
+
+describe('pending DETAIL resolution gate (prod IMG_6733: shake + sandwich never logged)', () => {
+  it('resolves both pending items to the right segments', () => {
+    const r = detailResolve('Cheese sandwich and one scoop protein shake', ['sandwich', 'protein shake']);
+    expect(r.logged).toEqual(['Cheese sandwich', 'one scoop protein shake']);
+    expect(r.unresolved).toEqual([]);
+  });
+  it('resolves a single detailed answer', () => {
+    expect(detailResolve('one scoop protein shake', ['protein shake']).logged).toEqual(['one scoop protein shake']);
+    expect(detailResolve('turkey sandwich', ['sandwich']).logged).toEqual(['turkey sandwich']);
+  });
+  it('leaves an unmentioned pending item pending, and never hijacks an unrelated food', () => {
+    // A new/unrelated food does not match the pending keyword → nothing logged.
+    const r = detailResolve('some chicken', ['sandwich']);
+    expect(r.logged).toEqual([]);
+    expect(r.unresolved).toEqual(['sandwich']);
+  });
+  it('does not fire on a fresh consumption log ("I ate a sandwich")', () => {
+    // foodSpanFromConsumption matches → the gate is false → handled as a new log.
+    expect(detailResolve('I ate a turkey sandwich', ['sandwich']).logged).toEqual([]);
+  });
+});
+
 describe('foodSpanFromConsumption — never-drop backstop for "I ate X … <question>"', () => {
   it('extracts the eaten meal, slicing off the trailing question (prod: salmon)', () => {
     expect(

@@ -3946,6 +3946,51 @@ CRITICAL RULES:
       }
     }
 
+    // PENDING DETAIL RESOLUTION — the answer names the pending food(s) WITH the
+    // detail needed to log them (a filling AND/OR an amount), e.g. "Cheese
+    // sandwich and one scoop protein shake" resolving pending [sandwich, protein
+    // shake]. This is the case BETWEEN the amount-only (portion) and filling-only
+    // (composition) branches above — it has both, for possibly several items —
+    // and prod (IMG_6733/6735) showed it silently fell to the grounded path,
+    // which HALLUCINATED a total and logged nothing. Split the reply into
+    // segments and log the one that describes each pending item; a pending item
+    // the reply doesn't mention stays pending. A segment must actually contain a
+    // pending item's word, so a fresh/unrelated food is never hijacked. Scoped
+    // like the branches above: names a food, not a mutation, not a consumption
+    // statement ("I ate X" = a new log → extractor), short.
+    if (
+      pending.length > 0 &&
+      namesSpecificFood(text) &&
+      !FOOD_MUTATION_RE.test(text) &&
+      !foodSpanFromConsumption(text) &&
+      text.split(/\s+/).length <= 12
+    ) {
+      const segments = text.split(/\s+and\s+|,|;/i).map((s) => s.trim().replace(/[.!?]+$/, '')).filter(Boolean);
+      const logged: string[] = [];
+      const unresolved: typeof pending = [];
+      for (const p of pending) {
+        const key = (p.item.toLowerCase().split(/\s+/).pop() || p.item.toLowerCase())
+          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const seg = key ? segments.find((s) => new RegExp(`\\b${key}\\b`, 'i').test(s)) : undefined;
+        if (seg) {
+          const r = (await logFood.execute({ food: seg }).catch(() => null)) as Record<string, unknown> | null;
+          if (r && r.ok !== false) { logged.push(seg); continue; }
+        }
+        unresolved.push(p);
+      }
+      if (logged.length > 0) {
+        await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+        if (unresolved.length > 0) {
+          await addPendingFood(this.deps.redis, input.userId, unresolved.map((p) => ({ item: p.item, clarify_question: null }))).catch(() => {});
+        }
+        const clarify = unresolved.length > 0
+          ? buildPortionConfirmQuestion(unresolved.map((p) => ({ item: p.item, protein_g: null })))
+          : null;
+        this.deps.logger.info({ userId: input.userId, logged: logged.length, unresolved: unresolved.length }, 'ai.unified_food.detail_resolved');
+        return { logged, pending: unresolved.map((p) => p.item), removed: null, clarify };
+      }
+    }
+
     let extraction = await extractFood(
       this.deps.llm,
       this.deps.logger,

@@ -6,9 +6,24 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `de34c31`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`de34c31`.
+## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `a57fd79`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`a57fd79`.
 
 ### ⏳ ON MAIN, NOT YET DEPLOYED (user must `fly deploy`)
+- **`a57fd79` (#234) — don't context-cache the per-message grounded prompt (accuracy-neutral latency/cost fix).**
+  Diagnosis: Gemini context caching (`gemini.ts getOrCreateCachedContent`) keys on a sha256 of the FULL
+  systemInstruction in a SINGLE in-memory slot; the grounded reply prompt is rebuilt every message (temporal
+  block + profile + recalled memories) → hash differs every call → NEVER reuses, just leaks an orphaned 1h
+  cached object / wastes a ~300ms createCachedContent POST, AND evicts the slot the (mostly-static) food
+  extractor prompt could reuse. Fix: new opt-in `skipContextCache` LLMRequest flag, set ONLY on the grounded
+  `gen()` — model gets the identical systemInstruction (null-cache path already passes the full prompt), so
+  ZERO output change; other callers byte-identical (flag defaults off). Was the ONLY accuracy-neutral latency
+  lever left. **NOTE — complex-message #1/#2 (skip/parallelize extraction) were EVALUATED AND DECLINED:**
+  `hasExplicitQuantity` matches the article "a"/"an" (`vague-food.ts` QUANTITY_PRESENT_RE), so it's true even
+  for "a protein shake and a sandwich" and for "an apple" — there's NO deterministic proxy for "has confirmed
+  food to log" without the extractor, so any skip/parallel gate would regress logging (drop a log or lose the
+  just-logged total). The extractor is accuracy-critical and load-bearing; per the user's "only if it doesn't
+  affect accuracy" gate, not built. Pure food-log path is already 1 LLM call (extract) + deterministic reply;
+  only multi-topic is 2 and the 2nd (extractor) can't be safely removed.
 - **`de34c31` (#233) — MEMORY learn + recall wired into the LIVE unified path (was inert in prod).**
   Root cause: `runUnifiedReply` returns early from `handleMessage`, so the long-term-memory LEARNING
   block at the tail of `handleMessageInner` was never reached → Grace remembered nothing new in prod;

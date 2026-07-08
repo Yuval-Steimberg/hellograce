@@ -6,9 +6,24 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `3653750`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`3653750`.
+## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `de34c31`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`de34c31`.
 
 ### ⏳ ON MAIN, NOT YET DEPLOYED (user must `fly deploy`)
+- **`de34c31` (#233) — MEMORY learn + recall wired into the LIVE unified path (was inert in prod).**
+  Root cause: `runUnifiedReply` returns early from `handleMessage`, so the long-term-memory LEARNING
+  block at the tail of `handleMessageInner` was never reached → Grace remembered nothing new in prod;
+  and episodic `user_memories` were retrieved only on the dead compact path. Fix (both latency-safe):
+  (1) RECALL — `userMemory.retrieve(text,3)` added to the unified Promise.all (parallel with existing
+  loads → ~0 added latency, embedding cached 30min), injected into `buildGroundedPrompt`'s memory block
+  (weave-if-relevant, capped 3). (2) LEARN — new `learnFromTurnAsync` fires post-reply fire-and-forget
+  (`userMemory.extractAndStore` all users + `memoryMd` enqueue for pilot via `isEnrolled`); skips trivial
+  turns + pure food/water logs. `userMemory`/`memoryMd`(+queue) already constructed in server.ts. No
+  migration/env; `user_memories` populates from traffic post-deploy, retrieval returns [] until then.
+  **NOTE on "skills for latency" (user asked):** analysed + declined — Grace's guards are already
+  deterministic PRE-LLM intercepts (fast, one LLM pass). Converting them to LLM-called tools/function-calling
+  would ADD round-trips (slower), so per the user's own "IF it helps latency" condition we did NOT do it;
+  the current architecture already IS the low-latency shape. A tool-registry refactor is latency-neutral
+  org/extensibility only — offered as a separate option if they later want an agent brain.
 - **`3653750` (#232) — food-tracker ideas wired (from the uploaded `food_tracker` archive).** Brain-agnostic
   log-layer upgrades: (1) per-item **confidence** (exact|high|medium|low) — extractor emits it, `log_food`
   stores it, the deterministic food reply HEDGES the total on a rough (low/medium) estimate; (2) deterministic

@@ -2506,24 +2506,19 @@ export class AIService {
       /\bhow am i doing\b/.test(lower);
     if (!wantsTarget && !wantsHad) return null;
 
-    let user = await this.deps.users.getById(input.userId).catch(() => null);
+    const user = await this.deps.users.getById(input.userId).catch(() => null);
     if (!user) return null;
-    // Personalize on demand: if they're asking for their target but we've never
-    // computed one (SMS-onboarded users, or the field was added later), derive +
-    // store it now from their weight so the answer is THEIR own number, not a
-    // generic clinical range. Protein only needs weight — no extra questions.
-    if (wantsTarget && (!user.protein_goal_grams || user.protein_goal_grams <= 0) && user.current_weight != null) {
-      await this.deps.users.ensureNutritionTargets(input.userId).catch(() => undefined);
-      user = (await this.deps.users.getById(input.userId).catch(() => user)) ?? user;
-    }
     const parts: string[] = [];
+    // SETTINGS ARE THE SINGLE SOURCE OF TRUTH — Grace never WRITES a settings
+    // number from chat (2026-07-07, user directive). If a target is already SET
+    // (the user configured it in Settings), read it back. If it's NOT set, we
+    // never derive+store it silently — we SUGGEST a number, explain WHY, and ask
+    // them to put it in Settings themselves. Same flow for every settings datum.
     if (wantsTarget && user.protein_goal_grams && user.protein_goal_grams > 0) {
       parts.push(`your daily protein target is ${user.protein_goal_grams}g`);
     } else if (wantsTarget) {
-      // No stored target AND we couldn't derive one (weight missing). Don't dead-end
-      // or let the LLM invent a generic range — SUGGEST a computed number from
-      // whatever we have and invite them to confirm/set it in Settings, so the
-      // number is grounded and they know exactly what to do next.
+      // No stored target → suggest (never save), with the reasoning + a clear
+      // "set it in Settings yourself" so Grace isn't the source of truth.
       const anchorLbs = user.current_weight ?? user.goal_weight ?? null;
       const settingsUrl = 'https://graceglp.com/settings'; // rewritten by TwilioSender
       if (anchorLbs != null) {
@@ -2533,9 +2528,9 @@ export class AIService {
           age: user.age ?? null,
           goal: user.primary_goal ?? null,
         });
-        parts.push(`I don't have a protein target saved for you yet, but based on your weight a good goal is about ${suggested}g a day — you can confirm or adjust it in Settings (${settingsUrl}) and I'll track against it`);
+        parts.push(`you haven't set a protein target yet. Based on your weight, a good daily goal is about ${suggested}g — on a GLP-1 that's roughly the protein that protects your muscle while you lose. I can't save it from here, so pop that number into Settings (${settingsUrl}) and I'll track every meal against it`);
       } else {
-        parts.push(`I don't have your weight yet, so I can't pin your protein target exactly — for most people on a GLP-1 a solid goal is around 100-120g a day. Add your weight in Settings (${settingsUrl}) and I'll set your precise number`);
+        parts.push(`you haven't set a protein target yet, and I don't have your weight to suggest a precise one — for most people on a GLP-1, 100-120g a day is a solid goal to protect muscle. Add your weight and set your number in Settings (${settingsUrl}) and I'll track against it`);
       }
     }
     if (wantsHad) {
@@ -4593,12 +4588,13 @@ CRITICAL RULES:
         }
       }
       if (captured) {
+        // Persist the RAW datum the user gave (weight/height/etc.) — that's their
+        // input, not a Grace-invented number. We deliberately do NOT derive+store
+        // a protein/calorie TARGET here anymore: settings numbers are the user's
+        // to set. The replayed question answers by SUGGESTING a target (with the
+        // why) and pointing to Settings — Grace never writes the target itself.
         await this.deps.users.update(phone, captureFields!).catch(() => {});
         this.deps.logger.info({ userId: phone, slot: pending, captured: Object.keys(captureFields!) }, 'progressive_profile.captured');
-        // A newly-captured weight/goal/body metric may now let us derive a
-        // personalized protein/calorie target — fill it (best-effort, never
-        // clobbers a set value) so the replayed question answers with the number.
-        await this.deps.users.ensureNutritionTargets(phone).catch(() => undefined);
       }
       const declined = !captured && (llmDeclined || isGatherDecline(input.text));
       if (captured || declined) {

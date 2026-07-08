@@ -540,6 +540,7 @@ import {
 import { analyzeMessage, buildMultiPartNote } from './message-understanding.js';
 import { extractFood, formatFoodReply, EMPTY_EXTRACTION, type FoodExtraction, type ExtractedFoodItem } from './food-extract.js';
 import { getPendingFood, addPendingFood, resolvePendingFood, clearPendingFood } from './food-pending-store.js';
+import { uncoveredAskCount, missingAskTopics } from './multi-ask-coverage.js';
 import {
   PROFILE_LEARNING_ENABLED,
   mightStateProfileChange,
@@ -3558,7 +3559,22 @@ CRITICAL RULES:
     // to the grounded path (which answers every part, intake still snapshot-bound).
     if (isFoodDiaryQuery(input.text) && input.media.length === 0) {
       const s = todaysFoodPre;
-      const reply = renderDailyFoodSummary(s.items, Math.round(s.protein_g), Math.round(s.calories));
+      let reply = renderDailyFoodSummary(s.items, Math.round(s.protein_g), Math.round(s.calories));
+      // If foods are still awaiting a clarification (pending), acknowledge them so
+      // the user isn't told "nothing" about something they just reported (prod: a
+      // pending shake + sandwich were invisible to "what have I eaten today").
+      const pendingItems = await getPendingFood(this.deps.redis, userId).catch(
+        () => [] as Awaited<ReturnType<typeof getPendingFood>>,
+      );
+      const pendingNames = pendingItems.map((p) => p.item.trim()).filter(Boolean);
+      if (pendingNames.length > 0) {
+        const list = pendingNames.length === 1
+          ? pendingNames[0]
+          : pendingNames.length === 2
+            ? `${pendingNames[0]} and ${pendingNames[1]}`
+            : `${pendingNames.slice(0, -1).join(', ')}, and ${pendingNames[pendingNames.length - 1]}`;
+        reply += ` I'm also still waiting on the details for ${list} before I can log ${pendingNames.length === 1 ? 'it' : 'them'}.`;
+      }
       void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
       void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
       const totalMs = Date.now() - t0;
@@ -3743,6 +3759,22 @@ CRITICAL RULES:
         `\n\nHARD OVERRIDE: never say "as an AI", "I don't have access", "I can't provide medical advice", or "check your device". You are Grace and you HAVE their date, schedule, and profile in the facts above. Answer warmly and directly using those facts.`);
       if (retry2 && !UNIFIED_DENIAL_RE.test(retry2)) reply = retry2;
     }
+    // Completeness: an ENUMERATED multi-ask ("plan what to eat before dinner,
+    // what to choose at the meal, and how to handle dessert…") occasionally gets
+    // ONE part dropped (prod: only the before-dinner tip landed). When the reply
+    // misses an ask, regen ONCE asking for the missing parts — and adopt the retry
+    // ONLY if it covers strictly more, so a false positive can never ship a worse
+    // reply (worst case is one wasted call, and only on enumerated multi-asks).
+    if (isMultiTopic && reply) {
+      const uncovered = uncoveredAskCount(input.text, reply);
+      if (uncovered > 0) {
+        const topics = missingAskTopics(input.text, reply);
+        this.deps.logger.info({ userId, uncovered, topics }, 'ai.unified.completeness_regen');
+        const retry = await gen(systemPrompt +
+          `\n\nIMPORTANT: your draft skipped part of what they asked. In the SAME short, warm message, also directly answer: ${topics.join('; ')}. Cover EVERY part they asked about — plain prose, no lists.`);
+        if (retry && uncoveredAskCount(input.text, retry) < uncovered) reply = retry;
+      }
+    }
     if (!reply) reply = 'I’m here — tell me a little more?';
 
     // Report shape ("here's the game plan: 1. … 2. …") → strip to warm prose,
@@ -3868,6 +3900,39 @@ CRITICAL RULES:
       if (logged.length > 0) {
         this.deps.logger.info({ userId: input.userId, logged: logged.length }, 'ai.unified_food.portion_resolved');
         return { logged, pending: [], removed: null };
+      }
+    }
+
+    // COMPOSITION ANSWER to a "what was in the X?" clarification: a short bare
+    // FILLING word ("Cheese", "turkey", "chicken") resolves a pending COMPOSITION-
+    // ambiguous item (a bare salad/sandwich/wrap) → log it as "<filling> <food>"
+    // ("cheese salad") DETERMINISTICALLY, so it never falls to the grounded path
+    // (prod: "Cheese" answering the salad question produced an LLM reply that
+    // computed a total but logged nothing). Scoped tight like the portion branch:
+    // a short reply that names a food, has NO amount, is NOT a consumption
+    // statement ("I ate cheese" = a new log, handled by the extractor), and only
+    // when a composition-ambiguous item is actually pending.
+    const compositionPending = pending.filter((p) => isCompositionAmbiguousFood(p.item));
+    if (
+      compositionPending.length > 0 &&
+      !hasExplicitQuantity(text) &&
+      namesSpecificFood(text) &&
+      !FOOD_MUTATION_RE.test(text) &&
+      !foodSpanFromConsumption(text) &&
+      text.split(/\s+/).length <= 3
+    ) {
+      const filling = text.trim().replace(/[.!?,]+$/, '');
+      const logged: string[] = [];
+      for (const p of compositionPending) {
+        const food = `${filling} ${p.item}`.replace(/\s+/g, ' ').trim(); // "cheese salad"
+        const r = (await logFood.execute({ food }).catch(() => null)) as Record<string, unknown> | null;
+        if (r && r.ok !== false) logged.push(p.item);
+      }
+      for (const it of logged) await resolvePendingFood(this.deps.redis, input.userId, it).catch(() => {});
+      if (logged.length > 0) {
+        this.deps.logger.info({ userId: input.userId, logged: logged.length }, 'ai.unified_food.composition_resolved');
+        // The user-facing item names describe what was actually logged.
+        return { logged: logged.map((it) => `${filling} ${it}`.replace(/\s+/g, ' ').trim()), pending: [], removed: null };
       }
     }
 

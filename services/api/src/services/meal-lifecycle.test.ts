@@ -10,6 +10,38 @@ import {
   isBareConsumptionBackReference,
   mentionsFood,
 } from './meal-lifecycle.js';
+import { isCompositionAmbiguousFood } from './food-portion.js';
+import { hasExplicitQuantity } from '../safety/vague-food.js';
+
+// The exact deterministic gate foodStepUnified uses to resolve a bare filling
+// answer ("Cheese") against a pending composition-ambiguous item ("salad") —
+// logging "<filling> <food>" instead of falling to the grounded path (prod fix).
+function compositionResolves(text: string, pendingItem: string): boolean {
+  return (
+    isCompositionAmbiguousFood(pendingItem) &&
+    !hasExplicitQuantity(text) &&
+    namesSpecificFood(text) &&
+    !foodSpanFromConsumption(text) &&
+    text.split(/\s+/).length <= 3
+  );
+}
+
+describe('composition-answer resolution gate (prod: "Cheese" → the pending salad)', () => {
+  it('fires for a bare filling word answering "what was in the salad?"', () => {
+    expect(isCompositionAmbiguousFood('salad')).toBe(true);
+    expect(compositionResolves('Cheese', 'salad')).toBe(true);
+    expect(compositionResolves('turkey', 'salad')).toBe(true);
+    expect(compositionResolves('chicken', 'sandwich')).toBe(true);
+  });
+  it('does NOT fire for a new consumption log, an amount, or a long reply', () => {
+    expect(compositionResolves('I ate a burrito', 'salad')).toBe(false); // consumption → new log
+    expect(compositionResolves('one cup', 'salad')).toBe(false); // amount → portion branch
+    expect(compositionResolves('cheese and crackers and some grapes', 'salad')).toBe(false); // too long
+  });
+  it('does NOT fire when nothing composition-ambiguous is pending', () => {
+    expect(compositionResolves('Cheese', 'rice')).toBe(false); // rice is portion-ambiguous, not composition
+  });
+});
 
 describe('foodSpanFromConsumption — never-drop backstop for "I ate X … <question>"', () => {
   it('extracts the eaten meal, slicing off the trailing question (prod: salmon)', () => {

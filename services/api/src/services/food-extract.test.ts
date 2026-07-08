@@ -23,6 +23,33 @@ describe('parseFoodExtraction', () => {
       edit_ref: null,
     }));
     expect(out.items[0]).toMatchObject({ item: 'pizza', protein_g: null, calories: null, status: 'pending_portion', clarify_question: 'How many slices?' });
+    // Pending items carry no confidence / serving_size yet.
+    expect(out.items[0]?.confidence).toBeNull();
+    expect(out.items[0]?.serving_size).toBeNull();
+  });
+
+  it('parses confidence + serving_size (food_tracker fields) and defaults confidence to medium', () => {
+    const out = parseFoodExtraction(JSON.stringify({
+      intent: 'log',
+      items: [
+        { item: '3 eggs', protein_g: 18, calories: 210, status: 'confirmed', clarify_question: null, confidence: 'high', serving_size: '3 eggs' },
+        { item: 'toast', protein_g: 3, calories: 80, status: 'confirmed', clarify_question: null }, // no confidence → medium
+      ],
+      edit_ref: null,
+    }));
+    expect(out.items[0]).toMatchObject({ confidence: 'high', serving_size: '3 eggs' });
+    expect(out.items[1]?.confidence).toBe('medium');
+    expect(out.items[1]?.serving_size).toBeNull();
+  });
+
+  it('downgrades an internally-impossible estimate to low confidence (macro-sanity)', () => {
+    const out = parseFoodExtraction(JSON.stringify({
+      intent: 'log',
+      // 40g protein = 160 kcal, but only 60 kcal stated → impossible → 'low'.
+      items: [{ item: 'salad', protein_g: 40, calories: 60, status: 'confirmed', clarify_question: null, confidence: 'high' }],
+      edit_ref: null,
+    }));
+    expect(out.items[0]?.confidence).toBe('low');
   });
 
   it('clamps out-of-range macros to null', () => {
@@ -94,6 +121,15 @@ describe('formatFoodReply', () => {
   it('never includes nutrition-education phrasing', () => {
     const r = formatFoodReply({ loggedItems: ['2 eggs'], loggedProtein: 12, pendingFoods: [], seed });
     expect(r.toLowerCase()).not.toMatch(/high in protein|supports muscle|sustained energy|excellent source/);
+  });
+
+  it('hedges the total when the estimate is rough (food_tracker confidence)', () => {
+    const rough = formatFoodReply({ loggedItems: ['a bowl of soup'], loggedProtein: 15, pendingFoods: [], seed, rough: true });
+    expect(rough).toMatch(/rough estimate/i);
+    expect(rough).toMatch(/portion/i); // offers the path to exact
+    // A confident log does NOT hedge.
+    const exact = formatFoodReply({ loggedItems: ['3 eggs'], loggedProtein: 18, pendingFoods: [], seed, rough: false });
+    expect(exact).not.toMatch(/rough estimate/i);
   });
 });
 

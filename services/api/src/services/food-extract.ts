@@ -15,6 +15,7 @@
  */
 import type { LLMProvider } from '@grace/shared';
 import type { Logger } from 'pino';
+import { macroSanityConfidence, type Confidence } from '../nutrition/macro-sanity.js';
 
 /** Model for the structured extraction pass. flash-lite is markedly faster than
  *  flash for JSON classification; overridable/revertible via GEMINI_EXTRACT_MODEL. */
@@ -26,6 +27,15 @@ export interface ExtractedFoodItem {
   calories: number | null;
   status: 'confirmed' | 'pending_portion';
   clarify_question: string | null;
+  /** How trustworthy the estimate is (food_tracker idea): exact = from a label,
+   *  high = a clearly-stated portion, medium = a typical-serving estimate, low =
+   *  a rough guess (or a macro-sanity downgrade). Drives reply hedging. Null for
+   *  pending items (nothing estimated yet). */
+  confidence: Confidence | null;
+  /** The portion phrase the estimate is for ("2 slices", "1 cup", "200g"), stored
+   *  alongside the log so an edit/re-ask has the amount, not just the food name.
+   *  Null when no amount was given. */
+  serving_size: string | null;
 }
 
 export interface FoodExtraction {
@@ -47,7 +57,7 @@ export function buildFoodExtractPrompt(pendingItems: Array<{ item: string }>): s
 Return STRICT JSON only:
 {
   "intent": "log"|"edit"|"delete"|"query"|"none",
-  "items": [{"item": string, "protein_g": number|null, "calories": number|null, "status": "confirmed"|"pending_portion", "clarify_question": string|null}],
+  "items": [{"item": string, "protein_g": number|null, "calories": number|null, "status": "confirmed"|"pending_portion", "clarify_question": string|null, "confidence": "exact"|"high"|"medium"|"low"|null, "serving_size": string|null}],
   "edit_ref": string|null
 }
 
@@ -70,6 +80,8 @@ Hard rules:
 - A food named WITHOUT an amount ("had pasta", "ate chicken", "had a burger", "some rice", "a bit of tofu", a bare restaurant/cuisine) → status="pending_portion", numbers null, with a SHORT friendly clarify_question that suggests an easy ballpark ("roughly how much chicken — a palm-sized piece or so?"). ALWAYS ask for the portion when the amount is missing — do NOT silently assume a serving size. This is the default for any bare food mention.
 - Standard portion references for CONFIRMED items: egg≈6g/70cal, slice bread≈3g/80cal, oz cooked chicken≈7g/45cal, cup greek yogurt≈17g/130cal, scoop whey≈24g/120cal, cup milk≈8g/120cal, oz cheese≈7g/110cal, tbsp peanut butter≈4g/95cal, cup cooked rice≈4g/200cal, cup cooked pasta≈8g/220cal, banana≈1g/105cal, cup berries≈1g/70cal. ROUNDING (Nudge rule): protein — if ≥5g round to the nearest 5g; if between 1g and 4g keep it as the integer (NEVER round a real protein value down to 0); only use 0 when the food genuinely has ~0g protein (water, black coffee, plain soda, hard candy). Calories: round to nearest 10.
 - Each vague food is ONE pending item with its own clarify_question; the app combines multiple into a single friendly question. Never re-ask a pending item already resolved by this message.
+- confidence (per CONFIRMED item — how trustworthy the estimate is): "exact" ONLY when the user gave a nutrition-label number ("this bar has 20g protein"); "high" for a clearly stated, standard portion of a well-known food ("3 eggs", "4 oz chicken"); "medium" for a normal typical-serving estimate; "low" for a rough guess. A pending_portion item has confidence null (nothing estimated yet).
+- serving_size (per item): the portion phrase the numbers are for, exactly as it can be read back — "2 slices", "1 cup", "200g", "a palm-sized piece". Null when no amount was given (pending items are null).
 
 Output ONLY the JSON object.${pendingHint}`;
 }
@@ -106,7 +118,18 @@ export function parseFoodExtraction(raw: string): FoodExtraction {
       if (status === 'pending_portion') { protein_g = null; calories = null; }
       const clarify_question = typeof it.clarify_question === 'string' && it.clarify_question.trim()
         ? it.clarify_question.trim().slice(0, 240) : null;
-      return { item, protein_g, calories, status, clarify_question };
+      // Confidence: enum-clamp; a confirmed item with no/invalid value defaults to
+      // 'medium' (a typical-serving estimate). Pending items carry null.
+      const rawConf = ['exact', 'high', 'medium', 'low'].includes(it.confidence as string)
+        ? (it.confidence as Confidence) : null;
+      const serving_size = typeof it.serving_size === 'string' && it.serving_size.trim()
+        ? it.serving_size.trim().slice(0, 64) : null;
+      let confidence: Confidence | null = status === 'pending_portion' ? null : (rawConf ?? 'medium');
+      // Deterministic macro-sanity: an internally-impossible estimate (protein
+      // kcal > total kcal) is never trusted — downgrade to 'low' so the reply
+      // hedges the number instead of presenting a hallucination as fact.
+      if (confidence) confidence = macroSanityConfidence(protein_g, calories, confidence);
+      return { item, protein_g, calories, status, clarify_question, confidence, serving_size };
     })
     .filter((x): x is ExtractedFoodItem => x !== null);
 
@@ -141,12 +164,17 @@ export function formatFoodReply(opts: {
   loggedCalories?: number | null;
   pendingFoods: string[];
   seed: string;
+  /** When the logged estimate is low/medium confidence (food_tracker idea), the
+   *  total is hedged so a rough guess is never presented as exact. */
+  rough?: boolean;
 }): string {
   const logged = humanList(opts.loggedItems);
   const pending = humanList(opts.pendingFoods);
+  // A rough estimate is flagged honestly and offers an easy path to exact.
+  const hedge = opts.rough ? ' — a rough estimate, tell me the portion if you want it exact' : '';
   const total =
     opts.loggedProtein != null && opts.loggedProtein > 0
-      ? ` You're at about ${Math.round(opts.loggedProtein)}g protein${opts.loggedCalories != null && opts.loggedCalories > 0 ? ` and ${Math.round(opts.loggedCalories)} calories` : ''} today.`
+      ? ` You're at about ${Math.round(opts.loggedProtein)}g protein${opts.loggedCalories != null && opts.loggedCalories > 0 ? ` and ${Math.round(opts.loggedCalories)} calories` : ''} today${hedge}.`
       : '';
 
   // Portion question only (nothing concrete to log yet).

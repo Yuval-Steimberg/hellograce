@@ -506,6 +506,7 @@ import { classifyMessage } from '../safety/guard.js';
 import { detectVagueFood, findVagueAddOnItem, hasExplicitQuantity } from '../safety/vague-food.js';
 import { shouldDiscloseEstimate, estimateNote } from '../nutrition/estimate-note.js';
 import { calculateProteinTarget } from '../nutrition/protein-target.js';
+import { worstConfidence, isRoughConfidence } from '../nutrition/macro-sanity.js';
 import {
   calculateCalorieTarget,
   type Sex as CalorieSex,
@@ -537,7 +538,7 @@ import {
   clearActiveMeal,
 } from './meal-recommendation-store.js';
 import { analyzeMessage, buildMultiPartNote } from './message-understanding.js';
-import { extractFood, formatFoodReply, EMPTY_EXTRACTION, type FoodExtraction } from './food-extract.js';
+import { extractFood, formatFoodReply, EMPTY_EXTRACTION, type FoodExtraction, type ExtractedFoodItem } from './food-extract.js';
 import { getPendingFood, addPendingFood, resolvePendingFood, clearPendingFood } from './food-pending-store.js';
 import {
   PROFILE_LEARNING_ENABLED,
@@ -3623,6 +3624,7 @@ CRITICAL RULES:
           loggedCalories: todaysFood.calories,
           pendingFoods: [],
           seed,
+          rough: food.rough,
         });
         if (confirm) parts.push(confirm);
       }
@@ -3779,7 +3781,7 @@ CRITICAL RULES:
   private async foodStepUnified(
     input: InboundMessage,
     history: ChatTurn[],
-  ): Promise<{ logged: string[]; pending: string[]; removed: string | null; clarify?: string | null } | null> {
+  ): Promise<{ logged: string[]; pending: string[]; removed: string | null; clarify?: string | null; rough?: boolean } | null> {
     const text = input.text.trim();
     if (!text) return null;
     // Nudge's advice/planning guard: "what should I eat" / a bare "salmon" after
@@ -3923,12 +3925,20 @@ CRITICAL RULES:
     // food (an apple, toast, a banana) logs with the estimate. With an explicit
     // amount, portion-variable foods log as normal.
     const logged: string[] = [];
+    let anyRough = false;
     const downgraded: Array<{ item: string; protein_g: number | null }> = [];
-    const logConfirmed = async (it: { item: string; protein_g: number | null; calories: number | null }): Promise<void> => {
+    const logConfirmed = async (it: ExtractedFoodItem): Promise<void> => {
       const args: Record<string, unknown> = { food: it.item };
       if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
+      // Carry the extractor's confidence + portion phrase to the log (food_tracker
+      // idea). The tool's macro-sanity guard may still downgrade a bad estimate.
+      if (it.confidence) args.confidence = it.confidence;
+      if (it.serving_size) args.serving_size = it.serving_size;
       const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
-      if (r && r.ok !== false) logged.push(it.item);
+      if (r && r.ok !== false) {
+        logged.push(it.item);
+        if (isRoughConfidence(it.confidence)) anyRough = true;
+      }
     };
     for (const it of confirmed) {
       if (
@@ -3971,10 +3981,10 @@ CRITICAL RULES:
       : null;
 
     this.deps.logger.info(
-      { userId: input.userId, logged: logged.length, pending: pendingItems.length, downgraded: downgraded.length },
+      { userId: input.userId, logged: logged.length, pending: pendingItems.length, downgraded: downgraded.length, rough: anyRough },
       'ai.unified_food.step',
     );
-    return { logged, pending: pendingItems.map((i) => i.item), removed: null, clarify };
+    return { logged, pending: pendingItems.map((i) => i.item), removed: null, clarify, rough: anyRough };
   }
 
   /**
@@ -4214,6 +4224,10 @@ CRITICAL RULES:
               calories: allC ? confirmed.reduce((s, i) => s + (i.calories ?? 0), 0) : null,
               status: 'confirmed',
               clarify_question: null,
+              // Combined meal: the least-confident part sets the meal's confidence;
+              // no single serving_size for a collapsed multi-item meal.
+              confidence: worstConfidence(confirmed.map((i) => i.confidence)),
+              serving_size: null,
             }];
           }
           const loggedSummaries: string[] = [];

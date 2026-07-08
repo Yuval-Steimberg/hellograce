@@ -5,12 +5,13 @@ import type { LLMProvider } from '@grace/shared';
 import type { Tool } from '@grace/ai-core';
 import type { UsdaFoodService } from '../services/usda-food.service.js';
 import { USER_DAY_CTE, isCurrentUserDay } from '../nutrition/logging-window.js';
+import { macroSanityConfidence, type Confidence } from '../nutrition/macro-sanity.js';
 
 interface FoodEstimate {
   food: string;
   protein_g: number;
   calories: number;
-  confidence: 'low' | 'medium' | 'high';
+  confidence: Confidence;
 }
 
 const FOOD_SYSTEM_PROMPT = `You estimate protein and calories for each distinct food item the user mentioned. Use USDA-anchored values.
@@ -312,8 +313,16 @@ export function makeLogFoodTool(deps: {
       const hasPreCalc =
         typeof preP === 'number' && Number.isFinite(preP) && preP >= 0 && preP <= 300 &&
         typeof preC === 'number' && Number.isFinite(preC) && preC >= 0 && preC <= 5000;
+      // Caller-supplied confidence + serving_size (food_tracker idea) — the
+      // extractor already judged how trustworthy its estimate is and for what
+      // portion. Used on the pre-calc path; the macro-sanity guard below still
+      // applies regardless of source.
+      const incomingConf = ['exact', 'high', 'medium', 'low'].includes(args['confidence'] as string)
+        ? (args['confidence'] as Confidence) : null;
+      const servingSize = typeof args['serving_size'] === 'string' && (args['serving_size'] as string).trim()
+        ? (args['serving_size'] as string).trim().slice(0, 64) : null;
       let parsed: FoodEstimate | null = hasPreCalc
-        ? { food, protein_g: Math.round(preP as number), calories: Math.round(preC as number), confidence: 'high' }
+        ? { food, protein_g: Math.round(preP as number), calories: Math.round(preC as number), confidence: incomingConf ?? 'high' }
         : null;
       let estimateSource: 'usda' | 'llm' | 'fast_lookup' | 'deterministic' | 'precalc' = hasPreCalc ? 'precalc' : 'llm';
       if (hasPreCalc) {
@@ -390,14 +399,39 @@ export function makeLogFoodTool(deps: {
         .digest('hex')
         .slice(0, 32);
 
+      // Deterministic macro-sanity: an internally-impossible estimate (protein
+      // kcal > total kcal — a hallucinated "40g protein / 60 cal") is never
+      // stored as trustworthy; downgrade to 'low' so reads/replies hedge it.
+      // Applies to EVERY estimate source (precalc, lookup, USDA, LLM, det).
+      const storedConfidence = macroSanityConfidence(parsed.protein_g, parsed.calories, parsed.confidence);
+
       const source = deps.source ?? 'text';
-      const result = await deps.pool.query<{ id: string }>(
-        `INSERT INTO food_logs (user_id, food, protein_g, calories, confidence, raw_text, source, dedupe_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
-         RETURNING id`,
-        [deps.userId, parsed.food, parsed.protein_g, parsed.calories, parsed.confidence, food, source, dedupeKey],
-      );
+      const insertWith = (withServing: boolean) =>
+        deps.pool.query<{ id: string }>(
+          withServing
+            ? `INSERT INTO food_logs (user_id, food, protein_g, calories, confidence, raw_text, source, dedupe_key, serving_size)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+               ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+               RETURNING id`
+            : `INSERT INTO food_logs (user_id, food, protein_g, calories, confidence, raw_text, source, dedupe_key)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+               RETURNING id`,
+          withServing
+            ? [deps.userId, parsed.food, parsed.protein_g, parsed.calories, storedConfidence, food, source, dedupeKey, servingSize]
+            : [deps.userId, parsed.food, parsed.protein_g, parsed.calories, storedConfidence, food, source, dedupeKey],
+        );
+      // Deploy-order safety: if the serving_size migration hasn't been applied
+      // yet (code shipped ahead of the migration), Postgres raises 42703
+      // (undefined_column) — fall back to the pre-serving_size insert so food
+      // logging never breaks. serving_size is best-effort metadata, not the log.
+      const result = await insertWith(true).catch((err: unknown) => {
+        if ((err as { code?: string })?.code === '42703') {
+          deps.logger.warn({ userId: deps.userId }, 'tool.log_food.serving_size_column_missing');
+          return insertWith(false);
+        }
+        throw err;
+      });
 
       const wasDuplicate = result.rowCount === 0;
       // Invalidate today's food summary cache so the immediately-following

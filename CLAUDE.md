@@ -6,7 +6,25 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `fc91a81` (last CODE change `fc91a81`); PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health` == HEAD. **Apply migration `20260708000001_food_serving_size.sql` with the deploy.**
+## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `7486cb9` (last CODE change `7486cb9`); PROD deployed an INTERMEDIATE build (user tested live). **Redeploy the latest** → `fly deploy` grace-api, verify `/health` == `7486cb9`. **Apply migration `20260708000001_food_serving_size.sql` with the deploy.**
+
+### 🍽️ FOOD-ASKING — final deterministic model (#240→#246, latest 2026-07-08 PM)
+The "ask about almost every food with real macros" directive went through several
+iterations; the LANDED design (#246) is: the precision gate in `foodStepUnified` asks
+for a portion on ANY confirmed material-macro food (`isMaterialMacro` ≥2g protein OR
+≥25 kcal) UNLESS it has a REAL amount (`hasPreciseAmount` = a number or measuring unit
+in the label/serving_size), is a nutrition-label `exact` value, or is an obvious
+single-serving food (`isObviousSingleServing` = a whole fruit / a wrapped bar). A bare
+SIZE ("small") or vague quantifier ("some") is NOT a real amount → asks. **This is
+DETERMINISTIC — it no longer trusts the extractor's confidence** (gemini marked "small
+yogurt" high-confidence → it logged silently; prod bug). Fires on MULTI-TOPIC turns too
+(#245): a downgraded food becomes pending and the grounded path WEAVES the portion
+question into the full multi-part answer (buildMultiPartNote still answers every part —
+the Nudge IMG_6737 model), so asking never truncates the multipart reply. `foodOnlyTurn`
+scoping from #241 was REVERSED per the user after they saw multi-topic messages log
+silently. It IS intentionally aggressive — dial-back levers if it over-asks: expand the
+`isObviousSingleServing` allow-list or re-add a confidence gate. Precisely-stated foods
+("2 eggs", "a cup of rice", "6 oz chicken", "an apple") still log.
 
 ### 🧭 THIS SESSION'S ARC (2026-07-08, all merged, NONE deployed yet)
 Deployed baseline is `7fbbfbe`. On top, in order: #228 timezone-from-phone self-heal + deterministic
@@ -29,7 +47,11 @@ render as sections — one short paragraph per part (opt-in `preserveParagraphs`
 OrchestratorOutput→OutboundMessage→sanitizeOutbound→enforceFormat; default OFF = every other message
 byte-identical; also fixes the single-newline word-merge "stickcan") + `buildMultiPartNote` asks for a
 paragraph per part · **#243** AUDIT REMEDIATION (see its section below) — 6 real regressions the test
-net missed, found by a 3-agent parallel review of the whole arc.
+net missed, found by a 3-agent parallel review of the whole arc · **#244** docs · **#245** food
+portion-asking now fires on MULTI-TOPIC turns too (woven into the full answer, not terse — reverses
+#241's scoping per the user after live testing) · **#246** food portion-asking is now DETERMINISTIC
+(driven by `hasPreciseAmount`, NOT the extractor's confidence, which marked "small yogurt" high →
+logged silently) — see the FOOD-ASKING section above.
 
 ### 🔬 #243 AUDIT REMEDIATION (2026-07-08) — 6 regressions fixed, 3 deferred
 Full audit of `7fbbfbe..HEAD` (build/typecheck/2061 api+667 ai-core green) + 3 parallel deep reviews.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lookupCommonFoodMacros, estimateMultiItemFood, __testing } from './log-food.js';
+import { lookupCommonFoodMacros, estimateMultiItemFood, makeLogFoodTool, __testing } from './log-food.js';
 
 const { parseItemizedEstimate, sumItemized } = __testing;
 
@@ -402,5 +402,27 @@ describe('sumItemized — server-side total', () => {
     const total = sumItemized(itemized, 'a and b');
     expect(total!.protein_g).toBe(20);
     expect(total!.calories).toBe(230);
+  });
+});
+
+describe('log_food — a real INSERT failure is LOUD, never silently swallowed', () => {
+  it('logs tool.log_food.insert_failed and re-throws on a DB error', async () => {
+    const errors: Array<{ msg: string }> = [];
+    const logger = {
+      info() {}, warn() {}, debug() {},
+      error(_obj: unknown, msg: string) { errors.push({ msg }); },
+    } as unknown as Parameters<typeof makeLogFoodTool>[0]['logger'];
+    const pool = {
+      query: async () => {
+        const e = new Error('connection reset by peer') as Error & { code?: string };
+        e.code = '08006'; // a real DB error, not the 42703 migration-lag case
+        throw e;
+      },
+    } as unknown as Parameters<typeof makeLogFoodTool>[0]['pool'];
+    const tool = makeLogFoodTool({ pool, llm: {} as never, logger, userId: '+15551234567' });
+    // Pre-calc path (protein/calories supplied) → skips the estimator, straight
+    // to the INSERT, which throws.
+    await expect(tool.execute({ food: '2 eggs', protein_g: 12, calories: 140 })).rejects.toThrow(/connection reset/);
+    expect(errors.some((e) => e.msg === 'tool.log_food.insert_failed')).toBe(true);
   });
 });

@@ -2712,12 +2712,22 @@ export class AIService {
         .update(`${userId}|${rawText.toLowerCase().replace(/\s+/g, ' ')}|${minuteBucket}`)
         .digest('hex')
         .slice(0, 32);
-      await this.deps.pool.query(
-        `INSERT INTO food_logs (user_id, food, protein_g, calories, confidence, raw_text, source, dedupe_key)
-         VALUES ($1, $2, $3, $4, 'medium', $5, 'text', $6)
-         ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
-        [userId, foodLabel, est.protein_g, est.calories, rawText, dedupeKey],
-      );
+      try {
+        await this.deps.pool.query(
+          `INSERT INTO food_logs (user_id, food, protein_g, calories, confidence, raw_text, source, dedupe_key)
+           VALUES ($1, $2, $3, $4, 'medium', $5, 'text', $6)
+           ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+          [userId, foodLabel, est.protein_g, est.calories, rawText, dedupeKey],
+        );
+      } catch (err) {
+        // Loud on a real write failure (this path is otherwise swallowed by the
+        // caller's .catch). Re-throws — behavior unchanged, just not silent.
+        this.deps.logger.error(
+          { userId, food: foodLabel, err: err instanceof Error ? err.message : String(err) },
+          'ai.persist_estimated_food.insert_failed',
+        );
+        throw err;
+      }
       this.deps.users.invalidateTodaysFoodCache?.(userId);
     }
     const [summary, user] = await Promise.all([

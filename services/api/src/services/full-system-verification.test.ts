@@ -22,6 +22,7 @@ import { detectReminderIntent } from './reminder-service.js';
 import { analyzeMessage } from './message-understanding.js';
 import { sanitizeOutbound } from '../twilio/sender.js';
 import { signupSequence, buildSignupCompleteReply, parseSlotAnswer } from '../onboarding/onboarding-flow.js';
+import { uncoveredAskCount, missingAskTopics } from './multi-ask-coverage.js';
 
 /**
  * FULL-SYSTEM OFFLINE VERIFICATION (2026-07-07).
@@ -183,5 +184,60 @@ describe('PORTION-SENSITIVE FOODS ask, obvious foods just log', () => {
   });
   it('obvious/low-variance → log', () => {
     for (const f of ['apple', 'banana', 'a boiled egg', 'protein bar']) expect(isPortionSensitiveFood(f), f).toBe(false);
+  });
+});
+
+// ─── This session's prod screenshots (IMG_6723…6729, 2026-07-08) ──────────────
+
+describe('COMPOSITION ANSWER (IMG_6729) — "Cheese" resolves the pending salad', () => {
+  // The salad is composition-ambiguous → asked; a bare filling answer resolves it.
+  it('salad is composition-ambiguous and "Cheese" is the deterministic filling', () => {
+    expect(isCompositionAmbiguousFood('salad')).toBe(true);
+    // The exact gate foodStepUnified uses: short filling word, no amount, not a
+    // consumption statement, a composition-ambiguous item pending.
+    const gate = (text: string, pending: string) =>
+      isCompositionAmbiguousFood(pending) && !hasExplicitQuantity(text) &&
+      namesSpecificFood(text) && !foodSpanFromConsumption(text) && text.split(/\s+/).length <= 3;
+    expect(gate('Cheese', 'salad')).toBe(true);
+    expect(gate('I ate a burrito', 'salad')).toBe(false); // a new log, not a filling
+    expect(gate('one cup', 'salad')).toBe(false); // an amount, not a filling
+  });
+});
+
+describe('MULTI-ASK COMPLETENESS (IMG_6728) — the Friday message', () => {
+  const FRIDAY =
+    "I'm going to my parents Friday. Can you help me plan what to eat before dinner, what to choose at the meal, and how to handle dessert without feeling guilty?";
+  it('flags the two dropped asks in the prod reply', () => {
+    const droppedReply =
+      "Nice, sandwich and protein shake. For Friday, try to have a Greek yogurt about an hour before you go so you aren't arriving hungry.";
+    expect(uncoveredAskCount(FRIDAY, droppedReply)).toBe(2);
+    expect(missingAskTopics(FRIDAY, droppedReply)).toEqual(expect.arrayContaining(['meal', 'dessert']));
+  });
+  it('a complete reply covers all three', () => {
+    const full =
+      "Before you go, have a Greek yogurt. At the meal, fill your plate with the meat first. And enjoy a small dessert — no guilt.";
+    expect(uncoveredAskCount(FRIDAY, full)).toBe(0);
+  });
+});
+
+describe('FOOD-DIARY QUERY (IMG_6728) — "What I have eaten today" is recognized', () => {
+  it('matches the exact prod phrasing', () => {
+    expect(isFoodDiaryQuery('What I have eaten today')).toBe(true);
+    expect(isFoodDiaryQuery('what have i eaten today?')).toBe(true);
+  });
+});
+
+describe('KG UNIT (IMG_6729) — "150kg" is stored as lb, not 150', () => {
+  it('converts kg → lb in the chat gather', () => {
+    expect(parseSlotAnswer('current_weight', '150kg').fields).toEqual({ current_weight: 331 });
+    expect(parseSlotAnswer('current_weight', '180').fields).toEqual({ current_weight: 180 }); // bare stays lb
+  });
+});
+
+describe('FOOD-LOG TONE (IMG_6729) — clean label, no raw "I ate …" echo', () => {
+  it('strips the consumption prefix from the confirmation', () => {
+    const r = formatFoodReply({ loggedItems: ['I ate 2 eggs'], loggedProtein: 12, pendingFoods: [], seed: 'u|m' });
+    expect(r).toMatch(/2 eggs/);
+    expect(r.toLowerCase()).not.toContain('i ate');
   });
 });

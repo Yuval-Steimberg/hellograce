@@ -428,8 +428,21 @@ export function makeLogFoodTool(deps: {
       const result = await insertWith(true).catch((err: unknown) => {
         if ((err as { code?: string })?.code === '42703') {
           deps.logger.warn({ userId: deps.userId }, 'tool.log_food.serving_size_column_missing');
-          return insertWith(false);
+          return insertWith(false).catch((fallbackErr: unknown) => {
+            // Loud on a real write failure — a swallowed error here is the
+            // "says logged, saved nothing" class. Behavior is unchanged (still
+            // throws so callers handle it); this just makes it impossible to miss.
+            deps.logger.error(
+              { userId: deps.userId, food: parsed.food, err: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr) },
+              'tool.log_food.insert_failed',
+            );
+            throw fallbackErr;
+          });
         }
+        deps.logger.error(
+          { userId: deps.userId, food: parsed.food, code: (err as { code?: string })?.code, err: err instanceof Error ? err.message : String(err) },
+          'tool.log_food.insert_failed',
+        );
         throw err;
       });
 

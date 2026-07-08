@@ -6,7 +6,7 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `13405eb` (last CODE change `35a4e31`); PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health` == HEAD. **Apply migration `20260708000001_food_serving_size.sql` with the deploy.**
+## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `fc91a81` (last CODE change `fc91a81`); PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health` == HEAD. **Apply migration `20260708000001_food_serving_size.sql` with the deploy.**
 
 ### 🧭 THIS SESSION'S ARC (2026-07-08, all merged, NONE deployed yet)
 Deployed baseline is `7fbbfbe`. On top, in order: #228 timezone-from-phone self-heal + deterministic
@@ -15,7 +15,40 @@ TODAY'S FOCUS reminders + win-back HELP/STOP · #232 food-tracker fields (confid
 macro-sanity — **needs the migration**) · #233 memory learn+recall wired into the live unified path
 (was inert) · #234 don't context-cache the per-message grounded prompt · #235 settings-WRITE path
 closed (weight capture no longer stores a derived target) + kg unit parse + warmer food reply ·
-#236 diary surfaces pending foods + composition-answer resolves+logs + multi-ask completeness guard.
+#236 diary surfaces pending foods + composition-answer resolves+logs + multi-ask completeness guard ·
+**#237** loud logging on food INSERT failure (`tool.log_food.insert_failed`) + regression-harness
+scenarios · **#238** comprehensive offline battery locking the 15 real long multi-topic messages
+(`multitopic-battery.test.ts`) · **#239** DETAIL-resolution branch — a pending answer that names the
+foods WITH details ("Cheese sandwich and one scoop protein shake") logs deterministically (prod
+IMG_6733: was lost, 37g hallucinated) · **#240** ask a portion check for ALMOST EVERY rough-estimate
+food with real macros (new `isMaterialMacro` ≥2g protein OR ≥25 kcal; the precision gate now also
+downgrades a medium/low-confidence material food with no serving_size — user directive "almost every
+food with real macros") · **#241** scoped that broad asking to PURE food logs only (`foodOnlyTurn` =
+no media AND not multi-topic) so multi-topic replies are untouched · **#242** MULTI-PART replies now
+render as sections — one short paragraph per part (opt-in `preserveParagraphs` threaded
+OrchestratorOutput→OutboundMessage→sanitizeOutbound→enforceFormat; default OFF = every other message
+byte-identical; also fixes the single-newline word-merge "stickcan") + `buildMultiPartNote` asks for a
+paragraph per part · **#243** AUDIT REMEDIATION (see its section below) — 6 real regressions the test
+net missed, found by a 3-agent parallel review of the whole arc.
+
+### 🔬 #243 AUDIT REMEDIATION (2026-07-08) — 6 regressions fixed, 3 deferred
+Full audit of `7fbbfbe..HEAD` (build/typecheck/2061 api+667 ai-core green) + 3 parallel deep reviews.
+FIXED: (1) detail-resolution (#239) logged a QUESTION about a pending food as food ("Is the sandwich
+healthy?") → interrogative/`?` guard; (2) it DROPPED a fresh food ("chicken and rice" while only rice
+pending logged rice, dropped chicken) → falls through to the extractor when a segment matches no
+pending; (3) two pending items sharing a suffix double-logged one + dropped the other → DISTINCT-segment
+matching. (4) the 420-char cap truncated the longer #242 sectioned replies (dropping a whole part) →
+700-char ceiling for `preserveParagraphs`; (5) the dup-sentence dedup collapsed the preserved
+paragraphs + its same-quantity rule could drop a legit number-repeating part → per-paragraph dedup +
+skip same-quantity for multi-part. (6) episodic memory recall's embed was in the awaited load
+Promise.all so EVERY unified turn (incl. deterministic intercepts) paid it → kicked off early, awaited
+lazily on the grounded path only. Plus temporal "what time is it best to inject" no longer answered
+with the wall clock, and win-back STOP no longer catches "End of my rope"/"I quit my job" venting.
+DEFERRED w/ rationale: roughMaterial over-asks when the extractor omits `confidence` (that's the
+intended aggressive-asking direction — the extractor's high/exact tagging is the lever; watch
+post-deploy); `correctTimezoneFromPhone` can override a deliberately-set MATCHING zone (foreign number +
+that-zone resident — needs a "tz explicitly set" flag, pre-existing #228); completeness guard measures
+ask-coverage only (by design).
 **"Hermes agent as Grace's brain" (user idea):** evaluated + DECLINED as an integration — Nous
 **Hermes Agent** is an interactive agent CLI (blocked by the env network policy anyway) and NOT a
 model API, so it can't be a server-side brain. The real path is a `HermesProvider` implementing the

@@ -1113,7 +1113,13 @@ export class AIService {
     // existing pipeline byte-identical, so production is untouched until you flip.
     if (this.unifiedReplyPath) {
       try {
-        return await this.runUnifiedReply(input, t0, lat);
+        const result = await this.runUnifiedReply(input, t0, lat);
+        // LEARN long-term memory from this turn — fire-and-forget AFTER the reply
+        // is ready, so it adds zero user-facing latency. Without this the unified
+        // path (which returns here) never reached the learning block at the tail
+        // of handleMessageInner, so Grace remembered NOTHING new in prod.
+        this.learnFromTurnAsync(input, result);
+        return result;
       } catch (err) {
         this.deps.logger.error(
           { err: err instanceof Error ? err.message : String(err), userId: input.userId },
@@ -3295,13 +3301,20 @@ CRITICAL RULES:
     // Images / voice keep the existing media pipeline for now.
     if (input.media.length > 0) return this.handleMessageInner(input, t0, lat);
 
-    const [user, todaysFoodPre, knownFacts, memoryMd, history, conversationId] = await Promise.all([
+    const [user, todaysFoodPre, knownFacts, memoryMd, history, conversationId, recalled] = await Promise.all([
       this.deps.users.getByPhone(userId).catch(() => null),
       this.deps.users.getTodaysFoodSummary(userId).catch(() => ({ protein_g: 0, calories: 0, items: [] as string[] })),
       this.deps.users.getKnownFacts(userId, 8).catch(() => [] as Array<{ fact: string }>),
       this.deps.memoryMd ? this.deps.memoryMd.get(userId).catch(() => null) : Promise.resolve(null),
       this.deps.memory.getRecentTurns(userId, this.deps.historyTurns ?? 12).catch(() => [] as ChatTurn[]),
       this.deps.memory.ensureConversation(userId).catch(() => `fallback-${userId}`),
+      // Episodic recall (recency-weighted user_memories) — retrieved IN PARALLEL
+      // with the loads above so it adds ~zero latency (the query-embedding is
+      // cached 30min and overlaps the DB reads). Only consumed on the grounded
+      // reply path below; a deterministic intercept that returns first just drops it.
+      this.deps.userMemory
+        ? this.deps.userMemory.retrieve(userId, input.text, 3).catch(() => [] as string[])
+        : Promise.resolve([] as string[]),
     ]);
 
     // ── Progressive gather gate (2026-06-28) ───────────────────────────────
@@ -3653,7 +3666,7 @@ CRITICAL RULES:
     // Non-food chat — OR a multi-topic message that merely mentioned food —
     // uses the full Nudge grounded prompt so EVERY part gets answered (not the
     // terse food-confirmation, which drops the rest of a multi-part message).
-    let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, userText: input.text });
+    let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, recalled, userText: input.text });
 
     // If this multi-topic turn ALSO logged/mentioned food, weave that in — but
     // never let the model invent a total. The running total is the authoritative
@@ -3985,6 +3998,48 @@ CRITICAL RULES:
       'ai.unified_food.step',
     );
     return { logged, pending: pendingItems.map((i) => i.item), removed: null, clarify, rough: anyRough };
+  }
+
+  /**
+   * Learn long-term memory from a completed turn — fire-and-forget, runs AFTER
+   * the reply is on its way so it never adds user-facing latency. Two stores,
+   * both best-effort:
+   *   - user_memories (all users): semantic extraction of durable facts the user
+   *     stated ("my daughter's wedding is in August", "cardio makes me nauseous")
+   *     → recalled on later turns via `retrieve` in the grounded prompt.
+   *   - memory.md (pilot users only): narrative file, enqueued for the worker.
+   * Skips trivial turns and pure food/water logs (nothing memorable, and the
+   * highest-volume turns — no point spending a Gemini extraction on "2 eggs").
+   * This runs for the UNIFIED path; the compact path has its own equivalent at
+   * the tail of handleMessageInner, and the two paths are mutually exclusive.
+   */
+  private learnFromTurnAsync(input: InboundMessage, result: OrchestratorOutput): void {
+    const uLen = input.text.trim().length;
+    const aLen = result.text.trim().length;
+    const noLearnIntent = result.intent === 'food_log' || result.intent === 'water_log';
+
+    // Semantic memory (all users) — extraction decides what (if anything) is worth
+    // storing; a turn with no durable fact simply stores nothing.
+    if (this.deps.userMemory && !noLearnIntent && uLen >= 20 && aLen >= 20) {
+      void this.deps.userMemory
+        .extractAndStore(input.userId, input.text, result.text)
+        .catch((err) => this.deps.logger.warn({ err }, 'user_memory.extract.failed'));
+    }
+
+    // memory.md narrative (pilot users only — gated by enrolment).
+    if (this.deps.memoryMdQueue && !noLearnIntent && uLen + aLen >= 30) {
+      void (async () => {
+        const enrolled = this.deps.memoryMd
+          ? await this.deps.memoryMd.isEnrolled(input.userId).catch(() => false)
+          : false;
+        if (!enrolled) return;
+        await this.deps.memoryMdQueue!.add('update', {
+          userId: input.userId,
+          userText: input.text,
+          assistantText: result.text,
+        });
+      })().catch((err) => this.deps.logger.warn({ err }, 'memory-md-queue.add.failed'));
+    }
   }
 
   /**
@@ -6683,6 +6738,11 @@ CRITICAL RULES:
        *  the prompt (injection schedule, full diary) gets dumped as the reply.
        *  Gating by relevance makes recitation structurally impossible. */
       userText?: string;
+      /** Episodic memories recalled for THIS message (recency-weighted, from
+       *  user_memories) — things the user told Grace in earlier sessions that are
+       *  relevant now. Injected into the memory block so Grace has continuity
+       *  beyond the 12-turn window + durable profile facts. */
+      recalled?: string[];
     },
   ): string {
     const now = new Date();
@@ -6727,7 +6787,15 @@ CRITICAL RULES:
     }
     const todaySnapshot = snap.length ? `TRUE FOR THEM TODAY:\n${snap.map((s) => `- ${s}`).join('\n')}` : '';
 
-    const memoryBlock = opts.memoryMd && opts.memoryMd.trim() ? `WHAT YOU REMEMBER ABOUT THEM:\n${opts.memoryMd.trim().slice(0, 1200)}` : '';
+    // Memory block = the narrative memory.md (pilot users) PLUS the episodic
+    // memories recalled for this message (all users). Recalled items are things
+    // the user told Grace before that the 12-turn window + profile facts wouldn't
+    // otherwise surface. De-duped against each other, capped so it can't bloat.
+    const memParts: string[] = [];
+    if (opts.memoryMd && opts.memoryMd.trim()) memParts.push(opts.memoryMd.trim().slice(0, 1200));
+    const recalled = (opts.recalled ?? []).map((m) => m.trim()).filter(Boolean).slice(0, 3);
+    if (recalled.length) memParts.push(recalled.map((m) => `- ${m}`).join('\n'));
+    const memoryBlock = memParts.length ? `WHAT YOU REMEMBER ABOUT THEM (background — weave in only if relevant, never recite as a list):\n${memParts.join('\n')}` : '';
 
     return buildNudgeSystemPrompt({
       profileBlock,

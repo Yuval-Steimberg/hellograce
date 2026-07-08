@@ -6,9 +6,25 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `37868b6`; PROD is deployed at `7fbbfbe`. **3 commits on main are NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`37868b6`.
+## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `e2e87f7`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`e2e87f7`.
 
 ### ⏳ ON MAIN, NOT YET DEPLOYED (user must `fly deploy`)
+- **`e2e87f7` (#231) — the two open follow-ups, both done:**
+  - **Rotating TODAY'S FOCUS reminders (Nudge model).** `message-generator.ts` no longer
+    defaults morning/midday/evening to protein. New `pickTodaysFocus(goals, seed, slot)`
+    (weighted by onboarding goals + a universal set, deterministic per slot/day) +
+    `buildFocusBlock` (TOPIC DISCIPLINE: stay on the focus, no protein/numbers unless the
+    focus IS nutrition). Morning suppresses the protein "yesterday bridge" on a non-nutrition
+    day (symptom/emotion continuity still wins); REAL DATA stays for awareness but is not
+    recited off a nutrition day. Fallbacks are focus-matched. `GOAL_MODE_MAP` deleted.
+  - **Win-back HELP/STOP affordance wired.** `isWinbackHelpIntent`/`isWinbackStopIntent` were
+    dead code; now a deterministic webhook intercept (before the paywall gate, expired-trial
+    unpaid users) answers HELP → `buildWinbackHelpReply` (warm, cost/timing-aware, keeps the
+    door open + upgrade link + asks the blocker) and STOP → `buildWinbackStopReply` (confirm,
+    `setPaused(true)`, set `winback_stage`=complete so the sequence ends).
+  - 2004 api + 659 ai-core green. No migration/env.
+
+
 - **`3271380` (#228) — timezone-from-phone self-heal + deterministic time answers.** `UserService.ensureUser`
   now self-heals a still-default `America/New_York` timezone from the phone's calling code
   (`timezoneFromPhone`, +972→Asia/Jerusalem), one UPDATE max, never overrides a real setting.
@@ -45,11 +61,11 @@ _Also loaded automatically at session start. Update at the end of every session 
   + salad-masking + clarify-echo + onboarding "Nice to meet you,." glitch all fixed & deployed.
 - Offline verification harness `full-system-verification.test.ts` locks every screenshot
   scenario (IMG_6697…6717 + onboarding). 1988 api + 659 ai-core green at HEAD.
-- **OPEN / NEXT:** DEPLOY the 3 undeployed commits above; rotating-focus reminders (Nudge's
-  TODAY'S FOCUS model — see below); watch the live Nudge-base prompt A/B (rollback id above if
-  worse); win-back HELP-intent reply affordance (currently flows to the normal reply path).
-  Settings suggest-not-store now covers protein + calorie; other settings numbers (goal weight,
-  etc.) are non-derived (no LLM to invent) — query-fast reads/points-to-Settings, already safe.
+- **OPEN / NEXT:** DEPLOY the undeployed commits above (timezone #228, settings-write #229/#230,
+  reminders+winback #231); watch the live Nudge-base prompt A/B (rollback id above if worse).
+  Rotating-focus reminders + win-back HELP/STOP affordance are now DONE. Settings suggest-not-store
+  covers protein + calorie; other settings numbers (goal weight, etc.) are non-derived (no LLM to
+  invent) — query-fast reads/points-to-Settings, already safe.
 
 ### 🟢 NUDGE IS THE BASE (user directive, latest Nudge source studied 2026-07-07)
 User uploaded the actual Nudge code (`Nudge_Your_Wellness.zip`) and said: "the nudge

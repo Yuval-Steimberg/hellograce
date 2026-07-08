@@ -6,9 +6,29 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `a57fd79`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`a57fd79`.
+## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `35a4e31`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`35a4e31`. **Apply migration `20260708000001_food_serving_size.sql` with the deploy.**
 
 ### ⏳ ON MAIN, NOT YET DEPLOYED (user must `fly deploy`)
+- **`35a4e31` (#236) — three reply-path fixes from prod screenshots (surgical, verified).**
+  (1a) "what have I eaten today" now surfaces PENDING foods ("…still waiting on the details for X")
+  instead of "nothing" — the diary intercept appends the pending store when non-empty.
+  (1b) a bare FILLING answer ("Cheese" → "what was in the salad?") now resolves the pending
+  composition-ambiguous item DETERMINISTICALLY in `foodStepUnified` (logs "cheese salad", clears
+  pending) instead of falling to the grounded path that computed a total but logged nothing; gate
+  locked by `meal-lifecycle.test`. (4) completeness guard for ENUMERATED multi-asks — new pure
+  `multi-ask-coverage.ts` extracts asks as keyword groups; grounded path regenerates ONCE when a
+  part is dropped, adopting the retry ONLY if it covers strictly more (false positive can never ship
+  a worse reply). 2026 api green.
+- **`73522ea` (#235) — settings-write + kg unit + warmer food reply.** (2) `syncCurrentWeight`
+  (chat) + `logWeightEntry` (dashboard) no longer call `ensureNutritionTargets` → Grace never
+  auto-derives+stores a protein/calorie target (was the "set at 95g" violation; #229/#230 only fixed
+  the read path). Target is suggest-only now; onboarding keeps `ensureNutritionTargets`. (3) chat
+  `parseWeight` routes through `parseWeightToLbs` → "150kg"→331lb (was stored as 150). Tone: food
+  confirmation cleans the label ("Logged 2 eggs" not "Logged I ate 2 eggs") + warmer openers + a
+  seed-gated "How was it?" closer, still deterministic (no hallucination risk). NOTE: prod DB had
+  stale `protein_goal_grams=95` + `current_weight=150` from the old bugs — user should clear/reset
+  those in Settings; new code won't rewrite them.
+
 - **`a57fd79` (#234) — don't context-cache the per-message grounded prompt (accuracy-neutral latency/cost fix).**
   Diagnosis: Gemini context caching (`gemini.ts getOrCreateCachedContent`) keys on a sha256 of the FULL
   systemInstruction in a SINGLE in-memory slot; the grounded reply prompt is rebuilt every message (temporal

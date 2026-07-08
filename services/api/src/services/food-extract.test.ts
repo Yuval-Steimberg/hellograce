@@ -123,6 +123,30 @@ describe('formatFoodReply', () => {
     expect(r.toLowerCase()).not.toMatch(/high in protein|supports muscle|sustained energy|excellent source/);
   });
 
+  it('strips a leading consumption phrase from the food name (no "Logged I ate …")', () => {
+    // prod 2026-07-08: reply echoed the raw "I ate 2 eggs".
+    const r = formatFoodReply({ loggedItems: ['I ate 2 eggs'], loggedProtein: 12, pendingFoods: [], seed });
+    expect(r).toMatch(/2 eggs/);
+    expect(r.toLowerCase()).not.toContain('i ate');
+    expect(r).toMatch(/12g protein/);
+  });
+
+  it('warms up: some seeds add a friendly "how was it?" closer, none invent food/numbers', () => {
+    // Across seeds the confirmation is warm and occasionally asks how it was; it
+    // must never introduce a food or a number that was not passed in.
+    const replies = Array.from({ length: 12 }, (_, i) =>
+      formatFoodReply({ loggedItems: ['2 eggs'], loggedProtein: 12, loggedCalories: 140, pendingFoods: [], seed: `u|${i}` }),
+    );
+    expect(replies.some((r) => /how was it|hope it was good|how'd it hit/i.test(r))).toBe(true);
+    for (const r of replies) {
+      expect(r).toMatch(/2 eggs/);
+      // The only numbers present are the ones passed in (2 from "2 eggs", 12g, 140cal).
+      const nums = r.match(/\d+/g) ?? [];
+      expect(nums.every((n) => n === '2' || n === '12' || n === '140')).toBe(true);
+      expect(r.length).toBeLessThan(180);
+    }
+  });
+
   it('hedges the total when the estimate is rough (food_tracker confidence)', () => {
     const rough = formatFoodReply({ loggedItems: ['a bowl of soup'], loggedProtein: 15, pendingFoods: [], seed, rough: true });
     expect(rough).toMatch(/rough estimate/i);

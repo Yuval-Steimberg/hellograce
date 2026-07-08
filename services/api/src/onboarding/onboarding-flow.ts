@@ -41,6 +41,7 @@ import {
 } from '../services/profile-extract.js';
 import { parseTimezone, timezoneFromPhone } from '../services/timezone-parse.js';
 import { deriveMissingTargets } from '../nutrition/derive-targets.js';
+import { parseWeightToLbs } from '../nutrition/units.js';
 import { detectOnboardingSideQuestion, buildSideAnswer } from '../services/capability.js';
 
 export type SlotId =
@@ -219,11 +220,12 @@ function parseGoals(text: string): string[] | null {
 }
 
 function parseWeight(text: string): number | null {
-  const m = text.match(/(\d{2,4}(?:\.\d)?)/);
-  if (!m) return null;
-  const n = parseFloat(m[1]!);
-  if (!Number.isFinite(n) || n < 50 || n > 1000) return null;
-  return Math.round(n);
+  // Unit-aware: "150kg" → 331 lb, "12 stone" → 168 lb, bare "150" → 150 lb.
+  // Previously this grabbed the bare number and ignored the unit, so a user who
+  // said "150kg" was stored as 150 lb (prod 2026-07-08). Canonical storage is lb.
+  const lbs = parseWeightToLbs(text);
+  if (lbs == null || lbs < 50 || lbs > 1000) return null;
+  return Math.round(lbs);
 }
 
 function parseConsent(text: string): boolean | null {

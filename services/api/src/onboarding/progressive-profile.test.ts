@@ -174,7 +174,9 @@ describe('buildProfileGatherNote', () => {
 describe('parseProfileReply — defensive (short, direct answers only)', () => {
   it('parses a short direct answer', () => {
     expect(parseProfileReply('sex', 'male').fields).toEqual({ sex: 'male' });
-    expect(parseProfileReply('current_weight', '180 kg').fields).toEqual({ current_weight: 180 });
+    expect(parseProfileReply('current_weight', '180 kg').fields).toEqual({ current_weight: 397 }); // 180 kg → 397 lb
+    expect(parseProfileReply('current_weight', '150kg').fields).toEqual({ current_weight: 331 }); // prod: was stored as 150
+    expect(parseProfileReply('current_weight', '180').fields).toEqual({ current_weight: 180 }); // bare number stays lb (back-compat)
     expect(parseProfileReply('height', "6'2").fields).toEqual({ height_cm: 188 });
   });
   it('REJECTS a long sentence that merely contains a number (no misparse)', () => {

@@ -643,29 +643,32 @@ export class UserService {
     await this.pool.query(`INSERT INTO weight_logs (user_id, weight) VALUES ($1, $2)`, [userId, weight]);
     await this.pool.query(`UPDATE users SET current_weight = $2 WHERE phone = $1`, [userId, weight]).catch(() => undefined);
     this.invalidate(userId);
-    // A first real weight lets us personalize the protein/calorie target if the
-    // user doesn't have one yet. Best-effort, fill-if-missing.
-    await this.ensureNutritionTargets(userId).catch(() => undefined);
+    // NOTE: we deliberately do NOT derive+store a protein/calorie target here.
+    // Grace never writes a settings NUMBER on the user's behalf (2026-07-08 user
+    // directive) — a missing target is SUGGESTED on demand (tryPersonalStats) with
+    // the number + reasoning + "set it in Settings yourself", never auto-stored.
   }
 
   /** Sync users.current_weight from a chat weight log (the fast path + log_weight
-   *  tool only write weight_logs), invalidate the cache so the next turn sees it,
-   *  and fill a personalized target if we didn't have one. Best-effort — this is
-   *  how a weight told in chat is REMEMBERED in the profile, not just the log. */
+   *  tool only write weight_logs), invalidate the cache so the next turn sees it.
+   *  Best-effort — this is how a weight the user EXPLICITLY STATED in chat is
+   *  remembered in the profile, not just the log. */
   async syncCurrentWeight(userId: string, weightLbs: number): Promise<void> {
     if (!(weightLbs > 0)) return;
     await this.pool
       .query(`UPDATE users SET current_weight = $2 WHERE phone = $1`, [userId, weightLbs])
       .catch(() => undefined);
     this.invalidate(userId);
-    await this.ensureNutritionTargets(userId).catch(() => undefined);
+    // No auto-derive of the protein/calorie target — see logWeightEntry. Storing
+    // the weight the user STATED is fine; inventing+storing a DERIVED target is not.
   }
 
   /**
    * Fill-if-missing personalized protein/calorie targets from the user's current
-   * profile (weight/goal/body metrics). Safe to call after any weight or profile
-   * change — it never overwrites a target the user already has (Settings owns
-   * explicit edits), and no-ops when there's nothing to fill. Best-effort.
+   * profile. RETAINED for the onboarding setup flow only — it is intentionally NOT
+   * called from passive chat/dashboard weight capture, because Grace must never
+   * auto-store a derived settings number (it suggests instead). Never overwrites a
+   * target the user already has. Best-effort.
    */
   async ensureNutritionTargets(userId: string): Promise<void> {
     const user = await this.getByPhone(userId);

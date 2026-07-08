@@ -144,6 +144,18 @@ function pickSeeded<T>(arr: readonly T[], seed: string): T {
   return arr[Math.abs(h) % arr.length]!;
 }
 
+/** Strip a leading consumption phrase so a confirmation reads "2 eggs", not the
+ *  raw "I ate 2 eggs" the user typed (prod 2026-07-08: "Logged I ate 2 eggs").
+ *  Only removes an opening verb/meal frame; never touches the food itself. */
+function cleanFoodLabel(s: string): string {
+  const cleaned = (s ?? '')
+    .trim()
+    .replace(/^for\s+(?:breakfast|lunch|dinner|brunch|a\s+snack)\s*,?\s*/i, '')
+    .replace(/^(?:i\s+)?(?:just\s+)?(?:ate|had|have|grabbed|made|got|finished|drank)\s+(?:some\s+|a\s+bit\s+of\s+)?/i, '')
+    .trim();
+  return cleaned.length >= 2 ? cleaned : (s ?? '').trim();
+}
+
 function humanList(items: string[]): string {
   const a = items.filter(Boolean);
   if (a.length === 0) return '';
@@ -168,8 +180,8 @@ export function formatFoodReply(opts: {
    *  total is hedged so a rough guess is never presented as exact. */
   rough?: boolean;
 }): string {
-  const logged = humanList(opts.loggedItems);
-  const pending = humanList(opts.pendingFoods);
+  const logged = humanList(opts.loggedItems.map(cleanFoodLabel));
+  const pending = humanList(opts.pendingFoods.map(cleanFoodLabel));
   // A rough estimate is flagged honestly and offers an easy path to exact.
   const hedge = opts.rough ? ' — a rough estimate, tell me the portion if you want it exact' : '';
   const total =
@@ -188,10 +200,22 @@ export function formatFoodReply(opts: {
     return `${pickSeeded(openers, opts.seed)} — ${pickSeeded(asks, opts.seed + 'a')}`;
   }
 
-  // Confirmation only.
+  // Confirmation only — warm + varied opener, and about half the time a light,
+  // friendly closer ("How was it?") so a food log feels like a friend, not a
+  // receipt. Still fully deterministic (no LLM) so it can never invent a food or
+  // a number — the anti-hallucination guarantee the food path depends on.
   if (logged && !pending) {
-    const acks = [`Got it — logged ${logged}.`, `Logged ${logged}.`, `Done, ${logged} is in.`, `Nice — ${logged} logged.`];
-    return `${pickSeeded(acks, opts.seed)}${total}`;
+    const acks = [
+      `Logged ${logged}.`,
+      `Got it — ${logged} is in.`,
+      `Nice, ${logged} logged.`,
+      `Done — ${logged} logged.`,
+      `Love it — ${logged} is in.`,
+      `Yum, ${logged} logged.`,
+      `Perfect — ${logged} is in.`,
+    ];
+    const closers = ['', '', '', ' How was it?', ' Hope it was good.', " How'd it hit the spot?"];
+    return `${pickSeeded(acks, opts.seed)}${total}${pickSeeded(closers, opts.seed + 'c')}`;
   }
 
   // Logged some + still need a portion for the rest.

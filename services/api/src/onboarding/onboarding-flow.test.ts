@@ -470,7 +470,7 @@ describe('extractAllFields — multi-field, keyword-anchored, validated', () => 
     const f = extractAllFields("I'm on ozempic once a week and I want to get to 120kg");
     expect(f.medication).toBe('Ozempic');
     expect(f.medication_frequency).toBe('weekly');
-    expect(f.goal_weight).toBe(120);
+    expect(f.goal_weight).toBe(265); // 120 kg → 265 lb (unit-aware, canonical lb storage)
   });
   it('does NOT treat a bare number as a goal weight', () => {
     expect(extractAllFields('120').goal_weight).toBeUndefined();
@@ -520,7 +520,7 @@ describe('onboarding saves the answer (no Settings redirect during onboarding)',
     const u = user({ onboarding_state: 'in_progress', onboarding_last_slot: 'goal_weight' });
     const res = await runOnboardingTurn({ user: u, text: 'My goal is 120 kg', mode: 'signup', users, logger });
     expect(res.completed).toBe(false);
-    expect(calls).toContainEqual({ goal_weight: 120 });
+    expect(calls).toContainEqual({ goal_weight: 265 }); // 120 kg → 265 lb (unit conversion)
     expect(res.reply.toLowerCase()).not.toMatch(/settings|can only be updated/);
   });
   it('saves dietary preference from "I\'m vegan" and advances', async () => {

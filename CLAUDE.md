@@ -6,10 +6,26 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-07) — current `main` HEAD `7fbbfbe`, **DEPLOYED TO PROD**; deploy = `fly deploy` grace-api, verify `/health`.
+## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `37868b6`; PROD is deployed at `7fbbfbe`. **3 commits on main are NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`37868b6`.
+
+### ⏳ ON MAIN, NOT YET DEPLOYED (user must `fly deploy`)
+- **`3271380` (#228) — timezone-from-phone self-heal + deterministic time answers.** `UserService.ensureUser`
+  now self-heals a still-default `America/New_York` timezone from the phone's calling code
+  (`timezoneFromPhone`, +972→Asia/Jerusalem), one UPDATE max, never overrides a real setting.
+  New `services/temporal-query.ts` deterministically answers "what's my local time" /
+  "when does my day reset" from the REAL zone (prod IMG_6720/6721 hedged + gave NY time).
+- **`6c6b4e8` (#229) — Grace never WRITES a settings number from chat (protein).** `tryPersonalStats`:
+  a set target is read back; an unset one is SUGGESTED (number + why) with "set it in Settings
+  yourself" — never derived+stored. Removed the on-the-fly `ensureNutritionTargets` store.
+- **`37868b6` (#230) — same suggest-not-store flow extended to the CALORIE target.** `tryPersonalStats`
+  is now target-aware (`targetIsProtein`/`targetIsCalorie`) → a calorie question is never answered
+  with the protein number (latent bug fixed); unset calorie target → Mifflin-St Jeor suggestion +
+  reasoning + Settings link, never written. **This closes the user's "not only protein — every
+  settings datum" directive for the two derivable nutrition numbers.**
+- 1995 api + 659 ai-core green at HEAD; typecheck + build clean. No migration/env for these.
 
 ### 🚀 LIVE PROD STATE (deployed + activated 2026-07-07 by the user)
-- **`/health` == `7fbbfbe`** deployed. All this session's work is live.
+- **`/health` == `7fbbfbe`** deployed. The 3 commits above landed after and await a deploy.
 - **ACTIVE DB PROMPT = the Nudge-base prompt, version 61** (id `a7091aa6-e86c-42ed-85f4-05d39f8e5b6e`),
   loaded from `services/api/prompts/grace-nudge-base.md` via `POST /admin/prompts` +
   `PUT /admin/prompts/:id/activate`. **ROLLBACK to the old bloated prompt = re-activate
@@ -29,9 +45,11 @@ _Also loaded automatically at session start. Update at the end of every session 
   + salad-masking + clarify-echo + onboarding "Nice to meet you,." glitch all fixed & deployed.
 - Offline verification harness `full-system-verification.test.ts` locks every screenshot
   scenario (IMG_6697…6717 + onboarding). 1988 api + 659 ai-core green at HEAD.
-- **OPEN / NEXT:** rotating-focus reminders (Nudge's TODAY'S FOCUS model — see below); watch
-  the live Nudge-base prompt A/B (rollback id above if worse); win-back HELP-intent reply
-  affordance (currently flows to the normal reply path).
+- **OPEN / NEXT:** DEPLOY the 3 undeployed commits above; rotating-focus reminders (Nudge's
+  TODAY'S FOCUS model — see below); watch the live Nudge-base prompt A/B (rollback id above if
+  worse); win-back HELP-intent reply affordance (currently flows to the normal reply path).
+  Settings suggest-not-store now covers protein + calorie; other settings numbers (goal weight,
+  etc.) are non-derived (no LLM to invent) — query-fast reads/points-to-Settings, already safe.
 
 ### 🟢 NUDGE IS THE BASE (user directive, latest Nudge source studied 2026-07-07)
 User uploaded the actual Nudge code (`Nudge_Your_Wellness.zip`) and said: "the nudge

@@ -6,9 +6,22 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `e2e87f7`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`e2e87f7`.
+## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `3653750`; PROD is deployed at `7fbbfbe`. **Everything since is NOT yet deployed** → `fly deploy` grace-api, verify `/health`==`3653750`.
 
 ### ⏳ ON MAIN, NOT YET DEPLOYED (user must `fly deploy`)
+- **`3653750` (#232) — food-tracker ideas wired (from the uploaded `food_tracker` archive).** Brain-agnostic
+  log-layer upgrades: (1) per-item **confidence** (exact|high|medium|low) — extractor emits it, `log_food`
+  stores it, the deterministic food reply HEDGES the total on a rough (low/medium) estimate; (2) deterministic
+  **macro-sanity guard** (`nutrition/macro-sanity.ts`) — protein kcal can't exceed total kcal, so an
+  impossible estimate ("salad 40g/60cal") is downgraded to `low` at the single INSERT chokepoint (all sources)
+  + in the extractor parser; (3) **serving_size** stored per row. **NEW MIGRATION `20260708000001_food_serving_size.sql`
+  (one nullable col) — apply with the deploy**; `log_food` catches 42703 and falls back to the 8-col insert if
+  it lags, so logging never breaks. 2016 api green. Context: the user is exploring "an agent as Grace's brain"
+  (they tried to install Nous **Hermes Agent** — an interactive agent CLI, blocked by the env network policy,
+  and NOT a model API, so it can't be a server-side brain; the real path is a `HermesProvider` implementing the
+  existing `LLMProvider` seam IF Nous exposes a model API — needs base URL/model/key). Food ideas are
+  brain-agnostic and land regardless.
+
 - **`e2e87f7` (#231) — the two open follow-ups, both done:**
   - **Rotating TODAY'S FOCUS reminders (Nudge model).** `message-generator.ts` no longer
     defaults morning/midday/evening to protein. New `pickTodaysFocus(goals, seed, slot)`

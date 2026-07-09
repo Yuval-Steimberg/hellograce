@@ -182,6 +182,34 @@ const FOOD_RECO_OR_PLAN_RE =
   /\b(what should i|what can i|any (?:idea|ideas|suggestion|suggestions)|recommend|suggest|plan|for (?:breakfast|lunch|dinner|a snack)|help me|before dinner)\b/i;
 
 /**
+ * A warm, day-aware greeting reply — the Nudge model: greet back, reference the
+ * user's REAL local weekday/time, and offer a hand. Deterministic + seed-varied
+ * (no LLM), so a "Hey" is answered INSTANTLY and never with a dry generic line.
+ */
+export function buildWarmGreeting(seed: string, timezone: string | null | undefined, now: Date = new Date()): string {
+  const t = resolveTemporalContext(timezone, now);
+  const pick = <T,>(arr: readonly T[], s: string): T => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return arr[Math.abs(h) % arr.length]!;
+  };
+  const opener = pick(['Hey!', 'Hey there 🤍', 'Hi!', 'Hey, good to hear from you.'], seed);
+  const ask = pick(
+    [`How's your ${t.weekday} going?`, `How's your ${t.timeOfDay} treating you?`, `How's ${t.weekday} shaping up so far?`],
+    seed + 'a',
+  );
+  const offer = pick(
+    [
+      "I'm here if you want to talk through your day or a meal idea.",
+      "I'm around whenever you want to chat or log something.",
+      "Just holler if you want to think through food or your day.",
+    ],
+    seed + 'o',
+  );
+  return `${opener} ${ask} ${offer}`;
+}
+
+/**
  * True when a message is a QUESTION about what the user has eaten / their intake
  * today — answered deterministically from the food log, never the LLM reading
  * conversation history. Covers any phrasing/word order ("what have I eaten",
@@ -3329,6 +3357,26 @@ CRITICAL RULES:
     const recalledPromise: Promise<string[]> = this.deps.userMemory
       ? this.deps.userMemory.retrieve(userId, input.text, 3).catch(() => [] as string[])
       : Promise.resolve([] as string[]);
+
+    // ── Trivial-message fast-path (instant, warm, NO LLM) ──────────────────
+    // The unified path otherwise sends even "Hey" through the grounded Gemini
+    // call — slow, and drier than a snappy greeting. Greetings / thanks / brief
+    // rapport get a deterministic reply immediately. Safety (crisis/hypo) already
+    // ran before runUnifiedReply, and media never reaches here. A pure greeting
+    // gets a warm, day-aware reply built from the user's real local weekday/time
+    // (the Nudge model); other trivial categories use the fast-path text.
+    const fp = tryFastPath(input.text, userId);
+    if (fp) {
+      const reply = fp.category === 'greeting'
+        ? buildWarmGreeting(`${userId}|${input.text}`, user?.timezone ?? null)
+        : fp.text;
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+      const totalMs = Date.now() - t0;
+      this.deps.logger.info({ userId, category: fp.category, latencyMs: totalMs }, 'ai.unified.fast_path');
+      this.persistLatency(userId, 'unified_fast', totalMs, lat.snapshot(), input.text, reply);
+      return { text: reply, confidence: 'high', intent: 'fast_path', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+    }
 
     // ── Progressive gather gate (2026-06-28) ───────────────────────────────
     // Keep learning the user so every reply is specific to them. Ask-first

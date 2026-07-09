@@ -137,6 +137,13 @@ export function firstSpecificFoodNoun(text: string): string | null {
 export function isConsumptionConfirmed(text: string): boolean {
   const t = (text ?? '').trim();
   if (t.length === 0) return false;
+  // A negation ("didn't", "haven't", "skipped") normally voids consumption, BUT a
+  // negation about something ELSE must not drop food the user DID eat: "I ate eggs
+  // but didn't drink water" still logs the eggs. So a CLAUSE with a positive eating
+  // verb and NO negation inside it confirms consumption — while "I didn't eat" /
+  // "haven't had lunch" (negation IN the eating clause) still voids.
+  const clauses = t.split(/\b(?:but|though|although|however|and\s+then|;)\b|[.]/i);
+  if (clauses.some((c) => !CONSUMPTION_NEGATION_RE.test(c) && CONSUMPTION_RE.some((re) => re.test(c)))) return true;
   if (CONSUMPTION_NEGATION_RE.test(t)) return false;
   return CONSUMPTION_RE.some((re) => re.test(t));
 }

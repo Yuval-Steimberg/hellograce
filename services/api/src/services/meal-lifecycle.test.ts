@@ -156,8 +156,18 @@ describe('foodSpanFromConsumption — never-drop backstop for "I ate X … <ques
     expect(foodSpanFromConsumption('I had a really rough day, any advice?')).toBeNull();
     expect(foodSpanFromConsumption('I had a great time at the gym')).toBeNull();
   });
-  it('is voided by negation ("I did not eat")', () => {
+  it('is voided by negation IN the eating clause ("I did not eat")', () => {
     expect(foodSpanFromConsumption("I haven't had lunch yet, what should I make?")).toBeNull();
+    expect(isConsumptionConfirmed("I haven't had lunch yet")).toBe(false);
+    expect(isConsumptionConfirmed('I skipped lunch')).toBe(false);
+  });
+  it('a negation about something ELSE does NOT drop the eaten food ("ate eggs but didn\'t drink water")', () => {
+    expect(isConsumptionConfirmed("I ate eggs and toast but I didn't drink enough water today")).toBe(true);
+    const span = foodSpanFromConsumption("I ate eggs and toast but I didn't drink enough water today. what should I eat next?");
+    expect(span).toContain('eggs');
+    expect(span).toContain('toast');
+    // "I didn't eat X but I had Y" — the eaten Y (a real food) is confirmed.
+    expect(isConsumptionConfirmed('I didn\'t eat breakfast but I had chicken and rice')).toBe(true);
   });
   it('keeps a plain consumption statement intact when there is no question', () => {
     expect(foodSpanFromConsumption('I ate 3 eggs and a banana')).toBe('I ate 3 eggs and a banana');

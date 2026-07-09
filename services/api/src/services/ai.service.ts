@@ -4101,6 +4101,19 @@ CRITICAL RULES:
     if (extraction.intent === 'query' || extraction.intent === 'none') {
       const span = foodSpanFromConsumption(text);
       if (!span) return null;
+      // LATENCY: when the eaten span carries NO precise amount, every food will be
+      // ASKED about anyway — so skip the SECOND extraction LLM call and pend+ask the
+      // deterministically-named foods directly (prod: BOTH extract passes returned
+      // `none` for "small yogurt and some crackers", ~1-2s wasted). Only re-extract
+      // when the span has a real number/unit somewhere (a food whose macros we can
+      // capture), so a precisely-stated food in a mixed span is never dropped.
+      const detNames = ambiguousFoodNames(span, text);
+      if (detNames.length > 0 && !hasPreciseAmount(span)) {
+        await addPendingFood(this.deps.redis, input.userId, detNames.map((n) => ({ item: n, clarify_question: null }))).catch(() => {});
+        const clarify = buildPortionConfirmQuestion(detNames.map((n) => ({ item: n, protein_g: null })));
+        this.deps.logger.info({ userId: input.userId, span, names: detNames }, 'ai.unified_food.backstop_deterministic');
+        return { logged: [], pending: detNames, removed: null, clarify };
+      }
       const spanEx = await extractFood(this.deps.llm, this.deps.logger, span, [], 'gemini-2.5-flash').catch(
         () => ({ ...EMPTY_EXTRACTION }),
       );

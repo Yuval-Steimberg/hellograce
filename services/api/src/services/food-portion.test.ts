@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous, hasPreciseAmount, isObviousSingleServing } from './food-portion.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous, hasPreciseAmount, isObviousSingleServing, servingReflectsUserAmount } from './food-portion.js';
 import { hasExplicitQuantity } from '../safety/vague-food.js';
 
 // A composition-ambiguous assembled food (a bare sandwich/wrap) must be ASKED
@@ -90,6 +90,25 @@ describe('hasPreciseAmount — a real number/unit, NOT a bare size or vague quan
     for (const t of ['small yogurt', 'yogurt small', 'some crackers', 'crackers', 'a bit of chicken', 'a little rice', 'big salad', 'yogurt']) {
       expect(hasPreciseAmount(t), t).toBe(false);
     }
+  });
+});
+
+describe('servingReflectsUserAmount — trust serving_size only when the USER stated it', () => {
+  it('is TRUE when the amount token appears in the user message', () => {
+    expect(servingReflectsUserAmount('1 cup', 'I had a cup of rice')).toBe(true);
+    expect(servingReflectsUserAmount('a cup', 'a cup of rice')).toBe(true);
+    expect(servingReflectsUserAmount('2 slices', 'I had 2 slices of toast')).toBe(true);
+    expect(servingReflectsUserAmount('6 oz', 'grilled chicken, 6 oz')).toBe(true);
+  });
+  it('is FALSE when the extractor INVENTED an amount the user never gave', () => {
+    // "small yogurt" → extractor guesses "1 cup"; the user never said cup/1.
+    expect(servingReflectsUserAmount('1 cup', 'I only had a small yogurt')).toBe(false);
+    expect(servingReflectsUserAmount('1 serving', 'some crackers')).toBe(false);
+    expect(servingReflectsUserAmount('1 small yogurt', 'a small yogurt')).toBe(false); // no number/unit token in msg
+  });
+  it('is FALSE for an empty/absent serving_size', () => {
+    expect(servingReflectsUserAmount(null, 'a small yogurt')).toBe(false);
+    expect(servingReflectsUserAmount('', 'a small yogurt')).toBe(false);
   });
 });
 

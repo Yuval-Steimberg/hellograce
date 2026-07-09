@@ -96,7 +96,7 @@ const PREFERENCE_RE: RegExp[] = [
 // actually ABOUT a meal ("the omelet sounds good") and not a bare affirmation
 // to a non-food offer ("that sounds good" → "want me to walk you through?").
 const FOOD_MENTION_RE =
-  /\b(food|meal|dish|plate|bowl|wrap|sandwich|sub|burger|burrito|taco|pizza|sushi|soup|stew|curry|dal|dahl|chili|casserole|scramble|omelet(?:te)?|frittata|salad|stir.?fry|smoothie|shake|oatmeal|oats|cereal|pancakes?|waffles?|toast|bagel|yogurt|cottage\s+cheese|cheese|halloumi|tofu|tempeh|seitan|edamame|falafel|hummus|lentils?|chickpeas?|beans|quinoa|rice|pasta|noodles?|ramen|egg|eggs|chicken|turkey|beef|steak|pork|bacon|ham|fish|salmon|tuna|cod|tilapia|shrimp|prawns?|seafood|veg(?:gie|etable)s?|broccoli|spinach|kale|cauliflower|potato(?:es)?|sweet\s+potato|avocado|fruit|banana|apple|berries|nuts|almonds?|granola|protein\s+(?:bar|shake)|snack|breakfast|lunch|dinner|brunch|supper|dessert)\b/i;
+  /\b(food|meal|dish|plate|bowl|wrap|sandwich|sub|burger|burrito|taco|pizza|sushi|soup|stew|curry|dal|dahl|chili|casserole|scramble|omelet(?:te)?|frittata|salad|stir.?fry|smoothie|shake|oatmeal|oats|cereal|pancakes?|waffles?|toast|bagel|yogurt|cottage\s+cheese|cheese|halloumi|tofu|tempeh|seitan|edamame|falafel|hummus|lentils?|chickpeas?|beans|quinoa|rice|pasta|noodles?|ramen|egg|eggs|chicken|turkey|beef|steak|pork|bacon|ham|fish|salmon|tuna|cod|tilapia|shrimp|prawns?|seafood|veg(?:gie|etable)s?|broccoli|spinach|kale|cauliflower|potato(?:es)?|sweet\s+potato|avocado|fruit|banana|apple|berries|nuts|almonds?|granola|crackers?|rice\s+cakes?|protein\s+(?:bar|shake)|snack|breakfast|lunch|dinner|brunch|supper|dessert)\b/i;
 
 /** True when the text names a recognizable food / dish / meal. */
 export function mentionsFood(text: string): boolean {

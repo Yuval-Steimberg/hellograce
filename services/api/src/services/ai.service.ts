@@ -643,7 +643,7 @@ import {
 } from './symptom-intelligence.js';
 import { detectDashboardRequest, buildDashboardLinkReply } from './dashboard-link.js';
 import { detectFoodReset, buildFoodResetReply } from './food-reset.js';
-import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous, hasPreciseAmount, isObviousSingleServing } from './food-portion.js';
+import { isPortionAffirmation, buildPortionConfirmQuestion, isPortionSensitiveFood, isCompositionAmbiguousFood, isProteinProductAmbiguous, hasPreciseAmount, isObviousSingleServing, servingReflectsUserAmount } from './food-portion.js';
 import { weightProgress, loggingStreak, summarizeSymptoms } from './dashboard-data.js';
 import { LatencyTracker, LATENCY_TARGETS_MS, DEFAULT_LATENCY_TARGET_MS } from './latency-tracker.js';
 import type { FaqSemanticCache } from '../cache/faq-semantic-cache.js';
@@ -4183,7 +4183,9 @@ CRITICAL RULES:
         askAggressively &&
         isMaterialMacro(it.protein_g, it.calories) &&
         it.confidence !== 'exact' &&
-        !hasPreciseAmount(`${it.item} ${it.serving_size ?? ''}`) &&
+        // Precise only when the amount is in the item label OR the extractor's
+        // serving_size is one the USER actually stated (not an invented "1 cup").
+        !(hasPreciseAmount(it.item) || servingReflectsUserAmount(it.serving_size, text)) &&
         !isObviousSingleServing(it.item);
       if (
         isCompositionAmbiguousFood(it.item) ||

@@ -66,6 +66,24 @@ export function hasPreciseAmount(text: string): boolean {
   return PRECISE_AMOUNT_RE.test(text ?? '');
 }
 
+// Tokens (number or unit) the extractor's serving_size might carry.
+const AMOUNT_TOKEN_RE =
+  /\d+(?:\.\d+)?|\b(?:cup|cups|oz|ounces?|slices?|pieces?|scoops?|tbsp|tablespoons?|tsp|teaspoons?|grams?|lbs?|pounds?|handful|palmful|servings?|bowls?|plates?|glass|glasses|bottles?|cans?|cartons?|sticks?|bars?)\b/gi;
+
+/**
+ * True when a serving_size reflects an amount the USER actually stated — i.e. a
+ * number/unit token in it also appears in the user's message. The extractor
+ * often INVENTS a serving_size ("small yogurt" → "1 cup") that the user never
+ * gave; trusting that would silently log a guess. So a serving_size only counts
+ * as a real amount when the user's own words back it up.
+ */
+export function servingReflectsUserAmount(serving: string | null | undefined, message: string): boolean {
+  if (!serving) return false;
+  const msg = (message ?? '').toLowerCase();
+  const tokens = serving.toLowerCase().match(AMOUNT_TOKEN_RE) ?? [];
+  return tokens.some((tok) => msg.includes(tok));
+}
+
 // Foods that come in an obvious single standard serving — asking "how much?"
 // adds friction with ~no accuracy gain (a whole fruit, a wrapped bar). Everything
 // else material is worth a quick portion confirm.

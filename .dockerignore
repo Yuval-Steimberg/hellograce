@@ -1,0 +1,40 @@
+# ── Docker/Fly build-context trimming ──────────────────────────────
+# The image reinstalls deps (`pnpm install --frozen-lockfile`) and recompiles
+# from source, so none of the below need to be uploaded. node_modules (~573M)
+# and .git (~30M) were the entire cost of the multi-hundred-MB build context.
+
+# Dependencies — reinstalled inside the image
+**/node_modules
+
+# Git metadata
+.git
+.gitignore
+.gitattributes
+
+# Compiled output — recompiled inside the build stage
+**/dist
+**/dist-auto-eval
+**/dist-coverage
+
+# Root-level test-coverage output.
+# NOTE: do NOT ignore services/api/coverage/ — its *.json data assets
+# (intents.json, safety-framework.json) are read at runtime and reach the
+# image via the wholesale `COPY services/api services/api`. Only its generated
+# results/ output is excluded.
+/coverage
+services/api/coverage/results
+
+# Local env / secrets — must never enter the build context
+**/.env
+**/.env.*
+!**/.env.example
+
+# The web app is a separate Vercel deploy; the API image never copies it
+apps/web
+
+# Tooling / editor / OS cruft
+**/.turbo
+**/.cache
+**/*.log
+.DS_Store
+scratchpad

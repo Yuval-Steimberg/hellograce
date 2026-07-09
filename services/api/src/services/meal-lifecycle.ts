@@ -123,6 +123,16 @@ export function namesSpecificFood(text: string): boolean {
   return FOOD_MENTION_RE.test(stripped);
 }
 
+/** The FIRST specific food noun in the text ("small yogurt" → "yogurt", "some
+ *  crackers" → "crackers"), or null if only a meal-time/container word. Used to
+ *  name the food in a deterministic clarification when the LLM extractor fails to
+ *  itemize a span. */
+export function firstSpecificFoodNoun(text: string): string | null {
+  const stripped = (text ?? '').replace(GENERIC_FOOD_WORD_RE, ' ');
+  const m = stripped.match(FOOD_MENTION_RE);
+  return m ? m[0].toLowerCase().replace(/\s+/g, ' ').trim() : null;
+}
+
 /** True when the message explicitly confirms the user ate / wants logged. */
 export function isConsumptionConfirmed(text: string): boolean {
   const t = (text ?? '').trim();

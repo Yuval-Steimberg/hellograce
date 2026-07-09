@@ -44,7 +44,7 @@ const BATTERY: Array<{ msg: string; ambiguous: string[] }> = [
   },
   {
     msg: 'I forgot to log earlier, but today I had coffee, a banana, a turkey sandwich, some soup, and a few bites of chocolate. I feel mostly fine, just a little hungry now. Can you estimate my protein and suggest a smart dinner?',
-    ambiguous: [], // "turkey sandwich" names its filling → loggable, not ambiguous
+    ambiguous: ['soup'], // turkey sandwich (named filling) + banana (obvious) log; "some soup" is portion-vague → asked
   },
   {
     msg: 'I had grilled salmon with potatoes and salad for lunch and I felt great. Can you estimate my lunch, tell me what to eat tonight, and give me a two-day meal prep idea?',
@@ -52,7 +52,7 @@ const BATTERY: Array<{ msg: string; ambiguous: string[] }> = [
   },
   {
     msg: "I'm vegetarian and today was hard. I had a veggie wrap and some fruit, and I still need protein. Can you help me find a gentle dinner idea and a plan for tomorrow?",
-    ambiguous: [], // "veggie wrap" names its filling → loggable
+    ambiguous: ['fruit'], // "veggie wrap" (named filling) logs; "some fruit" is portion-vague → asked
   },
   {
     msg: 'I ate a burrito for lunch and a protein shake after the gym, feeling good but not sure if it was enough. What should I have for dinner and how do I hit my goal?',

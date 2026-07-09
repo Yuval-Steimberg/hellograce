@@ -557,6 +557,7 @@ import {
   extractFoodMention,
   foodSpanFromConsumption,
   namesSpecificFood,
+  firstSpecificFoodNoun,
   isBareConsumptionBackReference,
   mentionsFood,
 } from './meal-lifecycle.js';
@@ -7689,6 +7690,24 @@ export function ambiguousFoodNames(span: string, context = ''): string[] {
     }
   }
   if (isProteinProductAmbiguous(span, context)) items.push('protein shake');
+  // Any MATERIAL food eaten without a precise amount ("small yogurt", "some
+  // crackers", "some soup") — so a span the LLM extractor failed to itemize (prod:
+  // it returned `none` even for the clean span, and the raw sentence got logged at
+  // a guessed ~10g) is ASKED per food, never logged raw. Split on food connectors,
+  // take the food noun in each part, and include it unless it's obvious single-
+  // serving, the part carries a real number/unit amount, or the part is an
+  // assembled/product food already handled by the composition/protein blocks above
+  // (also skips modifier mis-picks like "veggie" in "veggie wrap").
+  const HANDLED_ELSEWHERE_RE =
+    /\b(sandwich|sandwiches|wrap|wraps|burrito|burritos|taco|tacos|sub|subs|hoagie|grinder|quesadilla|panini|salad|salads|poke|bowl|bowls|shake|shakes|smoothie|smoothies|whey)\b/i;
+  for (const seg of span.split(/\s+and\s+|,|;|\s+with\s+|\s+plus\s+/i)) {
+    if (HANDLED_ELSEWHERE_RE.test(seg)) continue;
+    const noun = firstSpecificFoodNoun(seg);
+    if (!noun) continue;
+    if (items.some((i) => i.includes(noun) || noun.includes(i))) continue;
+    if (isObviousSingleServing(noun) || hasPreciseAmount(seg)) continue;
+    items.push(noun);
+  }
   return [...new Set(items)];
 }
 

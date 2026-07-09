@@ -78,9 +78,16 @@ describe('multi-topic battery — ambiguous eaten foods are ASKED, never assumed
     expect(ambiguousEatenFoods(BATTERY[10]!)!.items).toContain('salad'); // salmon + potatoes + salad
     expect(ambiguousEatenFoods(BATTERY[11]!)!.items).toContain('salad'); // vegetarian: small salad
   });
-  it('a clearly-portioned/named meal is NOT flagged as ambiguous', () => {
-    expect(ambiguousEatenFoods(BATTERY[6]!)).toBeNull(); // "I ate pasta for lunch" (portion-sensitive, not composition-ambiguous)
-    expect(ambiguousEatenFoods(BATTERY[0]!)).toBeNull(); // eggs/toast/chicken+rice
+  it('a portion-less eaten food IS flagged (ask), a precisely-portioned one is NOT', () => {
+    // "I ate pasta for lunch" — no amount → asked (user directive: ask about
+    // almost every food with real macros).
+    expect(ambiguousEatenFoods(BATTERY[6]!)!.items).toContain('pasta');
+    // The prod case (IMG_6740): "small yogurt and some crackers" → both asked,
+    // even when the LLM extractor dropped them (deterministic backstop).
+    const yc = ambiguousEatenFoods("Today I only had a small yogurt and some crackers because I wasn't hungry. Can you give me restaurant ideas?");
+    expect(yc!.items).toEqual(expect.arrayContaining(['yogurt', 'crackers']));
+    // A precisely-stated meal is left alone (real number/unit present).
+    expect(ambiguousEatenFoods('I had 2 eggs and a cup of rice, what should I eat next?')).toBeNull();
   });
 });
 

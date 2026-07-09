@@ -131,6 +131,17 @@ describe('formatFoodReply', () => {
     expect(r).toMatch(/12g protein/);
   });
 
+  it('strips a consumption prefix carrying an adverb ("I also ate" → "2 eggs")', () => {
+    // prod ("dont need to say also logged 2 eggs"): the recovery fallback logged
+    // the raw span "I also ate 2 eggs" and the confirmation echoed it. The adverb
+    // (also/just/already/only) between "I" and the verb must be stripped too.
+    for (const raw of ['I also ate 2 eggs', 'I just had 2 eggs', 'I already ate 2 eggs', 'I only had 2 eggs']) {
+      const r = formatFoodReply({ loggedItems: [raw], loggedProtein: 12, pendingFoods: [], seed });
+      expect(r).toMatch(/2 eggs/);
+      expect(r.toLowerCase()).not.toMatch(/i (?:also|just|already|only) /);
+    }
+  });
+
   it('warms up: some seeds add a friendly "how was it?" closer, none invent food/numbers', () => {
     // Across seeds the confirmation is warm and occasionally asks how it was; it
     // must never introduce a food or a number that was not passed in.

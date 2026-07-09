@@ -151,7 +151,11 @@ function cleanFoodLabel(s: string): string {
   const cleaned = (s ?? '')
     .trim()
     .replace(/^for\s+(?:breakfast|lunch|dinner|brunch|a\s+snack)\s*,?\s*/i, '')
-    .replace(/^(?:i\s+)?(?:just\s+)?(?:ate|had|have|grabbed|made|got|finished|drank)\s+(?:some\s+|a\s+bit\s+of\s+)?/i, '')
+    // Strip a leading "I [also/just/already/only/recently] ate/had/…" consumption
+    // prefix. The adverbs are what a recovery-logged span carries ("I also ate 2
+    // eggs" → "2 eggs"); without them the raw phrase leaked into the confirmation
+    // ("Done, I also ate 2 eggs logged").
+    .replace(/^(?:i\s+)?(?:(?:also|just|already|only|recently)\s+)*(?:ate|had|have|eaten|grabbed|made|got|finished|drank|consumed)\s+(?:some\s+|a\s+bit\s+of\s+)?/i, '')
     .trim();
   return cleaned.length >= 2 ? cleaned : (s ?? '').trim();
 }

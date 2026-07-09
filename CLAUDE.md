@@ -6,7 +6,35 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 SESSION SUMMARY (2026-07-08) — `main` HEAD `7486cb9` (last CODE change `7486cb9`); PROD deployed an INTERMEDIATE build (user tested live). **Redeploy the latest** → `fly deploy` grace-api, verify `/health` == `7486cb9`. **Apply migration `20260708000001_food_serving_size.sql` with the deploy.**
+## 👉 SESSION SUMMARY (2026-07-09) — `main` HEAD `5c77a69`; PROD last confirmed at `5152743` (user redeploys as they test). **Redeploy the latest** → `fly deploy` grace-api, verify `/health` == HEAD. **Apply migration `20260708000001_food_serving_size.sql` with the deploy.**
+
+### 🍽️ FOOD-ASKING — the LIVE-TESTING chain (#240→#251, 2026-07-08/09)
+Driven by repeated live tests of ONE hard message ("I'm going to a restaurant… today I only
+had a small yogurt and some crackers… give me order ideas, what to avoid, should I eat before?").
+The final working model — layered, so it survives the LLM extractor misbehaving:
+- **#246 precision gate** (`foodStepUnified`, confirmed-item loop): ask a portion on any
+  material-macro food WITHOUT a real amount. Deterministic, NOT the extractor's confidence.
+- **#249**: `hasPreciseAmount` no longer trusts an INVENTED `serving_size` — a serving only
+  counts if its number/unit token also appears in the USER's message (`servingReflectsUserAmount`).
+  Gemini put serving_size "1 cup" on "small yogurt" and fooled the gate.
+- **#250 THE REAL FIX (from the prod log)**: `food_extract.done intent=none items=0` TWICE (whole
+  message AND the clean span) → the never-drop backstop logged the RAW SENTENCE as ~10g and never
+  asked. `ambiguousFoodNames` now also surfaces ANY material food eaten without a precise amount
+  (new `firstSpecificFoodNoun`), so a span the extractor fails to itemize is ASKED per food, never
+  logged raw. Flows through the log-path backstop AND the multi-topic weave (`ambiguousEatenFoods`).
+- **#245** reversed #241's scoping — asking fires on MULTI-TOPIC turns too, woven into the full
+  multi-part answer (Nudge IMG_6737 model), never terse.
+- **#251 LATENCY + negation**: the recovery re-extract (2nd LLM call) is SKIPPED when the span has
+  no precise amount (every food gets asked anyway) → ~1-2s off the vague multi-topic food turn;
+  and `isConsumptionConfirmed` is now CLAUSE-aware so "I ate eggs but didn't drink water" no longer
+  drops the eggs (a negation must be IN the eating clause to void).
+- **#248 GREETING FAST-PATH**: the unified path never called the fast-path, so even "Hey" hit the
+  grounded LLM (slow + dry). Now a pure greeting returns an INSTANT warm day-aware reply
+  (`buildWarmGreeting`, uses the real local weekday/time, no LLM) — the Nudge model.
+KNOWN LATENCY FLOOR: a multi-topic FOOD turn still needs ≥1 extract + 1 grounded call (2 sequential
+Gemini calls) — inherent. Next lever if still slow: drop the completeness-regen for food turns
+(held back — it's a quality guard). It IS intentionally aggressive asking — dial-back levers unchanged
+(expand `isObviousSingleServing`, or re-add a confidence gate).
 
 ### 🍽️ FOOD-ASKING — final deterministic model (#240→#246, latest 2026-07-08 PM)
 The "ask about almost every food with real macros" directive went through several

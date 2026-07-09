@@ -3341,6 +3341,10 @@ CRITICAL RULES:
     // Images / voice keep the existing media pipeline for now.
     if (input.media.length > 0) return this.handleMessageInner(input, t0, lat);
 
+    // Stage timing for the unified path (feeds messages.stage_timings → the admin
+    // Latency page's per-stage breakdown). Purely observational — mark() only
+    // records elapsed time between marks, never changes control flow.
+    lat.mark('unified_load');
     const [user, todaysFoodPre, knownFacts, memoryMd, history, conversationId] = await Promise.all([
       this.deps.users.getByPhone(userId).catch(() => null),
       this.deps.users.getTodaysFoodSummary(userId).catch(() => ({ protein_g: 0, calories: 0, items: [] as string[] })),
@@ -3366,6 +3370,7 @@ CRITICAL RULES:
     // ran before runUnifiedReply, and media never reaches here. A pure greeting
     // gets a warm, day-aware reply built from the user's real local weekday/time
     // (the Nudge model); other trivial categories use the fast-path text.
+    lat.mark('unified_fast_path');
     const fp = tryFastPath(input.text, userId);
     if (fp) {
       const reply = fp.category === 'greeting'
@@ -3384,6 +3389,7 @@ CRITICAL RULES:
     // returns ONE warm question (short-circuit); a gather answer rewrites
     // input.text to the replayed original question so the rest of this path
     // answers it, now personalized. Reply-path agnostic — must run here too.
+    lat.mark('unified_intercepts');
     if (this.progressiveProfile) {
       const gate = await this.progressiveGatherGate(input).catch(() => ({} as { reply?: string; text?: string }));
       if (gate.reply) {
@@ -3668,6 +3674,7 @@ CRITICAL RULES:
     // Nudge food step (extractFoodItems + planning guard): a specific meal logs
     // with an estimate; a hedged/generic mention comes back pending → we ask ONE
     // portion question via the CLARIFY note; advice/planning never logs.
+    lat.mark('food_step');
     const food = await this.foodStepUnified(input, history).catch(() => null);
     // Record the food actions as tool_logs so the admin dashboard's "Tool calls"
     // reflects reality (the unified path logs food via a direct call, not the
@@ -3748,6 +3755,7 @@ CRITICAL RULES:
     // Non-food chat — OR a multi-topic message that merely mentioned food —
     // uses the full Nudge grounded prompt so EVERY part gets answered (not the
     // terse food-confirmation, which drops the rest of a multi-part message).
+    lat.mark('memory_recall');
     const recalled = await recalledPromise;
     let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, recalled, userText: input.text });
 
@@ -3811,6 +3819,7 @@ CRITICAL RULES:
       return r ? enforceFormat(r.text ?? '', { userMessage: input.text, preserveParagraphs: isMultiTopic }).text.trim() : '';
     };
 
+    lat.mark('grounded_gen');
     let reply = await gen(systemPrompt);
 
     // ── ONE PASS + DETERMINISTIC FLOORS ──────────────────────────────────────
@@ -3824,6 +3833,7 @@ CRITICAL RULES:
     // I can't" is bad and can't be fixed deterministically). Rare — the date /
     // injection / reminder intercepts above already answer capability questions.
     if (reply && UNIFIED_DENIAL_RE.test(reply)) {
+      lat.mark('denial_regen');
       this.deps.logger.info({ userId }, 'ai.unified.denial_regen');
       const retry2 = await gen(systemPrompt +
         `\n\nHARD OVERRIDE: never say "as an AI", "I don't have access", "I can't provide medical advice", or "check your device". You are Grace and you HAVE their date, schedule, and profile in the facts above. Answer warmly and directly using those facts.`);
@@ -3838,6 +3848,7 @@ CRITICAL RULES:
     if (isMultiTopic && reply) {
       const uncovered = uncoveredAskCount(input.text, reply);
       if (uncovered > 0) {
+        lat.mark('completeness_regen');
         const topics = missingAskTopics(input.text, reply);
         this.deps.logger.info({ userId, uncovered, topics }, 'ai.unified.completeness_regen');
         const retry = await gen(systemPrompt +
@@ -3846,6 +3857,10 @@ CRITICAL RULES:
       }
     }
     if (!reply) reply = 'I’m here — tell me a little more?';
+
+    // Deterministic floors below (report-shape strip, number guard, clarify) — no
+    // LLM; kept in their own span so the LLM stages above read cleanly.
+    lat.mark('unified_floors');
 
     // Report shape ("here's the game plan: 1. … 2. …") → strip to warm prose,
     // deterministically (no regen). A numbered plan can never reach the user.

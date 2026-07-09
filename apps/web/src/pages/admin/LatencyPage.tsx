@@ -151,13 +151,30 @@ export default function LatencyPage() {
                 <span className="font-medium text-sm text-slate-100">Slowest requests</span>
               </div>
               <div>
-                {data.slow_samples.map((s, i) => (
-                  <div key={i} className="px-4 py-2 flex items-center gap-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                    <span className={`text-sm font-medium w-16 shrink-0 ${tone(s.latency_ms)}`}>{ms(s.latency_ms)}</span>
-                    <span className="text-xs font-mono text-slate-400 w-32 shrink-0 truncate">{s.intent}</span>
-                    <span className="text-xs text-slate-300 truncate flex-1">{s.content}</span>
-                  </div>
-                ))}
+                {data.slow_samples.map((s, i) => {
+                  const stages = Object.entries(s.stage_timings ?? {})
+                    .sort((a, b) => b[1] - a[1])
+                    .filter(([, v]) => v > 0)
+                    .slice(0, 4);
+                  return (
+                    <div key={i} className="px-4 py-2.5 border-t" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+                      <div className="flex items-center gap-3">
+                        <span className={`text-sm font-medium w-16 shrink-0 ${tone(s.latency_ms)}`}>{ms(s.latency_ms)}</span>
+                        <span className="text-xs font-mono text-slate-400 w-32 shrink-0 truncate">{s.intent}</span>
+                        <span className="text-xs text-slate-300 truncate flex-1">{s.content}</span>
+                      </div>
+                      {stages.length > 0 && (
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 pl-[4.75rem]">
+                          {stages.map(([stage, val]) => (
+                            <span key={stage} className="text-[11px] font-mono text-slate-500">
+                              {stage} <span className={tone(val)}>{ms(val)}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </motion.div>
           )}

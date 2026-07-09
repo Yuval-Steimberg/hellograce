@@ -110,6 +110,17 @@ describe('offline harness — ambiguousEatenFoods derives what must be asked (no
     // never the raw sentence
     for (const n of names) expect(n.length).toBeLessThan(20);
   });
+
+  // Prod ("where are the eggs"): "For breakfast I also ate 2 eggs and small salad"
+  // asked about the salad but silently DROPPED the precise eggs. ambiguousFoodNames
+  // must name ONLY the ambiguous salad (never the precisely-stated "2 eggs"), so the
+  // recovery fallback can LOG the eggs and PEND the salad — disjoint sets.
+  it('ambiguousFoodNames names the ambiguous food only, never the precisely-stated one', () => {
+    const span = '2 eggs and small salad';
+    const names = ambiguousFoodNames(span, span);
+    expect(names).toContain('salad');
+    expect(names.some((n) => /egg/i.test(n))).toBe(false); // 2 eggs is precise → logged, not asked
+  });
 });
 
 describe('offline harness — statesFalseConsumedTotal catches an ASSUMED total', () => {

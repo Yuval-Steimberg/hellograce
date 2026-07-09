@@ -4142,18 +4142,37 @@ CRITICAL RULES:
         // gate below (log clear ones, ask about ambiguous ones per food).
         extraction = { ...spanEx, intent: 'log' as const };
       } else {
-        // The extractor couldn't itemize the span (e.g. a Gemini timeout). If the
-        // span names a SPECIFIC ambiguous food (a bare sandwich/salad/shake), pend
-        // those CLEAN names and ask about each — NEVER the raw span, which would
-        // echo the whole message into the question (prod IMG_6709). If we can't
-        // name a clean ambiguous food, log the span (never-drop) rather than emit a
-        // garbled portion question.
+        // The extractor couldn't itemize the span (e.g. a Gemini timeout). Recover
+        // deterministically, per-food — a MIXED span ("2 eggs and small salad")
+        // must LOG the precise food (2 eggs) AND ask about the ambiguous one
+        // (salad), never drop either (prod: "where are the eggs" — the eggs were
+        // silently dropped while only the salad was asked).
+        //   • PRECISE segment (a real number/unit → the estimator can size it, and
+        //     it's not an assembled/product food) → LOG it.
+        //   • AMBIGUOUS food (a bare sandwich/salad/shake, or a material food with
+        //     no amount) → PEND the CLEAN name and ask — NEVER the raw span, which
+        //     would echo the whole message into the question (prod IMG_6709).
         const names = ambiguousFoodNames(span, text);
+        const loggedSpans: string[] = [];
+        for (const rawSeg of span.split(FOOD_SEGMENT_SPLIT_RE)) {
+          const seg = rawSeg.trim();
+          if (!seg) continue;
+          if (HANDLED_ELSEWHERE_RE.test(seg)) continue;      // assembled/product → pended below, not logged
+          if (!firstSpecificFoodNoun(seg)) continue;         // not a real food word
+          if (!hasPreciseAmount(seg)) continue;              // no amount → can't size it; ask/pend instead
+          const r = (await logFood.execute({ food: seg }).catch(() => null)) as Record<string, unknown> | null;
+          if (r && r.ok !== false) loggedSpans.push(seg);
+        }
+        for (const it of loggedSpans) await resolvePendingFood(this.deps.redis, input.userId, it).catch(() => {});
         if (names.length > 0) {
           await addPendingFood(this.deps.redis, input.userId, names.map((n) => ({ item: n, clarify_question: null }))).catch(() => {});
           const clarify = buildPortionConfirmQuestion(names.map((n) => ({ item: n, protein_g: null })));
-          this.deps.logger.info({ userId: input.userId, span, names }, 'ai.unified_food.backstop_needs_portion');
-          return { logged: [], pending: names, removed: null, clarify };
+          this.deps.logger.info({ userId: input.userId, span, names, logged: loggedSpans.length }, 'ai.unified_food.backstop_needs_portion');
+          return { logged: loggedSpans, pending: names, removed: null, clarify };
+        }
+        if (loggedSpans.length > 0) {
+          this.deps.logger.info({ userId: input.userId, span, logged: loggedSpans.length }, 'ai.unified_food.backstop_logged_precise');
+          return { logged: loggedSpans, pending: [], removed: null };
         }
         const r = (await logFood.execute({ food: span }).catch(() => null)) as Record<string, unknown> | null;
         if (!r || r.ok === false) return null;
@@ -7728,6 +7747,19 @@ export function stripReportShape(text: string): string {
 // eating, so the reply can ask about each by name).
 const ASSEMBLED_AMBIG_WORDS = ['sandwich', 'wrap', 'burrito', 'taco', 'sub', 'hoagie', 'quesadilla', 'panini', 'salad', 'poke bowl', 'grain bowl', 'buddha bowl'];
 
+// A span segment naming an assembled/product food is handled by the composition/
+// protein-product blocks (asked as a bare "sandwich"/"salad"/"shake"), never
+// logged deterministically from its amount — its macros depend on an unknown
+// filling. Shared by ambiguousFoodNames (to skip these in its per-food loop) and
+// by the log-path recovery fallback (to skip them when logging precise foods).
+const HANDLED_ELSEWHERE_RE =
+  /\b(sandwich|sandwiches|wrap|wraps|burrito|burritos|taco|tacos|sub|subs|hoagie|grinder|quesadilla|panini|salad|salads|poke|bowl|bowls|shake|shakes|smoothie|smoothies|whey)\b/i;
+
+// Split a consumption span into per-food segments on the food connectors
+// ("and", ",", ";", "with", "plus"). Shared so the recovery fallback segments a
+// mixed span the SAME way ambiguousFoodNames does.
+const FOOD_SEGMENT_SPLIT_RE = /\s+and\s+|,|;|\s+with\s+|\s+plus\s+/i;
+
 /**
  * The ambiguous foods a message reports EATING, derived deterministically from
  * the text (independent of the LLM extractor, which can drop them on a complex
@@ -7760,9 +7792,7 @@ export function ambiguousFoodNames(span: string, context = ''): string[] {
   // serving, the part carries a real number/unit amount, or the part is an
   // assembled/product food already handled by the composition/protein blocks above
   // (also skips modifier mis-picks like "veggie" in "veggie wrap").
-  const HANDLED_ELSEWHERE_RE =
-    /\b(sandwich|sandwiches|wrap|wraps|burrito|burritos|taco|tacos|sub|subs|hoagie|grinder|quesadilla|panini|salad|salads|poke|bowl|bowls|shake|shakes|smoothie|smoothies|whey)\b/i;
-  for (const seg of span.split(/\s+and\s+|,|;|\s+with\s+|\s+plus\s+/i)) {
+  for (const seg of span.split(FOOD_SEGMENT_SPLIT_RE)) {
     if (HANDLED_ELSEWHERE_RE.test(seg)) continue;
     const noun = firstSpecificFoodNoun(seg);
     if (!noun) continue;

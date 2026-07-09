@@ -45,6 +45,7 @@ const CoveragePage = lazy(() => import("./pages/admin/CoveragePage.tsx"));
 const ResearchPage = lazy(() => import("./pages/admin/ResearchPage.tsx"));
 const SubscriptionMessagesPage = lazy(() => import("./pages/admin/SubscriptionMessagesPage.tsx"));
 const SystemHealthPage = lazy(() => import("./pages/admin/SystemHealthPage.tsx"));
+const LatencyPage = lazy(() => import("./pages/admin/LatencyPage.tsx"));
 const AuditLogPage = lazy(() => import("./pages/admin/AuditLogPage.tsx"));
 
 const queryClient = new QueryClient();
@@ -96,6 +97,7 @@ const App = () => (
                 <Route path="research" element={<ResearchPage />} />
                 <Route path="subscription-messages" element={<SubscriptionMessagesPage />} />
                 <Route path="system-health" element={<SystemHealthPage />} />
+                <Route path="latency" element={<LatencyPage />} />
                 <Route path="audit" element={<AuditLogPage />} />
               </Route>
 

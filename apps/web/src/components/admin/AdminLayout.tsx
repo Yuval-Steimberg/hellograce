@@ -31,6 +31,7 @@ import {
   Layers,
   Gauge,
   Megaphone,
+  Timer,
 } from 'lucide-react';
 
 const NAV = [
@@ -54,6 +55,7 @@ const NAV = [
   { to: '/admin/content-rules', label: 'Content Rules', icon: Shield, end: false },
   { to: '/admin/subscription-messages', label: 'Subscription Messages', icon: CreditCard, end: false },
   { to: '/admin/system-health', label: 'System Health', icon: Activity, end: false },
+  { to: '/admin/latency', label: 'Latency', icon: Timer, end: false },
   { to: '/admin/audit', label: 'Audit & Ops', icon: ScrollText, end: false },
 ];
 

@@ -3669,6 +3669,11 @@ CRITICAL RULES:
     // with an estimate; a hedged/generic mention comes back pending → we ask ONE
     // portion question via the CLARIFY note; advice/planning never logs.
     const food = await this.foodStepUnified(input, history).catch(() => null);
+    // Record the food actions as tool_logs so the admin dashboard's "Tool calls"
+    // reflects reality (the unified path logs food via a direct call, not the
+    // orchestrator tool registry, so this metric was always 0). Fire-and-forget —
+    // zero user-facing latency, never touches the food logging itself.
+    this.persistFoodToolLogs(userId, conversationId, food);
     const todaysFood = food && food.logged.length > 0
       ? await this.deps.users.getTodaysFoodSummary(userId).catch(() => todaysFoodPre)
       : todaysFoodPre;
@@ -6784,6 +6789,35 @@ CRITICAL RULES:
   /** Persist a fast-path response's intent + latency + stage timings via the
    *  same channel as full-pipeline turns so /admin/latency reflects ALL traffic.
    *  Fire-and-forget; falls back to memory.appendTurn when no turnQueue. */
+  /** Record the unified path's food actions as tool_logs so the admin "Tool calls"
+   *  metric tracks them (the unified path logs food via a direct call, bypassing
+   *  the orchestrator tool registry that normally feeds tool_logs). Fire-and-forget;
+   *  best-effort — a failure here never affects the reply or the food log itself. */
+  private persistFoodToolLogs(
+    userId: string,
+    conversationId: string,
+    food: { logged: string[]; removed: string | null } | null,
+  ): void {
+    if (!food) return;
+    const rows: Array<{ name: string; args: unknown }> = [];
+    for (const item of food.logged) rows.push({ name: 'log_food', args: { food: item } });
+    if (food.removed) rows.push({ name: 'remove_food', args: { food: food.removed } });
+    if (rows.length === 0) return;
+    void (async () => {
+      try {
+        for (const r of rows) {
+          await this.deps.pool.query(
+            `INSERT INTO tool_logs (user_id, conversation_id, tool_name, args, ok, output, error, latency_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [userId, conversationId, r.name, JSON.stringify(r.args), true, JSON.stringify(null), null, 0],
+          );
+        }
+      } catch (err) {
+        this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'unified.food_tool_log.failed');
+      }
+    })();
+  }
+
   private persistLatency(
     userId: string,
     intent: string,

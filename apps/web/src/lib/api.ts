@@ -528,8 +528,17 @@ export interface AutoEvalProgressEvent {
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
+export interface LatencyStats {
+  window: string;
+  overall: { n: string; p50: string; p95: string; p99: string; max: string; avg: string } | null;
+  by_intent: { intent: string; n: string; p50: string; p95: string; p99: string; avg: string }[];
+  by_stage: { stage: string; avg_ms: string; p95_ms: string; n: string }[];
+  slow_samples: { intent: string; latency_ms: number; created_at: string; content: string }[];
+}
+
 export const api = {
   metrics: () => apiFetch<Metrics>('/admin/metrics'),
+  latency: (window = '24h') => apiFetch<LatencyStats>(`/admin/latency?window=${encodeURIComponent(window)}`),
 
   // Admin analytics (cohorts / funnel / business overview)
   cohorts: () => apiFetch<CohortCountsResult>('/admin/cohorts'),

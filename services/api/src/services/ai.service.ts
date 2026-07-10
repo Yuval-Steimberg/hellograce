@@ -181,6 +181,15 @@ const FOOD_DIARY_ASK_RE =
 const FOOD_RECO_OR_PLAN_RE =
   /\b(what should i|what can i|any (?:idea|ideas|suggestion|suggestions)|recommend|suggest|plan|for (?:breakfast|lunch|dinner|a snack)|help me|before dinner)\b/i;
 
+// A food-portion / composition clarification Grace asked in a PRIOR assistant
+// turn. Used by the live-path anti-loop cap (runUnifiedReply) so the SAME food
+// is never asked about more than twice — mirrors the guarantee that already
+// existed only in the dead handleMessageInner path (prod audit 2026-07: "how
+// much lox" asked three times). Covers both the dead-path phrasings AND
+// buildPortionConfirmQuestion's unified-path signatures.
+export const PRIOR_FOOD_CLARIFY_RE =
+  /\b(what was in|what kind of|how much|how many|any (?:dressing|sauce|oil)|palm-sized|roughly how much|what did you (?:have|order|get)|how many (?:scoops|eggs|slices)|how was the .{0,30} prepared|how big|that'?s about right|log it right|couple quick things so i log)\b/i;
+
 /**
  * A warm, day-aware greeting reply — the Nudge model: greet back, reference the
  * user's REAL local weekday/time, and offer a hand. Deterministic + seed-varied
@@ -3675,7 +3684,34 @@ CRITICAL RULES:
     // with an estimate; a hedged/generic mention comes back pending → we ask ONE
     // portion question via the CLARIFY note; advice/planning never logs.
     lat.mark('food_step');
-    const food = await this.foodStepUnified(input, history).catch(() => null);
+    let food = await this.foodStepUnified(input, history).catch(() => null);
+    // ── ANTI-LOOP CAP: never re-ask the SAME food's portion forever ──────────
+    // The clarification is asked at most twice. If Grace has already asked 2+
+    // food-clarify questions in recent history and this turn is about to ask
+    // AGAIN, stop asking — log the pending item(s) at a best-estimate serving
+    // instead (the user has answered enough; prod audit: "how much lox" ×3).
+    // This ports the guarantee that previously lived only in the dead
+    // handleMessageInner path into the live unified path.
+    if (food && food.clarify && food.pending.length > 0) {
+      const priorClarify = history.filter(
+        (t) => t.role === 'assistant' && t.content.includes('?') && PRIOR_FOOD_CLARIFY_RE.test(t.content),
+      ).length;
+      if (priorClarify >= 2) {
+        const cappedLogged = await this.logPendingBestEstimate(userId, food.pending);
+        await clearPendingFood(this.deps.redis, userId).catch(() => {});
+        this.deps.logger.info(
+          { userId, items: food.pending.length, priorClarify },
+          'ai.unified_food.clarify_cap_logged',
+        );
+        food = {
+          logged: [...food.logged, ...cappedLogged],
+          pending: [],
+          removed: food.removed,
+          clarify: null,
+          rough: true,
+        };
+      }
+    }
     // Record the food actions as tool_logs so the admin dashboard's "Tool calls"
     // reflects reality (the unified path logs food via a direct call, not the
     // orchestrator tool registry, so this metric was always 0). Fire-and-forget —
@@ -3913,6 +3949,28 @@ CRITICAL RULES:
    *
    * Returns { logged, pending, removed } or null.
    */
+  /** Log a list of pending food item NAMES at a best-estimate standard serving.
+   *  Used by the clarify-cap in runUnifiedReply so a food that's been asked about
+   *  twice is finally logged (rough) instead of re-asked forever. Returns the
+   *  items that logged successfully. Best-effort per item. */
+  private async logPendingBestEstimate(userId: string, items: string[]): Promise<string[]> {
+    const logFood = makeLogFoodTool({
+      pool: this.deps.pool,
+      llm: this.deps.llm,
+      logger: this.deps.logger,
+      userId,
+      source: 'text',
+      ...(this.deps.usda ? { usda: this.deps.usda } : {}),
+      users: this.deps.users,
+    });
+    const logged: string[] = [];
+    for (const item of items) {
+      const r = (await logFood.execute({ food: item }).catch(() => null)) as Record<string, unknown> | null;
+      if (r && r.ok !== false) logged.push(item);
+    }
+    return logged;
+  }
+
   private async foodStepUnified(
     input: InboundMessage,
     history: ChatTurn[],

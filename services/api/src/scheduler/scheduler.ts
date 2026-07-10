@@ -34,6 +34,17 @@ const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 
 const MIDDAY_DAYS = new Set([1, 3, 5]); // Mon, Wed, Fri
 const EVENING_DAYS = new Set([2, 4, 0]); // Tue, Thu, Sun
 
+// Quiet-hours boundaries (minutes from local midnight). NOTHING proactive is sent
+// between 21:00 and 07:00 local. These MUST match reminder-service.ts (QUIET_END_MIN
+// / QUIET_START_MIN) — the delivery path (here) and the "when is my next reminder"
+// answer path (reminder-service) both floor the morning at QUIET_END_MIN, so if they
+// drift, Grace tells the user a time she never actually delivers.
+const QUIET_END_MIN = 7 * 60; // 07:00 — earliest a proactive reminder may fire
+// Latest a MISSED/late morning may still land as "the morning check-in". Gives the
+// morning a catch-up runway (early wake_time, or a Fly machine that auto-stopped
+// through the normal window) without ever firing a "good morning" in the afternoon.
+const MORNING_CATCHUP_END_MIN = 11 * 60; // 11:00 local
+
 interface SchedulerDeps {
   users: UserService;
   sender: MessageSender;
@@ -594,11 +605,21 @@ export class Scheduler {
     // ── Morning window (covers both trial reminder and regular check-in)
     // Humanized timing: each user gets a deterministic per-day offset of 0-55
     // minutes from their wake_time so messages don't all fire at exactly 7:00.
-    // Window is 90 min wide so a machine waking late (e.g. after a webhook) still
-    // catches up — morningAlreadySent prevents double-sends within the same day.
     const morningOffset = jitterMinutes(`${user.phone}-${todayStr}-morning`, 55);
-    const morningTargetMin = wakeBaseMin + morningOffset;
-    const isMorningWindow = nowMin >= morningTargetMin && nowMin < morningTargetMin + 90;
+    // FLOOR the target at the quiet-hours boundary. A wake_time earlier than ~05:30
+    // would otherwise put the entire delivery window inside quiet hours (nothing is
+    // sent before 07:00), so the morning check-in could NEVER fire — a user with
+    // wake_time "00:00" got injection/day-after messages but never a plain morning.
+    // This mirrors reminder-service.ts, which already floors the morning at 07:00,
+    // keeping delivery in lockstep with what Grace TELLS the user ("~7:00 AM").
+    const morningTargetMin = Math.max(wakeBaseMin, QUIET_END_MIN) + morningOffset;
+    // Catch-up runway: the window is at least 90 min wide (a machine waking late
+    // after a webhook still catches up), and extends to 11:00 local so a morning
+    // missed because the Fly machine auto-stopped through the early window still
+    // lands as a morning rather than being silently dropped for the whole day.
+    // morningAlreadySent guarantees exactly one per day, so widening never dupes.
+    const morningWindowEnd = Math.max(morningTargetMin + 90, MORNING_CATCHUP_END_MIN);
+    const isMorningWindow = nowMin >= morningTargetMin && nowMin < morningWindowEnd;
     const morningAlreadySent = user.last_morning_sent_at &&
       toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) === todayStr;
 

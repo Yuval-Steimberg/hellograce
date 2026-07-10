@@ -10,7 +10,7 @@ import type { MessageGenerator } from './message-generator.js';
  * users and asserts every proactive reminder fires in the correct window:
  *
  *   ── Reminder schedule (per user-local time) ──────────────────────────────
- *   Morning           daily         wake_time + 0–54 min (90-min catch-up window)
+ *   Morning           daily         max(wake_time, 07:00) + 0–54 min; catch-up to 11:00
  *   Midday            Mon/Wed/Fri   11:00 + 0–164 min (15-min delivery window)
  *   Evening           Tue/Thu/Sun   sleep_time − 90 min (engaged users only)
  *   Injection morning weekly        wake_time + 0–44 min on injection_day
@@ -328,6 +328,47 @@ describe('Scheduler — morning reminder', () => {
     setUtc(2026, 5, 19, 3, 0);
     await tick(h2.scheduler);
     expect(h2.sends.length).toBe(0);
+  });
+
+  it('delivers a morning even when wake_time is 00:00 (floored to the 07:00 quiet-hours boundary)', async () => {
+    // Regression: a wake_time before ~05:30 used to put the ENTIRE delivery window
+    // inside quiet hours (nothing sends before 07:00) so the morning check-in NEVER
+    // fired — a real prod user with wake_time "00:00" got injection/day-after texts
+    // but never a plain morning. The target is now floored at 07:00, matching what
+    // reminder-service tells the user. Asia/Jerusalem in July = IDT = UTC+3, so
+    // 07:00 local = 04:00 UTC. Walk 07:00→08:00 local to hit any jitter offset.
+    const u = makeUser({ wake_time: '00:00', sleep_time: null as unknown as string, timezone: 'Asia/Jerusalem' });
+    const h = buildHarness(u);
+    await walkMinutes(
+      h.scheduler,
+      new Date(Date.UTC(2026, 6, 10, 4, 0)),  // 07:00 Jerusalem
+      new Date(Date.UTC(2026, 6, 10, 5, 0)),  // 08:00 Jerusalem
+    );
+    expect(h.generateCalls.filter((c) => c.type === 'morning').length).toBe(1);
+
+    // Still respects quiet hours: 06:00 Jerusalem = 03:00 UTC must NOT fire.
+    const h2 = buildHarness(makeUser({ wake_time: '00:00', timezone: 'Asia/Jerusalem' }));
+    setUtc(2026, 7, 10, 3, 0);
+    await tick(h2.scheduler);
+    expect(h2.sends.length).toBe(0);
+  });
+
+  it('catches up a morning missed past the 90-min window, up to 11:00 local', async () => {
+    // If the Fly machine auto-stopped through the early window (documented gap),
+    // a single tick after it wakes must still deliver the morning — up to an 11:00
+    // cutoff so a "good morning" never lands in the afternoon. NY in July = EDT =
+    // UTC-4. 10:00 NY = 14:00 UTC is past wake+90 (max 09:24) but before 11:00.
+    const u = makeUser({ wake_time: '08:00', timezone: 'America/New_York' });
+    const h = buildHarness(u);
+    setUtc(2026, 7, 10, 14, 0); // 10:00 NY
+    await tick(h.scheduler);
+    expect(h.generateCalls.filter((c) => c.type === 'morning').length).toBe(1);
+
+    // But NOT past the 11:00 cutoff — a stale morning is dropped, not sent late.
+    const h2 = buildHarness(makeUser({ wake_time: '08:00', timezone: 'America/New_York' }));
+    setUtc(2026, 7, 10, 15, 30); // 11:30 NY
+    await tick(h2.scheduler);
+    expect(h2.generateCalls.filter((c) => c.type === 'morning').length).toBe(0);
   });
 });
 

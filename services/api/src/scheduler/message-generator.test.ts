@@ -35,6 +35,7 @@ function makeUser(overrides: Partial<GraceUser> = {}): GraceUser {
     goal_weight: 160,
     protein_goal_grams: 90,
     rlhf_enabled: false,
+    ...overrides,
   } as unknown as GraceUser;
 }
 

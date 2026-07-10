@@ -202,9 +202,16 @@ export function sanitizeOutbound(input: string, logger?: Logger, opts?: { preser
   //   <angle_var>       — common from prompt template leakage
   // For [bracketed]: only strip ones that look like placeholders (lowercase,
   // 2-30 chars, no spaces) — keep legitimate uses like "[laughs]" / "[2/5]".
-  text = text.replace(/\{[a-z_][a-z0-9_]{0,30}\}/g, '');
+  text = text.replace(/\$\{[^}]{0,40}\}/g, '');            // ${var} template-literal leak
+  text = text.replace(/\{[a-z_][a-z0-9_]{0,30}\}/g, '');   // {snake_case_var}
   text = text.replace(/<[a-z_][a-z0-9_]{0,30}>/g, '');
   text = text.replace(/\[(link|settings link|url|here|first_name|name|phone)\]/gi, '');
+  // Stray / UNBALANCED brace left by a broken template (prod audit: "Thinking}Sleep
+  // well!"). The balanced strips above miss a lone "{" or "}". A brace WEDGED
+  // between two word chars becomes a space (so "Thinking}Sleep" → "Thinking Sleep",
+  // not "ThinkingSleep"); any other stray brace is dropped. Grace's own outbound
+  // never legitimately contains a curly brace, so this can't damage real content.
+  text = text.replace(/(\w)[{}](\w)/g, '$1 $2').replace(/[{}]/g, '');
 
   // Collapse double spaces left behind by placeholder strips.
   text = text.replace(/[ \t]{2,}/g, ' ').replace(/\s+([.,!?])/g, '$1');

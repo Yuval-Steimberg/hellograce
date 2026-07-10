@@ -74,6 +74,37 @@ describe('sanitizeOutbound — never truncates a trailing URL (2026-06-13)', () 
   });
 });
 
+describe('sanitizeOutbound — strips leaked template placeholders / stray braces (2026-07-10)', () => {
+  it('fixes the exact prod leak "Thinking}Sleep well!" (brace wedged between words → space)', () => {
+    const out = sanitizeOutbound('Thinking}Sleep well! I\'m around if you need a hand 🤍');
+    expect(out).not.toContain('}');
+    expect(out).not.toContain('{');
+    // The brace between words becomes a space (not "ThinkingSleep"); note the
+    // sanitizer separately normalizes "!" → "." via the ≤1-exclamation rule.
+    expect(out).toContain('Thinking Sleep well');
+    expect(out).not.toContain('ThinkingSleep');
+  });
+  it('drops a trailing stray brace left by a broken {opener}} template', () => {
+    const out = sanitizeOutbound('Thinking of you }');
+    expect(out).not.toMatch(/[{}]/);
+    expect(out).toContain('Thinking of you');
+  });
+  it('strips an un-interpolated ${var} template literal', () => {
+    const out = sanitizeOutbound('Hi ${firstName}, you are doing great.');
+    expect(out).not.toContain('${');
+    expect(out).not.toMatch(/[{}]/);
+  });
+  it('still removes a balanced {snake_case} placeholder', () => {
+    const out = sanitizeOutbound('Hey {first_name}, great work.');
+    expect(out).not.toMatch(/[{}]/);
+    expect(out).toContain('great work');
+  });
+  it('does not touch normal prose with no braces', () => {
+    const out = sanitizeOutbound("Nice, that's 22g protein so far today.");
+    expect(out).toBe("Nice, that's 22g protein so far today.");
+  });
+});
+
 describe('sanitizeOutbound — preserveParagraphs opt-in for multi-part replies', () => {
   const multi = 'You are on track today.\n\nFor tonight, try Greek yogurt.\n\nFor Friday, protein first, then dessert.';
   it('collapses paragraphs by default', () => {

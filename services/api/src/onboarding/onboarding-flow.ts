@@ -253,13 +253,70 @@ export function parseClockTime(text: string): string | null {
   return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 }
 
-/** "7am ... 10pm" → { wake_time, sleep_time }. First time = wake, second = sleep. */
+/** Plausible morning wake band (04:00–11:59). Used to spot a bedtime that was
+ *  stated first, and to reject a lone ambiguous time (e.g. just "midnight"). */
+function isPlausibleWakeHm(hm: string): boolean {
+  const h = parseInt(hm.slice(0, 2), 10);
+  return h >= 4 && h <= 11;
+}
+
+interface ClockToken { hm: string; explicit: boolean; bareHour: number | null }
+
+/** Parse one time token → { "HH:MM", whether a meridiem/noon/midnight was
+ *  explicit, and the bare hour when none was given } for later PM inference. */
+function parseClockToken(text: string): ClockToken | null {
+  const t = text.toLowerCase().trim();
+  if (/\bnoon\b/.test(t)) return { hm: '12:00', explicit: true, bareHour: null };
+  if (/\bmidnight\b/.test(t)) return { hm: '00:00', explicit: true, bareHour: null };
+  const m = t.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  if (!m) return null;
+  let h = parseInt(m[1]!, 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const ap = m[3];
+  if (h > 23 || min > 59) return null;
+  if (ap === 'pm' && h < 12) h += 12;
+  else if (ap === 'am' && h === 12) h = 0;
+  return {
+    hm: `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
+    explicit: !!ap,
+    bareHour: ap ? null : h,
+  };
+}
+
+/**
+ * "7am ... 10pm" → { wake_time, sleep_time }. Robust to how people actually answer:
+ *  - Roles are corrected by plausibility, so a bedtime stated FIRST ("bed at
+ *    midnight, up at 7") still yields wake 07:00 / sleep 00:00 instead of the
+ *    reverse.
+ *  - A bare bedtime reads as PM ("bed at 11" → 23:00, "10" → 22:00) while the
+ *    wake time keeps its morning (AM) reading.
+ *  - A lone, implausible time (just "midnight" / "10pm") is too ambiguous to store
+ *    as a wake, so it returns null → the flow re-asks. This is what stops a "00:00"
+ *    wake from being saved — a wake before ~05:30 used to sit entirely inside quiet
+ *    hours and silently drop the daily morning reminder.
+ */
 function parseWakeSleep(text: string): Partial<GraceUser> | null {
-  const matches = text.toLowerCase().match(/\b(?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/g) ?? [];
-  const times = matches.map((m) => parseClockTime(m)).filter((t): t is string => !!t);
-  if (times.length === 0) return null;
-  const fields: Partial<GraceUser> = { wake_time: times[0]! };
-  if (times[1]) fields.sleep_time = times[1];
+  const raw = text.toLowerCase().match(/\b(?:noon|midnight|\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b/g) ?? [];
+  const toks = raw.map(parseClockToken).filter((x): x is ClockToken => !!x);
+  if (toks.length === 0) return null;
+  let wake = toks[0]!;
+  let sleep = toks[1] ?? null;
+  // First time isn't a plausible wake but the second is → bedtime came first; swap.
+  if (sleep && !isPlausibleWakeHm(wake.hm) && isPlausibleWakeHm(sleep.hm)) {
+    [wake, sleep] = [sleep, wake];
+  }
+  // PM inference for a BARE bedtime (1–11 → PM, 12 → midnight); wake stays AM.
+  let sleepHm: string | null = null;
+  if (sleep) {
+    const bh = sleep.bareHour;
+    if (bh != null && bh >= 1 && bh <= 11) sleepHm = `${String(bh + 12).padStart(2, '0')}:${sleep.hm.slice(3)}`;
+    else if (bh === 12) sleepHm = `00:${sleep.hm.slice(3)}`;
+    else sleepHm = sleep.hm;
+  }
+  // A lone, implausible time is too ambiguous to store as a wake → re-ask.
+  if (!sleep && !isPlausibleWakeHm(wake.hm)) return null;
+  const fields: Partial<GraceUser> = { wake_time: wake.hm };
+  if (sleepHm) fields.sleep_time = sleepHm;
   return fields;
 }
 

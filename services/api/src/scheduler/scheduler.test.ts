@@ -370,6 +370,24 @@ describe('Scheduler — morning reminder', () => {
     await tick(h2.scheduler);
     expect(h2.generateCalls.filter((c) => c.type === 'morning').length).toBe(0);
   });
+
+  it('fires the morning anchor even within the 2h engagement cooldown (recent reply)', async () => {
+    // The morning anchor is the "at least once a day" guarantee, so it is exempt
+    // from the engagement cooldown: a user who texted 15 min before their window
+    // must STILL get the daily morning check-in, not have it swallowed. (Default
+    // cooldown = 2h; before the exemption this suppressed the morning.)
+    const u = makeUser({
+      wake_time: '08:00', sleep_time: '22:00', timezone: 'America/New_York',
+      last_reply_at: new Date(Date.UTC(2026, 4, 19, 11, 45)), // 07:45 NY — 15 min pre-window
+    });
+    const h = buildHarness(u);
+    await walkMinutes(
+      h.scheduler,
+      new Date(Date.UTC(2026, 4, 19, 12, 0)),  // 08:00 NY
+      new Date(Date.UTC(2026, 4, 19, 14, 30)), // 10:30 NY
+    );
+    expect(h.generateCalls.filter((c) => c.type === 'morning').length).toBe(1);
+  });
 });
 
 describe('Scheduler — midday reminder', () => {

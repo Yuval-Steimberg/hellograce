@@ -324,6 +324,31 @@ describe('parseSlotAnswer', () => {
     expect(parseSlotAnswer('wake_sleep', 'no idea')).toEqual({ ok: true, skipped: true });
   });
 
+  it('reads a BARE bedtime as PM, not AM', () => {
+    // "7 and 11" — the 11 is a bedtime (23:00), not 11 AM.
+    expect(parseSlotAnswer('wake_sleep', 'wake at 7, sleep at 11'))
+      .toEqual({ ok: true, fields: { wake_time: '07:00', sleep_time: '23:00' } });
+    expect(parseSlotAnswer('wake_sleep', '8 to 10'))
+      .toEqual({ ok: true, fields: { wake_time: '08:00', sleep_time: '22:00' } });
+  });
+
+  it('corrects role order when the bedtime is stated first', () => {
+    // "bed at midnight, up at 7" must NOT store 00:00 as the wake time (which sits
+    // inside quiet hours and silently drops the morning reminder).
+    expect(parseSlotAnswer('wake_sleep', 'I go to bed at midnight and wake at 7'))
+      .toEqual({ ok: true, fields: { wake_time: '07:00', sleep_time: '00:00' } });
+    expect(parseSlotAnswer('wake_sleep', '10pm and 6am'))
+      .toEqual({ ok: true, fields: { wake_time: '06:00', sleep_time: '22:00' } });
+  });
+
+  it('re-asks (not-ok) on a lone, implausible time instead of storing a bad wake', () => {
+    expect(parseSlotAnswer('wake_sleep', 'midnight').ok).toBe(false);
+    expect(parseSlotAnswer('wake_sleep', 'around 12am').ok).toBe(false);
+    // A lone PLAUSIBLE morning time is fine (sleep left for later/default).
+    expect(parseSlotAnswer('wake_sleep', 'I usually wake at 6'))
+      .toEqual({ ok: true, fields: { wake_time: '06:00' } });
+  });
+
   it('parses biological sex', () => {
     expect(parseSlotAnswer('sex', 'male')).toEqual({ ok: true, fields: { sex: 'male' } });
     expect(parseSlotAnswer('sex', 'female')).toEqual({ ok: true, fields: { sex: 'female' } });

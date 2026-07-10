@@ -837,7 +837,20 @@ export class Scheduler {
       'injection_followup',
       'trial_expiry_reminder',
     ]);
-    const COOLDOWN_EXEMPT = new Set(['injection_morning', 'injection_followup']);
+    // The daily MORNING ANCHOR (and its journey/win-back variants) is the "at
+    // least one message a day" guarantee, so it bypasses the engagement cooldown:
+    // a user who happens to text Grace shortly before their morning window should
+    // still get their once-a-day check-in, not have it silently swallowed. It is
+    // NOT cadence-exempt — the Layer-2 daily cap/gap + last_morning_sent_at still
+    // hold it to one morning per day. (trial_expiry_reminder stays cooldown-bound:
+    // a billing nudge should never interrupt an active chat.)
+    const COOLDOWN_EXEMPT = new Set([
+      'injection_morning',
+      'injection_followup',
+      'morning',
+      'journey',
+      'winback',
+    ]);
     const skipCadence = CADENCE_EXEMPT.has(type);
     const skipCooldown = COOLDOWN_EXEMPT.has(type);
 

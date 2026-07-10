@@ -52,8 +52,8 @@ const SettingsUpdateSchema = z.object({
   dose_mg: z.number().positive().max(100).nullable().optional(),
   injection_day: z.string().max(20).nullable().optional(),
   timezone: z.string().max(100).optional(),
-  wake_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  sleep_time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+  wake_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+  sleep_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
   current_weight: z.number().positive().max(2000).nullable().optional(),
   goal_weight: z.number().positive().max(2000).nullable().optional(),
   starting_weight: z.number().positive().max(2000).nullable().optional(),
@@ -81,7 +81,7 @@ const SettingsUpdateSchema = z.object({
     .optional(),
   // Fields also collected at onboarding — editable here so Settings shows every
   // piece of data the user entered.
-  medication_time: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(),
+  medication_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
   biggest_challenge: z.string().trim().max(120).nullable().optional(),
   why_started: z.string().trim().max(120).nullable().optional(),
   support_style: z.enum(['gentle', 'straight_facts', 'tough_love', 'mix']).nullable().optional(),

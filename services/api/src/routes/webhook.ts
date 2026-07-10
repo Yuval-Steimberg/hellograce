@@ -71,29 +71,15 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
 
     const normalized = normalizeTwilio(params as unknown as RawTwilioPayload);
 
-    // Deduplicate by Twilio MessageSid — Twilio retries webhooks if our server
-    // is slow (e.g. Fly cold start). Without this, a timed-out 8 AM message
-    // can replay hours later with the original text instead of answering the
-    // current question. TTL 2h covers all realistic retry windows.
-    if (deps.redis && normalized.providerMessageId) {
-      const dedupKey = `twilio:seen:${normalized.providerMessageId}`;
-      const alreadySeen = await deps.redis.set(dedupKey, '1', 'EX', 7200, 'NX');
-      if (alreadySeen === null) {
-        req.log.warn(
-          { msgSid: normalized.providerMessageId, userId: normalized.userId },
-          'webhook.duplicate_sid_dropped',
-        );
-        reply.header('content-type', 'text/xml');
-        return reply.send('<?xml version="1.0" encoding="UTF-8"?><Response/>');
-      }
-    }
-
     req.log.info(
       { userId: normalized.userId, channel: normalized.channel, type: normalized.type },
       'webhook.received',
     );
 
-    // Reply with empty TwiML immediately; AI work + outbound send happens async.
+    // ACK with empty TwiML IMMEDIATELY — no awaited I/O before this, so a Redis
+    // stall can never delay the response past Twilio's ~15s timeout (→ error
+    // 11200, prod audit 2026-07). Dedup of retries runs inside
+    // processInboundMessage; AI work + outbound send happen async.
     reply.header('content-type', 'text/xml');
     void reply.send('<?xml version="1.0" encoding="UTF-8"?><Response/>');
 
@@ -126,16 +112,6 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
 
     const normalized = isSendblue ? normalizeSendblue(raw) : normalizeImessage(raw);
 
-    if (deps.redis && normalized.providerMessageId) {
-      const dedupKey = `imessage:seen:${normalized.providerMessageId}`;
-      const seen = await deps.redis.set(dedupKey, '1', 'EX', 7200, 'NX');
-      if (seen === null) {
-        req.log.warn({ msgId: normalized.providerMessageId, userId: normalized.userId }, 'webhook.imessage.duplicate_dropped');
-        reply.code(200);
-        return reply.send({ ok: true, duplicate: true });
-      }
-    }
-
     if (!normalized.userId || (!normalized.text && normalized.media.length === 0)) {
       reply.code(200);
       return reply.send({ ok: true, empty: true });
@@ -146,6 +122,8 @@ export function registerWebhookRoutes(app: FastifyInstance, deps: WebhookDeps): 
       'webhook.imessage.received',
     );
 
+    // ACK 200 IMMEDIATELY — no awaited Redis before this (dedup of retries runs
+    // inside processInboundMessage) so the ACK never waits on a Redis stall.
     reply.code(200);
     void reply.send({ ok: true });
 
@@ -158,6 +136,27 @@ export async function processInboundMessage(
   normalized: InboundMessage,
   log: FastifyBaseLogger,
 ): Promise<void> {
+      // Dedup by provider message id — Twilio/relays retry a webhook when the ACK
+      // was slow. This runs here, AFTER the route already ACKed, so the ACK never
+      // waits on Redis: a Redis latency spike during a rapid burst used to delay
+      // the awaited dedup SET past Twilio's timeout → error 11200 (prod audit
+      // 2026-07). A retry still gets dropped here; best-effort — a Redis error
+      // proceeds (process the message) rather than dropping it.
+      if (deps.redis && normalized.providerMessageId) {
+        const prefix = normalized.channel === 'imessage' ? 'imessage:seen' : 'twilio:seen';
+        const dedupKey = `${prefix}:${normalized.providerMessageId}`;
+        const firstSeen = await deps.redis
+          .set(dedupKey, '1', 'EX', 7200, 'NX')
+          .catch(() => 'OK'); // failure-open: process rather than drop
+        if (firstSeen === null) {
+          log.warn(
+            { providerMessageId: normalized.providerMessageId, userId: normalized.userId },
+            'webhook.duplicate_dropped',
+          );
+          return;
+        }
+      }
+
       // iMessage tapback reactions ("Liked \"…\"", "Loved \"…\"", "Reacted 👍 to
       // \"…\"") are relayed as plain text but are NOT conversational content —
       // never generate a reply or log them as a turn (prod audit 2026-07: several

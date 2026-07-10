@@ -18,6 +18,7 @@ import { classifyMessage as classifySafety, classifySymptomCategory } from '../s
 import { recordSymptom, shouldEscalate, clearStack } from '../safety/symptom-stack.js';
 import { getCrisisResourcesForUser, buildSafetyResponse } from '../safety/crisis-resources.js';
 import { tryHandleSettings, isBareSettingsFieldReply, tryHandleSettingsFollowUp } from '../services/settings-flow.js';
+import { isTapbackReaction } from '../services/reaction-filter.js';
 // Single source of truth for the trial length — shared with trial-info.ts so the
 // access gate and what Grace SAYS about the trial can never disagree (the "told
 // 7 days, cut at 3" churn was exactly that kind of drift).
@@ -156,6 +157,19 @@ export async function processInboundMessage(
   normalized: InboundMessage,
   log: FastifyBaseLogger,
 ): Promise<void> {
+      // iMessage tapback reactions ("Liked \"…\"", "Loved \"…\"", "Reacted 👍 to
+      // \"…\"") are relayed as plain text but are NOT conversational content —
+      // never generate a reply or log them as a turn (prod audit 2026-07: several
+      // tapbacks were processed as real messages). Media turns are never reactions.
+      if (
+        normalized.type === 'text' &&
+        normalized.media.length === 0 &&
+        isTapbackReaction(normalized.text)
+      ) {
+        log.info({ userId: normalized.userId }, 'webhook.reaction_skipped');
+        return;
+      }
+
       // Coalesce rapid consecutive text messages (corrections, continuations)
       // BEFORE the in-flight lock. Order matters: the buffer append must come
       // first — when the lock check ran first (2026-06-04 → 2026-06-10), a

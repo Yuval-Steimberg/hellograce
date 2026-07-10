@@ -19,6 +19,7 @@ import { recordSymptom, shouldEscalate, clearStack } from '../safety/symptom-sta
 import { getCrisisResourcesForUser, buildSafetyResponse } from '../safety/crisis-resources.js';
 import { tryHandleSettings, isBareSettingsFieldReply, tryHandleSettingsFollowUp } from '../services/settings-flow.js';
 import { isTapbackReaction } from '../services/reaction-filter.js';
+import { isDeviceAutoReply } from '../services/auto-reply-filter.js';
 // Single source of truth for the trial length — shared with trial-info.ts so the
 // access gate and what Grace SAYS about the trial can never disagree (the "told
 // 7 days, cut at 3" churn was exactly that kind of drift).
@@ -167,6 +168,18 @@ export async function processInboundMessage(
         isTapbackReaction(normalized.text)
       ) {
         log.info({ userId: normalized.userId }, 'webhook.reaction_skipped');
+        return;
+      }
+
+      // Device auto-replies (Apple Driving Focus / Do Not Disturb While Driving /
+      // "auto-reply:") are the phone responding for the user, not the user — never
+      // reply (prod audit: Grace sent the identical "check DND" tip four times).
+      if (
+        normalized.type === 'text' &&
+        normalized.media.length === 0 &&
+        isDeviceAutoReply(normalized.text)
+      ) {
+        log.info({ userId: normalized.userId }, 'webhook.auto_reply_skipped');
         return;
       }
 

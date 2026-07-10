@@ -379,3 +379,22 @@ describe('stickiness message types', () => {
     expect(w.length).toBeGreaterThan(10);
   });
 });
+
+describe('injection reminder — compounded medication gets a differentiated caution (2026-07-10 audit)', () => {
+  it('a COMPOUNDED med reminder nudges to confirm the pharmacy draw/units', async () => {
+    const { llm } = makeStubLlm(''); // empty → deterministic fallback template
+    const gen = new MessageGenerator(llm);
+    const out = (await gen.generate('injection_morning', makeUser({ medication: 'Compounded semaglutide' }))).toLowerCase();
+    expect(out).toMatch(/compounded/);
+    expect(out).toMatch(/pharmacy|draw|units/);
+    expect(out).toMatch(/done/); // still keeps the flow (reply "done")
+  });
+
+  it('a BRAND med reminder does NOT add the compounded caution', async () => {
+    const { llm } = makeStubLlm('');
+    const gen = new MessageGenerator(llm);
+    const out = (await gen.generate('injection_morning', makeUser({ medication: 'Ozempic' }))).toLowerCase();
+    expect(out).not.toMatch(/compounded/);
+    expect(out).not.toMatch(/pharmacy/);
+  });
+});

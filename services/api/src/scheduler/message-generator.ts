@@ -442,6 +442,16 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
     const seed = dailySeed(u.phone);
     const n = injectionNumberFromStart(u.glp1_start_date, u.medication_frequency);
     const num = n ? ` Injection #${n}.` : '';
+    // Compounded GLP-1s aren't standardized like brand pens (concentration and
+    // draw units vary by pharmacy), so their reminder gently nudges her to match
+    // her pharmacy's exact instructions — a differentiated caution, never alarming.
+    if (/compound/i.test(med)) {
+      return pick([
+        `Injection day 💉${num} Since it's compounded, double-check the exact draw and units from your pharmacy before you inject. Rotate to a new spot, go slow, keep ginger tea + crackers handy. Reply "done" when you're set.`,
+        `${med} day 💉${num} Quick one for compounded — match the exact units your pharmacy gave you. Different spot than last time, breathe through it. "Done" when it's done.`,
+        `Injection day.${num} With compounded, confirm the draw + units from your pharmacy's instructions first. Rotate the site, take your time, electrolytes on hand. Reply "done" after 💉`,
+      ], seed);
+    }
     return pick([
       `${med} day 💉${num} Rotate to a different spot than last time and take your time. Keep ginger tea, plain crackers, and electrolytes handy just in case. Reply "done" when you're set.`,
       `Injection day 💉${num} Rotate your site, breathe through it, and keep ginger tea + crackers nearby just in case. Just reply "done" when it's done.`,
@@ -866,7 +876,7 @@ export class MessageGenerator {
         }
         return `${base}Context: evening wind-down — a daily check-in that wraps the day, NOT a repeat of this morning's message.${buildFocusBlock(focus)} ${weightCtx} ${moodCtx}${dataBlock}${nutritionDay ? ` ${dislikes} If suggesting evening food, filter by dislikes.` : ''}${hook}`;
       })(),
-      injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}.${opts?.injectionNumber ? ` This is injection #${opts.injectionNumber} — you MAY mention the number.` : ' Do NOT mention an injection number (you don\'t know it).'} Remind them to rotate to a DIFFERENT injection site than last time, and to keep a few comfort items handy just in case (ginger tea, plain crackers, electrolytes). Tell them to reply "done" when injected. Warm and brief, 1-3 sentences. No questions about feelings — that comes later.${opts?.symptomHeadsUp ?? ''}`,
+      injection_morning: `${base}Context: injection day reminder. Their medication is ${user.medication ?? 'a GLP-1'}.${/compound/i.test(user.medication ?? '') ? ' Because it is COMPOUNDED (not a standardized brand pen — concentration and draw units vary by pharmacy), also gently remind them to double-check the exact draw and units from their pharmacy before injecting. One short clause, never alarming.' : ''}${opts?.injectionNumber ? ` This is injection #${opts.injectionNumber} — you MAY mention the number.` : ' Do NOT mention an injection number (you don\'t know it).'} Remind them to rotate to a DIFFERENT injection site than last time, and to keep a few comfort items handy just in case (ginger tea, plain crackers, electrolytes). Tell them to reply "done" when injected. Warm and brief, 1-3 sentences. No questions about feelings — that comes later.${opts?.symptomHeadsUp ?? ''}`,
       injection_followup: `${base}Context: a check-in after their shot (a few hours later, or the next morning if they injected late). Do NOT assume a specific number of hours. Just check in softly — no interrogation. One brief opening for them to share if they want.`,
       injection_dayafter: `${base}Context: morning after injection. Acknowledge that day-after can be tough, be gentle. No checklist questions.`,
       side_effect_nausea: `${base}Context: they reported nausea earlier. Soft follow-up only — no question stack. Offer one practical tip in passing.`,

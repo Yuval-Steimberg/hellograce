@@ -191,6 +191,32 @@ export const PRIOR_FOOD_CLARIFY_RE =
   /\b(what was in|what kind of|how much|how many|any (?:dressing|sauce|oil)|palm-sized|roughly how much|what did you (?:have|order|get)|how many (?:scoops|eggs|slices)|how was the .{0,30} prepared|how big|that'?s about right|log it right|couple quick things so i log)\b/i;
 
 /**
+ * True when a SPECIFIC pending food has genuinely looped — Grace already asked
+ * about THAT food 2+ times (e.g. "how much lox" three times). Used by the live
+ * anti-loop cap so a stuck food is finally logged instead of re-asked forever.
+ *
+ * Critically it is PER-FOOD: clarifying several DIFFERENT foods (a sandwich's
+ * "what kind?" + "how many slices?") must NOT trip the cap on the NEXT food —
+ * that bug auto-logged new foods (yogurt/crackers) at a guess without ever
+ * asking. We only count prior clarify questions that name the pending item.
+ */
+export function pendingFoodStuck(
+  pending: readonly string[],
+  history: ReadonlyArray<{ role: string; content: string }>,
+): boolean {
+  const clarifyTurns = history.filter(
+    (t) => t.role === 'assistant' && t.content.includes('?') && PRIOR_FOOD_CLARIFY_RE.test(t.content),
+  );
+  if (clarifyTurns.length < 2) return false;
+  return pending.some((item) => {
+    const words = item.toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
+    const key = words[words.length - 1] ?? item.toLowerCase().trim();
+    if (!key) return false;
+    return clarifyTurns.filter((t) => t.content.toLowerCase().includes(key)).length >= 2;
+  });
+}
+
+/**
  * A warm, day-aware greeting reply — the Nudge model: greet back, reference the
  * user's REAL local weekday/time, and offer a hand. Deterministic + seed-varied
  * (no LLM), so a "Hey" is answered INSTANTLY and never with a dry generic line.
@@ -3686,31 +3712,26 @@ CRITICAL RULES:
     lat.mark('food_step');
     let food = await this.foodStepUnified(input, history).catch(() => null);
     // ── ANTI-LOOP CAP: never re-ask the SAME food's portion forever ──────────
-    // The clarification is asked at most twice. If Grace has already asked 2+
-    // food-clarify questions in recent history and this turn is about to ask
-    // AGAIN, stop asking — log the pending item(s) at a best-estimate serving
-    // instead (the user has answered enough; prod audit: "how much lox" ×3).
-    // This ports the guarantee that previously lived only in the dead
-    // handleMessageInner path into the live unified path.
-    if (food && food.clarify && food.pending.length > 0) {
-      const priorClarify = history.filter(
-        (t) => t.role === 'assistant' && t.content.includes('?') && PRIOR_FOOD_CLARIFY_RE.test(t.content),
-      ).length;
-      if (priorClarify >= 2) {
-        const cappedLogged = await this.logPendingBestEstimate(userId, food.pending);
-        await clearPendingFood(this.deps.redis, userId).catch(() => {});
-        this.deps.logger.info(
-          { userId, items: food.pending.length, priorClarify },
-          'ai.unified_food.clarify_cap_logged',
-        );
-        food = {
-          logged: [...food.logged, ...cappedLogged],
-          pending: [],
-          removed: food.removed,
-          clarify: null,
-          rough: true,
-        };
-      }
+    // A clarification is asked at most twice PER FOOD. If a currently-pending food
+    // has already been asked about 2+ times (a genuine "how much lox ×3" loop),
+    // stop asking IT — log it at a best-estimate serving instead. This is PER-FOOD
+    // on purpose: clarifying several DIFFERENT foods must NOT auto-log the next new
+    // food (the bug that logged yogurt/crackers at a guess after a sandwich's two
+    // legitimate clarifications). Ports the dead-path guarantee, correctly scoped.
+    if (food && food.clarify && food.pending.length > 0 && pendingFoodStuck(food.pending, history)) {
+      const cappedLogged = await this.logPendingBestEstimate(userId, food.pending);
+      await clearPendingFood(this.deps.redis, userId).catch(() => {});
+      this.deps.logger.info(
+        { userId, items: food.pending.length },
+        'ai.unified_food.clarify_cap_logged',
+      );
+      food = {
+        logged: [...food.logged, ...cappedLogged],
+        pending: [],
+        removed: food.removed,
+        clarify: null,
+        rough: true,
+      };
     }
     // Record the food actions as tool_logs so the admin dashboard's "Tool calls"
     // reflects reality (the unified path logs food via a direct call, not the

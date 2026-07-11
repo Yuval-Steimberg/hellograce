@@ -572,7 +572,10 @@ export const api = {
   conversations: () => apiFetch<{ conversations: Conversation[] }>('/admin/conversations'),
 
   messages: (userId: string) =>
-    apiFetch<{ messages: Message[] }>(`/admin/conversations/${userId}/messages`),
+    // encodeURIComponent so the leading "+" of an E.164 phone survives the path
+    // (a raw "+972…" decodes to a space and misses WHERE user_id = $1 → empty
+    // thread). Every other user-scoped admin call already encodes the phone.
+    apiFetch<{ messages: Message[] }>(`/admin/conversations/${encodeURIComponent(userId)}/messages`),
 
   feedback: {
     list: (filters?: FeedbackFilters) => {

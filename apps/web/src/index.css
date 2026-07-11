@@ -296,6 +296,21 @@
     --ring: 239 84% 67%;
   }
 
+  /* Form fields don't inherit `color` in browsers, so a textarea/input with no
+     explicit text color renders as the default DARK text on the dark admin
+     background — "black on black", invisible (the campaign message box was the
+     worst offender). Force every admin input/textarea to the theme foreground so
+     typed content is always readable, with a muted (but visible) placeholder. */
+  .admin-shell input,
+  .admin-shell textarea,
+  .admin-shell select {
+    color: hsl(var(--foreground));
+  }
+  .admin-shell input::placeholder,
+  .admin-shell textarea::placeholder {
+    color: hsl(var(--muted-foreground));
+  }
+
   .admin-shell *::-webkit-scrollbar {
     width: 4px;
     height: 4px;

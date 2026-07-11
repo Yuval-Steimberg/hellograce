@@ -4056,12 +4056,22 @@ CRITICAL RULES:
       const amount = text.trim();
       const logged: string[] = [];
       for (const p of pending) {
-        const food = `${amount} ${p.item}`.replace(/\s+/g, ' ').trim();
-        const r = (await logFood.execute({ food }).catch(() => null)) as Record<string, unknown> | null;
+        const composed = `${amount} ${p.item}`.replace(/\s+/g, ' ').trim();
+        let r = (await logFood.execute({ food: composed }).catch(() => null)) as Record<string, unknown> | null;
+        // Retry with the CLEAN food name if the "amount + item" label fails — an
+        // amount that describes the filling rather than the dish ("5 slices turkey
+        // sandwich") can make the estimator reject it. A confirmed food must never
+        // silently fail to persist (prod: "I've added that sandwich" but no row).
+        if (!r || r.ok === false) {
+          r = (await logFood.execute({ food: p.item }).catch(() => null)) as Record<string, unknown> | null;
+        }
         if (r && r.ok !== false) logged.push(p.item);
       }
-      await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+      // Only clear pending for a food we ACTUALLY logged — otherwise keep it
+      // pending so the turn can't drop it (it falls through to the backstop /
+      // next turn) instead of losing it after clearing.
       if (logged.length > 0) {
+        await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
         this.deps.logger.info({ userId: input.userId, logged: logged.length }, 'ai.unified_food.portion_resolved');
         return { logged, pending: [], removed: null };
       }

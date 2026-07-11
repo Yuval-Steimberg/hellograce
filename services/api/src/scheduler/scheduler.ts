@@ -623,7 +623,19 @@ export class Scheduler {
     const morningAlreadySent = user.last_morning_sent_at &&
       toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) === todayStr;
 
-    if (isMorningWindow && !morningAlreadySent) {
+    // A user whose 3-day trial has EXPIRED and who hasn't paid gets NO morning
+    // check-in until they upgrade — the morning anchor is a paid experience.
+    // Their MIDDAY (and evening) reminders still fire below, a lighter touch that
+    // keeps the door open. Mirrors isAccessAllowed (webhook.ts): access ends at
+    // trial_start + TRIAL_DAYS for a non-paid, non-pro user. NOTE: a day-2 user is
+    // NOT yet expired (24–48h < 72h), so the trial_expiry_reminder inside the block
+    // still fires DURING the trial. Injection-day reminders are a separate health
+    // flow (handled above) and are unaffected.
+    const trialExpiredUnpaid =
+      !user.is_paid && !user.is_pro && !!user.trial_start &&
+      Date.now() - new Date(user.trial_start).getTime() >= TRIAL_DAYS * 24 * 3_600_000;
+
+    if (isMorningWindow && !morningAlreadySent && !trialExpiredUnpaid) {
       // Trial Day 2 reminder fires instead of the regular morning check-in.
       // Sends only once (24–48h after trial_start) for unpaid users.
       if (!user.is_paid && !user.is_pro && user.trial_start) {

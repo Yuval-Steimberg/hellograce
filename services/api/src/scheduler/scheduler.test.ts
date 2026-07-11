@@ -388,6 +388,27 @@ describe('Scheduler — morning reminder', () => {
     );
     expect(h.generateCalls.filter((c) => c.type === 'morning').length).toBe(1);
   });
+
+  it('does NOT send a morning check-in to an EXPIRED-trial unpaid user (paid experience)', async () => {
+    // Trial started 2026-05-10; by the 05-19 window the 3-day trial is long over
+    // and the user hasn't paid → NO morning-slot message at all (morning / journey
+    // / winback / trial reminder). Their midday still fires (separate test below).
+    const u = makeUser({
+      is_paid: false, is_pro: false,
+      trial_start: new Date(Date.UTC(2026, 4, 10)),
+      wake_time: '08:00', sleep_time: '22:00', timezone: 'America/New_York',
+    });
+    const h = buildHarness(u);
+    await walkMinutes(
+      h.scheduler,
+      new Date(Date.UTC(2026, 4, 19, 12, 0)),  // 08:00 NY
+      new Date(Date.UTC(2026, 4, 19, 14, 30)), // 10:30 NY
+    );
+    const morningish = h.generateCalls.filter((c) =>
+      ['morning', 'journey', 'winback', 'trial_expiry_reminder'].includes(c.type),
+    );
+    expect(morningish.length).toBe(0);
+  });
 });
 
 describe('Scheduler — midday reminder', () => {
@@ -404,6 +425,27 @@ describe('Scheduler — midday reminder', () => {
     });
     const h = buildHarness(u);
 
+    await walkMinutes(
+      h.scheduler,
+      new Date(Date.UTC(2026, 4, 18, 15, 0)),
+      new Date(Date.UTC(2026, 4, 18, 18, 0)),
+    );
+    expect(h.generateCalls.filter((c) => c.type === 'midday').length).toBe(1);
+  });
+
+  it('STILL fires midday for an EXPIRED-trial unpaid user (morning gated, midday kept)', async () => {
+    // Same setup as the passing midday test, but the user's 3-day trial has expired
+    // and they haven't paid. The morning is suppressed for them, but midday must
+    // still fire — the explicit product requirement.
+    const u = makeUser({
+      is_paid: false, is_pro: false,
+      trial_start: new Date(Date.UTC(2026, 4, 10)), // expired by 05-18
+      wake_time: '08:00',
+      timezone: 'America/New_York',
+      last_morning_sent_at: new Date('2026-05-18T12:00:00Z'),
+      last_reply_at: new Date('2026-05-17T22:00:00Z'), // 17h silent (<1 day)
+    });
+    const h = buildHarness(u);
     await walkMinutes(
       h.scheduler,
       new Date(Date.UTC(2026, 4, 18, 15, 0)),

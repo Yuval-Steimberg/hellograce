@@ -216,6 +216,40 @@ export function pendingFoodStuck(
   });
 }
 
+// Grace's prior turn signalled a FOOD context — a clarification, a log
+// confirmation, or a "how much / what kind" portion invite. Used to scope the
+// bare-food-answer recovery below so a stray food WORD in an unrelated short
+// message is never logged out of nowhere.
+const FOOD_CONTEXT_PRIOR_RE =
+  /\b(portion|how much|how many|what kind|what was in|what did you (?:have|eat|order|get)|logged|log it|scoops|protein|calories|cals)\b/i;
+
+/**
+ * A SHORT bare food-name statement that names a specific food WITHOUT an eating
+ * verb ("Turkey sandwich", "chicken", "protein shake") — the exact reply a user
+ * gives when answering Grace's "what did you have?". The structured extractor
+ * returns `none` for a verb-less noun phrase, so without a deterministic recovery
+ * the food silently vanishes and the follow-up portion answer ("5 slices") has
+ * nothing to attach to → the food is never logged (prod 2026-07-11: a turkey
+ * sandwich was lost across an entire clarification loop, "still not logging").
+ *
+ * Returns the clean food name to pend/log, or null when it isn't a bare food
+ * answer. Scoped tight: names a real food, ≤6 words, not a question / mutation /
+ * preference / diary-query / plan, AND Grace's prior turn was about food — so a
+ * bare food word in an out-of-context short message is never auto-logged.
+ */
+export function bareFoodAnswer(text: string, lastAssistant: string | null): string | null {
+  const t = (text ?? '').trim();
+  if (!t || /\?/.test(t)) return null;
+  if (t.split(/\s+/).length > 6) return null;
+  if (!namesSpecificFood(t)) return null;
+  if (FOOD_MUTATION_RE.test(t)) return null;
+  if (FOOD_DIARY_QUERY_RE.test(t)) return null;
+  if (FOOD_RECO_OR_PLAN_RE.test(t)) return null;
+  if (detectMealConsumption(t) === 'preference') return null;
+  if (!FOOD_CONTEXT_PRIOR_RE.test(lastAssistant ?? '')) return null;
+  return t.toLowerCase().replace(/^(?:a|an|some|the)\s+/i, '').replace(/[.!?,]+$/, '').trim() || null;
+}
+
 /**
  * A warm, day-aware greeting reply — the Nudge model: greet back, reference the
  * user's REAL local weekday/time, and offer a hand. Deterministic + seed-varied
@@ -4209,7 +4243,33 @@ CRITICAL RULES:
     // through to the grounded path so a real question is answered, not logged.
     if (extraction.intent === 'query' || extraction.intent === 'none') {
       const span = foodSpanFromConsumption(text);
-      if (!span) return null;
+      if (!span) {
+        // No "I ate X" verb — but a SHORT bare food-name reply ("Turkey sandwich")
+        // answering Grace's "what did you have?" is still a food to record. The
+        // extractor returns `none` for a verb-less noun phrase, so recover it
+        // deterministically: log it if the amount is precise, else pend + ask ONE
+        // portion question so the next answer ("5 slices") resolves it. Without
+        // this the food is lost and every clarification answer falls to the LLM,
+        // which acks warmly but logs nothing (prod 2026-07-11: turkey sandwich
+        // never persisted across the whole loop). Scoped by bareFoodAnswer().
+        const lastAssistant = [...history].reverse().find((h) => h.role === 'assistant')?.content ?? null;
+        const bare = pending.length === 0 ? bareFoodAnswer(text, lastAssistant) : null;
+        if (bare) {
+          const precise = hasExplicitQuantity(text) && !isCompositionAmbiguousFood(bare) && !isProteinProductAmbiguous(bare, text);
+          if (precise) {
+            const r = (await logFood.execute({ food: bare }).catch(() => null)) as Record<string, unknown> | null;
+            if (r && r.ok !== false) {
+              this.deps.logger.info({ userId: input.userId, bare }, 'ai.unified_food.bare_logged');
+              return { logged: [bare], pending: [], removed: null };
+            }
+          }
+          await addPendingFood(this.deps.redis, input.userId, [{ item: bare, clarify_question: null }]).catch(() => {});
+          const clarify = buildPortionConfirmQuestion([{ item: bare, protein_g: null }]);
+          this.deps.logger.info({ userId: input.userId, bare }, 'ai.unified_food.bare_pended');
+          return { logged: [], pending: [bare], removed: null, clarify };
+        }
+        return null;
+      }
       // LATENCY: when the eaten span carries NO precise amount, every food will be
       // ASKED about anyway — so skip the SECOND extraction LLM call and pend+ask the
       // deterministically-named foods directly (prod: BOTH extract passes returned

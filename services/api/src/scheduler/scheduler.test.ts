@@ -534,6 +534,27 @@ describe('Scheduler — evening reminder', () => {
     expect(h.generateCalls.filter((c) => c.type === 'evening').length).toBe(1);
   });
 
+  it('does NOT fire evening for an EXPIRED-trial unpaid user (only midday is kept)', async () => {
+    // Same engaged Tuesday-evening setup as above, but the 3-day trial is over and
+    // unpaid → no evening wind-down (like the morning). Only midday would fire.
+    const u = makeUser({
+      is_paid: false, is_pro: false,
+      trial_start: new Date(Date.UTC(2026, 4, 10)), // expired
+      wake_time: '08:00',
+      sleep_time: '22:00',
+      timezone: 'America/New_York',
+      last_morning_sent_at: new Date('2026-05-19T12:00:00Z'),
+      last_reply_at: new Date('2026-05-19T13:00:00Z'), // engaged today
+    });
+    const h = buildHarness(u);
+    await walkMinutes(
+      h.scheduler,
+      new Date(Date.UTC(2026, 4, 20, 0, 30)),
+      new Date(Date.UTC(2026, 4, 20, 0, 59)),
+    );
+    expect(h.generateCalls.filter((c) => c.type === 'evening').length).toBe(0);
+  });
+
   it('Option A: SKIPS the evening reminder when the nightly summary covers tonight', async () => {
     // Same Tuesday evening window, but the daily summary is enabled AND the user
     // logged food today → the summary IS the night message, so no evening text.

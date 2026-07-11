@@ -624,9 +624,9 @@ export class Scheduler {
       toDateStr(localNow(user.timezone, new Date(user.last_morning_sent_at))) === todayStr;
 
     // A user whose 3-day trial has EXPIRED and who hasn't paid gets NO morning
-    // check-in until they upgrade — the morning anchor is a paid experience.
-    // Their MIDDAY (and evening) reminders still fire below, a lighter touch that
-    // keeps the door open. Mirrors isAccessAllowed (webhook.ts): access ends at
+    // check-in AND no evening wind-down until they upgrade — both are a paid
+    // experience. ONLY their MIDDAY reminder still fires, a single lighter touch
+    // that keeps the door open. Mirrors isAccessAllowed (webhook.ts): access ends at
     // trial_start + TRIAL_DAYS for a non-paid, non-pro user. NOTE: a day-2 user is
     // NOT yet expired (24–48h < 72h), so the trial_expiry_reminder inside the block
     // still fires DURING the trial. Injection-day reminders are a separate health
@@ -700,6 +700,9 @@ export class Scheduler {
       nowMin >= eveningTargetMin && nowMin < eveningTargetMin + 15;
     if (
       isEveningWindow &&
+      // Expired-trial, unpaid users get NO evening wind-down either — like the
+      // morning, it's a paid experience. Only their midday reminder still fires.
+      !trialExpiredUnpaid &&
       // Dampener (mirrors midday): send the evening wind-down to users who
       // engaged today OR who aren't yet a full day silent — so a user who read
       // the morning note but hasn't replied still gets a gentle evening close,

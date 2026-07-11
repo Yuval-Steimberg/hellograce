@@ -620,6 +620,12 @@ function fallbackQuestion(slot: SlotId, name: string | null, reask: boolean): st
  * available (so it's never the same wording twice and adapts to the user), and
  * falls back to a short rotating template otherwise. Always returns quickly.
  */
+// Onboarding LLM calls (per-step questions, opener, answer-normalize) use the
+// FASTER lite model — these are short, simple, warm one-liners where flash-lite is
+// plenty and shaves ~0.5–1.5s off every step, so the signup back-and-forth feels
+// snappy. Same knob as the food/profile extractors; revert via GEMINI_EXTRACT_MODEL.
+const ONBOARDING_LLM_MODEL = process.env.GEMINI_EXTRACT_MODEL || 'gemini-2.5-flash-lite';
+
 export async function generateQuestion(
   slot: SlotId,
   user: Pick<FlowUser, 'first_name'>,
@@ -633,7 +639,7 @@ export async function generateQuestion(
 Write ONE short question (max ~140 chars) to learn ${SLOT_BRIEF[slot]}.
 Rules: warm and natural, vary the wording, contractions ok, ${user.first_name ? `use their name "${user.first_name}" naturally` : 'no name yet'}, at most one tiny emoji, no lists, no preamble, plain text only — output just the question.${reask ? ' The user\'s last answer was unclear, so gently re-ask and make it a touch more concrete.' : ''}`;
     const resp = await Promise.race([
-      llm.generate({ messages: [{ role: 'system', content: system }, { role: 'user', content: '(generate the question)' }], temperature: 0.85, maxOutputTokens: 80, disableThinking: true }),
+      llm.generate({ model: ONBOARDING_LLM_MODEL, messages: [{ role: 'system', content: system }, { role: 'user', content: '(generate the question)' }], temperature: 0.85, maxOutputTokens: 80, disableThinking: true }),
       new Promise<{ text: string }>((r) => setTimeout(() => r({ text: '' }), 4000)),
     ]);
     const text = (resp.text ?? '').trim().replace(/^["']|["']$/g, '');
@@ -674,7 +680,7 @@ Write a SHORT opening message (1–2 short sentences, MAX ~140 characters) that:
 - ENDS by warmly asking their first name.
 Rules: keep it BRIEF — one quick, warm line that ends in a name question. A long paragraph makes people drop off, so do NOT list everything you do. Sound like a real friend texting — casual, contractions; at most ONE emoji; no lists, no markdown, plain text only. NEVER invent statistics or user counts. Output just the message.`;
     const resp = await Promise.race([
-      llm.generate({ messages: [{ role: 'system', content: system }, { role: 'user', content: '(write the opener)' }], temperature: 0.9, maxOutputTokens: 140, disableThinking: true }),
+      llm.generate({ model: ONBOARDING_LLM_MODEL, messages: [{ role: 'system', content: system }, { role: 'user', content: '(write the opener)' }], temperature: 0.9, maxOutputTokens: 140, disableThinking: true }),
       new Promise<{ text: string }>((r) => setTimeout(() => r({ text: '' }), 4000)),
     ]);
     const text = (resp.text ?? '').trim().replace(/^["']|["']$/g, '');
@@ -806,6 +812,7 @@ Rules: fix obvious typos and expand abbreviations. For how-often answers output 
   try {
     const resp = await Promise.race([
       llm.generate({
+        model: ONBOARDING_LLM_MODEL,
         messages: [{ role: 'system', content: system }, { role: 'user', content: text }],
         temperature: 0,
         maxOutputTokens: 24,

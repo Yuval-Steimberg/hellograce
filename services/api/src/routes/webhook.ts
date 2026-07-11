@@ -204,10 +204,19 @@ export async function processInboundMessage(
       // a normalizer mis-types an extensionless media URL as 'text'.)
       if (deps.redis && normalized.type === 'text' && normalized.media.length === 0) {
         if (!shouldSkipCoalesce(normalized.text)) {
-          const coalesced = await coalesceMessages(deps.redis, normalized.userId, normalized.text);
-          // Only a pure-text absorption may be dropped here; a media turn never is.
-          if (coalesced === null && normalized.media.length === 0) return;
-          if (coalesced !== null) normalized.text = coalesced;
+          // Onboarding answers are single, turn-based steps (one question at a
+          // time) — the 2s merge buffer just adds dead latency to every step. Skip
+          // it while a signup flow is active so the back-and-forth feels snappy.
+          // Only a ~10ms GET, and only on messages that would otherwise coalesce.
+          const onboardingActive = await deps.redis
+            .get(`onboard:active:${normalized.userId}`)
+            .catch(() => null);
+          if (!onboardingActive) {
+            const coalesced = await coalesceMessages(deps.redis, normalized.userId, normalized.text);
+            // Only a pure-text absorption may be dropped here; a media turn never is.
+            if (coalesced === null && normalized.media.length === 0) return;
+            if (coalesced !== null) normalized.text = coalesced;
+          }
         }
       }
 
@@ -598,6 +607,14 @@ export async function processInboundMessage(
             // goal-weight loop). trial_start is only set when signup COMPLETES,
             // so "no trial yet" reliably means we're still in initial signup.
             const mode = user.trial_start ? 'gapfill' : 'signup';
+            // Mark onboarding active so the NEXT inbound skips the 2s coalesce
+            // buffer — each onboarding answer is a single turn-based step that
+            // never needs merging, so skipping it makes the signup back-and-forth
+            // snappy. Short TTL, refreshed every turn; harmlessly expires a few
+            // minutes after the flow completes.
+            if (deps.redis) {
+              await deps.redis.set(`onboard:active:${normalized.userId}`, '1', 'EX', 300).catch(() => {});
+            }
             const { reply } = await runOnboardingTurn({
               user,
               text: normalized.text,

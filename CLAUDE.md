@@ -6,7 +6,16 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 CURRENT STATE (2026-07-10 EOD) — DEPLOYED to prod (`/health` == `127f700`)
+## 👉 CURRENT STATE (2026-07-11) — 3 NEW FIXES MERGED to `main` (`766a3d5`), NOT YET DEPLOYED (prod still `127f700`)
+
+**Merged to `main` today (fast-forward from `claude/reminders-system-check-70g94a`), await a `fly deploy`** — 2117 api green, web builds, typecheck clean:
+- **`766a3d5` — dropped-food write + admin UI.** (a) FOOD: the portion-answer branch built the write as `"${amount} ${p.item}"`; when that string failed the estimator it dropped the item AND still cleared the pending store, so a confirmed food vanished silently ("I've added that sandwich" but the sandwich never persisted — reproduced live: food-logs showed eggs/yogurt/crackers, NO sandwich). Now retries the write with the clean `p.item`, and only `clearPendingFood` when `logged.length > 0`. (b) ADMIN "black on black": `.admin-shell input/textarea/select` didn't inherit `--foreground` → near-invisible text; added an explicit `color` + muted placeholder rule in `apps/web/src/index.css`. (c) ADMIN empty message thread: the conversation-messages fetch didn't `encodeURIComponent(userId)` so the `+` in phone numbers broke the URL → empty thread; fixed in `apps/web/src/lib/api.ts`.
+- **`60f6c05` — clarify-cap scoped PER-FOOD.** The prior anti-loop counted clarify questions across ALL foods, so after 2 unrelated clarifications it auto-logged the NEXT new food without asking (prod: a confirmed turkey sandwich went missing while unconfirmed yogurt/crackers were logged). New `pendingFoodStuck(pending, history)` only force-logs a food when THAT SPECIFIC food was asked about 2+ times (the real "how much lox ×3" loop); new foods are always asked. `clarify-cap.test.ts` locks per-food behavior.
+- **`b5012f6` — onboarding speed (same questions, faster replies).** Per-step LLM calls (question-gen, opener, slot-understanding) use `gemini-2.5-flash-lite` (`ONBOARDING_LLM_MODEL`); onboarding turns skip the 2s coalesce buffer via a `onboard:active:{phone}` Redis flag. No step-count/quality change.
+- **NOT A BUG (campaign "can't send to all users"):** the Send button is disabled until Preview loads ≥1 eligible recipient; a single paused/blocked/inactive test user is excluded from campaign audiences (working as designed). Per-user "Send message" already exists in the admin drawer for single-user testing.
+- **DEPLOY:** `git checkout main && git pull` → `fly deploy --app grace-api --config services/api/fly.toml --no-cache --build-arg GIT_COMMIT=$(git rev-parse --short HEAD)`; verify `/health` == `766a3d5`. Web (admin CSS + api.ts) auto-deploys on Vercel from `main`.
+
+## 👉 (2026-07-10 EOD) — DEPLOYED to prod (`/health` == `127f700`)
 
 All of this session's work (the morning-reminder outage fix + reminder hardening + the 11 transcript-audit fixes + the expired-trial reminder gating) is **MERGED to `main` and DEPLOYED to prod** — confirmed `curl https://grace-api.fly.dev/health` → `version: 127f700` (= current `main` HEAD; the code is that of `683a3ec` + a docs-only commit). Merged via **PR #256 → #257** (rebase — each fix is its own commit). `main` is **byte-identical** to the fully-verified branch: **api 2113 + ai-core 667 green, all 5 packages typecheck, full build clean**, regression-audited, inbound skip-filters stress-tested (0 false positives on 26 real messages). `ai-core`/`shared` untouched.
 

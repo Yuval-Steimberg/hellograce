@@ -69,17 +69,23 @@ function mkUser(over: Partial<GraceUser> = {}): GraceUser {
 
 // ── Pure: window math ────────────────────────────────────────────────────────
 
-describe('dailySummaryTargetMinutes', () => {
-  it('is sleep_time − 30 min when that lands inside 19:00–21:00', () => {
-    expect(dailySummaryTargetMinutes({ sleep_time: '21:00' })).toBe(20 * 60 + 30); // 20:30
+describe('dailySummaryTargetMinutes — tracks the user bedtime (sleep_time − 30)', () => {
+  it('is sleep_time − 30 min for a normal evening bedtime', () => {
+    expect(dailySummaryTargetMinutes({ sleep_time: '22:00' })).toBe(21 * 60 + 30); // 21:30
+    expect(dailySummaryTargetMinutes({ sleep_time: '23:00' })).toBe(22 * 60 + 30); // 22:30
     expect(dailySummaryTargetMinutes({ sleep_time: '20:15' })).toBe(19 * 60 + 45); // 19:45
   });
-  it('clamps to 21:00 for late sleepers', () => {
-    expect(dailySummaryTargetMinutes({ sleep_time: '22:00' })).toBe(21 * 60);
-    expect(dailySummaryTargetMinutes({ sleep_time: '23:30' })).toBe(21 * 60);
+  it('stays 30 min before a near-midnight bedtime, never past the 23:30 cap', () => {
+    expect(dailySummaryTargetMinutes({ sleep_time: '23:59' })).toBe(23 * 60 + 29); // 23:29
+    expect(dailySummaryTargetMinutes({ sleep_time: '23:45' })).toBe(23 * 60 + 15); // 23:15
   });
-  it('clamps to 19:00 for early sleepers', () => {
-    expect(dailySummaryTargetMinutes({ sleep_time: '18:00' })).toBe(19 * 60);
+  it('recaps before midnight for an after-midnight bedtime', () => {
+    expect(dailySummaryTargetMinutes({ sleep_time: '00:00' })).toBe(23 * 60 + 30); // midnight → 23:30
+    expect(dailySummaryTargetMinutes({ sleep_time: '01:30' })).toBe(23 * 60 + 30);
+  });
+  it('floors at 18:00 for an early bedtime', () => {
+    expect(dailySummaryTargetMinutes({ sleep_time: '18:00' })).toBe(18 * 60); // 17:30 → floored 18:00
+    expect(dailySummaryTargetMinutes({ sleep_time: '19:00' })).toBe(18 * 60 + 30); // 18:30
   });
   it('defaults to 21:00 when sleep_time is missing/unparseable', () => {
     expect(dailySummaryTargetMinutes({ sleep_time: null as unknown as string })).toBe(21 * 60);
@@ -383,9 +389,9 @@ describe('Scheduler.sendDailySummaries', () => {
 
   const call = (s: Scheduler) => (s as unknown as { sendDailySummaries: () => Promise<void> }).sendDailySummaries();
 
-  /** 2026-07-06 21:05 UTC → local 21:05 for a UTC user (target 21:00, in window). */
+  /** UTC user with sleep_time 22:00 → target 21:30. 21:35 UTC is inside the window. */
   function inWindow(): void {
-    vi.setSystemTime(new Date(Date.UTC(2026, 6, 6, 21, 5)));
+    vi.setSystemTime(new Date(Date.UTC(2026, 6, 6, 21, 35)));
   }
   function outOfWindow(): void {
     vi.setSystemTime(new Date(Date.UTC(2026, 6, 6, 15, 0))); // local 15:00

@@ -93,15 +93,24 @@ function localDayOf(user: GraceUser, when: Date): string {
 }
 
 // ── Send-window math (pure) ──────────────────────────────────────────────────
-// The end-of-day slot: 30 min before the user's sleep time, clamped into
-// 19:00–21:00 local; 21:00 when there's no usable sleep schedule. A narrow
-// window (like the evening reminder's) keeps the per-minute tick cheap.
+// The end-of-day slot tracks the USER'S BEDTIME: 30 min before their sleep_time,
+// so a 22:00 sleeper gets it ~21:30 and a midnight sleeper ~23:30 (the old fixed
+// 19:00–21:00 clamp pinned everyone to 21:00 regardless of when they actually go
+// to bed). It's floored at 18:00 (a sane evening floor so a mis-set early
+// sleep_time can't fire mid-afternoon) and capped at 23:30 so the recap always
+// lands BEFORE local midnight — the moment the logging day rolls, after which the
+// numbers would belong to a fresh day. This pass runs outside processUser, so it
+// is NOT subject to the 21:00 quiet-hours block; the 23:30 cap is the ceiling.
 
 /** Minutes-from-local-midnight of the low/high clamp + the default. */
-const SUMMARY_MIN_TARGET = 19 * 60; // 19:00
-const SUMMARY_MAX_TARGET = 21 * 60; // 21:00
+const SUMMARY_MIN_TARGET = 18 * 60; // 18:00 — earliest an evening recap may fire
+const SUMMARY_MAX_TARGET = 23 * 60 + 30; // 23:30 — latest, still before midnight
 const SUMMARY_DEFAULT_TARGET = 21 * 60; // 21:00 when no sleep schedule
 const SUMMARY_OFFSET_BEFORE_SLEEP = 30; // minutes before sleep_time
+// A sleep_time before noon means the user goes to bed AFTER midnight (e.g. "00:00",
+// "01:30") — "30 min before" would cross into the next day, so recap the ending
+// day just before midnight (the cap) instead of firing at ~00:30 the next morning.
+const SUMMARY_AFTER_MIDNIGHT_CUTOFF = 12 * 60; // 12:00
 /** How wide the eligible send window is (minutes). */
 export const DAILY_SUMMARY_WINDOW_MIN = 15;
 
@@ -114,13 +123,17 @@ function parseHhMm(value: string | null | undefined): number | null {
 }
 
 /**
- * The target minute-of-day (local) to send the summary: sleep_time − 30 min,
- * clamped to [19:00, 21:00]; 21:00 when sleep_time is missing/unparseable.
+ * The target minute-of-day (local) to send the summary: the user's BEDTIME
+ * minus 30 min, clamped to [18:00, 23:30]; 21:00 when sleep_time is
+ * missing/unparseable; 23:30 for an after-midnight bedtime (sleep_time before
+ * noon) so the recap still lands before the logging day rolls at midnight.
  * Pure — the scheduler supplies the user, this returns a stable target.
  */
 export function dailySummaryTargetMinutes(user: Pick<GraceUser, 'sleep_time'>): number {
   const sleepMin = parseHhMm(user.sleep_time);
   if (sleepMin == null) return SUMMARY_DEFAULT_TARGET;
+  // After-midnight bedtime → recap the ending day just before midnight.
+  if (sleepMin < SUMMARY_AFTER_MIDNIGHT_CUTOFF) return SUMMARY_MAX_TARGET;
   const target = sleepMin - SUMMARY_OFFSET_BEFORE_SLEEP;
   return Math.min(SUMMARY_MAX_TARGET, Math.max(SUMMARY_MIN_TARGET, target));
 }

@@ -6,9 +6,9 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 CURRENT STATE (2026-07-11 latest) — `main` HEAD `1fc104f`, NOT yet deployed (prod still `21a9bc5`)
+## 👉 CURRENT STATE (2026-07-11 latest) — DEPLOYED to prod (`/health` == `c4df88e`)
 
-**MERGED to `main`, awaits a `fly deploy`** — 2125 api green, typecheck clean. Deploy = `git checkout main && git pull` → `fly deploy --app grace-api --config services/api/fly.toml --no-cache --build-arg GIT_COMMIT=$(git rev-parse --short HEAD)`; verify `/health` == `1fc104f`.
+**MERGED to `main` and DEPLOYED** — confirmed `curl https://grace-api.fly.dev/health` → `version: c4df88e` (= `main` HEAD; `1fc104f` code + a docs-only commit). 2125 api green, typecheck clean.
 - **`1fc104f` — food label captured "and a" + flat positive reply (prod IMG_6780/6781).** (a) LOGGING: "I ate 2 eggs" → "And a sandwich" pended the food as **"and a sandwich"** (`bareFoodAnswer` stripped a leading article but not a leading connector), so Grace asked "what was in the AND A sandwich?" and then "Veggie" logged **"Veggie and a sandwich"** — which the estimator mis-split into a phantom "Big salad with veggies" + "Deli sandwich" (wrong 38g/720cal). `bareFoodAnswer` now drops a leading continuation word (`and/also/plus/then/oh/well/so`) before the article → clean "sandwich" → "Veggie" → "Veggie sandwich" (one item). +3 tests. (b) WARMTH: "I'm feeling good" → "Happy to hear that." was a flat dead-end; `BRIEF_POSITIVE_REPLIES` (fast-path) reworded warmer with a soft door, no food pivot. That message already skips coalesce + uses the fast-path, so it stays INSTANT — latency unchanged. NOTE on LATENCY (user raised it): the small-talk/positive/diary turns are already instant (fast-path + coalesce-skip); the felt latency is on FOOD turns (inherent 1 extract + 1 grounded Gemini call) + the Fly-`iad`(Virginia)↔Supabase-`ap-northeast-1`(Tokyo) DB round-trip — structural/infra (co-locate DB or move Fly region), not a code lever.
 
 ## 👉 (earlier 2026-07-11) — DEPLOYED to prod (`/health` == `21a9bc5`); 4 fixes live

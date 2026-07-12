@@ -247,7 +247,17 @@ export function bareFoodAnswer(text: string, lastAssistant: string | null): stri
   if (FOOD_RECO_OR_PLAN_RE.test(t)) return null;
   if (detectMealConsumption(t) === 'preference') return null;
   if (!FOOD_CONTEXT_PRIOR_RE.test(lastAssistant ?? '')) return null;
-  return t.toLowerCase().replace(/^(?:a|an|some|the)\s+/i, '').replace(/[.!?,]+$/, '').trim() || null;
+  // Clean the label: drop a leading continuation/connector ("And a sandwich" is
+  // "I also ate a sandwich") THEN a leading article, so the pending food is just
+  // "sandwich" — never "and a sandwich" (prod 2026-07-11: "Got it, what was in
+  // the AND A sandwich?" then "Veggie and a sandwich" mis-split into a phantom
+  // salad + deli sandwich). Trailing punctuation stripped too.
+  return t
+    .toLowerCase()
+    .replace(/^(?:and|also|plus|then|oh|well|so)\s+/i, '')
+    .replace(/^(?:a|an|some|the)\s+/i, '')
+    .replace(/[.!?,]+$/, '')
+    .trim() || null;
 }
 
 /**

@@ -198,14 +198,14 @@ const GREETING_REPLIES: readonly string[] = [
 ] as const;
 
 const BRIEF_POSITIVE_REPLIES: readonly string[] = [
-  'Love hearing that.',
-  'Really glad to hear it.',
-  'That\'s great to hear.',
-  'Good to hear 🤍',
-  'Happy to hear that.',
-  'Glad you\'re feeling that way.',
-  'That makes me happy 🧡',
-  'Solid.',
+  "Love hearing that — I'm right here if you want to chat about anything 🤍",
+  "Really glad to hear it. What's been going well?",
+  "That's so good to hear. I'm around whenever you need me.",
+  'Good to hear 🤍 Hope the day keeps treating you well.',
+  "Happy for you — enjoy it. I'm here if anything comes up.",
+  "Glad you're feeling that way. Anything on your mind today?",
+  'That makes me happy 🧡 Keep riding that.',
+  "Love that. I'm here whenever you want to check in.",
 ] as const;
 
 // Neutral small talk — acknowledge warmly, leave a soft door, NEVER pivot to

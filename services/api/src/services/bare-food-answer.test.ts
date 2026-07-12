@@ -23,6 +23,14 @@ describe('bareFoodAnswer — recover a verb-less food reply in a food context', 
     expect(bareFoodAnswer('some crackers', foodCtx)).toBe('crackers');
   });
 
+  it('strips a leading CONNECTOR so a continuation logs a clean name', () => {
+    // prod 2026-07-11: "And a sandwich" pended as "and a sandwich" → "what was in
+    // the AND A sandwich?" then "Veggie and a sandwich" mis-split into two items.
+    expect(bareFoodAnswer('And a sandwich', foodCtx)).toBe('sandwich');
+    expect(bareFoodAnswer('also a protein shake', foodCtx)).toBe('protein shake');
+    expect(bareFoodAnswer('plus some yogurt', foodCtx)).toBe('yogurt');
+  });
+
   it('does NOT fire out of food context (no food-related prior turn)', () => {
     expect(bareFoodAnswer('Turkey sandwich', 'Good morning! How are you feeling today?')).toBeNull();
     expect(bareFoodAnswer('chicken', null)).toBeNull();

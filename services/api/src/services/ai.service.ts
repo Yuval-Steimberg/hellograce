@@ -3750,6 +3750,83 @@ CRITICAL RULES:
       }
     }
 
+    // ── Water intercept (ported into the LIVE unified path 2026-07-13) ────────
+    // Water has its OWN table (water_logs) and the dashboard reads it. The unified
+    // path had NO water handling, so "I drank 0.5 liter of water" fell to the
+    // grounded LLM — a warm ack that NEVER persisted, leaving the dashboard at
+    // "0 oz / no water logged" (prod IMG_6810/6811: chat + dashboard out of sync).
+    // Log it deterministically here so chat, the dashboard, and the reminders all
+    // read the same total. Cheap gate first; a solid-food mention excludes it.
+    if (input.media.length === 0) {
+      const wq = isWaterQuery(input.text);
+      const maybeWater = wq
+        || /\b(water|hydrate|hydration|h2o)\b/i.test(input.text)
+        || (/\b(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s*(oz|ounces?|ml|cups?|glass(?:es)?|bottles?|l|liters?|litres?)\b/i.test(input.text)
+            && !/\b(rice|oats?|oatmeal|yogurt|soup|cereal|pasta|beans|coffee|tea|juice|milk|soda|smoothie|shake|broth|wine|beer|protein)\b/i.test(input.text));
+      if (maybeWater) {
+        const lastAsst = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+        const oz = parseWaterOz(input.text);
+        const isLog = isWaterLog(input.text, lastAsst);
+        const finishWater = (text: string, intent: string): OrchestratorOutput => {
+          void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+          void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: text }).catch(() => {});
+          const totalMs = Date.now() - t0;
+          this.persistLatency(userId, intent, totalMs, lat.snapshot(), input.text, text);
+          return { text, confidence: 'high', intent, toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+        };
+        // A stated amount is a LOG (even alongside a query word); no amount + an
+        // asking phrasing is a QUERY; a log intent without a parseable amount asks.
+        if (isLog && oz && oz > 0) {
+          const res = await logWater(this.deps.pool, this.deps.logger, input.userId, oz, input.text);
+          if (res) {
+            this.deps.logger.info({ userId, oz, dailyOz: res.dailyOz }, 'ai.unified.water_log.served');
+            return finishWater(res.text, 'water_log');
+          }
+        }
+        if (wq) {
+          const totalOz = await getTodaysWaterOz(this.deps.pool, input.userId);
+          if (totalOz !== null) return finishWater(renderWaterTotal(totalOz), 'water_query');
+        }
+        if (isLog && (!oz || oz <= 0)) {
+          return finishWater(
+            `Got it. How much water, in oz or glasses? (a glass is about 8 oz, aiming for ${WATER_GOAL_MIN_OZ}-${WATER_GOAL_MAX_OZ} oz a day)`,
+            'water_clarify',
+          );
+        }
+      }
+    }
+
+    // ── Weight intercept (ported into the LIVE unified path 2026-07-13) ───────
+    // Like water, a chat weight log ("I weigh 185 lbs") was NOT handled on the
+    // unified path, so it never hit weight_logs / users.current_weight and the
+    // dashboard weight chart + hero stat stayed stale. Log it here so chat, the
+    // dashboard, and Settings all show the same weight. A weight QUERY ("what's
+    // my weight") is already answered by tryQueryFast above. Gate excludes
+    // goal/target/starting weight so "my goal weight is 150" is never logged as a
+    // current reading; tryWeightLogFastResponse adds its own guards (length, '?',
+    // negation, 60-600 lb range).
+    if (input.media.length === 0
+      && /\b(weigh|weighed|weight|lbs?|pounds?|kg|kilos?|kilograms?|stone|scale)\b/i.test(input.text)
+      && !/\b(goal|target|starting)\b/i.test(input.text)) {
+      const wlf = await tryWeightLogFastResponse(input.text, {
+        pool: this.deps.pool,
+        logger: this.deps.logger,
+        userId: input.userId,
+        intentType: 'weight_log',
+      }).catch(() => null);
+      if (wlf) {
+        // Sync the PROFILE too (current_weight + cache + fills a missing target),
+        // so the dashboard hero stat and Settings match — not just weight_logs.
+        void this.deps.users.syncCurrentWeight(input.userId, wlf.weightLbs).catch(() => undefined);
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: wlf.text }).catch(() => {});
+        const totalMs = Date.now() - t0;
+        this.deps.logger.info({ userId, lbs: wlf.weightLbs }, 'ai.unified.weight_log.served');
+        this.persistLatency(userId, 'weight_log', totalMs, lat.snapshot(), input.text, wlf.text);
+        return { text: wlf.text, confidence: 'high', intent: 'weight_log', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      }
+    }
+
     // Nudge food step (extractFoodItems + planning guard): a specific meal logs
     // with an estimate; a hedged/generic mention comes back pending → we ask ONE
     // portion question via the CLARIFY note; advice/planning never logs.

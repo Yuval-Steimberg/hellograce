@@ -7,7 +7,22 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { GRACE_SYSTEM_PROMPT } from '@grace/ai-core';
 import { UnauthorizedError, ValidationError } from '../errors.js';
-import { encryptField, decryptField } from '../crypto/field-encrypt.js';
+import { encryptField, decryptField, isEncryptedBlob } from '../crypto/field-encrypt.js';
+
+// Decrypt an at-rest field for the admin view, failing SAFE: a value encrypted
+// with a rotated/absent key (decryptField throws, or returns an unreadable
+// `enc:` blob) becomes null instead of 500-ing the whole user-detail endpoint.
+// Mirrors UserService.safeDecryptField so one orphaned blob can't blind the admin
+// dashboard to a user (prod 2026-07: GET /admin/users/:phone → INTERNAL_ERROR).
+function safeAdminDecrypt(value: unknown): unknown {
+  if (typeof value !== 'string' || !value) return value;
+  try {
+    const d = decryptField(value);
+    return isEncryptedBlob(d) ? null : d;
+  } catch {
+    return null;
+  }
+}
 import {
   getBillingSnapshot,
   cancelSubscriptionAtPeriodEnd,
@@ -679,8 +694,8 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     // Decrypt encrypted-at-rest fields so the admin sees plaintext, not `enc:...`.
     const decrypted = rows.map((r) => ({
       ...r,
-      ...(r.first_name ? { first_name: decryptField(r.first_name) } : {}),
-      ...(r.medication ? { medication: decryptField(r.medication) } : {}),
+      ...(r.first_name ? { first_name: safeAdminDecrypt(r.first_name) } : {}),
+      ...(r.medication ? { medication: safeAdminDecrypt(r.medication) } : {}),
     }));
     return { users: decrypted, total: Number(countRows[0]?.total ?? 0) };
   });
@@ -734,8 +749,8 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
     const decryptedUser = {
       ...userRows[0],
       ...(stripeStateRows[0] ?? {}),
-      ...(userRows[0].first_name ? { first_name: decryptField(userRows[0].first_name) } : {}),
-      ...(userRows[0].medication ? { medication: decryptField(userRows[0].medication) } : {}),
+      ...(userRows[0].first_name ? { first_name: safeAdminDecrypt(userRows[0].first_name) } : {}),
+      ...(userRows[0].medication ? { medication: safeAdminDecrypt(userRows[0].medication) } : {}),
     };
     return {
       user: decryptedUser,
@@ -815,7 +830,7 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         beforeSnapshot = { ...priorRows[0] };
         for (const piiKey of ['first_name', 'medication'] as const) {
           if (typeof beforeSnapshot[piiKey] === 'string' && beforeSnapshot[piiKey]) {
-            beforeSnapshot[piiKey] = decryptField(beforeSnapshot[piiKey] as string);
+            beforeSnapshot[piiKey] = safeAdminDecrypt(beforeSnapshot[piiKey] as string);
           }
         }
       }
@@ -938,8 +953,8 @@ Return ONLY the improved system prompt text. No explanations, no headers, no mar
         await ensureStripeCustomer({
           graceUserId: u.id,
           phone: u.phone,
-          firstName: u.first_name ? decryptField(u.first_name) : undefined,
-          medication: u.medication ? decryptField(u.medication) : undefined,
+          firstName: u.first_name ? (safeAdminDecrypt(u.first_name) as string | null) ?? undefined : undefined,
+          medication: u.medication ? (safeAdminDecrypt(u.medication) as string | null) ?? undefined : undefined,
         });
         ensured++;
       } catch (err) {

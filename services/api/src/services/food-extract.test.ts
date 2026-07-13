@@ -142,6 +142,15 @@ describe('formatFoodReply', () => {
     }
   });
 
+  it('strips a leading GREETING + verb-without-I ("hey, just ate 2 eggs" → "2 eggs")', () => {
+    // prod IMG_6795: reply echoed the whole message "Perfect, hey, just ate 2 eggs is in".
+    for (const raw of ['hey, just ate 2 eggs', 'Hi just had 2 eggs', 'ok so ate 2 eggs', 'yeah just ate 2 eggs']) {
+      const r = formatFoodReply({ loggedItems: [raw], loggedProtein: 12, pendingFoods: [], seed });
+      expect(r).toMatch(/2 eggs/);
+      expect(r.toLowerCase()).not.toMatch(/hey|just ate|just had/);
+    }
+  });
+
   it('warms up: some seeds add a friendly "how was it?" closer, none invent food/numbers', () => {
     // Across seeds the confirmation is warm and occasionally asks how it was; it
     // must never introduce a food or a number that was not passed in.

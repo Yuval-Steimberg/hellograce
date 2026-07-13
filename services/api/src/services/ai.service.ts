@@ -4140,18 +4140,26 @@ CRITICAL RULES:
       text.split(/\s+/).length <= 3
     ) {
       const filling = text.trim().replace(/[.!?,]+$/, '');
-      const logged: string[] = [];
-      for (const p of compositionPending) {
-        const food = `${filling} ${p.item}`.replace(/\s+/g, ' ').trim(); // "cheese salad"
-        const r = (await logFood.execute({ food }).catch(() => null)) as Record<string, unknown> | null;
-        if (r && r.ok !== false) logged.push(p.item);
-      }
-      for (const it of logged) await resolvePendingFood(this.deps.redis, input.userId, it).catch(() => {});
-      if (logged.length > 0) {
-        this.deps.logger.info({ userId: input.userId, logged: logged.length }, 'ai.unified_food.composition_resolved');
-        // The user-facing item names describe what was actually logged.
-        return { logged: logged.map((it) => `${filling} ${it}`.replace(/\s+/g, ' ').trim()), pending: [], removed: null };
-      }
+      // The filling resolves WHAT'S in it ("turkey sandwich"), but not HOW MUCH —
+      // and a sandwich's protein swings with the amount of filling. So instead of
+      // logging a standard guess, re-pend the now-composition-RESOLVED item and ask
+      // ONE portion question for accuracy (prod IMG_6795: "Turkey" logged a turkey
+      // sandwich without ever asking how much turkey). The next answer ("5 slices")
+      // resolves it via the portion branch; the per-food clarify cap bounds this so
+      // it can't loop, and a resolved "turkey sandwich" is no longer composition-
+      // ambiguous so it won't re-enter this branch.
+      const composed = compositionPending.map((p) => `${filling} ${p.item}`.replace(/\s+/g, ' ').trim());
+      for (const p of compositionPending) await resolvePendingFood(this.deps.redis, input.userId, p.item).catch(() => {});
+      await addPendingFood(
+        this.deps.redis,
+        input.userId,
+        composed.map((c) => ({ item: c, clarify_question: null })),
+      ).catch(() => {});
+      const clarify = composed.length === 1
+        ? `Got it — a ${composed[0]} 🙌 Roughly how much ${filling} was on it — a couple slices, or more? Or say "that's about right" and I'll log a standard one.`
+        : buildPortionConfirmQuestion(composed.map((c) => ({ item: c, protein_g: null })));
+      this.deps.logger.info({ userId: input.userId, composed }, 'ai.unified_food.composition_needs_portion');
+      return { logged: [], pending: composed, removed: null, clarify };
     }
 
     // PENDING DETAIL RESOLUTION — the answer names the pending food(s) WITH the

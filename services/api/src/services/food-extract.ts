@@ -150,11 +150,16 @@ function pickSeeded<T>(arr: readonly T[], seed: string): T {
 function cleanFoodLabel(s: string): string {
   const cleaned = (s ?? '')
     .trim()
+    // Strip a leading greeting / interjection ("Hey, ", "Hi ", "Ok so ") so a
+    // whole raw message doesn't leak into the confirmation ("Perfect, hey, just
+    // ate 2 eggs is in" — prod IMG_6795). Keeps stripping if several stack.
+    .replace(/^(?:hey|hi|hello|heya|yo|ok|okay|so|well|oh|yeah|yep|um|hmm|please)\b[\s,!.]*/i, '')
     .replace(/^for\s+(?:breakfast|lunch|dinner|brunch|a\s+snack)\s*,?\s*/i, '')
-    // Strip a leading "I [also/just/already/only/recently] ate/had/…" consumption
-    // prefix. The adverbs are what a recovery-logged span carries ("I also ate 2
-    // eggs" → "2 eggs"); without them the raw phrase leaked into the confirmation
-    // ("Done, I also ate 2 eggs logged").
+    // Strip a leading "[I] [also/just/already/only/recently] ate/had/…"
+    // consumption prefix — the "I" is OPTIONAL so a greeting-led "just ate 2 eggs"
+    // (after the greeting strip above) also reduces to "2 eggs". The adverbs are
+    // what a recovery-logged span carries ("I also ate 2 eggs" → "2 eggs");
+    // without them the raw phrase leaked into the confirmation.
     .replace(/^(?:i\s+)?(?:(?:also|just|already|only|recently)\s+)*(?:ate|had|have|eaten|grabbed|made|got|finished|drank|consumed)\s+(?:some\s+|a\s+bit\s+of\s+)?/i, '')
     .trim();
   return cleaned.length >= 2 ? cleaned : (s ?? '').trim();

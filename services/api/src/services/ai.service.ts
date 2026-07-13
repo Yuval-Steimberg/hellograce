@@ -261,6 +261,29 @@ export function bareFoodAnswer(text: string, lastAssistant: string | null): stri
 }
 
 /**
+ * A deterministic 1-10 mood score the user EXPLICITLY stated. Tight on purpose so
+ * casual "I'm feeling good" small talk is NEVER logged as mood data: matches only
+ * "N/10" / "N out of 10", a labelled "my mood is (a) N" / "feeling (like a) N", or
+ * a BARE 1-10 number when Grace's prior turn actually asked about mood on a scale.
+ * Returns the score (1-10) or null.
+ */
+export function parseMoodScore(text: string, lastAssistant: string | null): number | null {
+  const t = (text ?? '').trim();
+  if (!t) return null;
+  const ok = (n: number): number | null => (Number.isInteger(n) && n >= 1 && n <= 10 ? n : null);
+  const outOf = t.match(/\b([1-9]|10)\s*(?:\/|out\s+of)\s*10\b/i);
+  if (outOf) return ok(Number(outOf[1]));
+  const labelled = t.match(/\b(?:mood|feeling|feel)\b[^0-9]{0,12}?\b([1-9]|10)\b/i);
+  if (labelled) return ok(Number(labelled[1]));
+  const askedMood = /\bmood\b|how are you feeling|1\s*(?:-|to|–)\s*10|out of 10|scale of/i.test(lastAssistant ?? '');
+  if (askedMood) {
+    const bare = t.match(/^(?:i'?m\s+(?:a\s+|at\s+)?|a\s+|about\s+|maybe\s+|like\s+(?:a\s+)?)?([1-9]|10)\s*[.!]?$/i);
+    if (bare) return ok(Number(bare[1]));
+  }
+  return null;
+}
+
+/**
  * A warm, day-aware greeting reply — the Nudge model: greet back, reference the
  * user's REAL local weekday/time, and offer a hand. Deterministic + seed-varied
  * (no LLM), so a "Hey" is answered INSTANTLY and never with a dry generic line.
@@ -3936,6 +3959,46 @@ CRITICAL RULES:
     lat.mark('memory_recall');
     const recalled = await recalledPromise;
     let systemPrompt = this.buildGroundedPrompt(user, { todaysFood, dietaryRestriction, dislikes, knownFacts, memoryMd, recalled, userText: input.text });
+
+    // ── Symptom + mood recording (ported into the LIVE unified path 2026-07-13) ─
+    // Both feed the dashboard (the "what Grace learned about your body" panel + the
+    // mood chart) and BOTH were bypassed on the unified path, so a symptom or a
+    // mood score reported in chat never synced. NOTE-ONLY: record the data + weave
+    // a warm context note into the grounded prompt — the empathetic reply still
+    // comes from the grounded call below (never a cold "logged mood: 3"). Cheap
+    // regex gate first; only a match does a DB read/write. Best-effort throughout.
+    if (input.text.trim()) {
+      try {
+        const symptom = classifySymptom(input.text);
+        if (symptom && user) {
+          const prior = await this.deps.users.getSymptomEpisodes(userId, symptom).catch(() => []);
+          const pattern = analyzeSymptomPattern(symptom, prior);
+          const dsi = daysSinceInjection(user.injection_day, localDayOfWeek(user.timezone));
+          await this.deps.users
+            .recordSymptomEpisode(userId, { symptom, days_since_injection: dsi, dose_mg: user.dose_mg ?? null })
+            .catch(() => {});
+          const note = buildSymptomRecallNote(pattern);
+          if (note) { systemPrompt += note; this.deps.logger.info({ userId, symptom }, 'ai.unified.symptom_memory.recall'); }
+        } else if (!symptom) {
+          // Remedy outcome ("the ginger tea helped") → attribute to the last open episode.
+          const outcome = detectRemedyOutcome(input.text);
+          if (outcome?.remedy) {
+            const recent = await this.deps.users.getRecentSymptomEpisodes(userId, 20).catch(() => []);
+            const open = recent.find((e) => e.remedy_helped == null);
+            if (open) await this.deps.users.setLastEpisodeRemedy(userId, open.symptom, outcome.remedy).catch(() => {});
+          }
+        }
+        const lastAsst = [...history].reverse().find((t) => t.role === 'assistant')?.content ?? '';
+        const mood = parseMoodScore(input.text, lastAsst);
+        if (mood != null) {
+          await this.deps.users.logMoodEntry(userId, mood).catch(() => {});
+          systemPrompt += `\n\nMOOD LOGGED — they just shared a mood of ${mood}/10 and it's recorded. Acknowledge it warmly and empathetically in your own voice (lead with the feeling), never a cold "logged".`;
+          this.deps.logger.info({ userId, mood }, 'ai.unified.mood_log.served');
+        }
+      } catch (err) {
+        this.deps.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'ai.unified.side_effect_memory.error');
+      }
+    }
 
     // If this multi-topic turn ALSO logged/mentioned food, weave that in — but
     // never let the model invent a total. The running total is the authoritative

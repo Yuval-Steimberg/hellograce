@@ -575,7 +575,12 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   registerHealthRoutes(app, pool);
   registerWebhookRoutes(app, { env, ai, sender, users, redis, templates: messageTemplatesService });
   registerUserRoutes(app, { pool, users, sender, generator });
-  registerSettingsRoutes(app, { redis, sender, users, whatsappEnabled: !!env.TWILIO_WHATSAPP_FROM });
+  registerSettingsRoutes(app, {
+    redis, sender, users,
+    whatsappEnabled: !!env.TWILIO_WHATSAPP_FROM,
+    stripePriceId: env.STRIPE_BASE_PRICE_ID,
+    webUrl: env.PUBLIC_WEB_URL,
+  });
   registerDashboardRoutes(app, {
     redis, users, pool, llm, logger,
     gemini: { apiKey: env.GEMINI_API_KEY, model: env.GEMINI_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL },

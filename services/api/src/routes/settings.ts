@@ -7,6 +7,7 @@ import type { UserService, GraceUser } from '../user/user.service.js';
 import { ValidationError, UnauthorizedError } from '../errors.js';
 import { isEncryptedBlob } from '../crypto/field-encrypt.js';
 import { isPlausibleStartDate } from '../services/medication-start-date.js';
+import { createCheckoutSession, isStripeEnabled } from '../services/stripe.service.js';
 
 /**
  * Self-serve user settings API (phone + verification code).
@@ -29,6 +30,10 @@ export interface SettingsRouteDeps {
   users: UserService;
   /** WhatsApp configured? Code is sent via WhatsApp when true, else SMS. */
   whatsappEnabled: boolean;
+  /** Stripe base (standard) price id for the customer-facing upgrade checkout. */
+  stripePriceId?: string;
+  /** Deployment web URL — used for Stripe success/cancel return URLs. */
+  webUrl?: string;
 }
 
 const CODE_TTL_SEC = 600;       // 10 minutes
@@ -240,6 +245,40 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
     const token = randomBytes(24).toString('hex');
     await deps.redis.set(sessionKey(token), phone, 'EX', SESSION_TTL_SEC);
     return { ok: true, token, profile: toProfile(user) };
+  });
+
+  // 2b. Start a hosted Stripe Checkout (v2-native upgrade) — Bearer session token.
+  // Replaces the legacy Supabase create-checkout edge fn. Returns a Stripe URL to
+  // redirect to; on completion the v2 Stripe webhook flips is_paid.
+  app.post('/settings/checkout', async (req, reply) => {
+    const phone = await requireVerifiedPhone(req);
+    const user = await deps.users.getByPhone(phone).catch(() => null);
+    if (!user) { reply.code(404); return { error: 'No account found for this number.' }; }
+    if (user.is_paid || user.is_pro) return { alreadyPaid: true, url: null };
+    if (!isStripeEnabled() || !deps.stripePriceId) {
+      reply.code(503);
+      return { error: 'Checkout is not available right now.' };
+    }
+    const id = (user as GraceUser & { id?: string }).id;
+    if (!id) { reply.code(500); return { error: 'Account is missing an id.' }; }
+    const base = (deps.webUrl ?? '').replace(/\/$/, '');
+    const firstName = !isEncryptedBlob(user.first_name) ? (user.first_name ?? undefined) : undefined;
+    try {
+      const session = await createCheckoutSession({
+        graceUserId: id,
+        phone,
+        ...(firstName ? { firstName } : {}),
+        priceId: deps.stripePriceId,
+        successUrl: `${base}/upgrade?checkout=success`,
+        cancelUrl: `${base}/upgrade?checkout=cancel`,
+      });
+      if (!session?.url) { reply.code(502); return { error: 'Could not start checkout.' }; }
+      return { url: session.url };
+    } catch (err) {
+      req.log.warn({ err: (err as Error).message, phone }, 'settings.checkout_failed');
+      reply.code(502);
+      return { error: 'Could not start checkout. Please try again.' };
+    }
   });
 
   // 3. Get the current profile.

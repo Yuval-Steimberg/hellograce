@@ -6,7 +6,6 @@ import { Shield, CheckCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import PhoneInput from "@/components/onboarding/PhoneInput";
 import QuizButton from "@/components/onboarding/QuizButton";
-import PaymentStep from "@/components/onboarding/PaymentStep";
 import SEOHead from "@/components/SEOHead";
 
 type Phase = "verify-phone" | "enter-code" | "payment" | "already-paid";
@@ -36,6 +35,14 @@ export default function Upgrade() {
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [user, setUser] = useState<UserInfo | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [checkingOut, setCheckingOut] = useState(false);
+
+  // Returning from Stripe's hosted checkout → show the success state (the v2
+  // webhook flips is_paid in the background).
+  useEffect(() => {
+    if (searchParams.get("checkout") === "success") setPhase("already-paid");
+  }, [searchParams]);
 
   // If there's already a stored session, skip straight to payment check
   useEffect(() => {
@@ -106,6 +113,7 @@ export default function Upgrade() {
         toast.error(data?.message ?? data?.error ?? "Invalid code. Try again.");
         return;
       }
+      if (data.token) setSessionToken(data.token as string);
       const p = data.profile as { id: string; first_name: string | null; is_paid?: boolean; is_pro?: boolean };
       handleUserVerified({
         id: p.id,
@@ -117,6 +125,36 @@ export default function Upgrade() {
       toast.error("Something went wrong. Try again.");
     } finally {
       setVerifying(false);
+    }
+  };
+
+  // Start the v2-native hosted Stripe Checkout and redirect to Stripe.
+  const handleStartCheckout = async () => {
+    if (!sessionToken) {
+      toast.error("Please verify your number again.");
+      setPhase("verify-phone");
+      return;
+    }
+    setCheckingOut(true);
+    try {
+      const res = await fetch(`${API_BASE}/settings/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionToken}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data?.alreadyPaid) {
+        setPhase("already-paid");
+        return;
+      }
+      if (!res.ok || data?.error || !data?.url) {
+        toast.error(data?.error ?? "Couldn't start checkout. Please try again.");
+        return;
+      }
+      window.location.href = data.url as string;
+    } catch {
+      toast.error("Something went wrong. Try again.");
+    } finally {
+      setCheckingOut(false);
     }
   };
 
@@ -275,11 +313,23 @@ export default function Upgrade() {
                 transition={{ duration: 0.3 }}
                 className="flex-1 overflow-y-auto px-8 pb-8 pt-4"
               >
-                <PaymentStep
-                  userId={user.id}
-                  firstName={user.first_name ?? ""}
-                  onNext={() => setPhase("already-paid")}
-                />
+                <div className="mb-2 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                  Subscribe
+                </div>
+                <h1 className="text-4xl font-serif text-foreground tracking-tight leading-[1.05] mb-4">
+                  Pick up where you left off.
+                </h1>
+                <p className="text-muted-foreground text-base leading-relaxed mb-8">
+                  Your daily check-ins, food and weight tracking, and everything Grace has
+                  learned about you — all back on. Secure checkout is handled by Stripe.
+                </p>
+                <QuizButton onClick={handleStartCheckout} disabled={checkingOut}>
+                  {checkingOut ? "Redirecting to checkout…" : "Continue to secure checkout"}
+                </QuizButton>
+                <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                  <Shield className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  Payments processed securely by Stripe. Cancel anytime.
+                </div>
               </motion.div>
             )}
 

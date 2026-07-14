@@ -354,6 +354,44 @@ export async function ensureStripeCustomer(input: {
   return customer.id;
 }
 
+/**
+ * Create a hosted Stripe Checkout Session (subscription mode) and return its URL.
+ * The customer-facing v2 upgrade path — replaces the legacy Supabase
+ * create-checkout edge fn + embedded Elements. On completion Stripe fires
+ * customer.subscription.created, which the v2 webhook already turns into
+ * is_paid=true (resolved via the customer's phone metadata). The user's free
+ * trial has already ended by the time they reach here, so NO trial is granted.
+ */
+export async function createCheckoutSession(input: {
+  graceUserId: string;
+  phone: string;
+  firstName?: string;
+  priceId: string;
+  successUrl: string;
+  cancelUrl: string;
+}): Promise<{ url: string } | null> {
+  if (!stripe) return null;
+  const customerId = await ensureStripeCustomer({
+    graceUserId: input.graceUserId,
+    phone: input.phone,
+    ...(input.firstName ? { firstName: input.firstName } : {}),
+  });
+  if (!customerId) return null;
+  const session = await stripe.checkout.sessions.create({
+    mode: 'subscription',
+    customer: customerId,
+    line_items: [{ price: input.priceId, quantity: 1 }],
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    allow_promotion_codes: true,
+    // Carry phone + id on the SUBSCRIPTION so the webhook can resolve the user
+    // even if the customer's stripe_customer_id isn't backfilled yet.
+    subscription_data: { metadata: { phone: input.phone, grace_user_id: input.graceUserId } },
+    metadata: { phone: input.phone, grace_user_id: input.graceUserId },
+  });
+  return session.url ? { url: session.url } : null;
+}
+
 // Statuses that grant access. past_due is included so a transient payment
 // retry doesn't immediately revoke access (Stripe keeps the sub active-ish
 // while it retries). canceled / unpaid / incomplete* revoke access.

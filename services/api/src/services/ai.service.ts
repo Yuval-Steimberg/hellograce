@@ -284,6 +284,25 @@ export function parseMoodScore(text: string, lastAssistant: string | null): numb
 }
 
 /**
+ * A clearly ZERO-CALORIE beverage the user mentioned that Grace logs no macros for
+ * (black coffee, plain/unsweetened tea, diet soda). She should still ACKNOWLEDGE it
+ * so a user who mentioned it doesn't feel half-ignored (prod IMG_6812: "ate two
+ * eggs and drank black coffee" → Grace only mentioned the eggs). Returns a short
+ * label or null. Excludes anything with milk/cream/sugar/syrup or a calorie-carrying
+ * espresso drink — a latte is NOT calorie-free.
+ */
+export function zeroCalBeverageMention(text: string): string | null {
+  const t = (text ?? '').toLowerCase();
+  if (/\b(milk|cream|creamer|sugar|honey|syrup|latte|cappuccino|mocha|macchiato|frapp\w*|flat\s+white|oat|almond|soy|sweet\w*|caramel|vanilla|whip)\b/.test(t)) return null;
+  if (/\bblack\s+coffee\b/.test(t)) return 'black coffee';
+  if (/\b(?:cup of |some |a )?coffee\b/.test(t) && !/\bcoffee\s+(?:cake|ice\s*cream)\b/.test(t)) return 'coffee';
+  if (/\b(?:green|herbal|black|mint|peppermint|chamomile|plain|unsweetened)\s+tea\b/.test(t)) return 'tea';
+  if (/\b(?:cup of |some |a )?tea\b/.test(t)) return 'tea';
+  if (/\bdiet\s+(?:coke|soda|pepsi|drink)\b/.test(t)) return 'diet soda';
+  return null;
+}
+
+/**
  * A warm, day-aware greeting reply — the Nudge model: greet back, reference the
  * user's REAL local weekday/time, and offer a hand. Deterministic + seed-varied
  * (no LLM), so a "Hey" is answered INSTANTLY and never with a dry generic line.
@@ -3933,6 +3952,15 @@ CRITICAL RULES:
       }
       if (food.pending.length > 0) {
         parts.push(food.clarify || formatFoodReply({ loggedItems: [], pendingFoods: food.pending, seed }));
+      }
+      // Acknowledge a zero-calorie drink the user mentioned (black coffee, plain
+      // tea, diet soda) so they're not half-ignored — it moves no macros, so we
+      // just note it warmly (prod IMG_6812: "…and drank black coffee" got no
+      // acknowledgment). Only when something WAS logged, so a bare drink alone
+      // still flows to the grounded path.
+      if (food.logged.length > 0) {
+        const bev = zeroCalBeverageMention(input.text);
+        if (bev) parts.push(`And the ${bev} is calorie-free, so it won't change those numbers.`);
       }
       // The food confirmation ships DETERMINISTICALLY (formatFoodReply): it states
       // exactly what was logged + the REAL running total, and its openers already

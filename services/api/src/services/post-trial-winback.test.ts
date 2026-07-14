@@ -144,6 +144,23 @@ describe('post-trial win-back — reply intents', () => {
     expect(r).toMatch(/\?$/); // ends by inviting a reply
   });
 
+  it('HELP reply ROTATES so repeated taps never repeat verbatim', () => {
+    const ctx = { firstName: 'Yuval', upgradeUrl: 'https://x/u' };
+    const a = buildWinbackHelpReply(ctx, 0);
+    const b = buildWinbackHelpReply(ctx, 1);
+    const c = buildWinbackHelpReply(ctx, 2);
+    expect(new Set([a, b, c]).size).toBe(3); // all three distinct
+    // Every variant keeps the essentials: the link + an inviting question.
+    for (const r of [a, b, c]) {
+      expect(r).toContain('https://x/u');
+      expect(r).toMatch(/\?$/);
+      expect(r).toMatch(/Yuval/);
+    }
+    // Wraps around (seed 3 == seed 0) and tolerates negatives.
+    expect(buildWinbackHelpReply(ctx, 3)).toBe(a);
+    expect(buildWinbackHelpReply(ctx, -1)).toBe(buildWinbackHelpReply(ctx, 2));
+  });
+
   it('STOP reply confirms without pressure and leaves the door open', () => {
     const r = buildWinbackStopReply('Yuval');
     expect(r).toMatch(/stop the check-ins/i);

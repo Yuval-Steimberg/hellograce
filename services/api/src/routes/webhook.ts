@@ -662,15 +662,27 @@ export async function processInboundMessage(
               return;
             }
             if (isWinbackHelpIntent(normalized.text)) {
+              // Rotate the reply per HELP tap so it never repeats verbatim
+              // (a counter in Redis; failure-open to variant 0).
+              let helpCount = 0;
+              if (deps.redis) {
+                try {
+                  helpCount = await deps.redis.incr(`winback:help:${user.phone}`);
+                  await deps.redis.expire(`winback:help:${user.phone}`, 30 * 24 * 3600);
+                } catch { /* best-effort — variant 0 */ }
+              }
               await deps.sender.send({
                 to: normalized.userId,
                 channel: normalized.channel,
-                body: buildWinbackHelpReply({
-                  firstName: user.first_name,
-                  upgradeUrl: buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL),
-                }),
+                body: buildWinbackHelpReply(
+                  {
+                    firstName: user.first_name,
+                    upgradeUrl: buildUpgradeUrl(user.phone, deps.env.PUBLIC_WEB_URL),
+                  },
+                  Math.max(0, helpCount - 1),
+                ),
               });
-              log.info({ phone: user.phone }, 'webhook.winback_help');
+              log.info({ phone: user.phone, helpCount }, 'webhook.winback_help');
               return;
             }
           }
@@ -1310,9 +1322,10 @@ export function isSettingsKeyword(text: string): boolean {
 }
 
 export function buildUpgradeUrl(phone: string, webUrl: string = DEFAULT_WEB_URL): string {
-  const encoded = encodeURIComponent(phone);
+  // Bare digits, not the spammy "%2B…" encoding — the Upgrade page re-adds "+".
+  const digits = phone.replace(/[^\d]/g, '');
   const base = webUrl.replace(/\/$/, '');
-  return `${base}/upgrade?phone=${encoded}`;
+  return `${base}/upgrade?phone=${digits}`;
 }
 
 /**

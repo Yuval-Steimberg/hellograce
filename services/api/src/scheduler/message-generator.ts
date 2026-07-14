@@ -9,7 +9,12 @@ const DEFAULT_WEB_URL = 'https://grace-admin-silk.vercel.app';
 
 function buildUpgradeUrl(phone: string, webUrl: string = DEFAULT_WEB_URL): string {
   const base = webUrl.replace(/\/$/, '');
-  return `${base}/upgrade?phone=${encodeURIComponent(phone)}`;
+  // Use the bare digits, not the URL-encoded "+" — a customer-facing link should
+  // read ".../upgrade?phone=972547722420", never the spammy "…phone=%2B972…"
+  // (prod IMG_6816/6817). The Upgrade page re-normalizes a digits-only phone to
+  // E.164 (prepends "+"), so verification is unchanged.
+  const digits = phone.replace(/[^\d]/g, '');
+  return `${base}/upgrade?phone=${digits}`;
 }
 
 // ─── Daily variation engine ───────────────────────────────────────────────────

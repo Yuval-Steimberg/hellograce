@@ -21,7 +21,14 @@ interface UserInfo {
 export default function Upgrade() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const phoneFromUrl = searchParams.get("phone") ?? "";
+  const rawPhoneParam = searchParams.get("phone") ?? "";
+  // Links now use a clean digits-only phone (…/upgrade?phone=972547722420) instead
+  // of the spammy encoded "+" (…?phone=%2B972…). Re-normalize to E.164 for the
+  // verification API: a digits-only value gets a leading "+"; an already-"+"-prefixed
+  // value (from an older link) is left as-is.
+  const phoneFromUrl = /^\d{6,}$/.test(rawPhoneParam.trim())
+    ? `+${rawPhoneParam.trim()}`
+    : rawPhoneParam;
 
   const [phase, setPhase] = useState<Phase>("verify-phone");
   const [phone, setPhone] = useState(phoneFromUrl);

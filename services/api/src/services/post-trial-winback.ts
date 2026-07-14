@@ -179,9 +179,22 @@ export function isWinbackHelpIntent(text: string): boolean {
  * invites them to say what's holding them back so it can be a conversation, not a
  * wall. Deterministic + plain text (one link) so it's reviewable and testable.
  */
-export function buildWinbackHelpReply(ctx: Pick<WinbackMessageContext, 'firstName' | 'upgradeUrl'>): string {
+export function buildWinbackHelpReply(
+  ctx: Pick<WinbackMessageContext, 'firstName' | 'upgradeUrl'>,
+  seed = 0,
+): string {
   const name = ctx.firstName && ctx.firstName.trim() ? ` ${ctx.firstName.trim()}` : '';
-  return `Happy to help${name}. If cost or timing is the thing holding you back, just tell me — a lot of people find the daily check-ins pay for themselves in momentum, and I would rather find a way to keep you than lose you. Whenever you are ready you can pick up right where you left off here: ${ctx.upgradeUrl}. What is making you pause?`;
+  const url = ctx.upgradeUrl;
+  // Rotate so a user who taps HELP more than once never gets the SAME message
+  // twice (prod IMG_6816/6817: two HELPs → identical reply). Each angle is warm,
+  // low-pressure, carries the upgrade link, and ends with an open question.
+  const variants = [
+    `Happy to help${name}. If cost or timing is what's holding you back, tell me — a lot of people find the daily check-ins pay for themselves in momentum, and I'd rather find a way to keep you than lose you. You can pick up right where you left off here: ${url}. What's making you pause?`,
+    `I'm here${name}. Whether it's the price, the timing, or you just want to think it over, I'd rather talk it through than have you drift off. Your spot is still here whenever you're ready: ${url}. What's on your mind?`,
+    `Of course${name} — no pressure at all. The check-ins are what kept your momentum going, and they're right here when you want them back: ${url}. Is there something specific holding you up that I can help with?`,
+  ];
+  const idx = ((Math.trunc(seed) % variants.length) + variants.length) % variants.length;
+  return variants[idx]!;
 }
 
 /** The confirmation for a STOP intent — acknowledge, stop the sequence, leave the

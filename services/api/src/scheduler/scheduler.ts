@@ -259,7 +259,8 @@ export class Scheduler {
           checkins = await this.countWinbackStat(pool, 'check_ins', user.phone);
         }
 
-        const upgradeUrl = `${webUrl.replace(/\/$/, '')}/upgrade?phone=${encodeURIComponent(user.phone)}`;
+        // Bare digits, not the spammy "%2B…" encoding — the Upgrade page re-adds "+".
+        const upgradeUrl = `${webUrl.replace(/\/$/, '')}/upgrade?phone=${user.phone.replace(/[^\d]/g, '')}`;
         const body = buildWinbackMessage(due.stage.key, {
           firstName: user.first_name && !user.first_name.startsWith('enc:') ? user.first_name : null,
           upgradeUrl,

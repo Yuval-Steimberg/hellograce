@@ -114,6 +114,9 @@ function resolveChannel(
 /** The profile shape returned to the Settings page — editable fields only. */
 function toProfile(u: GraceUser): Record<string, unknown> {
   return {
+    // Shared DB id (same row v1/Supabase uses) — needed by the Upgrade page for
+    // the Stripe checkout after code verification. Not secret to the verified user.
+    id: (u as GraceUser & { id?: string }).id ?? null,
     phone: u.phone,
     first_name: plainOrNull(u.first_name),
     medication: plainOrNull(u.medication),
@@ -195,7 +198,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
         await deps.sender.send({
           to: phone,
           channel,
-          body: `Your Grace settings code is ${code}. It expires in 10 minutes. If you didn't request this, ignore this message.`,
+          body: `Your Grace verification code is ${code}. It expires in 10 minutes. If you didn't request this, ignore this message.`,
           raw: true,
         });
       } catch (err) {

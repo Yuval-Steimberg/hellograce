@@ -61,15 +61,26 @@ export default function Upgrade() {
     }
   }
 
+  // Verification runs against the v2 API so the code is delivered on the channel
+  // the user actually lives on (iMessage via Sendblue) — the legacy Supabase
+  // "send-verification-code" edge fn sent via Twilio SMS, which never reached
+  // iMessage users, so the code "sent" but never arrived (prod IMG_6818/6819).
+  const API_BASE =
+    (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ??
+    "http://localhost:3001";
+
   const handleSendCode = async () => {
     if (!phone.trim()) return;
     setSending(true);
     try {
-      const { data, error } = await supabase.functions.invoke("send-verification-code", {
-        body: { phone: phone.trim() },
+      const res = await fetch(`${API_BASE}/settings/request-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: phone.trim() }),
       });
-      if (error || data?.error) {
-        toast.error(data?.error ?? "Couldn't send code. Is this the right number?");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error) {
+        toast.error(data?.message ?? data?.error ?? "Couldn't send code. Is this the right number?");
         return;
       }
       setPhase("enter-code");
@@ -85,14 +96,23 @@ export default function Upgrade() {
     if (code.length !== 6) return;
     setVerifying(true);
     try {
-      const { data, error } = await supabase.functions.invoke("verify-code", {
-        body: { phone: phone.trim(), code },
+      const res = await fetch(`${API_BASE}/settings/verify-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: phone.trim(), code }),
       });
-      if (error || data?.error) {
-        toast.error(data?.error ?? "Invalid code. Try again.");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.error || !data?.profile?.id) {
+        toast.error(data?.message ?? data?.error ?? "Invalid code. Try again.");
         return;
       }
-      handleUserVerified(data.user as UserInfo);
+      const p = data.profile as { id: string; first_name: string | null; is_paid?: boolean; is_pro?: boolean };
+      handleUserVerified({
+        id: p.id,
+        first_name: p.first_name,
+        is_paid: !!p.is_paid,
+        is_pro: !!p.is_pro,
+      });
     } catch {
       toast.error("Something went wrong. Try again.");
     } finally {

@@ -12,13 +12,14 @@ import { Cache } from './cache/cache.js';
 import type { LLMProvider } from '@grace/shared';
 import { GeminiProvider } from './llm/gemini.js';
 import { ClaudeProvider } from './llm/claude.js';
+import { createLiveTestRunner } from './debug/live-test.js';
 import { GeminiEmbedder } from './rag/gemini-embedder.js';
 import { FaqSemanticCache } from './cache/faq-semantic-cache.js';
 import { RagService } from './rag/rag.service.js';
 import { MemoryService } from './memory/memory.service.js';
 import { UserMemoryService } from './memory/user-memory.service.js';
 import { ProductionIssuesService } from './services/production-issues.service.js';
-import { AIService } from './services/ai.service.js';
+import { AIService, type AIServiceDeps } from './services/ai.service.js';
 import { TwilioSender } from './twilio/sender.js';
 import { ImessageSender } from './imessage/sender.js';
 import { SendblueSender } from './imessage/sendblue-sender.js';
@@ -144,7 +145,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     );
   }
 
-  const ai = new AIService({
+  const aiDeps: AIServiceDeps = {
     pool,
     llm,
     replyLlm,
@@ -183,6 +184,24 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       progressiveProfile: env.PROGRESSIVE_PROFILE_ENABLED,
       unifiedReplyPath: env.UNIFIED_REPLY_PATH,
     },
+  };
+  const ai = new AIService(aiDeps);
+
+  // Internal debug platform (2026-07-18) — safe live tester. Reuses the exact
+  // production AI deps, swapping only the write-side deps (DryRunPool/Redis, no
+  // queues) per invocation so a live test never writes/sends/enqueues.
+  const liveTest = createLiveTestRunner({
+    aiDeps,
+    pool,
+    redis,
+    embedder,
+    model: {
+      replyProvider: env.LLM_REPLY_PROVIDER,
+      replyModel: env.LLM_REPLY_PROVIDER === 'claude' ? env.ANTHROPIC_REPLY_MODEL : undefined,
+      geminiModel: env.GEMINI_MODEL,
+      extractModel: env.GEMINI_EXTRACT_MODEL,
+    },
+    loadActivePrompt,
   });
   logger.info(
     { geminiFirst: env.GEMINI_FIRST, directReplyMode: env.DIRECT_REPLY_MODE, leanReplyMode: env.LEAN_REPLY_MODE, compactReplyMode: env.COMPACT_REPLY_MODE },
@@ -605,7 +624,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   registerAdminRoutes(app, {
     pool, cache, llm, promptOptimizer, reloadActivePrompt, redis,
     templates: messageTemplatesService, faqCache, users, memoryMd,
-    sender, memory,
+    sender, memory, liveTest,
     stripeBasePriceId: env.STRIPE_BASE_PRICE_ID,
     stripeProPriceId: env.STRIPE_PRO_PRICE_ID,
     ...(env.ADMIN_TOKEN ? { adminToken: env.ADMIN_TOKEN } : {}),

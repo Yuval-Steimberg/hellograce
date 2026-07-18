@@ -536,9 +536,34 @@ export interface LatencyStats {
   slow_samples: { intent: string; latency_ms: number; created_at: string; content: string; stage_timings: Record<string, number> | null }[];
 }
 
+export interface LiveTestResult {
+  reply: string;
+  intent: string;
+  confidence: string;
+  usedRetrieval: boolean;
+  regenerated: boolean;
+  usedSafeFallback: boolean;
+  critic?: unknown;
+  totalLatencyMs: number;
+  stageTimings: Record<string, number>;
+  toolCalls: Array<{ name: string; ok: boolean; latencyMs?: number; args?: unknown; output?: unknown; error?: string }>;
+  wouldWrite: Array<{ sql: string; params: unknown[]; op: string; table: string | null; at: number }>;
+  wouldWriteSummary: Array<{ table: string | null; op: string; count: number }>;
+  model: { replyProvider: string; replyModel?: string; geminiModel: string; extractModel?: string };
+  activeSystemPromptExcerpt: string | null;
+  historyTurnsCaptured: number;
+}
+
 export const api = {
   metrics: () => apiFetch<Metrics>('/admin/metrics'),
   latency: (window = '24h') => apiFetch<LatencyStats>(`/admin/latency?window=${encodeURIComponent(window)}`),
+
+  // Internal debug platform — safe live tester (dry-run, real pipeline).
+  liveTest: (body: { message: string; userId: string; channel?: 'imessage' | 'sms' | 'whatsapp' }) =>
+    apiFetch<{ ok: boolean; dryRun: boolean; result: LiveTestResult }>('/admin/debug/live-test', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   // Admin analytics (cohorts / funnel / business overview)
   cohorts: () => apiFetch<CohortCountsResult>('/admin/cohorts'),

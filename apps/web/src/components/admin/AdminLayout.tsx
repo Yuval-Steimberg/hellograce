@@ -32,10 +32,12 @@ import {
   Gauge,
   Megaphone,
   Timer,
+  Beaker,
 } from 'lucide-react';
 
 const NAV = [
   { to: '/admin', label: 'Metrics', icon: BarChart3, end: true },
+  { to: '/admin/live-test', label: 'Live Test', icon: Beaker, end: false },
   { to: '/admin/conversations', label: 'Conversations', icon: MessageSquare, end: false },
   { to: '/admin/users', label: 'Users', icon: Users, end: false },
   { to: '/admin/cohorts', label: 'Cohorts', icon: Layers, end: false },

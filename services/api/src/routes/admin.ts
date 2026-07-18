@@ -89,6 +89,11 @@ export interface AdminDeps {
   /** Stripe price IDs for the admin change-plan action. */
   stripeBasePriceId?: string;
   stripeProPriceId?: string;
+  /** Internal debug platform (2026-07-18) — the safe live tester. Runs the REAL
+   *  AIService.handleMessage against a real user's real data with EVERY DB write,
+   *  Redis write, outbound send, and background job captured (never executed).
+   *  Undefined in tests / when not wired. */
+  liveTest?: import('../debug/live-test.js').LiveTestRunner;
 }
 
 /** Read the acting admin's identity from the X-Admin-Actor header (set by the
@@ -2546,6 +2551,50 @@ Banned phrases must be exact lowercase substrings from Grace's actual response. 
   //
   // The in-memory food state persists across turns within a single replay,
   // so "I ate X" then "how much protein left" actually works correctly.
+  // ── Internal debug platform: safe LIVE TESTER ──────────────────────────────
+  // POST /admin/debug/live-test — runs the REAL AIService.handleMessage pipeline
+  // (not the simplified sandbox) against a real user's real data, wired to the
+  // DryRunPool + DryRunRedis + no-queue safety layer so NOTHING is written, sent,
+  // or enqueued. Returns the exact reply + full trace (intent, tool calls,
+  // latency waterfall, and every DB write it WOULD have made). Read-only + audited.
+  app.post('/admin/debug/live-test', async (req, reply) => {
+    if (!deps.liveTest) {
+      return reply.code(503).send({ error: 'live tester not configured' });
+    }
+    const body = (req.body ?? {}) as {
+      message?: string;
+      userId?: string;
+      phone?: string;
+      channel?: 'imessage' | 'sms' | 'whatsapp';
+      media?: Array<{ url: string; contentType: string; kind: 'image' | 'audio' | 'video' | 'other' }>;
+    };
+    const message = typeof body.message === 'string' ? body.message : '';
+    const userId = (body.userId ?? body.phone ?? '').trim();
+    if (!message.trim() || !userId) {
+      return reply.code(400).send({ error: 'message and userId (phone) are required' });
+    }
+    // Audit the action (dry-run, but records who probed which user).
+    await auditLogFull(deps.pool, {
+      action: 'debug.live_test',
+      actor: actorOf(req),
+      targetUser: userId,
+      ip: req.ip,
+      details: { message: message.slice(0, 200), channel: body.channel ?? 'imessage', hasMedia: !!body.media?.length },
+    }).catch(() => {});
+    try {
+      const result = await deps.liveTest({
+        message,
+        userId,
+        channel: body.channel,
+        media: body.media,
+      });
+      return reply.send({ ok: true, dryRun: true, result });
+    } catch (err) {
+      req.log.error({ err: err instanceof Error ? err.message : String(err) }, 'admin.live_test.failed');
+      return reply.code(500).send({ error: err instanceof Error ? err.message : 'live test failed' });
+    }
+  });
+
   app.post('/admin/replay', async (req, reply) => {
     const body = (req.body ?? {}) as {
       messages?: string[];

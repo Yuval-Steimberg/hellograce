@@ -27,6 +27,7 @@ const AdminLogin = lazy(() => import("./pages/admin/AdminLogin.tsx"));
 const AdminLayout = lazy(() => import("./components/admin/AdminLayout.tsx"));
 const MetricsPage = lazy(() => import("./pages/admin/MetricsPage.tsx"));
 const ConversationsPage = lazy(() => import("./pages/admin/ConversationsPage.tsx"));
+const LiveTestPage = lazy(() => import("./pages/admin/LiveTestPage.tsx"));
 const FeedbackPage = lazy(() => import("./pages/admin/FeedbackPage.tsx"));
 const PromptsPage = lazy(() => import("./pages/admin/PromptsPage.tsx"));
 const ToolsPage = lazy(() => import("./pages/admin/ToolsPage.tsx"));
@@ -78,6 +79,7 @@ const App = () => (
               <Route path="/admin/login" element={<AdminLogin />} />
               <Route path="/admin" element={<AdminLayout />}>
                 <Route index element={<MetricsPage />} />
+                <Route path="live-test" element={<LiveTestPage />} />
                 <Route path="conversations" element={<ConversationsPage />} />
                 <Route path="feedback" element={<FeedbackPage />} />
                 <Route path="prompts" element={<PromptsPage />} />

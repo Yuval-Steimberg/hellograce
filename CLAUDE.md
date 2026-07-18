@@ -6,6 +6,22 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — post-trial messaging = MINIMAL/QUIET; expired-unpaid users go silent (2026-07-17, branch `claude/nudge-system-testing-3nv6pt`, NOT deployed)
+
+Driven by prod screenshots (IMG_6873/6874): an expired-trial unpaid user was getting **"out of nowhere" messages from four uncoordinated systems** — the webhook paywall ("Your 3-day Grace trial has ended… Reply HELP", fires on any inbound after expiry), the post-trial **winback ladder** Stage 1 ("Hey, your Grace trial just wrapped up…", days later, redundant with the paywall + factually stale), the **midday** nudge, and the nightly **daily recap** ("Quick recap of your day"). Two of those (paywall + winback) both announce "trial ended" with different wording, days apart. User chose the **minimal/quiet** policy: an expired-unpaid user gets **nothing proactive** — only the paywall reply when THEY text.
+
+**What was ALIGNED already (verified, no change):** `TRIAL_DAYS = 3` is the single source of truth (`trial-info.ts`), imported by the webhook access gate (`isAccessAllowed`), the winback sequence, and the scheduler — so "3-day" wording and the access cutoff can't drift. Morning + evening were already suppressed for expired-unpaid users.
+
+**Code fixes this session (`scheduler.ts`):**
+- New private `isTrialExpiredUnpaid(user)` helper (mirrors `isAccessAllowed`: `!paid && !pro && trial_start && now ≥ trial_start + TRIAL_DAYS`). Replaced the inline formula in `processUser`.
+- **MIDDAY now gated** on `!trialExpiredUnpaid` (was the one proactive touch that still fired for expired users — now suppressed). Test inverted: `scheduler.test.ts` "does NOT fire midday for an EXPIRED-trial unpaid user".
+- **DAILY SUMMARY now gated** — `sendDailySummaries` had NO expired-trial check (only onboarding + opt-out), so the nightly recap leaked to expired users. Added `if (this.isTrialExpiredUnpaid(user)) continue;`.
+- 2136 api tests green, typecheck clean.
+
+**REQUIRED prod action (the winback ladder is flag-controlled, not code) — turn it OFF:** `fly secrets set --app grace-api POST_TRIAL_WINBACK_ENABLED=false`. Default is already off in `env.ts`; it's ON in prod only via a secret set 2026-07-07, so a deploy alone won't disable it — the secret must be unset/false. Reversible instantly (no deploy) if the policy changes back. After that + this deploy, an expired-unpaid user's ONLY message is the paywall when they text. NOTE: `DAILY_SUMMARY_ENABLED` + `POST_TRIAL_WINBACK_ENABLED` are both still ON in prod; this session gates their AUDIENCE, doesn't flip the master switches (except the winback recommendation above).
+
+---
+
 ## 👉 CURRENT STATE (2026-07-13) — DEPLOYED to prod (`/health` == `0a891c5`, = `b0352fa` code + docs commit)
 
 **🔴 PROD DB WAS BROKEN + RECOVERED THIS SESSION.** During the (abandoned) US-East migration attempt, a pasted block set `DATABASE_URL` to the literal placeholder `NEW_USEAST_POOLER_URL` → `getaddrinfo ENOTFOUND base` → the app couldn't reach the DB AT ALL: `Scheduler.tick` failed every minute at `listActiveUsers` (**no reminders fired**), admin endpoints 500'd, content_rules failed to load. THIS was the real "no morning reminder" cause (NOT a code bug — the reminder code is verified sound, all gates traced, `trial_start` was null so the expired-trial gate never fired). Fix = restore the correct Tokyo pooler URL: `fly secrets set DATABASE_URL='postgresql://postgres.uifadtlktpddtfohwxfi:<PW>@aws-1-ap-northeast-1.pooler.supabase.com:6543/postgres'` (single quotes — the password has `!`). The wrong-password attempts tripped Supabase's `(ECIRCUITBREAKER) too many authentication failures` — a temporary pooler lockout that clears after a few quiet minutes once the password is correct. User reset the DB password to recover (retires the exposed `Giburking18!`). **Diagnostic that cracked it: `fly logs` → the `unhandled`/`scheduler.tick.error` lines carry the real `err` (host `base`). macOS has no `timeout`; capture with `fly logs > f 2>&1 &` + `sleep` + `kill`.**

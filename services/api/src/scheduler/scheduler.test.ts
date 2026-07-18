@@ -433,10 +433,11 @@ describe('Scheduler — midday reminder', () => {
     expect(h.generateCalls.filter((c) => c.type === 'midday').length).toBe(1);
   });
 
-  it('STILL fires midday for an EXPIRED-trial unpaid user (morning gated, midday kept)', async () => {
+  it('does NOT fire midday for an EXPIRED-trial unpaid user (minimal/quiet: no proactive touches)', async () => {
     // Same setup as the passing midday test, but the user's 3-day trial has expired
-    // and they haven't paid. The morning is suppressed for them, but midday must
-    // still fire — the explicit product requirement.
+    // and they haven't paid. Per the minimal/quiet policy (2026-07-17), such a user
+    // gets NO proactive check-ins at all — morning, evening, AND midday are all
+    // suppressed. Their only post-trial touch is the paywall reply when they text.
     const u = makeUser({
       is_paid: false, is_pro: false,
       trial_start: new Date(Date.UTC(2026, 4, 10)), // expired by 05-18
@@ -451,7 +452,7 @@ describe('Scheduler — midday reminder', () => {
       new Date(Date.UTC(2026, 4, 18, 15, 0)),
       new Date(Date.UTC(2026, 4, 18, 18, 0)),
     );
-    expect(h.generateCalls.filter((c) => c.type === 'midday').length).toBe(1);
+    expect(h.generateCalls.filter((c) => c.type === 'midday').length).toBe(0);
   });
 
   it('does NOT fire on Tuesday (Tue is evening day, not midday)', async () => {

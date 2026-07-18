@@ -296,6 +296,18 @@ export class Scheduler {
     }
   }
 
+  /**
+   * A user whose free trial has expired and who hasn't paid. Such a user gets
+   * NO proactive messages at all — morning, evening, midday, and the nightly
+   * daily recap are all suppressed. Their only remaining touch is the paywall
+   * reply when THEY text (webhook.ts) — the "minimal/quiet" post-trial policy.
+   * Mirrors isAccessAllowed (webhook.ts): access ends at trial_start + TRIAL_DAYS.
+   */
+  private isTrialExpiredUnpaid(user: Pick<GraceUser, 'is_paid' | 'is_pro' | 'trial_start'>): boolean {
+    if (user.is_paid || user.is_pro || !user.trial_start) return false;
+    return Date.now() - new Date(user.trial_start).getTime() >= TRIAL_DAYS * 24 * 3_600_000;
+  }
+
   /** Best-effort row count for a user's trial-engagement stat (win-back value stage). */
   private async countWinbackStat(pool: Pool, table: 'food_logs' | 'check_ins', phone: string): Promise<number | undefined> {
     try {
@@ -347,6 +359,11 @@ export class Scheduler {
         if (user.onboarding_state === 'in_progress') continue;
         // Per-user opt-out. Undefined (pre-migration row) is treated as enabled.
         if (user.daily_summary_enabled === false) continue;
+        // Expired-trial, unpaid users get no proactive night recap either — the
+        // daily summary is a paid experience (mirrors the morning/evening/midday
+        // gate in processUser). Without this, an expired user still got "Quick
+        // recap of your day" after their trial ended — a paid feature leaking.
+        if (this.isTrialExpiredUnpaid(user)) continue;
 
         // End-of-day window: sleep_time − 30min, clamped 19:00–21:00 local.
         const now = localNow(user.timezone || 'America/New_York');
@@ -632,9 +649,7 @@ export class Scheduler {
     // NOT yet expired (24–48h < 72h), so the trial_expiry_reminder inside the block
     // still fires DURING the trial. Injection-day reminders are a separate health
     // flow (handled above) and are unaffected.
-    const trialExpiredUnpaid =
-      !user.is_paid && !user.is_pro && !!user.trial_start &&
-      Date.now() - new Date(user.trial_start).getTime() >= TRIAL_DAYS * 24 * 3_600_000;
+    const trialExpiredUnpaid = this.isTrialExpiredUnpaid(user);
 
     if (isMorningWindow && !morningAlreadySent && !trialExpiredUnpaid) {
       // Trial Day 2 reminder fires instead of the regular morning check-in.
@@ -679,6 +694,13 @@ export class Scheduler {
       nowMin >= middayTargetMin && nowMin < middayTargetMin + 15;
     if (
       isMiddayWindow &&
+      // Expired-trial, unpaid users get NO proactive check-ins at all — not the
+      // morning, evening, OR midday. Every scheduled touch is a paid experience;
+      // the only message they get after expiry is the paywall reply when THEY
+      // text. (2026-07-17: midday used to still fire as a single conversion
+      // touch, but that stacked with the winback ladder + daily recap into the
+      // "out of nowhere" barrage the user flagged. Minimal/quiet is the policy.)
+      !trialExpiredUnpaid &&
       !user.midday_skip &&
       (!user.last_midday_sent_at || toDateStr(localNow(user.timezone, new Date(user.last_midday_sent_at))) !== todayStr) &&
       (!user.last_reply_at || Date.now() - new Date(user.last_reply_at).getTime() > 3 * 3_600_000) &&

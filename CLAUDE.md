@@ -6,7 +6,10 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 READ FIRST — post-trial messaging = MINIMAL/QUIET; expired-unpaid users go silent (2026-07-17, branch `claude/nudge-system-testing-3nv6pt`, NOT deployed)
+## 👉 READ FIRST — post-trial messaging = MINIMAL/QUIET; expired-unpaid users go silent (2026-07-17, **MERGED to `main` via PR #260 squash `860aace`, DEPLOYED to prod + winback secret OFF — user confirmed**)
+
+**DEPLOY STATUS (2026-07-18): DONE.** User merged PR #260 to `main` and put it in production: `fly deploy` grace-api shipped the midday + daily-recap gates, AND `fly secrets set POST_TRIAL_WINBACK_ENABLED=false` turned off the winback ladder. So an expired-trial unpaid user now gets NOTHING proactive — only the paywall reply when THEY text. (Deploy hiccup that session: `fly deploy` first 401'd `unauthorized` because a re-login landed on the wrong Fly account — `steimberg.yuval1@gmail.com` didn't own `grace-api`; resolved by logging into the account that owns the app. The git fast-forward to `860aace` was clean throughout — the block was purely Fly identity, not code/config. Diagnostic: `fly auth whoami` / `fly apps list` — if `grace-api` isn't listed, you're on the wrong account.)
+
 
 Driven by prod screenshots (IMG_6873/6874): an expired-trial unpaid user was getting **"out of nowhere" messages from four uncoordinated systems** — the webhook paywall ("Your 3-day Grace trial has ended… Reply HELP", fires on any inbound after expiry), the post-trial **winback ladder** Stage 1 ("Hey, your Grace trial just wrapped up…", days later, redundant with the paywall + factually stale), the **midday** nudge, and the nightly **daily recap** ("Quick recap of your day"). Two of those (paywall + winback) both announce "trial ended" with different wording, days apart. User chose the **minimal/quiet** policy: an expired-unpaid user gets **nothing proactive** — only the paywall reply when THEY text.
 
@@ -18,7 +21,7 @@ Driven by prod screenshots (IMG_6873/6874): an expired-trial unpaid user was get
 - **DAILY SUMMARY now gated** — `sendDailySummaries` had NO expired-trial check (only onboarding + opt-out), so the nightly recap leaked to expired users. Added `if (this.isTrialExpiredUnpaid(user)) continue;`.
 - 2136 api tests green, typecheck clean.
 
-**REQUIRED prod action (the winback ladder is flag-controlled, not code) — turn it OFF:** `fly secrets set --app grace-api POST_TRIAL_WINBACK_ENABLED=false`. Default is already off in `env.ts`; it's ON in prod only via a secret set 2026-07-07, so a deploy alone won't disable it — the secret must be unset/false. Reversible instantly (no deploy) if the policy changes back. After that + this deploy, an expired-unpaid user's ONLY message is the paywall when they text. NOTE: `DAILY_SUMMARY_ENABLED` + `POST_TRIAL_WINBACK_ENABLED` are both still ON in prod; this session gates their AUDIENCE, doesn't flip the master switches (except the winback recommendation above).
+**Winback ladder — DONE (turned OFF in prod):** `fly secrets set --app grace-api POST_TRIAL_WINBACK_ENABLED=false` was run this session. It's flag-controlled, not code (default off in `env.ts`; it had been ON in prod via a secret set 2026-07-07, so the deploy alone wouldn't have disabled it — the secret flip was required and is now done). To bring the conversion sequence back later, set it `=true` again (instant, no deploy). NOTE: `DAILY_SUMMARY_ENABLED` is still ON in prod (master switch) — this session gated its AUDIENCE (expired-unpaid users excluded), it didn't flip the master switch. Only `POST_TRIAL_WINBACK_ENABLED` was flipped off.
 
 ---
 

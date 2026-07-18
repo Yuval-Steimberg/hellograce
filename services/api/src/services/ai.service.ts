@@ -711,6 +711,9 @@ import {
 import {
   parseStartDateStatement,
   buildStartDateCaptureReply,
+  isPlausibleStartDate,
+  formatStartDate,
+  glp1WeekNumber,
 } from './medication-start-date.js';
 import {
   detectReminderIntent,
@@ -983,6 +986,7 @@ export interface KnownProfileInput {
   why_started?: string | null;
   biggest_challenge?: string | null;
   support_style?: string | null;
+  glp1_start_date?: Date | string | null;
 }
 
 const SUPPORT_STYLE_LABEL: Record<string, string> = {
@@ -1010,6 +1014,14 @@ export function buildKnownProfileFacts(
   const med = user?.medication && !isEncryptedBlob(user.medication) ? user.medication.trim() : null;
   if (med) facts.push(`Medication: ${med}${user?.dose_mg ? ` at ${user.dose_mg}mg` : ''}`);
   if (user?.injection_day) facts.push(`Injection day: ${user.injection_day}`);
+  // GLP-1 start date (+ derived week number) — a stable settings fact Grace must
+  // answer from, never guess. Only surfaced when plausible so a garbage/1999
+  // stored value can't produce a bogus "week 500". A start question was
+  // fabricating a date/week in prod because this fact never reached the prompt.
+  if (user?.glp1_start_date && isPlausibleStartDate(user.glp1_start_date)) {
+    const start = typeof user.glp1_start_date === 'string' ? new Date(user.glp1_start_date) : user.glp1_start_date;
+    facts.push(`Started GLP-1 on ${formatStartDate(start)} (currently week ${glp1WeekNumber(start)})`);
+  }
   const body: string[] = [];
   if (user?.sex) body.push(String(user.sex));
   if (user?.age) body.push(`${user.age}y`);
@@ -3739,7 +3751,7 @@ CRITICAL RULES:
     // unified intercepts (personal-stats owns protein/calorie; this owns the rest)
     // and before the food step; anchored READ-only patterns can't hijack a log.
     try {
-      const qf = await tryQueryFast(input.text, { users: this.deps.users, logger: this.deps.logger, userId });
+      const qf = await tryQueryFast(input.text, { users: this.deps.users, logger: this.deps.logger, userId, user });
       if (qf) {
         void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
         void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: qf.text }).catch(() => {});

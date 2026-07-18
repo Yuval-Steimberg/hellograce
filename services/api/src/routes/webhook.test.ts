@@ -250,6 +250,20 @@ describe('isSettingsKeyword', () => {
       expect(isSettingsKeyword(t)).toBe(true);
     }
   });
+  it('matches polite-wrapper settings requests (regression: "Can I see my settings")', () => {
+    for (const t of [
+      'Can I see my settings',
+      'can i see my settings?',
+      'Could I view my profile',
+      'How do I change my settings',
+      'where can i update my preferences',
+      'I want to see my settings',
+      'show me my settings',
+      'let me see my account',
+    ]) {
+      expect(isSettingsKeyword(t)).toBe(true);
+    }
+  });
   it('does NOT fire on prose that merely contains the word', () => {
     for (const t of ["what's my wake time", 'my settings are wrong because of the timezone', 'I changed my mind about settings later', 'can you change my injection day']) {
       expect(isSettingsKeyword(t)).toBe(false);

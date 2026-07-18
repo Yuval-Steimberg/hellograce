@@ -1315,7 +1315,7 @@ export function detectPauseIntent(text: string): boolean {
 // on "what's my wake time" (handled by the settings READ flow) or prose that
 // merely contains the word.
 const SETTINGS_KEYWORD_RE =
-  /^\s*(settings?|preferences?|account|profile|my\s+(settings?|preferences?|account|profile)|(change|update|edit|manage|open|see|view)\s+(my\s+)?(settings?|preferences?|account|profile))[.!?]?\s*$/i;
+  /^\s*(?:(?:can|could|how\s+do|how\s+can|where\s+do|where\s+can|where)\s+i\s+|i(?:'?d| would)?\s+(?:want|like)\s+to\s+|let\s+me\s+|show\s+me\s+|i\s+need\s+to\s+)?(settings?|preferences?|account|profile|my\s+(settings?|preferences?|account|profile)|(change|update|edit|manage|open|see|view|show|access|check|find)\s+(my\s+)?(settings?|preferences?|account|profile))[.!?]?\s*$/i;
 
 export function isSettingsKeyword(text: string): boolean {
   return SETTINGS_KEYWORD_RE.test(text.trim());

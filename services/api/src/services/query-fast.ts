@@ -19,7 +19,7 @@
 
 import type { Logger } from 'pino';
 import { normalizeUserText } from '@grace/ai-core';
-import type { UserService } from '../user/user.service.js';
+import type { UserService, GraceUser } from '../user/user.service.js';
 import { renderDailyFoodSummary } from './food-summary.js';
 import { buildStartDateAnswer, isPlausibleStartDate } from './medication-start-date.js';
 
@@ -51,6 +51,18 @@ export interface QueryFastDeps {
   users: UserService;
   logger: Logger;
   userId: string;
+  /**
+   * The already-loaded user, when the caller has one. PREFER passing this.
+   * Re-fetching via `getById(userId)` below uses `WHERE id::text=$1 OR phone=$1`,
+   * which has NO phone_hash lookup — so under field encryption it reads null and
+   * EVERY settings read here (start_date, week_number, medication, injection_day,
+   * weights, age) silently fails → the reply falls to a generic/"not on file"
+   * answer even though Settings has the value. runUnifiedReply already loads the
+   * user via getByPhone (which has the phone_hash path); passing it keeps the
+   * settings reads working under encryption. If the key is present with value
+   * `null`, we honor it (loaded-but-absent) and do NOT re-fetch.
+   */
+  user?: GraceUser | null;
 }
 
 // ─── Pattern matchers ─────────────────────────────────────────────────────────
@@ -402,7 +414,11 @@ export async function tryQueryFast(
     r && statusAck ? { ...r, text: `${statusAck} ${r.text}` } : r;
 
   try {
-    const user = await deps.users.getById(deps.userId).catch(() => null);
+    // Prefer the caller-supplied user (works under field encryption); only
+    // re-fetch when no `user` key was provided at all.
+    const user = 'user' in deps
+      ? deps.user
+      : await deps.users.getById(deps.userId).catch(() => null);
     if (!user) return null;
 
     const result: QueryFastResult | null = await (async (): Promise<QueryFastResult | null> => {

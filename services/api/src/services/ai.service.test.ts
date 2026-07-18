@@ -55,6 +55,18 @@ describe('buildKnownProfileFacts — surface the full profile so Grace never re-
     const facts = buildKnownProfileFacts({ first_name: 'enc:aa:bb:cc', medication: 'enc:dd:ee:ff' });
     expect(facts).toEqual([]);
   });
+
+  it('surfaces a plausible GLP-1 start date + derived week (regression: start question was fabricating)', () => {
+    const iso = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const facts = buildKnownProfileFacts({ first_name: 'Sam', glp1_start_date: iso });
+    const joined = facts.join('\n');
+    expect(joined).toMatch(/Started GLP-1 on .+ \(currently week \d+\)/);
+  });
+
+  it('omits an implausible stored start date so it can never produce a bogus week', () => {
+    const facts = buildKnownProfileFacts({ first_name: 'Sam', glp1_start_date: '1999-01-05' });
+    expect(facts.join('\n')).not.toMatch(/Started GLP-1/);
+  });
 });
 
 describe('answerDateQuestion — deterministic date (flash denies it otherwise)', () => {

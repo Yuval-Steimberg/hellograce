@@ -203,6 +203,32 @@ describe('start_date: broadened detection + never fabricates (2026-07-05)', () =
     expect(r!.category).toBe('week_number');
     expect(r!.text.toLowerCase()).toContain("doesn't look right");
   });
+
+  it('uses a caller-supplied user and NEVER re-fetches via getById (encryption-safe)', async () => {
+    // Regression (2026-07-18): under field encryption, getById(phone) reads null
+    // (no phone_hash lookup) → every settings read here silently failed. The
+    // unified path now passes the already-loaded user; getById must not be hit.
+    const iso = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const getById = vi.fn().mockResolvedValue(null); // simulate the encryption miss
+    const users = { getById, getTodaysFoodSummary: vi.fn() } as unknown as UserService;
+    const r = await tryQueryFast('when did I start ozempic', {
+      users, logger: noopLogger, userId: 'u1',
+      user: { glp1_start_date: iso, medication: 'Ozempic' } as never,
+    });
+    expect(getById).not.toHaveBeenCalled();
+    expect(r!.category).toBe('start_date');
+    expect(r!.text).toMatch(/week \d+/);
+  });
+
+  it('honors a caller-supplied null user (loaded-but-absent) without re-fetching', async () => {
+    const getById = vi.fn().mockResolvedValue({ glp1_start_date: '2026-01-01', medication: 'Ozempic' });
+    const users = { getById, getTodaysFoodSummary: vi.fn() } as unknown as UserService;
+    const r = await tryQueryFast('when did I start ozempic', {
+      users, logger: noopLogger, userId: 'u1', user: null,
+    });
+    expect(getById).not.toHaveBeenCalled();
+    expect(r).toBeNull();
+  });
 });
 
 describe('food_summary_today: aggregated, non-repetitive summary (2026-06-11)', () => {

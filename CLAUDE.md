@@ -6,7 +6,9 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
-## 👉 READ FIRST — Internal DEBUG PLATFORM, Phase 1: safe Live Tester + Trace + Latency (2026-07-18, branch `claude/debug-platform-phase1`, NOT merged/deployed)
+## 👉 READ FIRST — Internal DEBUG PLATFORM, Phase 1: safe Live Tester + Trace + Latency (2026-07-18, **MERGED to `main` via PR #264 squash `21b1f1a`**; web auto-deploys on Vercel, **API needs a `fly deploy`** to activate the endpoint)
+
+**DEPLOY STATUS (2026-07-18):** Merged to `main`. The admin **web** page (Live Test) auto-deploys from `main` on Vercel. The **API** endpoint `POST /admin/debug/live-test` requires `fly deploy --app grace-api` (not yet confirmed done by the user) — until then the page loads but "Run" returns 404/503 (`liveTest not configured`). To use: admin dashboard (grace-admin-silk.vercel.app/admin) → log in with ADMIN_TOKEN → **Live Test** nav (Beaker icon) → enter a real user phone (E.164) + message → Run (dry-run). Verify API with `curl https://grace-api.fly.dev/health` == ok after deploy.
 
 Building the internal debugging/testing platform (16-section spec) in stages. Decisions locked with the user: **start with Live Tester + Trace + Latency**; **keep the existing single admin-token auth, RBAC as a later phase** (read-only/dry-run by default + audit every debug mutation). Reuse/extend existing admin tooling — do NOT duplicate. Full architecture audit done (4 parallel Explore agents): the existing `/admin/replay` is a SIMPLIFIED sandbox (builds its own `AIOrchestrator`, bypasses the real AIService layers) — deliberately NOT reused.
 

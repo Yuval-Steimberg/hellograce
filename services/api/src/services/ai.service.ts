@@ -802,6 +802,14 @@ const SIDE_EFFECT_KEYWORDS: Record<string, string> = {
 export interface AIServiceDeps {
   pool: Pool;
   llm: LLMProvider;
+  /** OPTIONAL provider used ONLY for the grounded, user-facing reply text in
+   *  runUnifiedReply (the warm turn governed by the Nudge behavioral prompt).
+   *  When set (LLM_REPLY_PROVIDER=claude), the reply text is generated here while
+   *  ALL other LLM work — extraction, structured tools, vision, voice, critic —
+   *  stays on `llm` (Gemini). When absent, the reply uses `llm` too, so the
+   *  default path is byte-identical. Falls back to `llm` on any failure via the
+   *  grounded caller's existing timeout+catch, so it can only improve a turn. */
+  replyLlm?: LLMProvider;
   memory: MemoryService;
   rag: RagService;
   users: UserService;
@@ -1041,6 +1049,13 @@ export class AIService {
    *  deterministic paths; production wires env.GEMINI_FIRST (default true). */
   private get geminiFirst(): boolean {
     return this.deps.guards?.geminiFirst ?? false;
+  }
+
+  /** Provider for the grounded, user-facing reply text ONLY. Uses the optional
+   *  `replyLlm` (Claude) when wired, else the default `llm` (Gemini). Everything
+   *  else in the service keeps using `this.deps.llm` directly. */
+  private get replyLlm(): LLMProvider {
+    return this.deps.replyLlm ?? this.deps.llm;
   }
 
   /** DIRECT REPLY MODE — single Gemini call, no orchestrator. Default false
@@ -4079,7 +4094,10 @@ CRITICAL RULES:
         // could never be reused — attempting it only wastes a round-trip and evicts
         // the extractor's reusable cache. Identical systemInstruction reaches the
         // model, so this is latency/cost-only, no output change.
-        this.deps.llm.generate({ messages: baseMessages(sys), temperature: 0.8, maxOutputTokens: 500, skipCache: true, skipContextCache: true, disableThinking: true }),
+        // Reply text only — routes to Claude when replyLlm is wired, else Gemini
+        // (default). Any failure/empty/timeout falls through to the deterministic
+        // reply below, so this can only improve the turn, never break it.
+        this.replyLlm.generate({ messages: baseMessages(sys), temperature: 0.8, maxOutputTokens: 500, skipCache: true, skipContextCache: true, disableThinking: true }),
         new Promise<{ text: string } | null>((res) => setTimeout(() => res(null), UNIFIED_GEN_TIMEOUT_MS)),
       ]).catch(() => null);
       // A multi-part answer keeps its paragraph breaks (one short section per

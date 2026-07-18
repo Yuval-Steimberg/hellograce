@@ -6,6 +6,31 @@ _Also loaded automatically at session start. Update at the end of every session 
 
 ---
 
+## 👉 READ FIRST — Claude as the REPLY-TEXT provider (opt-in, default OFF) (2026-07-18, branch `claude/claude-provider-reply-path`, NOT merged/deployed)
+
+Driven by "is there an LLM better than Gemini for the chat replies?" — YES for the reply path: Grace's warm reply is one call against the ~200-line Nudge behavioral prompt, and flash keeps violating its hard rules (generic-food no-logging ban, symptom safety-net line, no-fabrication, no trailing filler question). Instruction-following against a big prompt is Claude's strength. Implemented as a **surgical, additive, flag-gated** swap that CANNOT regress the current path.
+
+**Design (why it's safe):**
+- New `services/api/src/llm/claude.ts` `ClaudeProvider` implements the SAME `LLMProvider` seam as `GeminiProvider`. Wired in as an OPTIONAL `AIServiceDeps.replyLlm`, used by a new private `get replyLlm()` at EXACTLY ONE call site — the grounded reply `gen()` in `runUnifiedReply` (`ai.service.ts` ~4082, the warm user-facing text). Getter returns `this.deps.replyLlm ?? this.deps.llm`, so when unwired the reply uses Gemini **byte-identical** to before.
+- **Everything else stays on Gemini**: food/profile extraction, structured `responseSchema` tools, vision (food/body photos), voice transcription, the critic. The provider THROWS on any `responseFormat:'json'`/`responseSchema` request (guard) so an accuracy-critical extraction can never be answered as free text — the throw is caught upstream → deterministic path.
+- **Can only improve a turn, never break one**: the grounded caller already wraps the call in an 11s timeout race + `.catch(() => null)` and falls back to a DETERMINISTIC reply on empty/error. So a Claude error/timeout/empty degrades to the same deterministic answer it would have produced anyway. Provider itself is bounded at 10s (just under the caller's race), maxRetries 1.
+- Message mapping: system messages joined → Claude `system`; conversation turns mapped, empties dropped, leading assistant turns dropped (Claude requires first=user).
+
+**Flags (`env.ts`, all default to the current behavior):**
+- `LLM_REPLY_PROVIDER` = `gemini` (default) | `claude`. `gemini` → reply path UNCHANGED.
+- `ANTHROPIC_API_KEY` (optional; required only when `=claude`; missing key → warn + fall back to Gemini).
+- `ANTHROPIC_REPLY_MODEL` = `claude-haiku-4-5` (default; bump to `claude-sonnet-5` with no code change for warmer symptom/emotional turns).
+
+`server.ts` builds `replyLlm` ONLY when `LLM_REPLY_PROVIDER=claude` AND a key is present; otherwise `replyLlm` is undefined → Gemini reply. Added dep `@anthropic-ai/sdk@^0.112.3` (lockfile updated for the frozen-install Docker build).
+
+**Prompt caching — DONE (Claude path only):** `nudge-prompt.ts` exports `NUDGE_RULES` (the static ~200-line behavioral block, byte-identical every turn). `ClaudeProvider.buildSystemBlocks` splits the system prompt into `[{RULES, cache_control:ephemeral}, {dynamic profile/snapshot/temporal}]` so Claude bills the big fixed prefix at ~0.1× on cache reads. Output is UNCHANGED (Claude concatenates the blocks); it falls back to a single plain string if the prompt isn't the grounded reply prompt, so it can never mis-split. NOTE: Haiku's min cacheable prefix is ~4096 tokens — if RULES is under that, caching silently no-ops on Haiku (still helps on Sonnet); harmless either way.
+
+**Verified:** 2142 api tests green (2136 + 6 new `claude.test.ts`: system extraction / role mapping / leading-assistant + empty drop / multi-block concat / RULES cache-split / non-RULES plain-string / json-guard throw / no-user-content throw), typecheck + build clean. The DEFAULT path is proven unchanged (every existing ai.service test constructs AIService WITHOUT replyLlm → uses `deps.llm`; caching is Claude-path-only so Gemini is untouched). Live A/B needs the user's Mac (set the key + `LLM_REPLY_PROVIDER=claude`, watch real transcripts) — the cloud session can't make real Claude calls.
+
+**TO A/B in prod (user):** `fly secrets set --app grace-api ANTHROPIC_API_KEY=sk-ant-... LLM_REPLY_PROVIDER=claude` (optionally `ANTHROPIC_REPLY_MODEL=claude-sonnet-5`) then deploy. Instant revert: `fly secrets unset LLM_REPLY_PROVIDER` (or set `=gemini`) — no deploy needed. **Remaining follow-up (not done):** route the food warm-reply (`foodStepUnified` ~5102) through `replyLlm` too.
+
+---
+
 ## 👉 READ FIRST — post-trial messaging = MINIMAL/QUIET; expired-unpaid users go silent (2026-07-17, **MERGED to `main` via PR #260 squash `860aace`, DEPLOYED to prod + winback secret OFF — user confirmed**)
 
 **DEPLOY STATUS (2026-07-18): DONE.** User merged PR #260 to `main` and put it in production: `fly deploy` grace-api shipped the midday + daily-recap gates, AND `fly secrets set POST_TRIAL_WINBACK_ENABLED=false` turned off the winback ladder. So an expired-trial unpaid user now gets NOTHING proactive — only the paywall reply when THEY text. (Deploy hiccup that session: `fly deploy` first 401'd `unauthorized` because a re-login landed on the wrong Fly account — `steimberg.yuval1@gmail.com` didn't own `grace-api`; resolved by logging into the account that owns the app. The git fast-forward to `860aace` was clean throughout — the block was purely Fly identity, not code/config. Diagnostic: `fly auth whoami` / `fly apps list` — if `grace-api` isn't listed, you're on the wrong account.)

@@ -68,6 +68,20 @@ const EnvSchema = z.object({
   IMESSAGE_WEBHOOK_SECRET: z.string().optional(),
 
   LLM_PROVIDER: z.enum(['gemini']).default('gemini'),
+  /** REPLY-PATH provider switch (2026-07-18). Routes ONLY the grounded,
+   *  user-facing reply text (runUnifiedReply) to the chosen provider; extraction,
+   *  structured tools, vision, voice, and the critic ALWAYS stay on Gemini.
+   *  Default 'gemini' → the reply path is unchanged. Set 'claude' (needs
+   *  ANTHROPIC_API_KEY) to A/B Claude's instruction-following on the Nudge prompt.
+   *  Instant revert: unset it or set LLM_REPLY_PROVIDER=gemini (no deploy). */
+  LLM_REPLY_PROVIDER: z.enum(['gemini', 'claude']).default('gemini'),
+  /** Anthropic API key — required only when LLM_REPLY_PROVIDER=claude. Optional
+   *  otherwise, so nothing changes for a Gemini-only deployment. */
+  ANTHROPIC_API_KEY: z.string().optional(),
+  /** Claude model for the reply path. Haiku 4.5 is fast + cheap and follows the
+   *  guardrail-heavy Nudge prompt far better than flash. Bump to claude-sonnet-5
+   *  (no code change) for warmer/nuanced symptom + emotional turns if desired. */
+  ANTHROPIC_REPLY_MODEL: z.string().default('claude-haiku-4-5'),
   GEMINI_API_KEY: z.string().min(1),
   // 2026-06-19: base model REVERTED to the known-good gemini-2.5-flash.
   // gemini-3-flash-preview was shipping EMPTY replies in production — a preview

@@ -134,6 +134,16 @@ const RULES = [
 ].join('\n');
 
 /**
+ * The static behavioral rules, exported so the Claude reply provider can split
+ * them into their own prompt-cache breakpoint. This block is BYTE-IDENTICAL on
+ * every turn (the per-user profile/snapshot/temporal blocks are appended after
+ * it), so marking it cacheable lets Claude bill it at ~0.1× on cache reads. It
+ * is the exact prefix of every `buildNudgeSystemPrompt` output. Read-only — do
+ * not build prompts from this directly; call `buildNudgeSystemPrompt`.
+ */
+export const NUDGE_RULES = RULES;
+
+/**
  * Assemble the full Nudge-style system prompt for one reply. The behavioral
  * RULES are constant; the profile, today-snapshot (gated), temporal, and memory
  * blocks are injected per turn.

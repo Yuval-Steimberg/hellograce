@@ -9,7 +9,9 @@ import { createLogger } from './logger.js';
 import { createPool } from './db/pool.js';
 import { getRedisClient, closeRedis } from './cache/redis.js';
 import { Cache } from './cache/cache.js';
+import type { LLMProvider } from '@grace/shared';
 import { GeminiProvider } from './llm/gemini.js';
+import { ClaudeProvider } from './llm/claude.js';
 import { GeminiEmbedder } from './rag/gemini-embedder.js';
 import { FaqSemanticCache } from './cache/faq-semantic-cache.js';
 import { RagService } from './rag/rag.service.js';
@@ -74,6 +76,19 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
       );
     }
   })();
+  // OPTIONAL Claude provider for the reply text ONLY (runUnifiedReply). Built
+  // solely when LLM_REPLY_PROVIDER=claude AND a key is present; otherwise the
+  // reply path keeps using `llm` (Gemini), byte-identical to before. It never
+  // touches extraction / structured tools / vision / voice / critic.
+  let replyLlm: LLMProvider | undefined;
+  if (env.LLM_REPLY_PROVIDER === 'claude') {
+    if (env.ANTHROPIC_API_KEY) {
+      replyLlm = new ClaudeProvider({ apiKey: env.ANTHROPIC_API_KEY, model: env.ANTHROPIC_REPLY_MODEL }, logger);
+      logger.info({ model: env.ANTHROPIC_REPLY_MODEL }, 'startup.reply_provider.claude — grounded reply text routes to Claude; all other LLM work stays on Gemini');
+    } else {
+      logger.warn({}, 'startup.reply_provider.claude_missing_key — LLM_REPLY_PROVIDER=claude but ANTHROPIC_API_KEY is unset; falling back to Gemini for the reply path');
+    }
+  }
   const memory = new MemoryService(pool);
   const embedder = new GeminiEmbedder(env.GEMINI_API_KEY, 'gemini-embedding-001', cache);
   const rag = new RagService(pool, embedder, logger);
@@ -132,6 +147,7 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
   const ai = new AIService({
     pool,
     llm,
+    replyLlm,
     memory,
     rag,
     users,

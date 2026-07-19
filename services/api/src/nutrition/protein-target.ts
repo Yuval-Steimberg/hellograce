@@ -1,11 +1,12 @@
 /**
  * Personalized daily protein target (grams) for GLP-1 users.
  *
- * Uses lean-body-mass anchored multipliers, capped by goal-specific
- * grams-per-kg targets. GLP-1 users are at elevated risk of muscle loss,
- * so the floors are higher than the standard RDA (0.8 g/kg).
+ * Uses actual-body-weight multipliers in the evidence-informed 1.2–1.6 g/kg
+ * range commonly recommended during weight loss. This is a planning estimate,
+ * not a clinical prescription; explicit user/clinician targets always win.
  *
- * Returns a sensible default (~80g) if inputs are insufficient.
+ * Returns null if inputs are insufficient so a generic fallback is never
+ * represented as the user's personal target.
  */
 export type FitnessGoal = 'fat_loss' | 'muscle_gain' | 'maintenance' | 'recomposition';
 
@@ -16,33 +17,28 @@ export interface ProteinInputs {
   goal?: FitnessGoal | string | null;
 }
 
-const DEFAULT_TARGET = 80;
 const MIN_TARGET = 60;
-const MAX_TARGET = 220;
+const MAX_TARGET = 180;
 
 const G_PER_KG: Record<FitnessGoal, number> = {
-  // Aggressive but safe; protects lean mass during weight loss.
-  fat_loss: 1.8,
-  // Higher demand for synthesis.
-  muscle_gain: 2.0,
-  // Standard active-adult target.
-  maintenance: 1.4,
-  // Mid-range — losing fat + gaining muscle simultaneously.
-  recomposition: 1.8,
+  fat_loss: 1.2,
+  muscle_gain: 1.6,
+  maintenance: 1.2,
+  recomposition: 1.4,
 };
 
 const AGE_FLOORS: { age: number; gPerKg: number }[] = [
   // Older adults need more protein to overcome anabolic resistance.
-  { age: 65, gPerKg: 1.6 },
+  { age: 65, gPerKg: 1.4 },
   { age: 50, gPerKg: 1.4 },
 ];
 
-export function calculateProteinTarget(input: ProteinInputs): number {
-  if (input.weightLbs == null || input.weightLbs <= 0) return DEFAULT_TARGET;
+export function calculateProteinTarget(input: ProteinInputs): number | null {
+  if (input.weightLbs == null || input.weightLbs <= 0) return null;
   const weightKg = input.weightLbs / 2.2046;
 
   const goal = normalizeGoal(input.goal);
-  const goalGPerKg = goal ? G_PER_KG[goal] : 1.4;
+  const goalGPerKg = goal ? G_PER_KG[goal] : 1.2;
 
   // Age-aware floor for older adults.
   const ageFloor = input.age

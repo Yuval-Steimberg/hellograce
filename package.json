@@ -8,6 +8,10 @@
     "node": "20.x"
   },
   "scripts": {
+    "test:ready": "bash scripts/test-ready.sh",
+    "test:services:setup": "bash scripts/setup-local-test.sh",
+    "test:services:stop": "bash scripts/stop-local-test.sh",
+    "dev:local": "bash scripts/start-local-api.sh",
     "dev:api": "pnpm --filter @grace/api dev",
     "dev:web": "pnpm --filter @grace/web dev",
     "build": "pnpm -r build",

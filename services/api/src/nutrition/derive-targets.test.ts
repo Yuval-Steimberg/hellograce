@@ -3,10 +3,10 @@ import { deriveMissingTargets } from './derive-targets.js';
 
 describe('deriveMissingTargets', () => {
   it('sets a personalized protein target from weight + goal (not the 80g default)', () => {
-    // 200 lbs ≈ 90.7 kg × 1.8 (fat_loss) ≈ 163g
+    // 200 lbs ≈ 90.7 kg × 1.2 (fat_loss) ≈ 109g
     const out = deriveMissingTargets({ current_weight: 200, primary_goal: 'fat_loss' });
-    expect(out.protein_goal_grams).toBeGreaterThan(150);
-    expect(out.protein_goal_grams).toBeLessThan(175);
+    expect(out.protein_goal_grams).toBeGreaterThan(100);
+    expect(out.protein_goal_grams).toBeLessThan(120);
   });
 
   it('never overwrites an existing protein target (fill-if-missing)', () => {
@@ -75,9 +75,9 @@ describe('deriveMissingTargets', () => {
 
   it('falls back to the first free-text goal when primary_goal is absent', () => {
     const out = deriveMissingTargets({ current_weight: 180, goals: ['lose weight', 'feel better'] });
-    // "lose weight" → fat_loss multiplier (1.8) vs the neutral 1.4 default.
+    // "lose weight" maps to the evidence-informed fat-loss multiplier.
     const neutral = deriveMissingTargets({ current_weight: 180 }).protein_goal_grams!;
-    expect(out.protein_goal_grams!).toBeGreaterThan(neutral);
+    expect(out.protein_goal_grams!).toBe(neutral);
   });
 
   it('returns an empty object when there is nothing to fill', () => {

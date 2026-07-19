@@ -34,6 +34,8 @@ export interface SettingsRouteDeps {
   stripePriceId?: string;
   /** Deployment web URL — used for Stripe success/cancel return URLs. */
   webUrl?: string;
+  /** Development only: return the one-time code instead of calling a sender. */
+  localTestMode?: boolean;
 }
 
 const CODE_TTL_SEC = 600;       // 10 minutes
@@ -75,6 +77,7 @@ const SettingsUpdateSchema = z.object({
   goals: z.array(z.string().trim().max(120)).max(20).optional(),
   checkin_count_per_day: z.number().int().min(1).max(3).optional(),
   checkin_days_interval: z.number().int().min(1).max(14).optional(),
+  sms_consent: z.boolean().optional(),
   // Validate format AND plausibility so a stray value (e.g. "1999-01-05" or a
   // future date) can never be saved — Grace answers date questions from this
   // field, so garbage here would surface as a wrong (but "real-looking") answer.
@@ -147,6 +150,7 @@ function toProfile(u: GraceUser): Record<string, unknown> {
     goals: u.goals ?? [],
     checkin_count_per_day: u.checkin_count_per_day,
     checkin_days_interval: u.checkin_days_interval,
+    sms_consent: u.sms_consent,
     glp1_start_date: u.glp1_start_date,
     medication_time: u.medication_time,
     biggest_challenge: u.biggest_challenge,
@@ -198,18 +202,23 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
       // (via Sendblue); the ChannelRouter falls back to WhatsApp if the relay
       // send fails. WhatsApp/SMS users are unchanged. A user with no channel set
       // defaults to iMessage when configured, else WhatsApp/SMS.
-      const channel = resolveChannel(user, deps);
-      try {
-        await deps.sender.send({
-          to: phone,
-          channel,
-          body: `Your Grace verification code is ${code}. It expires in 10 minutes. If you didn't request this, ignore this message.`,
-          raw: true,
-        });
-      } catch (err) {
-        req.log.warn({ err: (err as Error).message, phone }, 'settings.code_send_failed');
-        reply.code(502);
-        return { error: 'Could not send the code right now. Please try again.' };
+      if (deps.localTestMode) {
+        req.log.info({ phone }, 'settings.code_local_test');
+        return { ok: true, sent: true, devCode: code };
+      } else {
+        const channel = resolveChannel(user, deps);
+        try {
+          await deps.sender.send({
+            to: phone,
+            channel,
+            body: `Your Grace verification code is ${code}. It expires in 10 minutes. If you didn't request this, ignore this message.`,
+            raw: true,
+          });
+        } catch (err) {
+          req.log.warn({ err: (err as Error).message, phone }, 'settings.code_send_failed');
+          reply.code(502);
+          return { error: 'Could not send the code right now. Please try again.' };
+        }
       }
     } else {
       req.log.info({ phone }, 'settings.request_code.unregistered');
@@ -313,6 +322,11 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: SettingsRoute
       );
     }
     const fields = parsed.data as Record<string, unknown>;
+    // Explicit opt-in/out owns the scheduler pause flag too. A verified user
+    // opting back in must become eligible again; opting out stops sends now.
+    if (typeof fields.sms_consent === 'boolean') {
+      fields.paused = !fields.sms_consent;
+    }
     const keys = Object.keys(fields);
     if (keys.length === 0) {
       const u = await deps.users.getByPhone(phone);

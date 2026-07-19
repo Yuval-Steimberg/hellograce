@@ -19,7 +19,10 @@ const OnboardSchema = z.object({
   medicationFrequency: z.string().trim().optional().default('weekly'),
   injectionDay: z.string().trim().max(20).optional().nullable(),
   medicationTime: z.string().trim().max(10).optional().nullable(),
-  smsConsent: z.boolean().optional().default(false),
+  // This endpoint immediately starts a messaging relationship and sends the
+  // compliance welcome. Consent is therefore required server-side, not merely
+  // by the current web UI (which can be bypassed by a direct API call).
+  smsConsent: z.literal(true),
   sex: z.enum(['female', 'male', 'nonbinary', 'prefer_not_to_say']).optional().nullable(),
   wakeTime: z.string().regex(/^\d{2}:\d{2}$/).default('08:00'),
   sleepTime: z.string().regex(/^\d{2}:\d{2}$/).default('22:00'),
@@ -78,18 +81,31 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
 
   // ─── Onboarding ─────────────────────────────────────────────────────────────
 
-  app.post('/users/onboard', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req) => {
+  app.post('/users/onboard', { config: { rateLimit: { max: 5, timeWindow: '10 minutes' } } }, async (req, reply) => {
     const parsed = OnboardSchema.safeParse(req.body);
     if (!parsed.success) throw new ValidationError(parsed.error.message);
     const b = parsed.data;
 
     const phone = normalizePhone(b.phone);
+    const existing = await users.getByPhone(phone);
+    // The pre-onboarding existence check is only a UX convenience. Enforce the
+    // invariant here too so a direct request cannot overwrite a completed,
+    // paid, or conversationally-onboarded account's medication and profile.
+    if (
+      existing
+      && (existing.trial_start != null || existing.is_paid || existing.onboarding_state === 'complete')
+    ) {
+      return reply.status(409).send({
+        error: 'ACCOUNT_EXISTS',
+        message: 'This account is already set up. Sign in to update it.',
+      });
+    }
     const foodDislikesArr = b.foodDislikes
       ? b.foodDislikes.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
 
     // Personalized daily protein target (grams), based on body metrics + goal.
-    // Falls back to a sensible 80g default when inputs are missing.
+    // Remains null when weight is missing so Grace asks instead of fabricating.
     const proteinGoalGrams = calculateProteinTarget({
       weightLbs: b.currentWeight ?? null,
       heightCm: b.heightCm ?? null,
@@ -324,4 +340,3 @@ export function registerUserRoutes(app: FastifyInstance, deps: UserRouteDeps): v
     return { ok: true };
   });
 }
-

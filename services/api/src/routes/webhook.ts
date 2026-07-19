@@ -304,17 +304,6 @@ export async function processInboundMessage(
             (needsRegistration(user) || user.onboarding_state === 'in_progress')
           );
 
-          // ── Natural-language opt-out (master prompt — OPT-OUT HANDLING).
-          // Literal STOP/UNSUBSCRIBE are handled by Twilio at the carrier level;
-          // these phrases still need an in-conversation response.
-          if (user && !onboardingActive) {
-            const optOutReply = detectNaturalOptOut(normalized.text, deps.env.PUBLIC_WEB_URL);
-            if (optOutReply) {
-              await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: optOutReply });
-              return;
-            }
-          }
-
           // ── In-chat reminder / check-in frequency change.
           // Reminder preferences are owned by the Settings page (single source
           // of truth). Grace must NOT change the cadence from chat — detect the
@@ -503,6 +492,26 @@ export async function processInboundMessage(
             // wording, not the safety hotline template — preserve those.
             const bodyToSend = safety.class === 'medical_advice' ? safety.response! : localizedResponse;
             await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: bodyToSend });
+            return;
+          }
+
+          // ── Natural-language opt-out (after safety, before normal handling).
+          // Persist both consent=false and paused=true so a later support message
+          // cannot silently re-enable proactive messaging through auto-resume.
+          // The user can explicitly opt back in from their verified Settings.
+          if (user && !onboardingActive && detectNaturalOptOut(normalized.text, deps.env.PUBLIC_WEB_URL)) {
+            const optOutPhone = user.phone;
+            await deps.users.update(optOutPhone, {
+              sms_consent: false,
+              paused: true,
+            }).catch((err: unknown) => {
+              log.warn({ err: err instanceof Error ? err.message : String(err), phone: optOutPhone }, 'opt_out.persist.failed');
+            });
+            await deps.sender.send({
+              to: normalized.userId,
+              channel: normalized.channel,
+              body: buildOptOutReply(deps.env.PUBLIC_WEB_URL),
+            });
             return;
           }
 
@@ -930,7 +939,7 @@ const OPT_OUT_PHRASES: RegExp[] = [
 
 function buildOptOutReply(webUrl: string): string {
   const base = webUrl.replace(/\/$/, '');
-  return `Done — you can manage your preferences here: ${base}/settings. And if you ever want to come back, I'll be here.`;
+  return `Done — I’ve stopped proactive messages. You can still text me anytime, and you can opt back in here: ${base}/settings.`;
 }
 
 function detectNaturalOptOut(text: string, webUrl: string): string | null {

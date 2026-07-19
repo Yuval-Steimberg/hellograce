@@ -159,18 +159,15 @@ export class UserService {
 
   /** Public invalidator — call after writing to food_logs so the next read
    *  sees the new total. Safe to call from anywhere (tools, fast-paths). */
-  invalidateTodaysFoodCache(userId: string): void {
+  async invalidateTodaysFoodCache(userId: string): Promise<void> {
     this.todaysFoodCache.delete(userId);
-    // Also drop the L2 Redis cache (best-effort, fire-and-forget). The
-    // caller doesn't need to await — next read will recompute.
+    // Also drop the L2 Redis cache. Existing mutation callers may keep this
+    // fire-and-forget; routes that establish a previously missing user can
+    // await it before the first diary read to prevent a stale zero-summary.
     if (this.todayFoodCache) {
-      void (async () => {
-        const u = await this.getById(userId).catch(() => null);
-        const tz = u?.timezone ?? 'UTC';
-        if (this.todayFoodCache) {
-          await this.todayFoodCache.invalidate(userId, tz, u?.wake_time ?? null).catch(() => undefined);
-        }
-      })();
+      const u = await this.getById(userId).catch(() => null);
+      const tz = u?.timezone ?? 'UTC';
+      await this.todayFoodCache.invalidate(userId, tz, u?.wake_time ?? null).catch(() => undefined);
     }
   }
 
@@ -958,10 +955,16 @@ export class UserService {
     );
   }
 
-  /** List all active users (for scheduler). */
+  /** List users eligible for proactive messaging. Consent is enforced in the
+   *  query so every scheduler feature (check-ins, summaries, win-back) inherits
+   *  the same compliance floor instead of relying on each caller to remember it. */
   async listActiveUsers(): Promise<GraceUser[]> {
     const { rows } = await this.pool.query<GraceUser>(
-      `SELECT * FROM users WHERE active = TRUE AND paused = FALSE AND blocked = FALSE`,
+      `SELECT * FROM users
+       WHERE active = TRUE
+         AND sms_consent = TRUE
+         AND paused = FALSE
+         AND blocked = FALSE`,
     );
     return rows.map((r) => this.decryptUser(r));
   }
@@ -972,7 +975,11 @@ export class UserService {
    *  "I'm still here" quiet re-engagement after a long silence. */
   async listPausedUsers(): Promise<GraceUser[]> {
     const { rows } = await this.pool.query<GraceUser>(
-      `SELECT * FROM users WHERE active = TRUE AND paused = TRUE AND blocked = FALSE`,
+      `SELECT * FROM users
+       WHERE active = TRUE
+         AND sms_consent = TRUE
+         AND paused = TRUE
+         AND blocked = FALSE`,
     );
     return rows.map((r) => this.decryptUser(r));
   }
@@ -983,7 +990,10 @@ export class UserService {
    *  Uses the partial index users_onboarding_in_progress_idx. */
   async listOnboardingInProgress(): Promise<GraceUser[]> {
     const { rows } = await this.pool.query<GraceUser>(
-      `SELECT * FROM users WHERE onboarding_state = 'in_progress' AND blocked = FALSE`,
+      `SELECT * FROM users
+       WHERE onboarding_state = 'in_progress'
+         AND sms_consent = TRUE
+         AND blocked = FALSE`,
     );
     return rows.map((r) => this.decryptUser(r));
   }

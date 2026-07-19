@@ -68,12 +68,13 @@ export function deriveMissingTargets(p: TargetProfile): DerivedTargetUpdates {
   const weightLbs = p.current_weight ?? null;
 
   if (p.protein_goal_grams == null && weightLbs != null && weightLbs > 0) {
-    out.protein_goal_grams = calculateProteinTarget({
+    const protein = calculateProteinTarget({
       weightLbs,
       heightCm: p.height_cm ?? null,
       age: p.age ?? null,
       goal: goalOf(p),
     });
+    if (protein != null) out.protein_goal_grams = protein;
   }
 
   if (p.calorie_goal_kcal == null) {

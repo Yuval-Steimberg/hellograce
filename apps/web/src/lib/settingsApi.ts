@@ -29,6 +29,7 @@ export interface SettingsProfile {
   goals: string[];
   checkin_count_per_day: number | null;
   checkin_days_interval: number | null;
+  sms_consent: boolean;
   glp1_start_date: string | null;
   medication_time: string | null;
   biggest_challenge: string | null;
@@ -66,7 +67,7 @@ async function call<T>(path: string, init: RequestInit & { auth?: boolean } = {}
 
 export const settingsApi = {
   requestCode: (phone: string) =>
-    call<{ ok: boolean; sent: boolean }>('/settings/request-code', { method: 'POST', body: JSON.stringify({ phone }) }),
+    call<{ ok: boolean; sent: boolean; devCode?: string }>('/settings/request-code', { method: 'POST', body: JSON.stringify({ phone }) }),
 
   verifyCode: (phone: string, code: string) =>
     call<{ ok: boolean; token: string; profile: SettingsProfile }>('/settings/verify-code', {

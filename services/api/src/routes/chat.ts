@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import type { AIService } from '../services/ai.service.js';
-import { ValidationError } from '../errors.js';
+import type { UserService } from '../user/user.service.js';
+import { UnauthorizedError, ValidationError } from '../errors.js';
 
 const ChatSchema = z.object({
   userId: z.string().min(1).max(120),
@@ -10,11 +11,52 @@ const ChatSchema = z.object({
 });
 
 /** Investor-friendly demo endpoint — bypasses Twilio entirely. */
-export function registerChatRoutes(app: FastifyInstance, ai: AIService, pool?: Pool): void {
+export function registerChatRoutes(
+  app: FastifyInstance,
+  ai: AIService,
+  pool?: Pool,
+  users?: Pick<UserService, 'ensureUser' | 'invalidateTodaysFoodCache'>,
+  options: { localTestMode?: boolean; adminToken?: string } = { localTestMode: true },
+): void {
+  const requireDeveloperAccess = (authorization: unknown): void => {
+    if (options.localTestMode) return;
+    const header = Array.isArray(authorization) ? authorization[0] : authorization;
+    if (!options.adminToken || header !== `Bearer ${options.adminToken}`) {
+      throw new UnauthorizedError('Developer chat access requires an admin token');
+    }
+  };
+
   app.post('/chat/send', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (req) => {
+    requireDeveloperAccess(req.headers.authorization);
     const parsed = ChatSchema.safeParse(req.body);
     if (!parsed.success) throw new ValidationError(parsed.error.message);
     const { userId, text } = parsed.data;
+
+    // Shell-test paste guard. `send "first"send "second"` is parsed by zsh as
+    // one argument, and the literal `.send`/`send` suffix used to be estimated
+    // as part of the food name. Refuse the malformed test input before it can
+    // corrupt the diary; the user can rerun the commands on separate lines.
+    if (/[.!?]["']?send(?:\s+|$)/i.test(text)) {
+      return {
+        reply: 'It looks like two test commands were joined together. Run each send command on its own line, then try again.',
+        intent: 'invalid_test_input',
+        confidence: 'high',
+        latencyMs: 0,
+        toolResults: [],
+      };
+    }
+
+    // The real messaging webhook creates/refreshes the user before invoking
+    // AIService. Keep the demo endpoint behaviorally equivalent: diary reads
+    // depend on the profile's timezone/wake-time boundary, so skipping this
+    // step made a successfully persisted meal appear as "Nothing logged".
+    if (users) {
+      await users.ensureUser(userId);
+      // A demo user may have logged food before a profile row existed (older
+      // /chat/send behavior). That empty result can remain in Redis under the
+      // same phone/date key, so clear it synchronously before AIService reads.
+      await users.invalidateTodaysFoodCache(userId);
+    }
 
     const result = await ai.handleMessage({
       userId,
@@ -40,6 +82,7 @@ export function registerChatRoutes(app: FastifyInstance, ai: AIService, pool?: P
    * as they land in the DB. Polls every 500 ms and pushes deltas as SSE events.
    */
   app.get('/chat/stream/:conversationId', async (req, reply) => {
+    requireDeveloperAccess(req.headers.authorization);
     if (!pool) {
       reply.status(503).send({ error: 'STREAM_UNAVAILABLE', message: 'Streaming requires DB pool' });
       return;
@@ -100,6 +143,7 @@ export function registerChatRoutes(app: FastifyInstance, ai: AIService, pool?: P
 
   /** Chat history for a user (most recent 100 messages). */
   app.get('/chat/history/:userId', async (req) => {
+    requireDeveloperAccess(req.headers.authorization);
     if (!pool) return { messages: [] };
     const { userId } = req.params as { userId: string };
     const { rows } = await pool.query(

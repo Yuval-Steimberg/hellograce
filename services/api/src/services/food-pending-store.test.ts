@@ -62,4 +62,18 @@ describe('food-pending-store', () => {
     await expect(addPendingFood(undefined, PHONE, [{ item: 'x', clarify_question: null }])).resolves.toBeUndefined();
     await expect(clearPendingFood(undefined, PHONE)).resolves.toBeUndefined();
   });
+
+  it('falls back to the durable database row and rehydrates Redis', async () => {
+    const redis = fakeRedis();
+    redis.get.mockRejectedValueOnce(new Error('redis unavailable'));
+    const pool = {
+      query: vi.fn(async () => ({
+        rows: [{ items: [{ item: 'pasta', clarify_question: 'How much?', ts: 1 }] }],
+      })),
+    };
+    const got = await getPendingFood(redis as never, PHONE, pool as never);
+    expect(got.map((p) => p.item)).toEqual(['pasta']);
+    expect(pool.query).toHaveBeenCalled();
+    expect(redis.set).toHaveBeenCalled();
+  });
 });

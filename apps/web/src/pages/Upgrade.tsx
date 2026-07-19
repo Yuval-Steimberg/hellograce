@@ -90,8 +90,9 @@ export default function Upgrade() {
         toast.error(data?.message ?? data?.error ?? "Couldn't send code. Is this the right number?");
         return;
       }
+      if (data?.devCode) setCode(String(data.devCode));
       setPhase("enter-code");
-      toast.success("Code sent! Check your messages 📱");
+      toast.success(data?.devCode ? `Local test code: ${data.devCode}` : "Code sent. Check your messages.");
     } catch {
       toast.error("Something went wrong. Try again.");
     } finally {
@@ -320,8 +321,9 @@ export default function Upgrade() {
                   Pick up where you left off.
                 </h1>
                 <p className="text-muted-foreground text-base leading-relaxed mb-8">
-                  Your daily check-ins, food and weight tracking, and everything Grace has
-                  learned about you — all back on. Secure checkout is handled by Stripe.
+                  Turn everything Grace has learned into a weekly report, adaptive daily
+                  plan, injection-cycle insights, and a doctor-ready export. Your check-ins,
+                  food, symptoms, and weight history stay connected.
                 </p>
                 <QuizButton onClick={handleStartCheckout} disabled={checkingOut}>
                   {checkingOut ? "Redirecting to checkout…" : "Continue to secure checkout"}
@@ -347,9 +349,15 @@ export default function Upgrade() {
                   You're all set.
                 </h1>
                 <p className="text-muted-foreground text-base leading-relaxed mb-10 max-w-xs">
-                  Your Grace subscription is active. Head back to WhatsApp — I'm here whenever you need me.
+                  Your Grace Plus subscription is active. Your personal reports and plans are ready in the dashboard.
                 </p>
                 <div className="w-full space-y-3">
+                  <button
+                    onClick={() => navigate("/dashboard")}
+                    className="w-full h-14 rounded-full bg-primary text-primary-foreground font-medium text-sm transition-transform active:scale-[0.98]"
+                  >
+                    Open my dashboard
+                  </button>
                   <button
                     onClick={handleManageSubscription}
                     className="w-full h-14 rounded-full ring-1 ring-border/60 bg-secondary/50 hover:bg-secondary text-foreground font-medium text-sm transition-colors"

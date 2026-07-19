@@ -65,7 +65,8 @@ export function TodayOverview({
 }) {
   const n = data.nutrition;
   const w = data.weight;
-  const proteinPct = ringPct(n.today.protein, n.proteinGoal);
+  const hasProteinGoal = n.proteinGoal != null && n.proteinGoal > 0;
+  const proteinPct = hasProteinGoal ? ringPct(n.today.protein, n.proteinGoal) : 0;
   const hasCalorieGoal = n.calorieGoal != null && n.calorieGoal > 0;
   const caloriePct = hasCalorieGoal ? ringPct(n.today.calories, n.calorieGoal) : 0;
   const meals = n.today.items.length;
@@ -89,7 +90,7 @@ export function TodayOverview({
       <div className="grid grid-cols-2 items-center gap-y-6 sm:grid-cols-4 sm:gap-4">
         <RingTile
           pct={proteinPct} color={CLAY}
-          big={`${n.today.protein}g`} small={`of ${n.proteinGoal}g`} label="Protein"
+          big={`${n.today.protein}g`} small={hasProteinGoal ? `of ${n.proteinGoal}g` : "logged today"} label="Protein"
         />
         {hasCalorieGoal ? (
           <RingTile

@@ -48,7 +48,13 @@ export function QuickLog({ onLogged }: { onLogged: () => void }) {
     try {
       const r = await dashboardApi.logFood(food.trim());
       setFood("");
-      done(r.logged.protein != null ? `Logged — about ${r.logged.protein}g protein` : "Meal logged");
+      if (r.needsPortion) {
+        if (r.logged.length > 0) onLogged();
+        toast.message(r.ask || "About how much did you have? A rough amount is enough.");
+        return;
+      }
+      const protein = r.logged.reduce((sum, item) => sum + (item.protein ?? 0), 0);
+      done(protein > 0 ? `Logged — about ${protein}g protein` : "Meal logged");
     } catch (e) { toast.error(e instanceof Error ? e.message : "Couldn't estimate that"); } finally { setBusy(false); }
   };
 

@@ -32,11 +32,11 @@ export interface DashboardSummary {
     today: {
       protein: number;
       calories: number;
-      proteinGoal: number;
+      proteinGoal: number | null;
       calorieGoal: number | null;
       items: Array<{ food: string; protein: number; calories: number }>;
     };
-    proteinGoal: number;
+    proteinGoal: number | null;
     calorieGoal: number | null;
     history: Array<{ day: string; protein: number; calories: number; itemCount: number }>;
     streak: number;
@@ -79,6 +79,31 @@ export interface DashboardSummary {
     patterns: Array<{ symptom: string; count: number; typicalTiming: string | null; topRemedy: string | null }>;
     recent: Array<{ symptom: string; daysSinceInjection: number | null; remedyHelped: string | null; date: string }>;
     total: number;
+  };
+  premium: {
+    access: "free" | "trial" | "plus" | "pro";
+    unlocked: boolean;
+    upgradePath: string | null;
+    preview: string;
+    weeklyReport: {
+      headline: string;
+      highlights: string[];
+      focus: string;
+    } | null;
+    injectionInsight: {
+      title: string;
+      body: string;
+      nextStep: string;
+    } | null;
+    dailyPlan: {
+      breakfast: string;
+      lunch: string;
+      snack: string;
+      dinner: string;
+      hydration: string;
+      movement: string;
+    } | null;
+    doctorReport: string | null;
   };
 }
 
@@ -131,7 +156,14 @@ export const dashboardApi = {
     ),
 
   logFood: (text: string) =>
-    call<{ ok: boolean; logged: { food: string; protein: number | null; calories: number | null }; todayProtein: number | null; todayCalories: number | null }>(
+    call<{
+      ok: boolean;
+      logged: Array<{ food: string; protein: number | null; calories: number | null }>;
+      needsPortion: boolean;
+      ask: string | null;
+      todayProtein: number | null;
+      todayCalories: number | null;
+    }>(
       "/dashboard/food",
       { method: "POST", auth: true, body: JSON.stringify({ text }) },
     ),

@@ -137,8 +137,12 @@ export async function buildHarness(opts: { delays?: StubDelays } = {}): Promise<
       relevanceEnabled: env.RELEVANCE_CHECK_ENABLED,
       qualityStrict: env.QUALITY_GUARD_STRICT,
       // Match production (server.ts) so the harness exercises the same paths.
+      geminiFirst: env.GEMINI_FIRST,
       directReplyMode: env.DIRECT_REPLY_MODE,
+      leanReplyMode: env.LEAN_REPLY_MODE,
+      compactReplyMode: env.COMPACT_REPLY_MODE,
       progressiveProfile: env.PROGRESSIVE_PROFILE_ENABLED,
+      unifiedReplyPath: env.UNIFIED_REPLY_PATH,
     },
   });
 
@@ -149,7 +153,7 @@ export async function buildHarness(opts: { delays?: StubDelays } = {}): Promise<
   const app = Fastify({ loggerInstance: logger as never }) as unknown as FastifyInstance;
   await app.register(formbody);
   registerWebhookRoutes(app, { env, ai, sender: sender as unknown as TwilioSender, users, redis, templates });
-  registerChatRoutes(app, ai, pool);
+  registerChatRoutes(app, ai, pool, users);
   await app.ready();
 
   const sendWhatsApp: Harness['sendWhatsApp'] = async (phone, text, o = {}) => {

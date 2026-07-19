@@ -24,6 +24,10 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3001),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  /** Local-only testing helper. When enabled by scripts/start-local-api.sh,
+   * verification codes are returned to the browser instead of sent through a
+   * real SMS/iMessage provider. Never enable in production. */
+  LOCAL_TEST_MODE: boolish(false),
 
   PUBLIC_BASE_URL: z.string().url(),
   /** Public-facing web app URL for upgrade + settings links in outbound messages. */
@@ -332,10 +336,10 @@ const EnvSchema = z.object({
    *  reply uses ONE grounded prompt (compact Nudge-style tight style + the
    *  always-present grounding facts: date/time, injection schedule, today's
    *  totals) instead of choosing between the compact / lean / personalised
-   *  builders. Default false — flip ONLY after the regression + auto-eval gate
-   *  passes. The upstream intercepts (reminders, image analysis, multi-part,
-   *  safety) are UNAFFECTED by this flag; it only selects the final prompt. */
-  UNIFIED_REPLY_PATH: boolish(false),
+   *  builders. This is the default for the unified Grace + Nudge system. Set
+   *  UNIFIED_REPLY_PATH=false for an instant rollback to Grace's legacy
+   *  orchestrator. The upstream safety and media paths remain available. */
+  UNIFIED_REPLY_PATH: boolish(true),
   /** DAILY_SUMMARY_ENABLED (2026-07-06). Master gate for the nightly end-of-day
    *  recap feature (a SEPARATE system from reminders — its own scheduler pass,
    *  own Redis dedup lock, own check_ins type). Default false = dark launch:

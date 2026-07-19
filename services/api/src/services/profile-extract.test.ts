@@ -35,6 +35,8 @@ describe('mightStateProfileChange (pre-filter)', () => {
     expect(mightStateProfileChange('I inject on Fridays now')).toBe(true);
     expect(mightStateProfileChange('my goal weight is 160')).toBe(true);
     expect(mightStateProfileChange("I really don't like mushrooms")).toBe(true);
+    expect(mightStateProfileChange('I do not like cottage cheese')).toBe(true);
+    expect(mightStateProfileChange('Actually I am taking 10 mg every Monday now')).toBe(true);
   });
 
   it('fires on present/habitual injection-day statements (memory capture)', () => {

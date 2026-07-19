@@ -79,11 +79,9 @@ describe('relevantProfileSlot — ask the field that makes THIS answer accurate'
     // The bare word "protein" alone must not trigger a gather.
     expect(relevantProfileSlot(empty, 'I love a good protein shake')).toBeNull();
   });
-  it('a food-idea question pulls dietary, then dislikes, then nothing', () => {
-    expect(relevantProfileSlot(empty, 'what should I eat for dinner?')).toBe('dietary');
-    // diet known but dislikes unknown → ask dislikes
-    expect(relevantProfileSlot({ ...empty, dietary_pattern: 'vegan' }, 'any dinner ideas?')).toBe('dislikes');
-    // both known → not relevant
+  it('answers food ideas first instead of blocking on missing preferences', () => {
+    expect(relevantProfileSlot(empty, 'what should I eat for dinner?')).toBeNull();
+    expect(relevantProfileSlot({ ...empty, dietary_pattern: 'vegan' }, 'any dinner ideas?')).toBeNull();
     expect(relevantProfileSlot({ ...empty, dietary_pattern: 'vegan', food_dislikes: ['eggs'] }, 'any dinner ideas?')).toBeNull();
   });
   it('a reminder-timing question pulls wake_sleep when unknown', () => {
@@ -164,7 +162,7 @@ describe('contextualGatherSlot — pick the field relevant to the topic', () => 
 describe('buildProfileGatherNote', () => {
   it('instructs ONE warm question at the end, with the reason, never stacked', () => {
     const note = buildProfileGatherNote('current_weight');
-    expect(note).toMatch(/PROFILE GATHERING/);
+    expect(note).toMatch(/OPTIONAL PROFILE LEARNING/);
     expect(note).toMatch(/ONE/);
     expect(note.toLowerCase()).toMatch(/weight/);
     expect(note).toMatch(/never stack/i);
@@ -178,6 +176,10 @@ describe('parseProfileReply — defensive (short, direct answers only)', () => {
     expect(parseProfileReply('current_weight', '150kg').fields).toEqual({ current_weight: 331 }); // prod: was stored as 150
     expect(parseProfileReply('current_weight', '180').fields).toEqual({ current_weight: 180 }); // bare number stays lb (back-compat)
     expect(parseProfileReply('height', "6'2").fields).toEqual({ height_cm: 188 });
+  });
+  it('accepts natural phrasing when the requested metric is explicit', () => {
+    expect(parseProfileReply('current_weight', 'For context, I currently weigh about 180 pounds').fields).toEqual({ current_weight: 180 });
+    expect(parseProfileReply('goal_weight', 'My longer term goal is to get down to 150 pounds').fields).toEqual({ goal_weight: 150 });
   });
   it('REJECTS a long sentence that merely contains a number (no misparse)', () => {
     // pending=current_weight, but the user moved on and logged food

@@ -23,6 +23,7 @@ services/api/coverage/results/
 .env.local
 .env.*.local
 !.env.example
+.local/
 
 # logs
 *.log

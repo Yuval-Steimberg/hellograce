@@ -204,9 +204,17 @@ export function pendingFoodStuck(
   pending: readonly string[],
   history: ReadonlyArray<{ role: string; content: string }>,
 ): boolean {
-  const clarifyTurns = history.filter(
-    (t) => t.role === 'assistant' && t.content.includes('?') && PRIOR_FOOD_CLARIFY_RE.test(t.content),
-  );
+  // Message persistence can surface the same assistant reply twice while the
+  // async turn writer catches up. Count distinct clarification texts, otherwise
+  // one real question looks like two and the anti-loop cap guesses a portion.
+  const seenClarifications = new Set<string>();
+  const clarifyTurns = history.filter((t) => {
+    if (t.role !== 'assistant' || !t.content.includes('?') || !PRIOR_FOOD_CLARIFY_RE.test(t.content)) return false;
+    const key = t.content.trim().toLowerCase();
+    if (seenClarifications.has(key)) return false;
+    seenClarifications.add(key);
+    return true;
+  });
   if (clarifyTurns.length < 2) return false;
   return pending.some((item) => {
     const words = item.toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
@@ -783,6 +791,7 @@ import { makeGetFoodSummaryTool, makeGetProteinHistoryTool } from '../tools/get-
 import { makeLogSideEffectTool } from '../tools/log-side-effect.js';
 import { makeSearchFoodIdeasTool } from '../tools/search-food-ideas.js';
 import { makeRemoveFoodTool } from '../tools/remove-food.js';
+import { FoodLedgerService } from './food-ledger.js';
 import type { TurnPersistJob, FactExtractJob, MemoryMdUpdateJob } from '../workers/queues.js';
 import type { MemoryMdService } from '../memory/memory-md.service.js';
 
@@ -1270,7 +1279,7 @@ export class AIService {
         const deleted = await this.deps.users.clearTodaysFood(input.userId);
         // Also clear any awaiting-portion items so a reset truly zeroes the day —
         // otherwise a stale pending sandwich/shake could resolve onto a later turn.
-        await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+        await clearPendingFood(this.deps.redis, input.userId, this.deps.pool).catch(() => {});
         const reply = buildFoodResetReply(deleted);
         const totalMs = Date.now() - t0;
         this.deps.logger.info({ userId: input.userId, deleted }, 'ai.food_reset.served');
@@ -3493,7 +3502,7 @@ CRITICAL RULES:
     // Latency page's per-stage breakdown). Purely observational — mark() only
     // records elapsed time between marks, never changes control flow.
     lat.mark('unified_load');
-    const [user, todaysFoodPre, knownFacts, memoryMd, history, conversationId] = await Promise.all([
+    const [userLoaded, todaysFoodPre, knownFacts, memoryMd, history, conversationId] = await Promise.all([
       this.deps.users.getByPhone(userId).catch(() => null),
       this.deps.users.getTodaysFoodSummary(userId).catch(() => ({ protein_g: 0, calories: 0, items: [] as string[] })),
       this.deps.users.getKnownFacts(userId, 8).catch(() => [] as Array<{ fact: string }>),
@@ -3501,6 +3510,11 @@ CRITICAL RULES:
       this.deps.memory.getRecentTurns(userId, this.deps.historyTurns ?? 12).catch(() => [] as ChatTurn[]),
       this.deps.memory.ensureConversation(userId).catch(() => `fallback-${userId}`),
     ]);
+    // Keep the unified path at feature parity with the orchestrator path: durable
+    // facts volunteered in chat (medication, dose/day, goal weight, dislikes)
+    // must be learned before any gate or reply is built. This also gives the
+    // current turn the refreshed profile rather than waiting for the next turn.
+    const user = await this.tryLearnProfile(input, userLoaded, this.deps.logger);
     // Episodic recall (recency-weighted user_memories) is consumed ONLY on the
     // grounded reply path. Kick it off here so it overlaps the deterministic
     // intercepts + the food step below, but AWAIT it lazily at buildGroundedPrompt
@@ -3510,6 +3524,70 @@ CRITICAL RULES:
     const recalledPromise: Promise<string[]> = this.deps.userMemory
       ? this.deps.userMemory.retrieve(userId, input.text, 3).catch(() => [] as string[])
       : Promise.resolve([] as string[]);
+
+    // Text that merely claims a photo was sent is not media. Never infer visual
+    // contents from wording or prior turns: only input.media authorizes vision.
+    if (
+      input.media.length === 0 &&
+      /\b(?:sent|attached|uploaded|shared)\b[\s\S]{0,40}\b(?:photo|picture|image|pic)\b/i.test(input.text)
+    ) {
+      const reply = "I don't see a photo attached to this message. Please send it again and I'll take a look.";
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+      return { text: reply, confidence: 'high', intent: 'media_missing', toolResults: [], usedRetrieval: false, latencyMs: Date.now() - t0 };
+    }
+
+    // If this turn changed a durable profile field, confirm the write directly.
+    // Sending the statement back through the Nudge prompt would invoke its legacy
+    // Settings redirect rule even though Grace has already safely stored it.
+    if (userLoaded && user) {
+      const changed: string[] = [];
+      if (user.medication !== userLoaded.medication) changed.push(`medication to ${user.medication}`);
+      if (user.dose_mg !== userLoaded.dose_mg) changed.push(`dose to ${user.dose_mg} mg`);
+      if (user.injection_day !== userLoaded.injection_day) changed.push(`injection day to ${user.injection_day}`);
+      if (user.goal_weight !== userLoaded.goal_weight) changed.push(`goal weight to ${user.goal_weight} lb`);
+      const oldDislikes = new Set((userLoaded.food_dislikes ?? []).map((d) => d.toLowerCase()));
+      const addedDislikes = (user.food_dislikes ?? []).filter((d) => !oldDislikes.has(d.toLowerCase()));
+      if (addedDislikes.length) changed.push(`food preferences to avoid ${addedDislikes.join(', ')}`);
+      if (changed.length > 0) {
+        const medicationChanged = user.medication !== userLoaded.medication;
+        const reply = `Updated your ${changed.join(' and ')}.${medicationChanged ? ' Keep your prescriber in the loop about medication changes.' : ''}`;
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+        void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+        return {
+          text: reply,
+          confidence: 'high',
+          intent: 'profile_update',
+          toolResults: [{ name: 'update_profile', args: { fields: changed }, output: { updated: true }, latencyMs: 0, ok: true }],
+          usedRetrieval: false,
+          latencyMs: Date.now() - t0,
+        };
+      }
+    }
+
+    // An explicit detailed full-day request is a product capability, not a
+    // reason to defer or force the user to pick one topic. Render every requested
+    // section deterministically so model length/style drift cannot omit hydration,
+    // timing, movement, or nausea support.
+    if (wantsFullDayPlan(input.text) && /\b(?:detailed|including|breakfast|lunch|dinner)\b/i.test(input.text)) {
+      const avoid = (user?.food_dislikes ?? []).map((d) => d.toLowerCase());
+      const breakfast = avoid.some((d) => d.includes('yogurt'))
+        ? 'two eggs with whole-grain toast and a small piece of fruit'
+        : 'Greek yogurt with berries and a spoonful of nut butter';
+      const reply = [
+        `Breakfast: ${breakfast}.`,
+        'Lunch: grilled chicken or tofu with rice, cooked vegetables, and a light dressing.',
+        'Snack: a protein shake, edamame, or a hard-boiled egg; choose one based on appetite.',
+        'Dinner: baked salmon or chicken with a small potato and roasted vegetables.',
+        'Protein timing: spread your target across the day, aiming for a protein source at each meal and snack instead of trying to catch up at night.',
+        'Hydration: sip steadily between meals; small frequent sips are usually easier than drinking a large amount at once.',
+        'Movement: if you feel well, take a gentle 10–20 minute walk after a meal and skip hard exercise if nausea or dizziness is active.',
+        'Nausea prevention: keep portions small, eat slowly, limit greasy or very spicy foods, and stop when comfortably full. If nausea worsens, lasts more than a few days, or you cannot keep fluids down, contact your prescriber.',
+      ].join('\n');
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
+      void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
+      return { text: reply, confidence: 'high', intent: 'meal_plan', toolResults: [], usedRetrieval: false, latencyMs: Date.now() - t0, preserveParagraphs: true };
+    }
 
     // ── Trivial-message fast-path (instant, warm, NO LLM) ──────────────────
     // The unified path otherwise sends even "Hey" through the grounded Gemini
@@ -3725,7 +3803,12 @@ CRITICAL RULES:
     // three now read the same stored number, so the target is consistent). Runs
     // before the food step so a "goal" query is never mistaken for a food log.
     {
-      const psRaw = await this.tryPersonalStats(input).catch(() => null);
+      // A combined diary question ("what did I eat and how much protein?")
+      // belongs to the richer food-diary renderer below. Letting the personal
+      // stats shortcut claim it answered only the grams and dropped the foods.
+      const psRaw = isFoodDiaryQuery(input.text)
+        ? null
+        : await this.tryPersonalStats(input).catch(() => null);
       if (psRaw) {
         const reply = await this.warmlyRephrase(
           psRaw,
@@ -3778,7 +3861,7 @@ CRITICAL RULES:
       // If foods are still awaiting a clarification (pending), acknowledge them so
       // the user isn't told "nothing" about something they just reported (prod: a
       // pending shake + sandwich were invisible to "what have I eaten today").
-      const pendingItems = await getPendingFood(this.deps.redis, userId).catch(
+      const pendingItems = await getPendingFood(this.deps.redis, userId, this.deps.pool).catch(
         () => [] as Awaited<ReturnType<typeof getPendingFood>>,
       );
       const pendingNames = pendingItems.map((p) => p.item.trim()).filter(Boolean);
@@ -3910,7 +3993,7 @@ CRITICAL RULES:
     // legitimate clarifications). Ports the dead-path guarantee, correctly scoped.
     if (food && food.clarify && food.pending.length > 0 && pendingFoodStuck(food.pending, history)) {
       const cappedLogged = await this.logPendingBestEstimate(userId, food.pending);
-      await clearPendingFood(this.deps.redis, userId).catch(() => {});
+      await clearPendingFood(this.deps.redis, userId, this.deps.pool).catch(() => {});
       this.deps.logger.info(
         { userId, items: food.pending.length },
         'ai.unified_food.clarify_cap_logged',
@@ -3928,6 +4011,35 @@ CRITICAL RULES:
     // orchestrator tool registry, so this metric was always 0). Fire-and-forget —
     // zero user-facing latency, never touches the food logging itself.
     this.persistFoodToolLogs(userId, conversationId, food);
+    const foodToolResults: ToolResult[] = food
+      ? [
+          ...food.logged.map((item) => ({
+            name: 'log_food',
+            args: { food: item },
+            output: { logged: true },
+            latencyMs: 0,
+            ok: true,
+          })),
+          ...(food.pending.length > 0
+            ? [{
+                name: 'pending_food',
+                args: { foods: food.pending },
+                output: { awaitingPortion: true },
+                latencyMs: 0,
+                ok: true,
+              }]
+            : []),
+          ...(food.removed
+            ? [{
+                name: 'remove_food',
+                args: { food: food.removed },
+                output: { removed: true },
+                latencyMs: 0,
+                ok: true,
+              }]
+            : []),
+        ]
+      : [];
     const todaysFood = food && food.logged.length > 0
       ? await this.deps.users.getTodaysFoodSummary(userId).catch(() => todaysFoodPre)
       : todaysFoodPre;
@@ -4005,7 +4117,14 @@ CRITICAL RULES:
       const didLog = food.logged.length > 0 || !!food.removed;
       this.deps.logger.info({ userId, logged: food.logged.length, pending: food.pending.length, removed: !!food.removed }, 'ai.unified.food_deterministic');
       this.persistLatency(userId, didLog ? 'unified_food' : 'unified', totalMs, lat.snapshot(), input.text, reply);
-      return { text: reply, confidence: 'high', intent: didLog ? 'food_log' : 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs };
+      return {
+        text: reply,
+        confidence: 'high',
+        intent: didLog ? 'food_log' : 'food_clarify',
+        toolResults: foodToolResults,
+        usedRetrieval: false,
+        latencyMs: totalMs,
+      };
     }
 
     // Non-food chat — OR a multi-topic message that merely mentioned food —
@@ -4083,6 +4202,10 @@ CRITICAL RULES:
 
     // Multi-part guidance so Grace answers EVERY part + leads with the feeling.
     if (isMultiTopic) systemPrompt += buildMultiPartNote(understanding);
+    const fullDayPlanRequested = wantsFullDayPlan(input.text);
+    if (fullDayPlanRequested) {
+      systemPrompt += `\n\nFULL-DAY PLAN REQUEST: the user explicitly asked for a detailed plan. Give a complete, practical plan now and cover every named category (meals, snacks, hydration, protein timing, movement, and nausea prevention). Do not refuse, defer, or ask them to choose one topic. Keep medical advice conservative and include appropriate symptom red flags. A compact labeled structure is allowed for this explicit detailed-plan request.`;
+    }
 
     // Non-food chat keeps history for continuity.
     const effHistory = history;
@@ -4109,7 +4232,7 @@ CRITICAL RULES:
         // Reply text only — routes to Claude when replyLlm is wired, else Gemini
         // (default). Any failure/empty/timeout falls through to the deterministic
         // reply below, so this can only improve the turn, never break it.
-        this.replyLlm.generate({ messages: baseMessages(sys), temperature: 0.8, maxOutputTokens: 500, skipCache: true, skipContextCache: true, disableThinking: true }),
+        this.replyLlm.generate({ messages: baseMessages(sys), temperature: 0.8, maxOutputTokens: fullDayPlanRequested ? 900 : 500, skipCache: true, skipContextCache: true, disableThinking: true }),
         new Promise<{ text: string } | null>((res) => setTimeout(() => res(null), UNIFIED_GEN_TIMEOUT_MS)),
       ]).catch(() => null);
       // A multi-part answer keeps its paragraph breaks (one short section per
@@ -4194,11 +4317,34 @@ CRITICAL RULES:
       }
     }
 
+    // Numeric completeness floor for mixed meal + symptom + planning turns.
+    // The model may answer the symptom and dinner idea but omit the exact
+    // "how much protein is left?" calculation the user explicitly requested.
+    if (/\b(?:how much|protein).{0,35}(?:still need|left|remaining)\b|\bhow much protein\b/i.test(input.text)) {
+      const total = Math.round(todaysFood.protein_g);
+      const goal = user?.protein_goal_grams ?? null;
+      const remaining = goal != null ? Math.max(0, Math.round(goal - total)) : null;
+      const hasExactAnswer = remaining != null && new RegExp(`\\b${remaining}\\s*g\\b`, 'i').test(reply);
+      if (remaining != null && !hasExactAnswer) {
+        reply = `You're at ${total}g of your ${goal}g protein goal, so you have ${remaining}g left today. ${reply}`.trim();
+      } else if (goal == null && !/protein (?:goal|target).*(?:not set|don't have|isn't set)/i.test(reply)) {
+        reply = `You've logged ${total}g of protein today, but you don't have a protein target set yet, so I can't calculate an accurate amount remaining. ${reply}`.trim();
+      }
+    }
+
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
     void this.deps.memory.appendTurn({ userId, conversationId, role: 'assistant', content: reply }).catch(() => {});
     const totalMs = Date.now() - t0;
     this.persistLatency(userId, 'unified', totalMs, lat.snapshot(), input.text, reply);
-    return { text: reply, confidence: 'high', intent: 'chat', toolResults: [], usedRetrieval: false, latencyMs: totalMs, ...(isMultiTopic ? { preserveParagraphs: true } : {}) };
+    return {
+      text: reply,
+      confidence: 'high',
+      intent: foodToolResults.some((r) => r.name === 'log_food') ? 'food_log' : 'chat',
+      toolResults: foodToolResults,
+      usedRetrieval: false,
+      latencyMs: totalMs,
+      ...(isMultiTopic ? { preserveParagraphs: true } : {}),
+    };
   }
 
   /**
@@ -4240,11 +4386,13 @@ CRITICAL RULES:
   ): Promise<{ logged: string[]; pending: string[]; removed: string | null; clarify?: string | null; rough?: boolean } | null> {
     const text = input.text.trim();
     if (!text) return null;
+    // Preference/avoidance statements name foods but do not report consumption.
+    if (/\b(?:don'?t|do\s+not|never|can'?t)\s+(?:like|eat|want)|\b(?:hate|avoid)\b/i.test(text)) return null;
     // Nudge's advice/planning guard: "what should I eat" / a bare "salmon" after
     // Grace asked what she has in mind is discussion, never a log.
     if (isMealAdviceOrPlanningTurn(text, history)) return null;
 
-    const pending = await getPendingFood(this.deps.redis, input.userId).catch(
+    const pending = await getPendingFood(this.deps.redis, input.userId, this.deps.pool).catch(
       () => [] as Awaited<ReturnType<typeof getPendingFood>>,
     );
     const foodish = namesSpecificFood(text) || !!foodSpanFromConsumption(text) || FOOD_MUTATION_RE.test(text) || FOOD_DIARY_QUERY_RE.test(text);
@@ -4266,6 +4414,33 @@ CRITICAL RULES:
       users: this.deps.users,
     });
 
+    // Fragmented meal continuation: messaging clients often deliver
+    // "For lunch I had chicken" / "with half a cup of rice" / "and broccoli"
+    // as separate turns. A leading conjunction has no new eating verb, so the
+    // normal consumption-span parser cannot see it. Persist a quantified new
+    // fragment while keeping earlier unresolved foods pending.
+    if (
+      pending.length > 0 &&
+      /^(?:with|and|plus)\b/i.test(text) &&
+      !/[?]/.test(text) &&
+      namesSpecificFood(text) &&
+      hasExplicitQuantity(text)
+    ) {
+      const fragment = text.replace(/^(?:with|and|plus)\s+/i, '').replace(/[.!?]+$/, '').trim();
+      const r = (await logFood.execute({ food: fragment }).catch(() => null)) as Record<string, unknown> | null;
+      if (r && r.ok !== false) {
+        const remaining = await getPendingFood(this.deps.redis, input.userId, this.deps.pool).catch(() => pending);
+        return {
+          logged: [fragment],
+          pending: remaining.map((p) => p.item),
+          removed: null,
+          clarify: remaining.length
+            ? buildPortionConfirmQuestion(remaining.map((p) => ({ item: p.item, protein_g: null })))
+            : null,
+        };
+      }
+    }
+
     // AFFIRMATION of a proposed standard portion ("yes", "that's about right")
     // when we're awaiting one → log the pending item(s) at the standard estimate.
     if (pending.length > 0 && isPortionAffirmation(text)) {
@@ -4274,7 +4449,7 @@ CRITICAL RULES:
         const r = (await logFood.execute({ food: p.item }).catch(() => null)) as Record<string, unknown> | null;
         if (r && r.ok !== false) logged.push(p.item);
       }
-      await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+      await clearPendingFood(this.deps.redis, input.userId, this.deps.pool).catch(() => {});
       if (logged.length === 0) return null;
       this.deps.logger.info({ userId: input.userId, logged: logged.length }, 'ai.unified_food.affirm_logged');
       return { logged, pending: [], removed: null };
@@ -4292,13 +4467,17 @@ CRITICAL RULES:
       pending.length > 0 &&
       hasExplicitQuantity(text) &&
       !namesSpecificFood(text) &&
-      !FOOD_MUTATION_RE.test(text) &&
-      text.split(/\s+/).length <= 6
+      text.split(/\s+/).length <= 10
     ) {
       const amount = text.trim();
       const logged: string[] = [];
-      for (const p of pending) {
-        const composed = `${amount} ${p.item}`.replace(/\s+/g, ' ').trim();
+      // "half of it" refers to the most recently mentioned pending food, not
+      // every unresolved item from the last six hours.
+      const targets = /\b(?:it|that|this)\b/i.test(text) ? pending.slice(-1) : pending;
+      for (const p of targets) {
+        const composed = /\bhalf\b/i.test(amount)
+          ? `half portion ${p.item}`
+          : `${amount} ${p.item}`.replace(/\s+/g, ' ').trim();
         let r = (await logFood.execute({ food: composed }).catch(() => null)) as Record<string, unknown> | null;
         // Retry with the CLEAN food name if the "amount + item" label fails — an
         // amount that describes the filling rather than the dish ("5 slices turkey
@@ -4313,9 +4492,19 @@ CRITICAL RULES:
       // pending so the turn can't drop it (it falls through to the backstop /
       // next turn) instead of losing it after clearing.
       if (logged.length > 0) {
-        await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+        for (const p of targets) {
+          await resolvePendingFood(this.deps.redis, input.userId, p.item, this.deps.pool).catch(() => {});
+        }
         this.deps.logger.info({ userId: input.userId, logged: logged.length }, 'ai.unified_food.portion_resolved');
-        return { logged, pending: [], removed: null };
+        const remaining = await getPendingFood(this.deps.redis, input.userId, this.deps.pool).catch(() => []);
+        return {
+          logged,
+          pending: remaining.map((p) => p.item),
+          removed: null,
+          clarify: remaining.length
+            ? buildPortionConfirmQuestion(remaining.map((p) => ({ item: p.item, protein_g: null })))
+            : null,
+        };
       }
     }
 
@@ -4347,11 +4536,12 @@ CRITICAL RULES:
       // it can't loop, and a resolved "turkey sandwich" is no longer composition-
       // ambiguous so it won't re-enter this branch.
       const composed = compositionPending.map((p) => `${filling} ${p.item}`.replace(/\s+/g, ' ').trim());
-      for (const p of compositionPending) await resolvePendingFood(this.deps.redis, input.userId, p.item).catch(() => {});
+      for (const p of compositionPending) await resolvePendingFood(this.deps.redis, input.userId, p.item, this.deps.pool).catch(() => {});
       await addPendingFood(
         this.deps.redis,
         input.userId,
         composed.map((c) => ({ item: c, clarify_question: null })),
+        this.deps.pool,
       ).catch(() => {});
       const clarify = composed.length === 1
         ? `Got it — a ${composed[0]} 🙌 Roughly how much ${filling} was on it — a couple slices, or more? Or say "that's about right" and I'll log a standard one.`
@@ -4415,9 +4605,9 @@ CRITICAL RULES:
           if (r && r.ok !== false) logged.push(seg);
         }
         if (logged.length > 0) {
-          await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+          await clearPendingFood(this.deps.redis, input.userId, this.deps.pool).catch(() => {});
           if (unresolved.length > 0) {
-            await addPendingFood(this.deps.redis, input.userId, unresolved.map((p) => ({ item: p.item, clarify_question: null }))).catch(() => {});
+            await addPendingFood(this.deps.redis, input.userId, unresolved.map((p) => ({ item: p.item, clarify_question: null })), this.deps.pool).catch(() => {});
           }
           const clarify = unresolved.length > 0
             ? buildPortionConfirmQuestion(unresolved.map((p) => ({ item: p.item, protein_g: null })))
@@ -4440,10 +4630,10 @@ CRITICAL RULES:
 
     if (extraction.intent === 'delete' && extraction.edit_ref) {
       try {
-        const rm = makeRemoveFoodTool({ pool: this.deps.pool, logger: this.deps.logger, userId: input.userId });
+        const rm = makeRemoveFoodTool({ pool: this.deps.pool, logger: this.deps.logger, userId: input.userId, users: this.deps.users });
         await rm.execute({ food: extraction.edit_ref });
       } catch { /* best-effort */ }
-      await resolvePendingFood(this.deps.redis, input.userId, extraction.edit_ref).catch(() => {});
+      await resolvePendingFood(this.deps.redis, input.userId, extraction.edit_ref, this.deps.pool).catch(() => {});
       return { logged: [], pending: [], removed: extraction.edit_ref };
     }
 
@@ -4479,7 +4669,7 @@ CRITICAL RULES:
               return { logged: [bare], pending: [], removed: null };
             }
           }
-          await addPendingFood(this.deps.redis, input.userId, [{ item: bare, clarify_question: null }]).catch(() => {});
+          await addPendingFood(this.deps.redis, input.userId, [{ item: bare, clarify_question: null }], this.deps.pool).catch(() => {});
           const clarify = buildPortionConfirmQuestion([{ item: bare, protein_g: null }]);
           this.deps.logger.info({ userId: input.userId, bare }, 'ai.unified_food.bare_pended');
           return { logged: [], pending: [bare], removed: null, clarify };
@@ -4494,7 +4684,7 @@ CRITICAL RULES:
       // capture), so a precisely-stated food in a mixed span is never dropped.
       const detNames = ambiguousFoodNames(span, text);
       if (detNames.length > 0 && !hasPreciseAmount(span)) {
-        await addPendingFood(this.deps.redis, input.userId, detNames.map((n) => ({ item: n, clarify_question: null }))).catch(() => {});
+        await addPendingFood(this.deps.redis, input.userId, detNames.map((n) => ({ item: n, clarify_question: null })), this.deps.pool).catch(() => {});
         const clarify = buildPortionConfirmQuestion(detNames.map((n) => ({ item: n, protein_g: null })));
         this.deps.logger.info({ userId: input.userId, span, names: detNames }, 'ai.unified_food.backstop_deterministic');
         return { logged: [], pending: detNames, removed: null, clarify };
@@ -4528,9 +4718,9 @@ CRITICAL RULES:
           const r = (await logFood.execute({ food: seg }).catch(() => null)) as Record<string, unknown> | null;
           if (r && r.ok !== false) loggedSpans.push(seg);
         }
-        for (const it of loggedSpans) await resolvePendingFood(this.deps.redis, input.userId, it).catch(() => {});
+        for (const it of loggedSpans) await resolvePendingFood(this.deps.redis, input.userId, it, this.deps.pool).catch(() => {});
         if (names.length > 0) {
-          await addPendingFood(this.deps.redis, input.userId, names.map((n) => ({ item: n, clarify_question: null }))).catch(() => {});
+          await addPendingFood(this.deps.redis, input.userId, names.map((n) => ({ item: n, clarify_question: null })), this.deps.pool).catch(() => {});
           const clarify = buildPortionConfirmQuestion(names.map((n) => ({ item: n, protein_g: null })));
           this.deps.logger.info({ userId: input.userId, span, names, logged: loggedSpans.length }, 'ai.unified_food.backstop_needs_portion');
           return { logged: loggedSpans, pending: names, removed: null, clarify };
@@ -4575,6 +4765,26 @@ CRITICAL RULES:
     let anyRough = false;
     const downgraded: Array<{ item: string; protein_g: number | null }> = [];
     const logConfirmed = async (it: ExtractedFoodItem): Promise<void> => {
+      if (extraction.intent === 'edit' && extraction.edit_ref) {
+        if (it.protein_g == null || it.calories == null) return;
+        const ledger = new FoodLedgerService(this.deps.pool, this.deps.users);
+        const replaced = await ledger.replaceLatest(input.userId, extraction.edit_ref, {
+          food: it.item,
+          protein_g: it.protein_g,
+          calories: it.calories,
+          confidence: it.confidence,
+          raw_text: input.text,
+          serving_size: it.serving_size,
+        }).catch(() => null);
+        if (replaced?.updated) {
+          logged.push(it.item);
+          if (isRoughConfidence(it.confidence)) anyRough = true;
+          return;
+        }
+        // A correction must never become an additive log if the referenced row
+        // cannot be found. Leave the diary unchanged and let the reply clarify.
+        return;
+      }
       const args: Record<string, unknown> = { food: it.item };
       if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
       // Carry the extractor's confidence + portion phrase to the log (food_tracker
@@ -4618,9 +4828,9 @@ CRITICAL RULES:
     }
 
     if (extraction.intent === 'edit' && logged.length > 0) {
-      await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+      await clearPendingFood(this.deps.redis, input.userId, this.deps.pool).catch(() => {});
     } else {
-      for (const it of logged) await resolvePendingFood(this.deps.redis, input.userId, it).catch(() => {});
+      for (const it of logged) await resolvePendingFood(this.deps.redis, input.userId, it, this.deps.pool).catch(() => {});
     }
 
     // Everything awaiting a portion: the extractor's own pending items PLUS the
@@ -4630,7 +4840,7 @@ CRITICAL RULES:
       ...extractorPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question })),
     ];
     if (pendingItems.length > 0) {
-      await addPendingFood(this.deps.redis, input.userId, pendingItems).catch(() => {});
+      await addPendingFood(this.deps.redis, input.userId, pendingItems, this.deps.pool).catch(() => {});
     }
 
     if (logged.length === 0 && pendingItems.length === 0) return null;
@@ -4711,7 +4921,7 @@ CRITICAL RULES:
   ): Promise<OrchestratorOutput | null> {
     if (!this.deps.flags.toolsEnabled) return null;
     const foodIntent = intent === 'food_log' || intent === 'food_question';
-    const pending = await getPendingFood(this.deps.redis, input.userId).catch(() => [] as Awaited<ReturnType<typeof getPendingFood>>);
+    const pending = await getPendingFood(this.deps.redis, input.userId, this.deps.pool).catch(() => [] as Awaited<ReturnType<typeof getPendingFood>>);
     if (!foodIntent && pending.length === 0) return null;
 
     const extraction = await Promise.race<FoodExtraction>([
@@ -4737,11 +4947,11 @@ CRITICAL RULES:
 
     if (extraction.intent === 'delete' && extraction.edit_ref) {
       try {
-        const rm = makeRemoveFoodTool({ pool: this.deps.pool, logger: this.deps.logger, userId: input.userId });
+        const rm = makeRemoveFoodTool({ pool: this.deps.pool, logger: this.deps.logger, userId: input.userId, users: this.deps.users });
         const r = await rm.execute({ food: extraction.edit_ref });
         if (r && (r as { ok?: boolean }).ok !== false) toolResults.push({ name: 'remove_food', args: { food: extraction.edit_ref }, ok: true, output: r, latencyMs: 0 });
       } catch { /* best-effort */ }
-      await resolvePendingFood(this.deps.redis, input.userId, extraction.edit_ref).catch(() => {});
+      await resolvePendingFood(this.deps.redis, input.userId, extraction.edit_ref, this.deps.pool).catch(() => {});
       reply = `Done — took ${extraction.edit_ref} off today's log.`;
     } else {
       const confirmed = extraction.items.filter((i) => i.status === 'confirmed');
@@ -4752,7 +4962,26 @@ CRITICAL RULES:
       for (const it of confirmed) {
         const args: Record<string, unknown> = { food: it.item };
         if (it.protein_g != null && it.calories != null) { args.protein_g = it.protein_g; args.calories = it.calories; }
-        const r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
+        let r: Record<string, unknown> | null;
+        if (extraction.intent === 'edit' && extraction.edit_ref && it.protein_g != null && it.calories != null) {
+          const mutation = await new FoodLedgerService(this.deps.pool, this.deps.users).replaceLatest(
+            input.userId,
+            extraction.edit_ref,
+            {
+              food: it.item,
+              protein_g: it.protein_g,
+              calories: it.calories,
+              confidence: it.confidence,
+              raw_text: input.text,
+              serving_size: it.serving_size,
+            },
+          ).catch(() => null);
+          r = mutation?.updated
+            ? { ok: true, protein_g: it.protein_g, calories: it.calories, daily_protein_g: mutation.totals.protein_g, daily_calories: mutation.totals.calories }
+            : null;
+        } else {
+          r = (await logFood.execute(args).catch(() => null)) as Record<string, unknown> | null;
+        }
         if (r && r.ok !== false) {
           toolResults.push({ name: 'log_food', args, ok: true, output: r, latencyMs: 0 });
           dailyProtein = (r.daily_protein_g as number | undefined) ?? dailyProtein;
@@ -4761,12 +4990,12 @@ CRITICAL RULES:
         }
       }
       if (extraction.intent === 'edit') {
-        await clearPendingFood(this.deps.redis, input.userId).catch(() => {});
+        await clearPendingFood(this.deps.redis, input.userId, this.deps.pool).catch(() => {});
       } else {
-        for (const it of confirmed) await resolvePendingFood(this.deps.redis, input.userId, it.item).catch(() => {});
+        for (const it of confirmed) await resolvePendingFood(this.deps.redis, input.userId, it.item, this.deps.pool).catch(() => {});
       }
       if (newPending.length > 0) {
-        await addPendingFood(this.deps.redis, input.userId, newPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question }))).catch(() => {});
+        await addPendingFood(this.deps.redis, input.userId, newPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question })), this.deps.pool).catch(() => {});
       }
       // Nothing usable to log or ask → let the orchestrator handle it.
       if (loggedItems.length === 0 && newPending.length === 0) return null;
@@ -4850,7 +5079,7 @@ CRITICAL RULES:
       // Food path: run the structured extraction when the message is food-shaped
       // OR there's a pending item awaiting a portion (a continuation like
       // "cup of spaghetti" classifies as general but must resolve the pending).
-      const pending = await getPendingFood(this.deps.redis, params.userId).catch(() => []);
+      const pending = await getPendingFood(this.deps.redis, params.userId, this.deps.pool).catch(() => []);
       // A food photo is already logged (or deferred to a pending question) in the
       // media branch, so skip text extraction here to avoid double-logging.
       // A clear "I ate X" also forces the food path even when the classifier
@@ -4893,7 +5122,7 @@ CRITICAL RULES:
         if (extraction.intent === 'delete' && extraction.edit_ref && params.tools.has('remove_food')) {
           const r = await params.tools.execute({ name: 'remove_food', args: { food: extraction.edit_ref } }).catch(() => null);
           if (r?.ok) toolResults.push(r);
-          await resolvePendingFood(this.deps.redis, params.userId, extraction.edit_ref).catch(() => {});
+          await resolvePendingFood(this.deps.redis, params.userId, extraction.edit_ref, this.deps.pool).catch(() => {});
           logNote += `\n\n[The user asked to remove "${extraction.edit_ref}" from today's log — it's done. Confirm warmly and briefly.]`;
         } else if (extraction.intent === 'log' || extraction.intent === 'edit') {
           // Drop any "item" that is only a meal-TIME / container word with no
@@ -4948,7 +5177,37 @@ CRITICAL RULES:
               logArgs.protein_g = it.protein_g;
               logArgs.calories = it.calories;
             }
-            const r = await params.tools.execute({ name: 'log_food', args: logArgs }).catch(() => null);
+            let r: ToolResult | null;
+            if (extraction.intent === 'edit' && extraction.edit_ref && it.protein_g != null && it.calories != null) {
+              const mutation = await new FoodLedgerService(this.deps.pool, this.deps.users).replaceLatest(
+                params.userId,
+                extraction.edit_ref,
+                {
+                  food: it.item,
+                  protein_g: it.protein_g,
+                  calories: it.calories,
+                  confidence: it.confidence,
+                  raw_text: params.rawUserText,
+                  serving_size: it.serving_size,
+                },
+              ).catch(() => null);
+              r = mutation?.updated
+                ? {
+                    name: 'replace_food',
+                    args: { ref: extraction.edit_ref, food: it.item },
+                    ok: true,
+                    output: {
+                      protein_g: it.protein_g,
+                      calories: it.calories,
+                      daily_protein_g: mutation.totals.protein_g,
+                      daily_calories: mutation.totals.calories,
+                    },
+                    latencyMs: 0,
+                  }
+                : null;
+            } else {
+              r = await params.tools.execute({ name: 'log_food', args: logArgs }).catch(() => null);
+            }
             if (r?.ok) {
               toolResults.push(r);
               const out = (r.output ?? {}) as Record<string, unknown>;
@@ -4965,10 +5224,10 @@ CRITICAL RULES:
           // "pasta"). A plain "log" only resolves pending items a confirmed
           // item clearly matches, so an unrelated pending stays.
           if (extraction.intent === 'edit') {
-            await clearPendingFood(this.deps.redis, params.userId).catch(() => {});
+            await clearPendingFood(this.deps.redis, params.userId, this.deps.pool).catch(() => {});
           } else {
             for (const it of confirmed) {
-              await resolvePendingFood(this.deps.redis, params.userId, it.item).catch(() => {});
+              await resolvePendingFood(this.deps.redis, params.userId, it.item, this.deps.pool).catch(() => {});
             }
           }
           if (newPending.length > 0) {
@@ -4976,6 +5235,7 @@ CRITICAL RULES:
               this.deps.redis,
               params.userId,
               newPending.map((i) => ({ item: i.item, clarify_question: i.clarify_question })),
+              this.deps.pool,
             ).catch(() => {});
           }
           const parts: string[] = [];
@@ -5304,7 +5564,6 @@ CRITICAL RULES:
     // multi-part handler covers these, and asking "what's your activity level?"
     // in the middle of a real question is exactly the "out of nowhere" behavior
     // to avoid (2026-07-02).
-    if (analyzeMessage(input.text).hasMultiple) return {};
     const user = await this.deps.users.getById(phone).catch(() => null);
     if (!user) return {};
     // The onboarding flow owns data collection — never ask-first mid-signup.
@@ -5370,8 +5629,9 @@ CRITICAL RULES:
       await clearReplayQuery(redis, phone);
     }
 
-    // 2. Relevance-first: this question needs a missing field to be specific —
-    //    ask for it first. The ONLY guard is whether the field is actually
+    // 2. Ask-first is reserved for calculations that genuinely cannot be
+    //    personalized without one input. Recommendations are answered first and
+    //    may gather a preference afterward. The ONLY guard is whether the field is
     //    filled (handled by relevantProfileSlot) — no time-based marker, which
     //    previously got stuck in Redis across re-onboards and silently
     //    suppressed every clarification (prod 2026-06-28).
@@ -5570,7 +5830,7 @@ CRITICAL RULES:
             // existing text food-extract pending path resolves it).
             const pendingItem = (itemsText || 'the food in the photo').slice(0, 120);
             const question = ask || 'Did you eat some, and roughly how much?';
-            await addPendingFood(this.deps.redis, input.userId, [{ item: pendingItem, clarify_question: question }]).catch(() => {});
+            await addPendingFood(this.deps.redis, input.userId, [{ item: pendingItem, clarify_question: question }], this.deps.pool).catch(() => {});
             logger.info({ userId: input.userId, mealStatus, confidence, items: itemsText.slice(0, 80) }, 'ai.image_food.ambiguous_ask');
             augmentedText = `${userIntent}The user sent a food photo, but it isn't clearly a meal they're eating right now — it looks like ${itemsText || 'food'} (could be sitting out, groceries, or an unclear portion), so nothing has been logged yet.\n\n[Reply like a warm friend in 1–2 short sentences: briefly say what you see, then ask "${question}" so you can log it accurately. Do NOT claim you logged anything. Do NOT state a protein number.${staleHistoryNote}]`;
           }
@@ -6597,7 +6857,7 @@ CRITICAL RULES:
         }));
       }
       if (toolSettings['remove_food'] !== false) {
-        tools.register(makeRemoveFoodTool({ pool: this.deps.pool, logger, userId: input.userId }));
+        tools.register(makeRemoveFoodTool({ pool: this.deps.pool, logger, userId: input.userId, users: this.deps.users }));
       }
     }
     const orchestrator = new AIOrchestrator({
@@ -7915,10 +8175,15 @@ CRITICAL RULES:
     const fields = Object.keys(updates);
     if (fields.length === 0) return user;
 
-    void this.deps.users
-      .update(user.phone, updates as Partial<GraceUser>)
-      .then(() => logger.info({ phone: user.phone, fields }, 'ai.profile_learn.applied'))
-      .catch((err) => logger.warn({ err, phone: user.phone }, 'ai.profile_learn.persist.failed'));
+    // Await the write. The next line returns a merged in-memory user for this
+    // turn, so allowing persistence to race could confirm an update that failed.
+    try {
+      await this.deps.users.update(user.phone, updates as Partial<GraceUser>);
+      logger.info({ phone: user.phone, fields }, 'ai.profile_learn.applied');
+    } catch (err) {
+      logger.warn({ err, phone: user.phone }, 'ai.profile_learn.persist.failed');
+      return user;
+    }
 
     // Supersede contradicting long-term memories so a stale fact can't resurface
     // and contradict the fresh profile. Currently scoped to a medication switch

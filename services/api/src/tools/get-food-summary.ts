@@ -9,7 +9,7 @@ export function makeGetFoodSummaryTool(deps: { users: UserService; userId: strin
     async execute() {
       const summary = await deps.users.getTodaysFoodSummary(deps.userId);
       const user = await deps.users.getById(deps.userId).catch(() => null);
-      const proteinTarget = user?.protein_goal_grams ?? 80;
+      const proteinTarget = user?.protein_goal_grams ?? null;
       const calorieTarget = user?.calorie_goal_kcal ?? null;
       const caloriesToday = Math.round(summary.calories);
       return {
@@ -31,8 +31,8 @@ export function makeGetFoodSummaryTool(deps: { users: UserService; userId: strin
           logged_at: i.logged_at,
         })),
         protein_goal_grams: proteinTarget,
-        protein_goal_met: summary.protein_g >= proteinTarget,
-        protein_remaining_g: Math.max(0, Math.round(proteinTarget - summary.protein_g)),
+        protein_goal_met: proteinTarget == null ? null : summary.protein_g >= proteinTarget,
+        protein_remaining_g: proteinTarget == null ? null : Math.max(0, Math.round(proteinTarget - summary.protein_g)),
         // Calorie fields — parallel to protein. calorie_goal_kcal is null when
         // user hasn't completed onboarding fields for Mifflin-St Jeor calc.
         calorie_goal_kcal: calorieTarget,
@@ -57,7 +57,7 @@ export function makeGetProteinHistoryTool(deps: { users: UserService; userId: st
       const days = Math.max(1, Math.min(30, daysArg));
       const history = await deps.users.getDailyProteinHistory(deps.userId, days);
       const user = await deps.users.getById(deps.userId).catch(() => null);
-      const proteinTarget = user?.protein_goal_grams ?? 80;
+      const proteinTarget = user?.protein_goal_grams ?? null;
       // Pad days with NO logs as zero-rows so Grace can answer "did I log
       // anything yesterday?" honestly when the user's history has gaps.
       return {
@@ -70,7 +70,7 @@ export function makeGetProteinHistoryTool(deps: { users: UserService; userId: st
           history.length > 0
             ? Math.round(history.reduce((s, d) => s + d.protein_g, 0) / history.length)
             : 0,
-        days_met_target: history.filter((d) => d.protein_g >= proteinTarget).length,
+        days_met_target: proteinTarget == null ? null : history.filter((d) => d.protein_g >= proteinTarget).length,
       };
     },
   };

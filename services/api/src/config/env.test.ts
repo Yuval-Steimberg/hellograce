@@ -19,7 +19,8 @@ describe('env boolean flags — "false" must mean OFF (z.coerce.boolean footgun)
     expect(loadEnv({ ...BASE, UNIFIED_REPLY_PATH: '0' }).UNIFIED_REPLY_PATH).toBe(false);
     expect(loadEnv({ ...BASE, UNIFIED_REPLY_PATH: 'off' }).UNIFIED_REPLY_PATH).toBe(false);
     expect(loadEnv({ ...BASE, UNIFIED_REPLY_PATH: 'no' }).UNIFIED_REPLY_PATH).toBe(false);
-    expect(loadEnv({ ...BASE, UNIFIED_REPLY_PATH: '' }).UNIFIED_REPLY_PATH).toBe(false);
+    // Empty is treated as unset, so this default-ON flag stays enabled.
+    expect(loadEnv({ ...BASE, UNIFIED_REPLY_PATH: '' }).UNIFIED_REPLY_PATH).toBe(true);
   });
 
   it('affirmative tokens turn a flag ON', () => {
@@ -30,11 +31,12 @@ describe('env boolean flags — "false" must mean OFF (z.coerce.boolean footgun)
 
   it('honors each flag default when the var is absent', () => {
     const env = loadEnv({ ...BASE });
-    expect(env.UNIFIED_REPLY_PATH).toBe(false); // default off
+    expect(env.UNIFIED_REPLY_PATH).toBe(true); // unified Grace + Nudge path is default
     expect(env.COMPACT_REPLY_MODE).toBe(false);
     expect(env.DIRECT_REPLY_MODE).toBe(false);
     expect(env.GEMINI_FIRST).toBe(true); // default on
     expect(env.RELEVANCE_CHECK_ENABLED).toBe(true);
+    expect(env.LOCAL_TEST_MODE).toBe(false);
   });
 
   it('a default-ON flag can be turned OFF with "false"', () => {

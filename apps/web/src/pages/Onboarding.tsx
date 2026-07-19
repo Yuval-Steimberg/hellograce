@@ -14,28 +14,23 @@ import MedicationTimeStep from "@/components/onboarding/MedicationTimeStep";
 import GoalsStep from "@/components/onboarding/GoalsStep";
 import ScheduleStep from "@/components/onboarding/ScheduleStep";
 import FoodStep from "@/components/onboarding/FoodStep";
-import WeightStep from "@/components/onboarding/WeightStep";
-import GLP1DetailStep from "@/components/onboarding/GLP1DetailStep";
-import PersonalContextStep from "@/components/onboarding/PersonalContextStep";
 import PhoneStep from "@/components/onboarding/PhoneStep";
 import PaymentStep from "@/components/onboarding/PaymentStep";
 import ConfirmationStep from "@/components/onboarding/ConfirmationStep";
 
-// 13-step onboarding flow:
+// Fast, essentials-first onboarding:
 // 1. Welcome
 // 2. Name
-// 3. About you (sex, height, age, weight, goal weight, activity level) — all required
-// 4. Medication
-// 5. Injection Day / Med Time
-// 6. GLP-1 details (start date, dose)
-// 7. Goals
-// 8. Optional: your story + exercise (accordion — challenge, why, exercise, support style)
-// 9. Food preferences (dietary style + dislikes)
-// 10. Schedule (wake/sleep)
-// 11. Phone + consent
-// 12. Payment/trial
-// 13. Confirmation
-const TOTAL_STEPS = 13;
+// 3. Medication
+// 4. Injection Day / Med Time
+// 5. Goals
+// 6. Food safety + preferences
+// 7. Schedule
+// 8. Phone + consent
+// 9. Payment/trial
+// 10. Confirmation
+// Body metrics and deeper context are learned later, only when useful.
+const TOTAL_STEPS = 10;
 
 const Onboarding = () => {
   const seoJsonLd = breadcrumbSchema([
@@ -102,7 +97,7 @@ const Onboarding = () => {
       const storedId = localStorage.getItem("grace_user_id");
       if (storedId) {
         setUserId(storedId);
-        setStep(12); // payment step
+        setStep(9); // payment step
       }
     }
   }, [searchParams]);
@@ -207,31 +202,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 3: About you (sex, height, age, weight, goal, activity) — all required */}
+        {/* Step 3: Medication */}
         {step === 3 && (
-          <WeightStep
-            sex={sex}
-            currentWeight={currentWeight}
-            goalWeight={goalWeight}
-            startingWeight={startingWeight}
-            heightCm={heightCm}
-            age={age}
-            activityLevel={activityLevel}
-            onChange={(d) => {
-              if (d.sex !== undefined) setSex(d.sex);
-              if (d.currentWeight !== undefined) setCurrentWeight(d.currentWeight);
-              if (d.goalWeight !== undefined) setGoalWeight(d.goalWeight);
-              if (d.startingWeight !== undefined) setStartingWeight(d.startingWeight);
-              if (d.heightCm !== undefined) setHeightCm(d.heightCm);
-              if (d.age !== undefined) setAge(d.age);
-              if (d.activityLevel !== undefined) setActivityLevel(d.activityLevel);
-            }}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 4: Medication */}
-        {step === 4 && (
           <MedicationStep
             selected={medication}
             onSelect={(med, freq) => {
@@ -242,8 +214,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 5: Injection Day or Med Time */}
-        {step === 5 && (
+        {/* Step 4: Injection Day or Med Time */}
+        {step === 4 && (
           medicationFrequency === "daily" ? (
             <MedicationTimeStep selected={medicationTime} onSelect={setMedicationTime} onNext={next} />
           ) : (
@@ -251,47 +223,13 @@ const Onboarding = () => {
           )
         )}
 
-        {/* Step 6: GLP-1 details (start date, dose) */}
+        {/* Step 5: Goals */}
+        {step === 5 && (
+          <GoalsStep selected={goals} onChange={setGoals} onNext={next} />
+        )}
+
+        {/* Step 6: Food preferences */}
         {step === 6 && (
-          <GLP1DetailStep
-            glp1StartDate={glp1StartDate}
-            doseMg={doseMg}
-            onChange={(d) => {
-              if (d.glp1StartDate !== undefined) setGlp1StartDate(d.glp1StartDate);
-              if (d.doseMg !== undefined) setDoseMg(d.doseMg);
-            }}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 7: Goals */}
-        {step === 7 && (
-          <GoalsStep
-            selected={goals}
-            onChange={setGoals}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 8: Optional — your story + exercise (accordion) */}
-        {step === 8 && (
-          <PersonalContextStep
-            biggestChallenge={biggestChallenge}
-            whyStarted={whyStarted}
-            supportStyle={supportStyle}
-            exerciseHabits={exerciseHabits}
-            onChange={(d) => {
-              if (d.biggestChallenge !== undefined) setBiggestChallenge(d.biggestChallenge);
-              if (d.whyStarted !== undefined) setWhyStarted(d.whyStarted);
-              if (d.supportStyle !== undefined) setSupportStyle(d.supportStyle);
-              if (d.exerciseHabits) setExerciseHabits(d.exerciseHabits);
-            }}
-            onNext={next}
-          />
-        )}
-
-        {/* Step 9: Food preferences (dietary style + dislikes) */}
-        {step === 9 && (
           <FoodStep
             foodDislikes={foodDislikes}
             dietaryRestriction={dietaryRestriction}
@@ -301,8 +239,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 10: Schedule (wake/sleep) */}
-        {step === 10 && (
+        {/* Step 7: Schedule */}
+        {step === 7 && (
           <ScheduleStep
             wakeTime={wakeTime}
             sleepTime={sleepTime}
@@ -314,8 +252,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 11: Phone + consent */}
-        {step === 11 && (
+        {/* Step 8: Phone + consent */}
+        {step === 8 && (
           <PhoneStep
             phone={phone}
             smsConsent={smsConsent}
@@ -326,8 +264,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 12: Payment/trial */}
-        {step === 12 && (
+        {/* Step 9: Payment/trial */}
+        {step === 9 && (
           <PaymentStep
             userId={userId}
             firstName={firstName}
@@ -335,8 +273,8 @@ const Onboarding = () => {
           />
         )}
 
-        {/* Step 13: Confirmation */}
-        {step === 13 && <ConfirmationStep firstName={firstName} phone={phone} />}
+        {/* Step 10: Confirmation */}
+        {step === 10 && <ConfirmationStep firstName={firstName} phone={phone} />}
       </QuizLayout>
       <LegalFooter />
     </>

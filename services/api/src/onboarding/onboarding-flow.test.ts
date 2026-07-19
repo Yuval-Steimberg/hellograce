@@ -138,7 +138,8 @@ describe('runOnboardingTurn — personalizes nutrition targets when weight is le
     });
     const targetWrite = calls.find((c) => 'protein_goal_grams' in c);
     expect(targetWrite).toBeTruthy();
-    expect(targetWrite!.protein_goal_grams as number).toBeGreaterThan(150);
+    expect(targetWrite!.protein_goal_grams as number).toBeGreaterThan(100);
+    expect(targetWrite!.protein_goal_grams as number).toBeLessThan(120);
   });
 
   it('does not overwrite a protein target the user already has', async () => {

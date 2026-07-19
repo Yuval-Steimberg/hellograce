@@ -25,7 +25,7 @@ const baseUser = {
   checkin_count_per_day: 2, checkin_days_interval: 1, glp1_start_date: null, is_paid: true, is_pro: false, trial_start: null,
 } as unknown as Awaited<ReturnType<import('../user/user.service.js').UserService['getByPhone']>>;
 
-function makeApp(opts: { userExists?: boolean; user?: Record<string, unknown> } = {}) {
+function makeApp(opts: { userExists?: boolean; user?: Record<string, unknown>; localTestMode?: boolean } = {}) {
   const redis = makeRedis();
   const sender = { send: vi.fn().mockResolvedValue({ sid: 'SM1' }) };
   const update = vi.fn().mockResolvedValue(undefined);
@@ -39,7 +39,13 @@ function makeApp(opts: { userExists?: boolean; user?: Record<string, unknown> } 
     if (err instanceof AppError) { reply.status(err.statusCode).send({ error: err.code, message: err.message }); return; }
     reply.status(500).send({ error: 'INTERNAL', message: err.message });
   });
-  registerSettingsRoutes(app, { redis: redis as never, sender: sender as never, users: users as never, whatsappEnabled: true });
+  registerSettingsRoutes(app, {
+    redis: redis as never,
+    sender: sender as never,
+    users: users as never,
+    whatsappEnabled: true,
+    localTestMode: opts.localTestMode,
+  });
   return { app, redis, sender, users, update };
 }
 
@@ -87,6 +93,15 @@ describe('POST /settings/request-code', () => {
     const { app, sender } = makeApp({ user: { ...baseUser, channel: null } });
     await app.inject({ method: 'POST', url: '/settings/request-code', payload: { phone: '+15551112222' } });
     expect(sender.send).toHaveBeenCalledWith(expect.objectContaining({ channel: 'whatsapp' }));
+  });
+
+  it('returns the code without contacting a provider in local test mode', async () => {
+    const { app, redis, sender } = makeApp({ localTestMode: true });
+    const res = await app.inject({ method: 'POST', url: '/settings/request-code', payload: { phone: '+15551112222' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().devCode).toBe(redis.store.get('settings:code:+15551112222'));
+    expect(res.json().devCode).toMatch(/^\d{6}$/);
+    expect(sender.send).not.toHaveBeenCalled();
   });
 });
 

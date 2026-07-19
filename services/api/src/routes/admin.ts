@@ -171,7 +171,11 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminDeps): void
     if (req.method === 'OPTIONS') return;
     const auth = req.headers.authorization;
     const expected = deps.adminToken;
-    if (!expected) return;
+    // Local/test harnesses may register handlers without an admin token, but a
+    // missing production secret must fail CLOSED. The previous early return
+    // exposed every admin read and mutation when ADMIN_TOKEN was misconfigured.
+    if (!expected && process.env.NODE_ENV !== 'production') return;
+    if (!expected) throw new UnauthorizedError('Admin access is not configured');
     if (auth === `Bearer ${expected}`) return;
     // Query param token only for SSE endpoints (EventSource can't set headers)
     if (req.url.startsWith('/admin/auto-eval/progress')) {

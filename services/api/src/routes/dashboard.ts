@@ -9,7 +9,7 @@ import { ValidationError, UnauthorizedError, NotFoundError } from '../errors.js'
 import { makeLogFoodTool } from '../tools/log-food.js';
 import { isEncryptedBlob } from '../crypto/field-encrypt.js';
 import { analyzeMedia } from '../multimodal/analyze.js';
-import { parseFoodImageAnalysis } from '../services/ai.service.js';
+import { ambiguousEatenFoods, parseFoodImageAnalysis } from '../services/ai.service.js';
 import {
   classifySymptom,
   daysSinceInjection,
@@ -31,6 +31,15 @@ import { computeUserLoggingDay } from '../nutrition/logging-window.js';
 import { HABITS, HABIT_KEYS, type HabitKey } from '../services/habit-checklist.js';
 import { checkHabits, uncheckHabit, getTodaysHabits } from '../services/habit-store.js';
 import { getDoseEvents, buildDoseTimeline, type DoseEvent } from '../services/medication-timeline.js';
+import { buildPremiumCompanion } from '../services/premium-companion.js';
+import { extractFood } from '../services/food-extract.js';
+import {
+  addPendingFood,
+  getPendingFood,
+  resolvePendingFood,
+} from '../services/food-pending-store.js';
+import { hasPreciseAmount, isPortionAffirmation } from '../services/food-portion.js';
+import { namesSpecificFood } from '../services/meal-lifecycle.js';
 
 /**
  * Grace user dashboard API (2026-07-02).
@@ -126,8 +135,34 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
       .reverse()
       .map((m) => ({ date: new Date(m.created_at).toISOString(), score: m.mood_score }));
 
-    const proteinGoal = user.protein_goal_grams ?? 80;
+    const proteinGoal = user.protein_goal_grams ?? null;
     const calorieGoal = user.calorie_goal_kcal ?? null;
+    const symptomPatterns = summarizeSymptoms(episodes);
+    const weeklyStats = computeWeeklyStats({
+      proteinHistory7: proteinHist.slice(0, 7).map((d) => ({ day: d.day, protein: Math.round(d.protein_g), itemCount: d.item_count })),
+      weightSeries,
+      waterHistory: waterHist.map((d) => ({ day: d.day, oz: d.oz })),
+      proteinGoal,
+      waterGoalMin: WATER_GOAL_MIN_OZ,
+    });
+    const premium = buildPremiumCompanion({
+      isPaid: !!user.is_paid,
+      isPro: !!user.is_pro,
+      trialStart: user.trial_start,
+      medication: plainOrNull(user.medication),
+      doseMg: user.dose_mg ?? null,
+      injectionDay: user.injection_day ?? null,
+      proteinToday: Math.round(todayFood.protein_g),
+      proteinGoal,
+      caloriesToday: Math.round(todayFood.calories),
+      waterTodayOz: waterToday ?? 0,
+      daysProteinLogged: weeklyStats.daysProteinLogged,
+      avgProtein: weeklyStats.avgProtein,
+      weightDeltaLbs: weeklyStats.weightDeltaLbs,
+      weeklyInsight: weeklyStats.insight,
+      dislikes: user.food_dislikes ?? [],
+      symptoms: symptomPatterns,
+    });
 
     return {
       generatedAt: new Date().toISOString(),
@@ -193,16 +228,10 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
       }),
       // Weekly rollup: averages + this-week weight change + plateau signal + one
       // hedged, non-causal insight. Pure derivation from data already fetched.
-      weekly: computeWeeklyStats({
-        proteinHistory7: proteinHist.slice(0, 7).map((d) => ({ day: d.day, protein: Math.round(d.protein_g), itemCount: d.item_count })),
-        weightSeries,
-        waterHistory: waterHist.map((d) => ({ day: d.day, oz: d.oz })),
-        proteinGoal,
-        waterGoalMin: WATER_GOAL_MIN_OZ,
-      }),
+      weekly: weeklyStats,
       mood: { series: moodSeries },
       symptoms: {
-        patterns: summarizeSymptoms(episodes),
+        patterns: symptomPatterns,
         recent: episodes.slice(0, 20).map((e) => ({
           symptom: e.symptom,
           daysSinceInjection: e.days_since_injection,
@@ -211,6 +240,7 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
         })),
         total: episodes.length,
       },
+      premium,
     };
   });
 
@@ -250,7 +280,10 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
     const parsed = z.object({ oz: z.number().positive().max(400) }).safeParse(req.body);
     if (!parsed.success) throw new ValidationError('Enter how many ounces of water to log.');
     const oz = Math.round(parsed.data.oz);
-    await logWater(deps.pool, deps.logger, phone, oz, `${oz} oz (dashboard)`).catch(() => null);
+    const logged = await logWater(deps.pool, deps.logger, phone, oz, `${oz} oz (dashboard)`);
+    if (!logged) {
+      throw new ValidationError("I couldn't save that water entry right now. Please try again.");
+    }
     const today = (await getTodaysWaterOz(deps.pool, phone).catch(() => null)) ?? 0;
     deps.logger.info({ phone, oz: parsed.data.oz, today }, 'dashboard.water.logged');
     return { ok: true, today, goalMin: WATER_GOAL_MIN_OZ, goalMax: WATER_GOAL_MAX_OZ };
@@ -308,19 +341,116 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
     return { ok: true, symptom, pattern: patterns[0] ?? null };
   });
 
-  // ── POST /dashboard/food — log a meal from free text (real estimator) ───────
+  // ── POST /dashboard/food — shared accuracy-first food pipeline ──────────────
   app.post('/dashboard/food', async (req) => {
     const phone = await requireVerifiedPhone(req);
     const parsed = z.object({ text: z.string().trim().min(1).max(280) }).safeParse(req.body);
     if (!parsed.success) throw new ValidationError('Tell me what you ate.');
+    const pendingBefore = await getPendingFood(deps.redis, phone, deps.pool).catch(() => []);
+    // Resolve a bare amount ("1 cup") against one durable pending dish without
+    // trusting the model to reconnect the two turns. A standard-serving
+    // affirmation uses the pending dish itself; the log-food estimator applies
+    // its reviewed default and marks it as an estimate.
+    const singlePending = pendingBefore.length === 1 ? pendingBefore[0] : null;
+    const deterministicResolution =
+      singlePending
+      && !namesSpecificFood(parsed.data.text)
+      && (hasPreciseAmount(parsed.data.text) || isPortionAffirmation(parsed.data.text))
+        ? `${hasPreciseAmount(parsed.data.text) ? `${parsed.data.text} of ` : ''}${singlePending.item}`
+        : null;
+    let extraction = deterministicResolution
+      ? {
+          intent: 'edit' as const,
+          edit_ref: singlePending!.item,
+          items: [{
+            item: deterministicResolution,
+            protein_g: null,
+            calories: null,
+            status: 'confirmed' as const,
+            clarify_question: null,
+            confidence: 'high' as const,
+            serving_size: hasPreciseAmount(parsed.data.text) ? parsed.data.text : null,
+          }],
+        }
+      : await extractFood(
+          deps.llm,
+          deps.logger,
+          parsed.data.text,
+          pendingBefore.map((item) => ({ item: item.item })),
+          deps.gemini.model,
+        );
+    // The structured model occasionally returns `none` for a simple vague log
+    // such as "I had pasta". Chat already has a deterministic never-drop
+    // fallback for exactly this case; use the same exported detector here so
+    // dashboard and messaging create the same durable pending clarification.
+    if (extraction.intent === 'none') {
+      const fallback = ambiguousEatenFoods(parsed.data.text);
+      if (fallback) {
+        extraction = {
+          intent: 'log',
+          edit_ref: null,
+          items: fallback.items.map((item) => ({
+            item,
+            protein_g: null,
+            calories: null,
+            status: 'pending_portion' as const,
+            clarify_question: fallback.clarify,
+            confidence: null,
+            serving_size: null,
+          })),
+        };
+      }
+    }
+    if (extraction.intent === 'query' || extraction.intent === 'none' || extraction.intent === 'delete') {
+      throw new ValidationError("I couldn't identify an eaten food and portion. Try “2 eggs” or “1 cup of Greek yogurt.”");
+    }
+
     const tool = makeLogFoodTool({ pool: deps.pool, llm: deps.llm, logger: deps.logger, userId: phone, source: 'text', users: deps.users });
-    const res = await tool.execute({ food: parsed.data.text }) as Record<string, unknown>;
-    if ((res as { ok?: boolean }).ok === false) throw new ValidationError("I couldn't estimate that — try naming the food and portion.");
+    const logged: Array<{ food: string; protein: number | null; calories: number | null }> = [];
+    for (const item of extraction.items.filter((candidate) => candidate.status === 'confirmed')) {
+      const res = await tool.execute({
+        food: item.item,
+        ...(item.protein_g != null && item.calories != null
+          ? { protein_g: item.protein_g, calories: item.calories }
+          : {}),
+        ...(item.confidence ? { confidence: item.confidence } : {}),
+        ...(item.serving_size ? { serving_size: item.serving_size } : {}),
+      }) as Record<string, unknown>;
+      if ((res as { ok?: boolean }).ok === false) continue;
+      logged.push({
+        food: item.item,
+        protein: typeof res['protein_g'] === 'number' ? res['protein_g'] : item.protein_g,
+        calories: typeof res['calories'] === 'number' ? res['calories'] : item.calories,
+      });
+      await resolvePendingFood(deps.redis, phone, item.item, deps.pool).catch(() => undefined);
+    }
+
+    if (extraction.intent === 'edit' && extraction.edit_ref && logged.length > 0) {
+      await resolvePendingFood(deps.redis, phone, extraction.edit_ref, deps.pool).catch(() => undefined);
+    }
+    const needsPortion = extraction.items.filter((candidate) => candidate.status === 'pending_portion');
+    if (needsPortion.length > 0) {
+      await addPendingFood(
+        deps.redis,
+        phone,
+        needsPortion.map((item) => ({ item: item.item, clarify_question: item.clarify_question })),
+        deps.pool,
+      );
+    }
+    if (logged.length === 0 && needsPortion.length === 0) {
+      throw new ValidationError("I couldn't estimate that — try naming the food and portion.");
+    }
+
     const today = await deps.users.getTodaysFoodSummary(phone).catch(() => null);
-    deps.logger.info({ phone }, 'dashboard.food.logged');
+    deps.logger.info({ phone, logged: logged.length, pending: needsPortion.length }, 'dashboard.food.processed');
     return {
       ok: true,
-      logged: { food: parsed.data.text, protein: res['protein_g'] ?? null, calories: res['calories'] ?? null },
+      logged,
+      needsPortion: needsPortion.length > 0,
+      ask: needsPortion.map((item) => item.clarify_question).find(Boolean)
+        ?? (needsPortion.length > 0
+          ? `About how much ${needsPortion.map((item) => item.item).join(' and ')} did you have? A rough amount is enough.`
+          : null),
       todayProtein: today ? Math.round(today.protein_g) : null,
       todayCalories: today ? Math.round(today.calories) : null,
     };
@@ -351,7 +481,14 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: DashboardRou
       const food = parseFoodImageAnalysis(analysis);
       if (food.autoLog && food.proteinTotal != null && food.items) {
         const tool = makeLogFoodTool({ pool: deps.pool, llm: deps.llm, logger: deps.logger, userId: phone, source: 'image', users: deps.users });
-        await tool.execute({ food: food.items, protein_g: food.proteinTotal, calories: food.caloriesTotal }).catch(() => undefined);
+        const saved = await tool.execute({
+          food: food.items,
+          protein_g: food.proteinTotal,
+          calories: food.caloriesTotal,
+        }).catch(() => null) as Record<string, unknown> | null;
+        if (!saved || saved.ok === false) {
+          throw new ValidationError("I could read the meal, but couldn't save it right now. Please try again.");
+        }
         const today = await deps.users.getTodaysFoodSummary(phone).catch(() => null);
         deps.logger.info({ phone, protein: food.proteinTotal }, 'dashboard.photo.food_logged');
         return {

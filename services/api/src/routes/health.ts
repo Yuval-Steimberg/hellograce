@@ -16,13 +16,13 @@ export function registerHealthRoutes(app: FastifyInstance, pool: Pool): void {
     ...(machine ? { machine } : {}),
   }));
 
-  app.get('/ready', async () => {
+  app.get('/ready', async (_req, reply) => {
     try {
       await pool.query('SELECT 1');
       return { status: 'ready' };
     } catch (err) {
       app.log.warn({ err }, 'ready.db.failed');
-      return { status: 'degraded', reason: 'database_unreachable' };
+      return reply.status(503).send({ status: 'degraded', reason: 'database_unreachable' });
     }
   });
 }

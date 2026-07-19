@@ -28,6 +28,11 @@ describe('pendingFoodStuck — per-food anti-loop (does not punish new foods)', 
     expect(pendingFoodStuck(['lox'], [])).toBe(false);
   });
 
+  it('does NOT count a duplicated persisted reply as two questions', () => {
+    const duplicate = 'Yum, chicken. About how much chicken did you have?';
+    expect(pendingFoodStuck(['chicken'], [asst(duplicate), asst(duplicate)])).toBe(false);
+  });
+
   it('ignores non-clarify assistant turns and user turns', () => {
     const history = [
       { role: 'user', content: 'how much lox how much lox' },

@@ -554,7 +554,9 @@ const FALLBACKS: Record<MsgType, (user: GraceUser, opts?: GenerateOpts) => strin
     const seed = dailySeed(u.phone);
     const pool = [
       'Water check — GLP-1s quiet your thirst alongside hunger. One glass right now helps more than you think.',
-      `Quick protein thought: ${u.protein_goal_grams ?? 80}g is your daily target. A Greek yogurt or handful of nuts gets you closer without effort.`,
+      u.protein_goal_grams
+        ? `Quick protein thought: your ${u.protein_goal_grams}g target is easier in small steps. A Greek yogurt or handful of nuts can help.`
+        : 'Quick protein thought: adding a protein source to each meal can help protect muscle while appetite is lower.',
       'Movement doesn\'t have to be a workout. A 10-minute walk after a meal helps digestion and steadies blood sugar.',
       'Rest is part of the process. If your body says slow down today, listen.',
       'GLP-1 tip: eating protein first in a meal helps absorption and keeps you full longer.',
@@ -835,7 +837,9 @@ export class MessageGenerator {
         const category = BONUS_CATEGORIES[catIdx]!;
         const catHints: Record<string, string> = {
           hydration: 'a hydration nudge — GLP-1s suppress thirst. One practical water tip.',
-          protein_tip: `a protein idea they haven't heard. Target: ${user.protein_goal_grams ?? 80}g daily. Something surprising or easy.`,
+          protein_tip: user.protein_goal_grams
+            ? `a protein idea they haven't heard. Their saved target is ${user.protein_goal_grams}g daily. Something surprising or easy.`
+            : 'a protein idea they have not heard. No personal gram target is saved, so do not invent one. Something practical and easy.',
           movement: 'a gentle movement reminder — not a workout plan, just encouragement to move a little.',
           self_care: 'a body-care or self-care thought — sleep, skin, stretching, rest. Something nurturing.',
           glp1_knowledge: `one interesting fact about ${user.medication ?? 'GLP-1 medication'} that's useful and non-obvious. Not clinical.`,

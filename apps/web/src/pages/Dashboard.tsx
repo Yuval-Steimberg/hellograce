@@ -22,6 +22,7 @@ import { HabitChecklist } from "@/components/dashboard/HabitChecklist";
 import { MedicationTimeline } from "@/components/dashboard/MedicationTimeline";
 import { TodaysMeals } from "@/components/dashboard/TodaysMeals";
 import { ProfileCompleteness } from "@/components/dashboard/ProfileCompleteness";
+import { PremiumCompanion } from "@/components/dashboard/PremiumCompanion";
 import { DashboardSkeleton, DashboardLoadError } from "@/components/dashboard/DashboardStates";
 import { getWeightUnit, fromLbs, type WeightUnit } from "@/lib/units";
 
@@ -61,7 +62,12 @@ export default function Dashboard() {
   const sendCode = async () => {
     if (phone.replace(/\D/g, "").length < 8) { toast.error("Enter a valid phone number"); return; }
     setBusy(true);
-    try { await settingsApi.requestCode(phone); setStage("code"); toast.success("We sent you a 6-digit code"); }
+    try {
+      const result = await settingsApi.requestCode(phone);
+      if (result.devCode) setCode(result.devCode);
+      setStage("code");
+      toast.success(result.devCode ? `Local test code: ${result.devCode}` : "We sent you a 6-digit code");
+    }
     catch (e) { toast.error(e instanceof Error ? e.message : "Couldn't send the code"); } finally { setBusy(false); }
   };
 
@@ -197,6 +203,12 @@ function DashboardBody({ data, reload, onLogout }: { data: DashboardSummary; rel
       {/* This week — averages + weight change + plateau signal + hedged insight */}
       <div className="mb-4">
         <Reveal><WeeklyReview data={data} /></Reveal>
+      </div>
+
+      {/* Paid retention layer — weekly report, adaptive plan, injection insight,
+          and doctor-ready export. Unpaid users see a grounded preview. */}
+      <div className="mb-4">
+        <Reveal><PremiumCompanion data={data} /></Reveal>
       </div>
 
       {/* Dose journey — medication timeline with per-dose weight + symptom */}

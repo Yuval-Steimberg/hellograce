@@ -96,12 +96,16 @@ export function mightStateProfileChange(text: string): boolean {
   if (CHANGE_VERB.test(t) && PROFILE_NOUN.test(t)) return true;
   if (/\bmy (?:dose|goal weight|target weight|goal|timezone|time zone|wake[- ]?up time|bed ?time|injection day) (?:is|=|:)\b/i.test(t)) return true;
   if (/\bi (?:now |currently )?(?:inject|take my shot|do my shot) on\b/i.test(t)) return true;
+  // Natural correction order: "I'm taking 10 mg every Monday now." The prior
+  // gate only recognized "now taking", so this common phrasing never reached
+  // the validated extractor and fell through to the legacy Settings redirect.
+  if (/\bi(?:'m| am)?\s+(?:currently\s+)?taking\b[\s\S]{0,50}\b\d+(?:\.\d+)?\s*mg\b/i.test(t)) return true;
   // Present/habitual injection-day statements the patterns above miss (still
   // NEVER past/abandoned — the extractor's own prompt guards that). e.g.
   // "my shot day is Saturday", "my injection is on Fridays", "I get my shot on Sundays".
   if (/\bmy (?:shot|injection|jab)(?: day)? (?:is|are) (?:on )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b/i.test(t)) return true;
   if (/\bi (?:now |currently )?(?:get|have|do) my (?:shot|injection|jab) on\b/i.test(t)) return true;
-  if (/\bi (?:really )?(?:don'?t (?:like|eat)|hate|can'?t stand)\b/i.test(t)) return true;
+  if (/\bi (?:really )?(?:don'?t (?:like|eat)|do\s+not\s+(?:like|eat)|hate|can'?t stand)\b/i.test(t)) return true;
   return false;
 }
 

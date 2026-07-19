@@ -133,10 +133,9 @@ export function relevantProfileSlot(user: ProfileShape, text: string): Progressi
       if (!isProfileSlotFilled(user, slot)) return slot;
     }
   }
-  if (FOOD_IDEA_RE.test(t)) {
-    if (!isProfileSlotFilled(user, 'dietary')) return 'dietary';
-    if (!isProfileSlotFilled(user, 'dislikes')) return 'dislikes';
-  }
+  // A useful meal idea can always be offered first. Preferences are learned
+  // afterward when relevant; they must not block breakfast or dinner help.
+  if (FOOD_IDEA_RE.test(t)) return null;
   if (REMINDER_TIMING_RE.test(t) && !isProfileSlotFilled(user, 'wake_sleep')) return 'wake_sleep';
   return null;
 }
@@ -213,7 +212,7 @@ const GATHER_REASON: Record<ProgressiveSlot, { ask: string; why: string }> = {
  */
 export function buildProfileGatherNote(slot: ProgressiveSlot): string {
   const g = GATHER_REASON[slot];
-  return `\n\n[PROFILE GATHERING — after you've fully answered the user's message, add ONE short, warm, casual question to learn ${g.ask} (${g.why}). Phrase it naturally like a friend, vary the wording, never a form or "survey" tone, and ask ONLY this one thing — never stack questions. If the moment is heavy (a symptom, a hard feeling), skip it entirely and don't ask.]`;
+  return `\n\n[OPTIONAL PROFILE LEARNING — first give a complete, immediately useful answer. Only if it feels naturally connected, end with ONE short optional question to learn ${g.ask} (${g.why}). Never withhold or postpone the answer. Never ask something already present in profile, memory, or this message. Phrase it casually, allow "skip", never stack questions, and do not ask on a symptom, hard feeling, food-log, correction, or multi-part turn.]`;
 }
 
 // ── Pending-answer state (Redis) ──────────────────────────────────────────────
@@ -334,7 +333,7 @@ export async function askedProfileRecently(redis: RedisLike | undefined, phone: 
 // question ("male", "5'11", "33", "180kg"). This stops a normal sentence that
 // happens to contain a number ("I had 100g of protein") from being mis-stored as
 // a weight/age. Longer messages mean the user moved on; we just clear the ask.
-const MAX_ANSWER_WORDS = 6;
+const MAX_ANSWER_WORDS = 20;
 
 export interface ProfileAnswer {
   /** Validated fields to persist, or null when the reply isn't a usable answer. */
@@ -353,8 +352,16 @@ export function parseProfileReply(slot: ProgressiveSlot, text: string): ProfileA
   // answers (diet, dislikes, goals) can be a touch longer ("vegetarian, no
   // nuts" / "chicken, eggs and tuna"), so allow a higher cap there.
   const LONGER = new Set<ProgressiveSlot>(['dietary', 'dislikes', 'goals']);
-  const wordCap = LONGER.has(slot) ? 12 : MAX_ANSWER_WORDS;
+  const wordCap = LONGER.has(slot) ? 30 : MAX_ANSWER_WORDS;
   if (t.split(/\s+/).length > wordCap) return { fields: null };
+  // Longer natural answers are welcome ("I currently weigh about 180 pounds"),
+  // but a number inside an unrelated food log must not become a body metric.
+  if (t.split(/\s+/).length > 6) {
+    if (slot === 'current_weight' && !/\b(i (?:currently )?weigh|my (?:current )?weight|weight is|i'?m at)\b/i.test(t)) return { fields: null };
+    if (slot === 'goal_weight' && !/\b(goal|target|aim|want to (?:weigh|reach|get to|be)|down to)\b/i.test(t)) return { fields: null };
+    if (slot === 'height' && !/\b(tall|height|i'?m|i am)\b/i.test(t)) return { fields: null };
+    if (slot === 'age' && !/\b(years? old|my age|i'?m|i am|born)\b/i.test(t)) return { fields: null };
+  }
   const parsed = parseSlotAnswer(slot as SlotId, t);
   if (parsed.skipped) return { fields: null };
   return { fields: parsed.ok && parsed.fields ? parsed.fields : null };

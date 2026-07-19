@@ -60,6 +60,7 @@ interface FormState {
   goals: string;
   checkin_count_per_day: string;
   checkin_days_interval: string;
+  sms_consent: boolean;
   glp1_start_date: string;
   medication_time: string;
   biggest_challenge: string;
@@ -104,6 +105,7 @@ function profileToForm(p: SettingsProfile): FormState {
     goals: (p.goals ?? []).join(", "),
     checkin_count_per_day: num(p.checkin_count_per_day),
     checkin_days_interval: num(p.checkin_days_interval),
+    sms_consent: p.sms_consent,
     glp1_start_date: p.glp1_start_date ? String(p.glp1_start_date).slice(0, 10) : "",
     medication_time: (p.medication_time ?? "").slice(0, 5),
     biggest_challenge: p.biggest_challenge ?? "",
@@ -141,6 +143,7 @@ function formToUpdate(f: FormState): SettingsUpdate {
     goals: f.goals ? f.goals.split(",").map((s) => s.trim()).filter(Boolean) : [],
     checkin_count_per_day: f.checkin_count_per_day ? Number(f.checkin_count_per_day) : undefined,
     checkin_days_interval: f.checkin_days_interval ? Number(f.checkin_days_interval) : undefined,
+    sms_consent: f.sms_consent,
     glp1_start_date: strOrNull(f.glp1_start_date),
     medication_time: f.medication_time || null,
     biggest_challenge: strOrNull(f.biggest_challenge),
@@ -200,9 +203,10 @@ const Settings = () => {
     if (phone.replace(/\D/g, "").length < 8) { toast.error("Enter a valid phone number"); return; }
     setBusy(true);
     try {
-      await settingsApi.requestCode(phone);
+      const result = await settingsApi.requestCode(phone);
+      if (result.devCode) setCode(result.devCode);
       setStage("code");
-      toast.success("We sent you a 6-digit code");
+      toast.success(result.devCode ? `Local test code: ${result.devCode}` : "We sent you a 6-digit code");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't send the code");
     } finally {
@@ -356,6 +360,15 @@ const Settings = () => {
                   <Field label="Sleep time"><input type="time" className={inputClass} value={form.sleep_time} onChange={(e) => setField("sleep_time", e.target.value)} /></Field>
                   <Field label="Check-ins per day (1–3)"><input type="number" min={1} max={3} className={inputClass} value={form.checkin_count_per_day} onChange={(e) => setField("checkin_count_per_day", e.target.value)} /></Field>
                   <Field label="Every N days (1–14)"><input type="number" min={1} max={14} className={inputClass} value={form.checkin_days_interval} onChange={(e) => setField("checkin_days_interval", e.target.value)} /></Field>
+                  <label className="sm:col-span-2 flex items-center gap-3 rounded-xl border border-sand p-4 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={form.sms_consent}
+                      onChange={(e) => setForm((current) => current ? { ...current, sms_consent: e.target.checked } : current)}
+                      className="h-5 w-5 accent-primary"
+                    />
+                    Send me proactive Grace check-ins and reminders
+                  </label>
                 </Section>
 
                 <div className="sticky bottom-0 bg-background py-4 border-t border-sand">

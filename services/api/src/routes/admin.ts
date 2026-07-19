@@ -2521,7 +2521,7 @@ Banned phrases must be exact lowercase substrings from Grace's actual response. 
             temperature: 0.0,
             maxOutputTokens: 600,
             responseFormat: 'json',
-            model: 'gemini-2.0-flash',
+            model: 'gemini-2.5-flash',
           });
           const cleaned = resp.text.trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
           const parsed = JSON.parse(cleaned) as { bugDescription?: string; bannedPhrases?: string[]; requiredBehavior?: string[] };

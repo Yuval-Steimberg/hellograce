@@ -64,11 +64,6 @@ const safety = [
   "Your privacy and safety always come first.",
 ];
 const benefits = ["Feel less alone", "Stay consistent", "Understand your eating better", "Hit protein goals more easily", "Remember injection days", "Build simple routines", "Support without judgment", "Less time guessing"];
-const testimonials = [
-  { q: "Grace made tracking feel easy instead of stressful.", n: "Maya R.", meta: "4 months in" },
-  { q: "I finally have something that reminds me without making me feel bad.", n: "Daniel K.", meta: "On Wegovy" },
-  { q: "It feels like someone is actually checking in on me.", n: "Priya S.", meta: "On Mounjaro" },
-].map((t) => ({ ...t, initials: t.n.split(" ").map((s) => s[0]).join("").slice(0, 2) }));
 const freeFeats = ["Full access for 3 days", "The all-in-one dashboard", "Meal, protein & water logging", "No card required"];
 const proFeats = ["Everything in the trial", "Voice & photo food logging", "Weekly insights & plateau signals", "Medication & dose timeline", "Habits, symptoms & progress tracking"];
 const FAQ = [
@@ -154,7 +149,7 @@ const DesktopLanding = () => {
                 <span style={{ width: 34, height: 34, borderRadius: "50%", background: "#EADCC8", border: "2px solid #FBF4EA", marginLeft: -12 }} />
                 <span style={{ width: 34, height: 34, borderRadius: "50%", background: ACCENT, border: "2px solid #FBF4EA", marginLeft: -12, display: "flex", alignItems: "center", justifyContent: "center", color: "#FBF6EE", fontSize: 12, fontWeight: 700 }}>＋</span>
               </div>
-              <span style={{ fontSize: 14, color: MUTE, lineHeight: 1.4, maxWidth: "30ch" }}>Join thousands building daily consistency with Grace.</span>
+              <span style={{ fontSize: 14, color: MUTE, lineHeight: 1.4, maxWidth: "32ch" }}>Built for calm, private, day-to-day GLP-1 support.</span>
             </div>
           </Reveal>
           {/* HERO PHONE */}
@@ -320,25 +315,6 @@ const DesktopLanding = () => {
               ))}
             </div>
           </Reveal>
-        </div>
-      </section>
-
-      {/* TESTIMONIALS */}
-      <section style={{ background: PAGE }}>
-        <div style={sectionPad}>
-          <Reveal style={{ textAlign: "center", maxWidth: 620, margin: "0 auto 54px" }}>
-            <div style={eyebrow()}>In their words</div>
-            <h2 style={h2}>People feel the difference.</h2>
-          </Reveal>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: "clamp(20px,3vw,32px)" }}>
-            {testimonials.map((t, i) => (
-              <motion.div key={t.n} initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.55, delay: i * 0.1, ease: [0.22, 1, 0.36, 1] }} {...liftHover} style={{ background: "#fff", border: "1px solid #EFE3D1", borderRadius: 26, padding: "34px 32px", display: "flex", flexDirection: "column", gap: 22, boxShadow: CARD_SHADOW }}>
-                <div style={{ color: ACCENT, fontSize: 14, letterSpacing: 3 }}>★★★★★</div>
-                <div style={{ fontFamily: SERIF, fontSize: 21, lineHeight: 1.45, color: INK }}>“{t.q}”</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 13, marginTop: "auto" }}><div style={{ width: 44, height: 44, borderRadius: "50%", background: "#ECEFE2", color: SAGE, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 15 }}>{t.initials}</div><div><div style={{ fontWeight: 700, fontSize: 15, color: INK }}>{t.n}</div><div style={{ fontSize: 13, color: "#9B9183", marginTop: 2 }}>{t.meta}</div></div></div>
-              </motion.div>
-            ))}
-          </div>
         </div>
       </section>
 

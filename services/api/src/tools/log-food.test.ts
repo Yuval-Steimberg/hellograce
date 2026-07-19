@@ -12,6 +12,13 @@ describe('lookupCommonFoodMacros — fast-path macro table (2026-06-01)', () => 
     expect(r?.confidence).toBe('high');
   });
 
+  it('scales a trusted standard serving when the user says they ate half', () => {
+    const r = lookupCommonFoodMacros('half portion pasta');
+    expect(r?.protein_g).toBe(4);
+    expect(r?.calories).toBe(110);
+    expect(r?.food).toContain('half portion');
+  });
+
   it('matches "I just had 2 eggs for breakfast" (article + verb + suffix stripped)', () => {
     const r = lookupCommonFoodMacros('I just had 2 eggs for breakfast');
     expect(r).not.toBeNull();
@@ -106,6 +113,7 @@ describe('lookupCommonFoodMacros — Phase 16 expansion (2026-06-03)', () => {
 
   it('hits branded shakes', () => {
     expect(lookupCommonFoodMacros('fairlife')?.protein_g).toBe(26);
+    expect(lookupCommonFoodMacros('an 11 oz Fairlife protein shake')?.protein_g).toBe(26);
     expect(lookupCommonFoodMacros('premier protein')?.protein_g).toBe(30);
   });
 

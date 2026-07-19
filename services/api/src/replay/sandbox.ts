@@ -86,7 +86,7 @@ function makeMockLogFood(state: MockFoodState, llm: LLMProvider): Tool {
           temperature: 0.0,
           maxOutputTokens: 100,
           responseFormat: 'json',
-          model: 'gemini-2.0-flash',
+          model: 'gemini-2.5-flash',
         });
         const cleaned = resp.text.trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
         const parsed = JSON.parse(cleaned) as { protein_g?: number; calories?: number };

@@ -88,7 +88,7 @@ export async function classifyIntentLLM(
       ],
       temperature: 0,
       maxOutputTokens: 160,
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       disableThinking: true,
     });
     const json = extractJson(resp.text ?? '');

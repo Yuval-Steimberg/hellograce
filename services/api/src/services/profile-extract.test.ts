@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   mightStateProfileChange,
+  parseExplicitProfileUpdates,
   parseProfileUpdates,
   buildProfileExtractPrompt,
   normalizeMedication,
@@ -37,6 +38,7 @@ describe('mightStateProfileChange (pre-filter)', () => {
     expect(mightStateProfileChange("I really don't like mushrooms")).toBe(true);
     expect(mightStateProfileChange('I do not like cottage cheese')).toBe(true);
     expect(mightStateProfileChange('Actually I am taking 10 mg every Monday now')).toBe(true);
+    expect(mightStateProfileChange('Actually I take 10 mg every Monday now')).toBe(true);
   });
 
   it('fires on present/habitual injection-day statements (memory capture)', () => {
@@ -59,6 +61,23 @@ describe('mightStateProfileChange (pre-filter)', () => {
   it('ignores empty / oversized input', () => {
     expect(mightStateProfileChange('')).toBe(false);
     expect(mightStateProfileChange('switched mounjaro '.repeat(200))).toBe(false);
+  });
+});
+
+describe('parseExplicitProfileUpdates', () => {
+  it('captures a natural dose and injection-day correction without an LLM', () => {
+    expect(parseExplicitProfileUpdates('Actually I take 10 mg every Monday now', BLANK)).toEqual({
+      dose_mg: 10,
+      injection_day: 'Monday',
+    });
+  });
+
+  it('drops no-op values', () => {
+    expect(parseExplicitProfileUpdates('My dose is 10 mg on Monday', {
+      ...BLANK,
+      dose_mg: 10,
+      injection_day: 'Monday',
+    })).toEqual({});
   });
 });
 

@@ -134,7 +134,7 @@ Output ONLY a JSON object:
       temperature: 0.0,
       maxOutputTokens: 1024,
       responseFormat: 'json',
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
     });
     const cleaned = resp.text.trim().replace(/^```json\s*/i, '').replace(/```$/, '').trim();
     const parsed = JSON.parse(cleaned) as { checks?: Array<{ behavior: string; demonstrated: boolean }> };

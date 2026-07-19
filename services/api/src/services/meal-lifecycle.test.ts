@@ -126,6 +126,7 @@ describe('foodSpanFromConsumption — never-drop backstop for "I ate X … <ques
   it('handles a mid-sentence question clause with no period', () => {
     expect(foodSpanFromConsumption('I ate chicken and rice how much protein was that')).toBe('I ate chicken and rice');
     expect(foodSpanFromConsumption('just had a greek yogurt, any idea what to eat next?')).toBe('just had a greek yogurt');
+    expect(foodSpanFromConsumption('I drank an 11 oz Fairlife protein shake.')).toBe('I drank an 11 oz Fairlife protein shake');
   });
   it('slices off trailing state/context clauses (prod 2026-07-04: yogurt + injection + hunger)', () => {
     expect(foodSpanFromConsumption('I ate yogurt with berries after my injection and now I’m a little hungry. Any snack idea?'))

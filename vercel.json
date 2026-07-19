@@ -1,8 +1,8 @@
 {
-  "buildCommand": "cd apps/web && npm install --no-audit --no-fund && npm run build",
+  "buildCommand": "pnpm --filter @grace/web build",
   "outputDirectory": "apps/web/dist",
-  "installCommand": "echo 'install handled by build command'",
-  "framework": null,
+  "installCommand": "pnpm install --frozen-lockfile",
+  "framework": "vite",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ],

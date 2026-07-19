@@ -4,7 +4,6 @@ import SEOHead from "@/components/SEOHead";
 import FeatureGrid from "@/components/landing/FeatureGrid";
 
 const FeatureSpread = lazy(() => import("@/components/landing/FeatureSpread"));
-const TestimonialsSection = lazy(() => import("@/components/landing/TestimonialsSection"));
 
 const Features = () => (
   <MarketingLayout>
@@ -13,7 +12,6 @@ const Features = () => (
       <FeatureGrid />
       <Suspense fallback={null}>
         <FeatureSpread />
-        <TestimonialsSection />
       </Suspense>
     </div>
   </MarketingLayout>

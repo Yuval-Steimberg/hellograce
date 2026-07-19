@@ -14,7 +14,7 @@ const SITE_NAME = "grace";
 const DEFAULT_TITLE = "Grace — Your Daily GLP-1 Companion on iMessage";
 const DEFAULT_DESCRIPTION =
   "Grace is a daily GLP-1 companion for people on Ozempic, Wegovy, Mounjaro & Zepbound. Stay on track with protein, hydration, injection days, side effects and progress — all through a simple chat. No app. Not a replacement for medical care.";
-const BASE_URL = "https://graceglp.com";
+const BASE_URL = (import.meta.env.VITE_SITE_URL || "https://graceglp.com").replace(/\/+$/, "");
 const DEFAULT_OG_IMAGE = `${BASE_URL}/og-image.png`;
 
 const SEOHead = ({

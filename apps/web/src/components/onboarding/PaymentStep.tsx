@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Shield, Check, Star, CreditCard, Lock } from "lucide-react";
+import { Shield, Check, CreditCard, Lock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { loadStripe, type StripeError } from "@stripe/stripe-js";
@@ -31,9 +31,10 @@ function friendlyStripeError(error: StripeError): string {
 // can swap test → live without a code change. Falls back to the test key for
 // local dev only — production MUST set VITE_STRIPE_PUBLISHABLE_KEY to pk_live_*.
 const STRIPE_PUBLISHABLE_KEY =
-  (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined) ??
-  "pk_test_51TWfwcLMk6wjvxD9YRSKqpEGOd93kuzD1g29iK67bvdlkfpdvriGGdeGXwpuoPJf3DwxyOZ77MimOIvzc4kOXCxK00Ny75zsRB";
-const stripePromise = loadStripe(STRIPE_PUBLISHABLE_KEY);
+  (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined) ?? "";
+const stripePromise = STRIPE_PUBLISHABLE_KEY
+  ? loadStripe(STRIPE_PUBLISHABLE_KEY)
+  : null;
 
 interface PaymentStepProps {
   userId: string;
@@ -355,21 +356,6 @@ const PaymentForm = ({
         <span>No charge today</span>
       </div>
 
-      {/* Testimonial */}
-      <div className="w-full bg-card rounded-2xl p-5 ring-1 ring-border/30 mb-4">
-        <div className="flex gap-1 mb-2">
-          {[1, 2, 3, 4, 5].map((s) => (
-            <Star key={s} className="w-4 h-4 fill-peach text-peach" />
-          ))}
-        </div>
-        <blockquote className="text-foreground text-sm leading-relaxed italic mb-2">
-          "I wasn't sure about signing up, but the 3-day trial made it easy to try. By day 2, I was already looking forward to my morning check-in. It's like having a friend who actually gets what this journey is like."
-        </blockquote>
-        <cite className="text-muted-foreground text-xs not-italic">
-          — Sarah M., on Mounjaro for 4 months
-        </cite>
-      </div>
-
       {/* Back link */}
       <button
         onClick={onBack}
@@ -390,6 +376,10 @@ const PaymentStep = ({ userId, firstName, onNext }: PaymentStepProps) => {
 
   const handleContinueToPayment = async () => {
     if (loading) return;
+    if (!stripePromise) {
+      toast.error("Payments are temporarily unavailable. Please try again later.");
+      return;
+    }
     setLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("create-checkout", {

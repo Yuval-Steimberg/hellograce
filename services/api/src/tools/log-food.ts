@@ -928,14 +928,41 @@ function normalizeFoodForLookupHeavy(input: string): string {
  * (the table key must appear as a whole word in the normalized input).
  */
 export function lookupCommonFoodMacros(input: string): FoodEstimate | null {
+  const halfPortion = /\b(?:half|1\s*\/\s*2|½)\b/i.test(input);
+  const scale = (estimate: FoodEstimate): FoodEstimate => halfPortion
+    ? {
+        ...estimate,
+        food: `${estimate.food} (half portion)`,
+        protein_g: Math.max(0, Math.round(estimate.protein_g / 2)),
+        calories: Math.max(0, Math.round(estimate.calories / 2)),
+      }
+    : estimate;
   const lightNorm = normalizeFoodForLookup(input);
   if (lightNorm.length < 3) return null;
+
+  // A named product is more specific than its generic category. Without this
+  // pass, "Fairlife protein shake" matched the longer key "protein shake" and
+  // silently discarded the brand's curated label values.
+  const brandedKeys = ['fairlife', 'core power', 'premier protein', 'orgain', 'ensure', 'muscle milk'] as const;
+  for (const key of brandedKeys) {
+    if (new RegExp(`\\b${key.replace(/\s+/g, '\\s+')}\\b`, 'i').test(lightNorm)) {
+      const branded = COMMON_FOODS[key];
+      if (branded) {
+        return scale({
+          food: branded.food,
+          protein_g: branded.protein_g,
+          calories: branded.calories,
+          confidence: 'high',
+        });
+      }
+    }
+  }
 
   // Pass 1 — light normalization (keeps "slices of", "cup of", etc.).
   // Catches table entries that include those words like "2 slices of pizza".
   const exactLight = COMMON_FOODS[lightNorm];
   if (exactLight) {
-    return { food: exactLight.food, protein_g: exactLight.protein_g, calories: exactLight.calories, confidence: 'high' };
+    return scale({ food: exactLight.food, protein_g: exactLight.protein_g, calories: exactLight.calories, confidence: 'high' });
   }
 
   // Pass 2 — heavy normalization (strips "cup of", "slices of", etc.).
@@ -943,7 +970,7 @@ export function lookupCommonFoodMacros(input: string): FoodEstimate | null {
   const heavyNorm = normalizeFoodForLookupHeavy(input);
   const exactHeavy = heavyNorm !== lightNorm ? COMMON_FOODS[heavyNorm] : undefined;
   if (exactHeavy) {
-    return { food: exactHeavy.food, protein_g: exactHeavy.protein_g, calories: exactHeavy.calories, confidence: 'high' };
+    return scale({ food: exactHeavy.food, protein_g: exactHeavy.protein_g, calories: exactHeavy.calories, confidence: 'high' });
   }
 
   // Substring containment using BOTH normalizations. We try the heavy one
@@ -982,12 +1009,12 @@ export function lookupCommonFoodMacros(input: string): FoodEstimate | null {
     if (hasOtherFoodTokens(lightNorm, best.key) || hasOtherFoodTokens(heavyNorm, best.key)) {
       return null;
     }
-    return {
+    return scale({
       food: best.macros.food,
       protein_g: best.macros.protein_g,
       calories: best.macros.calories,
       confidence: 'high',
-    };
+    });
   }
   return null;
 }

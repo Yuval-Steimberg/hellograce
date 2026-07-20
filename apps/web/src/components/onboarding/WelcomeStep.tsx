@@ -1,9 +1,4 @@
 import QuizButton from "./QuizButton";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import avatar1 from "../../../public/avatars/avatar-1.jpg";
-import avatar2 from "../../../public/avatars/avatar-2.jpg";
-import avatar3 from "../../../public/avatars/avatar-3.jpg";
-import avatar4 from "../../../public/avatars/avatar-4.jpg";
 
 interface WelcomeStepProps {
   onNext: () => void;
@@ -23,28 +18,9 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
           I'll be your friend through this GLP-1 journey — right here in your texts, no app to open. Someone who remembers you, checks in on the good days and the hard ones, and actually gets it. Let's get to know each other.
         </p>
 
-        {/* Social Proof */}
-        <div className="mt-8 flex items-center gap-4" role="group" aria-label="Community members">
-          <div className="flex -space-x-3">
-            <Avatar className="h-10 w-10 border-2 border-background ring-0">
-              <AvatarImage src={avatar1} alt="grace community member" className="object-cover" width={40} height={40} />
-              <AvatarFallback className="bg-[hsl(15,50%,75%)] text-foreground text-sm font-medium">U1</AvatarFallback>
-            </Avatar>
-            <Avatar className="h-10 w-10 border-2 border-background ring-0">
-              <AvatarImage src={avatar2} alt="grace community member" className="object-cover" width={40} height={40} />
-              <AvatarFallback className="bg-[hsl(25,45%,70%)] text-foreground text-sm font-medium">U2</AvatarFallback>
-            </Avatar>
-            <Avatar className="h-10 w-10 border-2 border-background ring-0">
-              <AvatarImage src={avatar3} alt="grace community member" className="object-cover" width={40} height={40} />
-              <AvatarFallback className="bg-[hsl(10,40%,65%)] text-white text-sm font-medium">U3</AvatarFallback>
-            </Avatar>
-            <Avatar className="h-10 w-10 border-2 border-background ring-0">
-              <AvatarImage src={avatar4} alt="grace community member" className="object-cover" width={40} height={40} />
-              <AvatarFallback className="bg-[hsl(35,42%,72%)] text-foreground text-sm font-medium">U4</AvatarFallback>
-            </Avatar>
-          </div>
-          <p className="text-sm text-muted-foreground leading-snug">
-            <span className="font-semibold text-foreground">12,000+ women</span> on their GLP-1 journey
+        <div className="mt-8 rounded-2xl border border-border/70 bg-card/60 px-5 py-4">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            This takes just a few minutes. You can change any answer later, and Grace will keep learning naturally from your conversations.
           </p>
         </div>
       </div>

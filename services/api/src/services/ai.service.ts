@@ -702,6 +702,7 @@ import { uncoveredAskCount, missingAskTopics } from './multi-ask-coverage.js';
 import {
   PROFILE_LEARNING_ENABLED,
   mightStateProfileChange,
+  parseExplicitProfileUpdates,
   extractProfileUpdates,
   type ProfileSnapshot,
   type ProfileUpdates,
@@ -2703,6 +2704,8 @@ export class AIService {
     // answered with the protein number, and vice versa.
     const targetIsCalorie = wantsTarget && /\b(?:calorie|calories|cal|kcal)\b/.test(lower);
     const targetIsProtein = wantsTarget && (/\bprotein\b/.test(lower) || !targetIsCalorie);
+    const intakeIsCalorie = /\b(?:calorie|calories|cals?|kcal)\b/.test(lower);
+    const intakeIsProtein = /\bprotein\b/.test(lower) || !intakeIsCalorie;
     const wantsHad =
       /\bhow (?:much|many)\b[^?]{0,40}\b(?:protein|calorie|cal|kcal)?\b[^?]{0,20}\b(had|today|so far|eaten|consumed|left|remaining)\b/.test(lower) ||
       /\b(?:protein|calorie|cal|kcal)\b[^?]{0,15}\b(today|so far|left|remaining)\b/.test(lower) ||
@@ -2758,13 +2761,31 @@ export class AIService {
     if (wantsHad) {
       const summary = await this.deps.users.getTodaysFoodSummary(input.userId).catch(() => null);
       if (summary) {
-        const total = Math.round(summary.protein_g);
-        const goal = user.protein_goal_grams ?? 0;
-        if (goal > 0 && !wantsTarget) {
-          const left = Math.max(0, goal - total);
-          parts.push(left === 0 ? `you're at ${total}g protein today — you hit your ${goal}g target` : `you're at ${total}g protein today, ${left}g left of your ${goal}g target`);
-        } else {
-          parts.push(`you're at ${total}g protein today`);
+        if (intakeIsProtein) {
+          const total = Math.round(summary.protein_g);
+          const goal = user.protein_goal_grams ?? 0;
+          if (goal > 0 && !wantsTarget) {
+            const left = Math.max(0, goal - total);
+            parts.push(left === 0 ? `you're at ${total}g protein today — you hit your ${goal}g target` : `you're at ${total}g protein today, ${left}g left of your ${goal}g target`);
+          } else {
+            parts.push(`you're at ${total}g protein today`);
+          }
+        }
+        if (intakeIsCalorie) {
+          const total = Math.round(summary.calories);
+          const goal = user.calorie_goal_kcal ?? 0;
+          if (goal > 0 && !wantsTarget) {
+            const remaining = goal - total;
+            parts.push(
+              remaining > 0
+                ? `you're at ${total} kcal today, ${remaining} kcal left of your ${goal} kcal target`
+                : remaining === 0
+                  ? `you're at ${total} kcal today — you hit your ${goal} kcal target`
+                  : `you're at ${total} kcal today, ${Math.abs(remaining)} kcal over your ${goal} kcal target`,
+            );
+          } else {
+            parts.push(`you're at ${total} kcal today`);
+          }
         }
       }
     }
@@ -3616,7 +3637,19 @@ CRITICAL RULES:
     // input.text to the replayed original question so the rest of this path
     // answers it, now personalized. Reply-path agnostic — must run here too.
     lat.mark('unified_intercepts');
-    if (this.progressiveProfile) {
+    // A stored target is already sufficient for a personal totals/remaining
+    // question. Do not interrupt that five-millisecond read to ask for unrelated
+    // height, sex, or activity data. Gathering still runs when the requested
+    // target is genuinely missing and a personalized calculation needs inputs.
+    const lowerForStatsGate = normalizeUserText(input.text).toLowerCase();
+    const asksCalorieStats =
+      /\b(?:calorie|calories|cals?|kcal)\b/.test(lowerForStatsGate) ||
+      /\b(?:overeat|overeaten|eat too much|eaten too much|go over|gone over)\b/.test(lowerForStatsGate);
+    const asksProteinStats = /\bprotein\b/.test(lowerForStatsGate);
+    const storedTargetAnswersQuestion =
+      (asksCalorieStats && (user?.calorie_goal_kcal ?? 0) > 0) ||
+      (asksProteinStats && (user?.protein_goal_grams ?? 0) > 0);
+    if (this.progressiveProfile && !storedTargetAnswersQuestion) {
       const gate = await this.progressiveGatherGate(input).catch(() => ({} as { reply?: string; text?: string }));
       if (gate.reply) {
         void this.deps.memory.appendTurn({ userId, conversationId, role: 'user', content: input.text }).catch(() => {});
@@ -4413,6 +4446,38 @@ CRITICAL RULES:
       ...(this.deps.usda ? { usda: this.deps.usda } : {}),
       users: this.deps.users,
     });
+
+    // Nutrition-label correction for an item already logged today:
+    // "The protein shake had 30 grams of protein and 160 calories." This is
+    // exact user-provided data, so update the ledger deterministically instead
+    // of trusting the extractor to classify the sentence as an edit.
+    const labelCorrection = text.match(
+      /\b(\d{1,3})\s*(?:g|grams?)\s+(?:of\s+)?protein\b[\s\S]{0,45}\b(\d{1,4})\s*(?:calories|cals?|kcal)\b/i,
+    );
+    if (labelCorrection && namesSpecificFood(text)) {
+      const protein = Number(labelCorrection[1]);
+      const calories = Number(labelCorrection[2]);
+      const ref = extractFoodMention(text);
+      if (
+        ref
+        && Number.isFinite(protein) && protein >= 0 && protein <= 300
+        && Number.isFinite(calories) && calories >= 0 && calories <= 5000
+      ) {
+        const mutation = await new FoodLedgerService(this.deps.pool, this.deps.users)
+          .replaceLatest(input.userId, ref, {
+            food: ref,
+            protein_g: protein,
+            calories,
+            confidence: 'exact',
+            raw_text: text,
+          })
+          .catch(() => null);
+        if (mutation?.updated) {
+          this.deps.logger.info({ userId: input.userId, ref, protein, calories }, 'ai.unified_food.label_corrected');
+          return { logged: [ref], pending: [], removed: null };
+        }
+      }
+    }
 
     // Fragmented meal continuation: messaging clients often deliver
     // "For lunch I had chicken" / "with half a cup of rice" / "and broccoli"
@@ -8167,10 +8232,13 @@ CRITICAL RULES:
     // Cap the extra call so a slow extraction can't stall the reply; on timeout
     // we simply learn nothing this turn (a harmless no-op — the next turn tries
     // again). 3s is ample for the flash-lite JSON pass.
-    const updates = await Promise.race<ProfileUpdates>([
+    const deterministic = parseExplicitProfileUpdates(input.text, current);
+    const extracted = await Promise.race<ProfileUpdates>([
       extractProfileUpdates(this.deps.llm, logger, input.text, current),
       new Promise<ProfileUpdates>((resolve) => setTimeout(() => resolve({}), 3000)),
     ]).catch(() => ({} as ProfileUpdates));
+    // Deterministic explicit values win over model output for the same field.
+    const updates: ProfileUpdates = { ...extracted, ...deterministic };
 
     const fields = Object.keys(updates);
     if (fields.length === 0) return user;

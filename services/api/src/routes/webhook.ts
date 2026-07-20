@@ -490,7 +490,10 @@ export async function processInboundMessage(
             const localizedResponse = buildSafetyResponse(resources);
             // Crisis classification + medical-advice use their own dedicated
             // wording, not the safety hotline template — preserve those.
-            const bodyToSend = safety.class === 'medical_advice' ? safety.response! : localizedResponse;
+            const bodyToSend =
+              safety.class === 'crisis'
+                ? localizedResponse
+                : safety.response!;
             await deps.sender.send({ to: normalized.userId, channel: normalized.channel, body: bodyToSend });
             return;
           }
@@ -532,11 +535,10 @@ export async function processInboundMessage(
                     'webhook.symptom_stack.escalate',
                   );
                   await clearStack(user.phone, { redis: deps.redis, logger: log });
-                  const stackResources = getCrisisResourcesForUser(user, { reviewed: deps.env.CRISIS_RESOURCES_REVIEWED });
                   await deps.sender.send({
                     to: normalized.userId,
                     channel: normalized.channel,
-                    body: buildSafetyResponse(stackResources),
+                    body: 'This combination of symptoms could be a medical emergency. Call your local emergency services now, and do not drive yourself.',
                   });
                   return;
                 }

@@ -570,6 +570,10 @@ async function buildServer(): Promise<{ app: FastifyInstance; shutdown: () => Pr
     ? [
         process.env.PUBLIC_WEB_URL ?? 'https://grace-admin-silk.vercel.app',
         'https://grace-admin-silk.vercel.app',
+        'https://hellograce-production.vercel.app',
+        // Vercel preview/deployment aliases for the independent Grace web
+        // project. Keep this project-scoped; never allow arbitrary vercel.app.
+        /^https:\/\/hellograce-production(?:-[a-z0-9-]+)?(?:-yuval-steimbergs-projects)?\.vercel\.app$/,
         'https://graceglp.com',
         'https://www.graceglp.com',
         // Allow local web dev (Vite on :8080) to call the live API for quick

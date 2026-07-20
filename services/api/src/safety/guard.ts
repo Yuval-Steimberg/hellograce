@@ -109,6 +109,13 @@ const MEDICAL_ADVICE = [
 // same text on a cross-turn force-escalation.
 export const SAFETY_RESPONSE =
   'Please reach out for support right now. Call or text 988 to talk to someone trained to help. They\'re available 24/7. If you\'re in immediate physical danger, call 911. I care about you and want you to get real help immediately.';
+/**
+ * Physical emergencies must not be mislabeled as a mental-health crisis, and
+ * must not receive a guessed country-specific number. This wording remains
+ * correct before the country resource table receives clinical/legal approval.
+ */
+export const PHYSICAL_EMERGENCY_RESPONSE =
+  'This could be a medical emergency. Call your local emergency services now, and do not drive yourself. If someone is nearby, ask them to stay with you while help is on the way.';
 const MEDICAL_ADVICE_RESPONSE =
   'That\'s really one for your prescribing clinician — they can give you the right answer for your specific dose and schedule. If something feels off, message them today or call your pharmacy\'s nurse line.';
 
@@ -162,7 +169,7 @@ export function classifyMessage(text: string): SafetyCheck {
       return {
         class: 'emergency',
         matched: k,
-        response: SAFETY_RESPONSE,
+        response: PHYSICAL_EMERGENCY_RESPONSE,
         symptomCategory: group.category,
       };
     }

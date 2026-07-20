@@ -106,6 +106,8 @@ const PROTEIN_LEFT_RE =
   /^(?:how (?:much|many)\s+(?:grams? of\s+)?protein\s+(?:do i have\s+|is\s+|are\s+)?(?:left|remaining)|protein\s+(?:left|remaining)|how (?:much|many) more protein (?:do i need|can i (?:have|eat)))(?:\s+(?:today|for today))?\s*\??$/i;
 const CALORIE_LEFT_RE =
   /^(?:how (?:many|much)\s+(?:calories|cals?|kcal)\s+(?:do i have\s+|are\s+|is\s+)?(?:left|remaining)|(?:calories|cals?|kcal)\s+(?:left|remaining)|how (?:many|much) more (?:calories|cals?|kcal) (?:can i (?:have|eat)|do i have))(?:\s+(?:today|for today))?\s*\??$/i;
+const CALORIE_OVER_RE =
+  /^(?:did i (?:overeat|eat too much|go over)(?:\s+today)?|have i (?:overeaten|eaten too much|gone over)(?:\s+today)?|am i over my (?:calorie|calories|kcal) (?:goal|target|budget)(?:\s+today)?)\s*\??$/i;
 
 // 2026-06-11 WhatsApp screenshot: "What is my target?" (bare, no
 // "protein"/"calorie" word) fell through every pattern → orchestrator →
@@ -247,6 +249,7 @@ function categorizeQuery(t: string): QueryFastResult['category'] | null {
     : CALORIE_TODAY_RE.test(t) ? 'calorie_today'
     : PROTEIN_LEFT_RE.test(t) ? 'protein_today'
     : CALORIE_LEFT_RE.test(t) ? 'calorie_today'
+    : CALORIE_OVER_RE.test(t) ? 'calorie_today'
     : PROGRESS_TODAY_RE.test(t) ? 'progress_today'
     : PLAN_TODAY_RE.test(t) ? 'daily_focus'
     : FOOD_SUMMARY_LIST_RE.test(t) ? 'food_summary_today'
@@ -509,15 +512,21 @@ export async function tryQueryFast(
         const total = Math.round(summary.calories);
         const goal = user.calorie_goal_kcal ?? 0;
         if (goal > 0) {
-          const left = Math.max(0, goal - total);
-          if (left === 0) {
+          const remaining = goal - total;
+          if (remaining < 0) {
+            return {
+              text: `You're at ${total} kcal today — ${Math.abs(remaining)} kcal over your ${goal} kcal target based on what's logged. One day doesn't define your progress.`,
+              category: 'calorie_today',
+            };
+          }
+          if (remaining === 0) {
             return {
               text: `You're at ${total} kcal today — you hit your ${goal} kcal target.`,
               category: 'calorie_today',
             };
           }
           return {
-            text: `You're at ${total} kcal today — ${left} kcal left of your ${goal} kcal target.`,
+            text: `You're at ${total} kcal today — ${remaining} kcal left of your ${goal} kcal target.`,
             category: 'calorie_today',
           };
         }

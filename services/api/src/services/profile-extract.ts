@@ -72,6 +72,30 @@ export interface ProfileSnapshot {
 
 export const EMPTY_UPDATES: ProfileUpdates = {};
 
+/**
+ * Parse the most common explicit profile corrections without an LLM. These
+ * phrases are unambiguous, latency-sensitive, and too important to lose when a
+ * provider returns malformed JSON. The model extractor still handles natural
+ * language outside these narrow patterns.
+ */
+export function parseExplicitProfileUpdates(
+  text: string,
+  current: ProfileSnapshot,
+): ProfileUpdates {
+  const out: ProfileUpdates = {};
+  const dose = text.match(/\b(?:i(?:'m| am)?\s+(?:currently\s+)?(?:take|taking)|my\s+dose\s+(?:is|=|:)|(?:now|currently)\s+(?:on|taking))\s+(\d+(?:\.\d+)?)\s*mg\b/i);
+  if (dose?.[1]) {
+    const value = normalizeDose(Number(dose[1]));
+    if (value != null && value !== current.dose_mg) out.dose_mg = value;
+  }
+  const day = text.match(/\b(?:every|on)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\b/i);
+  if (day?.[1]) {
+    const normalized = normalizeDay(day[1]);
+    if (normalized && normalized !== current.injection_day) out.injection_day = normalized;
+  }
+  return out;
+}
+
 // ── Deterministic pre-filter ────────────────────────────────────────────────
 // Only run the LLM extractor when the message PLAUSIBLY states a durable
 // self-change. Past-tense ("I used to be on…"), questions, and third-party
@@ -100,6 +124,7 @@ export function mightStateProfileChange(text: string): boolean {
   // gate only recognized "now taking", so this common phrasing never reached
   // the validated extractor and fell through to the legacy Settings redirect.
   if (/\bi(?:'m| am)?\s+(?:currently\s+)?taking\b[\s\S]{0,50}\b\d+(?:\.\d+)?\s*mg\b/i.test(t)) return true;
+  if (/\bi\s+(?:currently\s+)?take\b[\s\S]{0,50}\b\d+(?:\.\d+)?\s*mg\b/i.test(t)) return true;
   // Present/habitual injection-day statements the patterns above miss (still
   // NEVER past/abandoned — the extractor's own prompt guards that). e.g.
   // "my shot day is Saturday", "my injection is on Fridays", "I get my shot on Sundays".

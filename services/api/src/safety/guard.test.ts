@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { classifyMessage } from './guard.js';
+import { classifyMessage, PHYSICAL_EMERGENCY_RESPONSE } from './guard.js';
 
 describe('classifyMessage', () => {
   it('passes safe messages', () => {
     expect(classifyMessage('had eggs for breakfast').class).toBe('safe');
   });
   it('flags emergencies', () => {
-    expect(classifyMessage("I have chest pain right now").class).toBe('emergency');
+    const result = classifyMessage("I have chest pain right now");
+    expect(result.class).toBe('emergency');
+    expect(result.response).toBe(PHYSICAL_EMERGENCY_RESPONSE);
+    expect(result.response).not.toMatch(/988|911/);
   });
   it('flags crisis', () => {
     expect(classifyMessage('I want to die').class).toBe('crisis');

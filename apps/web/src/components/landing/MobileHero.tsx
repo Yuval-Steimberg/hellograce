@@ -16,10 +16,10 @@ type Msg = { from: "user" | "grace"; text: string };
 
 const INTRO: Msg[] = [
   { from: "grace", text: "Hi, I'm Grace 🌸" },
-  { from: "grace", text: "Your all-in-one GLP-1 companion — food, protein, water, weight, habits, symptoms, and your shots, all in one place." },
+  { from: "grace", text: "Your all-in-one GLP-1 companion for food, protein, water, weight, habits, symptoms, and your shots, all in one place." },
   { from: "user", text: "how does it work?" },
-  { from: "grace", text: "Just text me like a friend — what you ate, how you feel, when your shot is." },
-  { from: "grace", text: "I'll track it all, show you the whole picture, and check in — so you're never doing this alone." },
+  { from: "grace", text: "Just text me like a friend: what you ate, how you feel, or when your shot is." },
+  { from: "grace", text: "I'll track it all, show you the whole picture, and check in, so you're never doing this alone." },
   { from: "user", text: "okay, I'm in" },
   { from: "grace", text: "Love that. Let's set you up 💛" },
 ];
@@ -73,13 +73,16 @@ const MobileHero = () => {
   const start = () => startWithGrace(() => navigate("/onboarding"));
 
   return (
-    <section className="lg:hidden flex h-[calc(100svh-64px)] flex-col bg-white">
+    <section className="lg:hidden flex h-[calc(100svh-64px)] flex-col bg-[#FFF9F4]">
       {/* Capped + centered so it reads as a phone-width column on tablets too */}
       <div className="mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col md:max-w-lg">
         {/* Contact header */}
-        <div className="flex flex-col items-center gap-1 border-b border-black/5 px-4 pb-3 pt-1">
+        <div className="flex flex-col items-center gap-1 border-b border-[#E9DDD3] bg-[#F7EFE8] px-4 pb-3 pt-1">
+          <div className="mb-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-[#D9896A] text-sm text-white shadow-sm">
+            G
+          </div>
           <div className="text-[20px] font-semibold text-[#111]">Grace</div>
-          <div className="text-[12px] text-[#8e8e93]">GLP-1 companion</div>
+          <div className="text-[12px] text-[#7D6E67]">GLP-1 companion</div>
         </div>
 
         {/* Thread */}
@@ -96,8 +99,12 @@ const MobileHero = () => {
                 <span
                   className={`max-w-[80%] rounded-[1.25rem] px-4 py-2.5 text-[17px] leading-snug ${
                     m.from === "user"
-                      ? "rounded-br-md bg-[#2C7DFA] text-white"
-                      : "rounded-bl-md bg-[#E9E9EB] text-[#111]"
+                      ? "rounded-br-md bg-[#4F78C8] text-white"
+                      : i % 3 === 0
+                        ? "rounded-bl-md bg-[#F4D8CB] text-[#3C2923]"
+                        : i % 3 === 1
+                          ? "rounded-bl-md bg-[#DCE8D7] text-[#263629]"
+                          : "rounded-bl-md bg-[#E5DDF0] text-[#33283F]"
                   }`}
                 >
                   {m.text}
@@ -112,11 +119,11 @@ const MobileHero = () => {
                 exit={{ opacity: 0 }}
                 className="flex justify-start"
               >
-                <span className="flex items-center gap-1 rounded-[1.25rem] rounded-bl-md bg-[#E9E9EB] px-4 py-3">
+                <span className="flex items-center gap-1 rounded-[1.25rem] rounded-bl-md bg-[#F4D8CB] px-4 py-3">
                   {[0, 0.15, 0.3].map((d) => (
                     <motion.span
                       key={d}
-                      className="block h-2 w-2 rounded-full bg-[#8e8e93]"
+                      className="block h-2 w-2 rounded-full bg-[#A56F5D]"
                       animate={{ y: [0, -3, 0], opacity: [0.4, 1, 0.4] }}
                       transition={{ duration: 0.9, repeat: Infinity, delay: d, ease: "easeInOut" }}
                     />
@@ -133,12 +140,12 @@ const MobileHero = () => {
             onClick={start}
             animate={done ? { scale: [1, 1.02, 1] } : { scale: 1 }}
             transition={done ? { duration: 1.6, repeat: Infinity, ease: "easeInOut" } : {}}
-            className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#16110D] text-[17px] font-semibold text-white shadow-sm transition-transform active:scale-[0.99]"
+            className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#315B4A] text-[17px] font-semibold text-white shadow-md transition-transform active:scale-[0.99]"
           >
             Start with Grace
             <ArrowRight className="h-4.5 w-4.5" strokeWidth={2.4} />
           </motion.button>
-          <p className="mt-2.5 text-center text-[12px] text-[#8e8e93]">
+          <p className="mt-2.5 text-center text-[12px] text-[#7D6E67]">
             Free to start · right inside iMessage
           </p>
         </div>

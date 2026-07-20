@@ -1,4 +1,4 @@
-const BASE_URL = "https://graceglp.com";
+const BASE_URL = (import.meta.env.VITE_SITE_URL || "https://graceglp.com").replace(/\/+$/, "");
 
 export const organizationSchema = {
   "@context": "https://schema.org",

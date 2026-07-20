@@ -1,8 +1,13 @@
 User-agent: *
 Allow: /
+Disallow: /admin/
+Disallow: /dashboard
+Disallow: /settings
+Disallow: /upgrade
+Disallow: /onboarding
 
-Sitemap: https://graceglp.com/sitemap.xml
+Sitemap: https://hellograce-production.vercel.app/sitemap.xml
 
 # LLM-readable product context
-LLMs-txt: https://graceglp.com/llms.txt
-LLMs-full-txt: https://graceglp.com/llms-full.txt
+LLMs-txt: https://hellograce-production.vercel.app/llms.txt
+LLMs-full-txt: https://hellograce-production.vercel.app/llms-full.txt

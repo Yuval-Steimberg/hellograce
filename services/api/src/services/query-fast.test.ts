@@ -650,6 +650,16 @@ describe('calories/protein LEFT today (2026-06-11 fix — was leaking to knowled
     expect(r!.text).toMatch(/600 kcal left/);
   });
 
+  it('"Did I overeat today?" compares the real diary to the stored calorie target', async () => {
+    const users = mockUsers({ todayCalories: 1725, calorie_goal_kcal: 1500 });
+    const r = await tryQueryFast('Did I overeat today?', { users, logger: noopLogger, userId: 'u1' });
+    expect(r).not.toBeNull();
+    expect(r!.category).toBe('calorie_today');
+    expect(r!.text).toContain('1725 kcal');
+    expect(r!.text).toContain('225 kcal over');
+    expect(r!.text).toContain("One day doesn't define your progress");
+  });
+
   it('does NOT hijack compound messages', async () => {
     const users = mockUsers({});
     const r = await tryQueryFast('how many calories do I have left today? also I just ate eggs', { users, logger: noopLogger, userId: 'u1' });
